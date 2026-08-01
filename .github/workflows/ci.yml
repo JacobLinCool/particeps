@@ -35,6 +35,11 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # The wrapper JAR is a binary in the tree; this checks it against Gradle's published
+      # checksums so nobody has to take it on faith.
+      - name: Validate the Gradle wrapper
+        uses: gradle/actions/wrapper-validation@0f4528296b4bc09e8ae0fc7be30185a4ab435545 # v6.0.0
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@0f4528296b4bc09e8ae0fc7be30185a4ab435545 # v6.0.0
 

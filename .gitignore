@@ -19,6 +19,12 @@
 *.tar.gz
 *.rar
 
+# The Gradle wrapper JAR is deliberately committed: without it a fresh clone cannot build at all,
+# which is what broke the first CI run here. The negation has to follow *.jar above, because the
+# last matching rule wins. CI verifies the JAR against Gradle's published checksums, so the one
+# binary in this tree is checkable rather than merely trusted.
+!gradle/wrapper/gradle-wrapper.jar
+
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*

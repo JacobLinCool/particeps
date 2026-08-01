@@ -75,6 +75,9 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Validate the Gradle wrapper
+        uses: gradle/actions/wrapper-validation@0f4528296b4bc09e8ae0fc7be30185a4ab435545 # v6.0.0
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@0f4528296b4bc09e8ae0fc7be30185a4ab435545 # v6.0.0
 
