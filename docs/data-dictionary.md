@@ -1,0 +1,382 @@
+# Data dictionary
+
+Every field that can appear in an exported dataset, per collector. This document is written to be quotable in an ethics submission: it describes what the code in this repository actually emits, including the gaps.
+
+Read the "what you cannot claim" column in the [researcher guide](researcher-guide.md) alongside this. This document says what a field *is*; that one says what it does not prove.
+
+## Reading an export
+
+A decrypted bundle is a `research-bundle-v1` JSON document.
+
+```json
+{
+  "format": "research-bundle-v1",
+  "exported_at_utc_millis": 1767225600000,
+  "configuration": { },
+  "experiment": {
+    "experiment_id": "...",
+    "configuration_id": "...",
+    "participant_instance_id": "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+    "state": "RUNNING",
+    "next_sequence_number": 4211,
+    "transitions": [ { "from": "READY", "to": "RUNNING", "reason": "...", "time": { } } ],
+    "events": [ ],
+    "first_sequence_number": 1,
+    "last_sequence_number": 4210
+  }
+}
+```
+
+The window fields come after `events`, and that placement is deliberate. A bundle is written as
+a stream, and an uploaded one stops at the first event boundary past a plaintext budget, so the
+last sequence it contains is not known until the events have been written. Declaring the window
+before them would let a bundle claim a range it does not contain. JSON object member order
+carries no meaning, so a parser that reads by key is unaffected, and decryption is unaffected
+too — the format string is unchanged and bundles written by earlier builds decrypt exactly as
+they did. Code that consumes a bundle as a token stream and expects the window before the events
+it describes does need to change.
+
+`configuration` is the canonical study configuration the participant consented to, reproduced verbatim. Every dataset therefore carries its own definition of what was supposed to be collected — including its `upload` block, so a dataset states whether the study it came from delivered data to an endpoint.
+
+It also includes the `signer` block, so provenance travels with the data: `configuration.signer.key_id` and `configuration.signer.public_key` name the key the configuration was signed with, and the same key fingerprint the participant saw on the consent screen can be recomputed from the public key at analysis time. That identifies which signing key issued the study a dataset came from — useful when a lab runs several studies or rotates keys — and does not by itself attest to who held that key.
+
+| Field | Meaning |
+| --- | --- |
+| `participant_instance_id` | A random UUID generated on the device when this participant imported the study, and stable for that install. It is pseudonymous: no name, account, device identifier, or advertising ID. It exists so that bundles from different participants in an uploading study can be told apart, and it is disclosed on the consent screen. Treat it as personal data — it links every bundle one person produced. |
+| `next_sequence_number` | The device's counter at the moment the bundle was written: one past the last event durably stored, across the whole study rather than this bundle. |
+| `first_sequence_number` | The first event sequence this bundle contains, inclusive. |
+| `last_sequence_number` | The last event sequence this bundle contains, inclusive. |
+
+### Whole exports and uploaded chunks
+
+The two ways data leaves the device produce the same document. What differs is the window.
+
+- A **manual export** runs to whatever was durable when the participant pressed export. It starts at `first_sequence_number: 1` unless the device has reclaimed a delivered prefix to free space, in which case it starts at the lowest sequence still on the phone. Successive exports from one participant therefore overlap, each containing everything the previous one did that has not since been reclaimed.
+- An **uploaded chunk**, from a study whose configuration names an endpoint, starts after the last sequence that endpoint confirmed. There is no configured chunk size: each delivery asks for everything outstanding and stops at the first event boundary past a 16 MiB plaintext budget, so chunk sizes vary with event size and with how much backlog was waiting. Consecutive chunks abut rather than overlap, and reassembling a participant's data means concatenating them in sequence order.
+
+Read `first_sequence_number` and `last_sequence_number` on every bundle rather than assuming a starting point or deriving a boundary from the study's configuration. In an uploading study the complete dataset for a participant is the chunks plus the final export, joined on sequence number.
+
+A bundle has no size ceiling of its own; it is bounded by the study's `storage.maximum_local_bytes`, which is why `researcher-tools decrypt` streams rather than decrypting in memory.
+
+`state`, `transitions`, and `configuration` describe the study as a whole in both cases, not just the window, so the same transition history repeats in every chunk. Only `events`, `first_sequence_number`, and `last_sequence_number` are window-scoped.
+
+`format` is bound into the bundle's cryptographic associated data, so a reader built for a different version fails to decrypt rather than silently misreading one: the authentication tag fails before any field is parsed.
+
+### The event envelope
+
+Every event has the same shape regardless of collector.
+
+```json
+{
+  "sequence_number": 1,
+  "collector_id": "accelerometer.v1",
+  "payload_schema_version": 1,
+  "observed_time": {
+    "wall_time_utc_millis": 1767225600000,
+    "elapsed_realtime_nanos": 12345678901234,
+    "boot_session_id": "0a1b2c3d4e5f60718293a4b5c6d7e8f9"
+  },
+  "payload_type": "ACCELEROMETER_SAMPLE",
+  "fields": { }
+}
+```
+
+| Envelope field | JSON type | Meaning |
+| --- | --- | --- |
+| `sequence_number` | number | Monotonic, starts at 1, **shared across all collectors in a study**. Not per-collector. |
+| `collector_id` | string | Which collector produced this event |
+| `payload_schema_version` | number | Version of the `fields` schema for this collector |
+| `observed_time` | object | See below |
+| `payload_type` | string | Which kind of event this is, within the collector |
+| `fields` | object | The payload. Keys are sorted. |
+
+### Every payload value is a JSON string
+
+This is the most important thing to know before writing a parser.
+
+`fields` is a string-to-string map. Numbers and booleans are stringified: acceleration appears as `"9.81"`, not `9.81`, and flags appear as `"true"` / `"false"`, not `true` / `false`. Only the envelope's `sequence_number`, `payload_schema_version`, and the three `observed_time` values are real JSON numbers.
+
+Field keys match `[a-z][a-z0-9_]{0,63}`, at most 32 fields per event, each value at most 1024 characters.
+
+### Time
+
+Three clocks are recorded on every event, because no single one is sufficient.
+
+| Field | Source | Unit | Caveat |
+| --- | --- | --- | --- |
+| `wall_time_utc_millis` | `System.currentTimeMillis()` | ms since Unix epoch, UTC | Can jump forwards or backwards — NTP corrections, manual changes, timezone travel. Do not assume monotonicity. |
+| `elapsed_realtime_nanos` | `SystemClock.elapsedRealtimeNanos()` | ns since boot | Monotonic and includes deep sleep, but only comparable **within the same `boot_session_id`** |
+| `boot_session_id` | derived | 32 hex characters | Changes on every reboot. A change means the two elapsed-realtime values either side are incomparable. |
+
+**No timezone or UTC offset is recorded anywhere.** If local time matters to your analysis, you have to obtain it another way; it cannot be recovered from an export.
+
+`observed_time` is stamped inside the collector callback at capture time, with two exceptions: `network_usage.v1` and `usage_events.v1` are polling collectors and stamp one `observed_time` per poll, shared by every event in that batch. For those two, use the in-payload source time instead.
+
+Several collectors also carry a source-supplied time in their payload. **Do not subtract across clock bases:**
+
+- `elapsed_realtime_nanos` and the `source_elapsed_realtime_nanos` fields (accelerometer, location) use the elapsed-realtime base, which **includes** deep sleep.
+- The keyboard's `event_uptime_millis` and `down_uptime_millis` use Android's uptime base, which **excludes** deep sleep.
+
+### Deduplication
+
+Exports overlap by design — a participant can export repeatedly, and each export contains everything from its retained floor up to its boundary. Uploaded chunks do not overlap each other, and a manual export overlaps every chunk after that floor. Deduplicate on `experiment_id` + `configuration_id` + `collector_id` + `sequence_number`, and separate participants on `participant_instance_id` when bundles arrive at an endpoint rather than by hand. Sequence numbers are never reissued, so a number identifies the same event across every bundle regardless of what has been reclaimed.
+
+### Gaps are real and are not errors
+
+- Nothing is recorded while a study is `PAUSED`. The polling collectors do not back-fill the paused interval on resume; that data is deliberately never collected.
+- Across a process restart, `network_usage.v1` and `usage_events.v1` do resume their query window from the last stored event, so a restart is not the same as a pause.
+- A collector that loses access reports `BLOCKED_ACCESS` and stops. It never emits a placeholder or interpolated value.
+
+A reclaimed prefix is not one of these gaps. When a bundle's `first_sequence_number` is above 1, the events below it were collected, delivered to the study's endpoint, and then removed from the phone to free space — they are in the chunks that endpoint received, not missing from the study. Events that were never delivered are never removed.
+
+---
+
+## `app_lifecycle.v1`
+
+Lifecycle callbacks of **this app's own** activities. Present mainly as a low-risk integration reference.
+
+**Configuration:** `{}` — no parameters beyond the collector-level `required` flag.
+**Access:** none.
+
+**Payload types:** `ACTIVITY_CREATED`, `ACTIVITY_STARTED`, `ACTIVITY_RESUMED`, `ACTIVITY_PAUSED`, `ACTIVITY_STOPPED`, `ACTIVITY_INSTANCE_STATE_SAVED`, `ACTIVITY_DESTROYED`.
+
+| Field | Type | Unit | Meaning |
+| --- | --- | --- | --- |
+| `activity_class` | string | — | Fully-qualified Java class name of the activity |
+
+Not recorded: any other app's lifecycle, saved-instance-state contents, intent extras, view hierarchy.
+
+---
+
+## `accelerometer.v1`
+
+Raw accelerometer samples, **including gravity**. No filtering, orientation estimation, or activity recognition is applied.
+
+**Configuration:**
+
+| Parameter | JSON key | Type | Unit | Range |
+| --- | --- | --- | --- | --- |
+| Sampling period | `sampling_period_us` | int | microseconds | 5,000–1,000,000 (200 Hz–1 Hz) |
+| Maximum report latency | `maximum_report_latency_us` | int | microseconds | 0–60,000,000 (batching window) |
+
+The sampling period is a **hint to Android**, not a guarantee. Actual delivery rate varies by device, by sensor, and with system power state. Measure the achieved rate from the data rather than assuming the configured one.
+
+**Access:** accelerometer hardware must be present. This is a capability check, not an Android permission — there is no dialog and nothing for the participant to grant. A device without the sensor cannot run a study that requires this collector.
+
+**Payload type:** `ACCELEROMETER_SAMPLE`.
+
+| Field | Type | Unit | Meaning |
+| --- | --- | --- | --- |
+| `source_elapsed_realtime_nanos` | long | ns since boot | Hardware sample time from `SensorEvent.timestamp`. Use this, not `observed_time`, for inter-sample intervals. |
+| `x_meters_per_second_squared` | float | m/s² | Device X axis, includes gravity |
+| `y_meters_per_second_squared` | float | m/s² | Device Y axis, includes gravity |
+| `z_meters_per_second_squared` | float | m/s² | Device Z axis, includes gravity |
+| `accuracy` | int | enum ordinal | Raw `SensorEvent.accuracy`, written unmapped |
+
+Not recorded: gyroscope, magnetometer, or any other sensor; derived orientation, step counts, or activity labels. Accuracy-*change* callbacks are discarded — accuracy is observable only as it rides along on samples, so a transition between two samples is not visible.
+
+---
+
+## `network_state.v1`
+
+Capabilities of the system default network. Connection shape only.
+
+**Configuration:**
+
+| Parameter | JSON key | Type | Meaning |
+| --- | --- | --- | --- |
+| Include bandwidth estimates | `include_bandwidth_estimates` | boolean | Adds the two `*_kbps` fields |
+
+**Access:** none requested at runtime. The module declares `ACCESS_NETWORK_STATE`, a normal install-time permission with no participant-facing prompt.
+
+**Payload types:**
+
+| Type | When | Fields |
+| --- | --- | --- |
+| `NETWORK_SNAPSHOT` | Once, when the collector starts | Capability fields **plus** `connected` |
+| `NETWORK_CAPABILITIES` | Default network capabilities changed | Capability fields |
+| `NETWORK_AVAILABLE` | A default network became available | **Empty** — `"fields": {}` |
+| `NETWORK_LOST` | The default network was lost | **Empty** — `"fields": {}` |
+
+`NETWORK_AVAILABLE` and `NETWORK_LOST` carry no payload at all, so they cannot be correlated to a particular network. They mark transitions in time, nothing more.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `wifi` | boolean-as-string | Has Wi-Fi transport |
+| `mobile` | boolean-as-string | Has cellular transport |
+| `ethernet` | boolean-as-string | Has ethernet transport |
+| `vpn` | boolean-as-string | Has VPN transport |
+| `validated` | boolean-as-string | Android verified actual internet connectivity |
+| `metered` | boolean-as-string | Negation of `NET_CAPABILITY_NOT_METERED` |
+| `roaming` | boolean-as-string | Negation of `NET_CAPABILITY_NOT_ROAMING` |
+| `downstream_kbps` | int | Android's downstream estimate. Only when bandwidth estimates are enabled. |
+| `upstream_kbps` | int | Android's upstream estimate. Only when bandwidth estimates are enabled. |
+| `connected` | boolean-as-string | `NETWORK_SNAPSHOT` only. When `"false"` it is the **only** field present. |
+
+The bandwidth values are Android's own coarse link estimates, not measurements. They do not reflect achieved throughput.
+
+Not recorded: SSID, BSSID, IP or MAC addresses, DNS, link properties, carrier or operator name, signal strength, hostnames, URLs, packets, or payloads.
+
+---
+
+## `network_usage.v1`
+
+Device-total byte and packet counters over a polling window, from Android's `NetworkStatsManager`.
+
+**Configuration:**
+
+| Parameter | JSON key | Type | Unit | Range |
+| --- | --- | --- | --- | --- |
+| Transports | `transports` | array of `"wifi"` / `"mobile"` | — | non-empty |
+| Poll interval | `poll_interval_minutes` | int | minutes | 1–1,440 |
+
+The one-minute floor is there so a pilot can confirm within a minute that the collector produces events. It buys finer windows, not finer data: Android's accounting is coarse and lags, so a minute-long window is still an aggregate whose contents cannot be placed within it.
+
+**Access:** Usage Access (`PACKAGE_USAGE_STATS`), a special access the participant grants in Android Settings and can revoke at any time.
+
+**Payload type:** `NETWORK_USAGE_AGGREGATE`. One event per transport per poll.
+
+| Field | Type | Unit | Meaning |
+| --- | --- | --- | --- |
+| `transport` | string | — | `"WIFI"` or `"MOBILE"` (uppercase, unlike the lowercase form in the configuration) |
+| `coverage_start_utc_millis` | long | ms since epoch, UTC | Inclusive start of the counted window |
+| `coverage_end_utc_millis` | long | ms since epoch, UTC | End of the counted window |
+| `rx_bytes` | long | bytes | Device total received in the window |
+| `tx_bytes` | long | bytes | Device total transmitted in the window |
+| `rx_packets` | long | packets | Device total received |
+| `tx_packets` | long | packets | Device total transmitted |
+
+**Interpretation limits.** The query is `querySummaryForDevice` with a null subscriber ID: device totals only. There is no per-app or per-UID attribution, and none can be recovered. Android's accounting is coarse and can lag, so a window's totals describe the window, not the instant traffic occurred within it. The first event arrives one full poll interval after the study starts, and resuming from a pause restarts the window at the moment of resume — the paused interval is never counted.
+
+Not recorded: per-app attribution, subscriber ID, hostnames, URLs, destinations, content, instantaneous throughput, ethernet or VPN transports.
+
+---
+
+## `usage_events.v1`
+
+Raw system usage events, from Android's `UsageStatsManager`.
+
+**Configuration:**
+
+| Parameter | JSON key | Type | Unit | Range |
+| --- | --- | --- | --- | --- |
+| Poll interval | `poll_interval_minutes` | int | minutes | 1–1,440 |
+
+The one-minute floor is a piloting setting. Polling more often does not make the platform deliver events sooner or more completely; it only shortens the wait before you can see whether anything is arriving.
+
+**Access:** Usage Access (`PACKAGE_USAGE_STATS`).
+
+**Payload types** — exactly nine are recorded; every other Android usage event type is discarded:
+
+`ACTIVITY_RESUMED`, `ACTIVITY_PAUSED`, `ACTIVITY_STOPPED`, `SCREEN_INTERACTIVE`, `SCREEN_NON_INTERACTIVE`, `KEYGUARD_SHOWN`, `KEYGUARD_HIDDEN`, `DEVICE_STARTUP`, `DEVICE_SHUTDOWN`
+
+| Field | Type | Unit | Meaning | Presence |
+| --- | --- | --- | --- | --- |
+| `source_time_utc_millis` | long | ms since epoch, UTC | Android's own event time. Use this, not `observed_time`, which is the poll time. | Always |
+| `package_name` | string | — | Package of the app the event concerns | **Omitted entirely** when Android reports it as null or blank |
+
+**Interpretation limits.** These are raw events, not a session stream. Android's retention and delivery are not guaranteed to be complete or timely, and this collector does not reconstruct sessions, durations, or foreground time — if you need those, you derive them, and the gaps are yours to handle. `SCREEN_INTERACTIVE` means the screen was on and interactive; it does not mean the participant was looking at it.
+
+Not recorded: activity or class names (package only), window titles, notification content, app usage durations, or any unmapped event type.
+
+---
+
+## `location.v1`
+
+Fused Location fixes via Google Play Services.
+
+**Configuration:**
+
+| Parameter | JSON key | Type | Unit | Range |
+| --- | --- | --- | --- | --- |
+| Interval | `interval_millis` | long | ms | 1,000–3,600,000 |
+| Minimum interval | `minimum_interval_millis` | long | ms | 500 up to the configured interval |
+| Maximum batch delay | `maximum_batch_delay_millis` | long | ms | 0–86,400,000 |
+| Minimum displacement | `minimum_displacement_meters` | float | metres | 0–10,000 |
+| Priority | `priority` | `"BALANCED"` or `"HIGH_ACCURACY"` | — | — |
+
+This collector always requires precise location. There is no coarse-only mode, and `priority` selects a power/accuracy trade-off within fine location rather than reducing the permission it needs. Say so in your consent text.
+
+**Access:** fine location and background location. Continuous collection runs under a visible foreground service notification.
+
+**Payload type:** `LOCATION_FIX`.
+
+| Field | Type | Unit | Meaning | Presence |
+| --- | --- | --- | --- | --- |
+| `source_elapsed_realtime_nanos` | long | ns since boot | Monotonic fix time | Always |
+| `source_time_utc_millis` | long | ms since epoch, UTC | Provider's wall-clock fix time | Always |
+| `latitude_degrees` | double | degrees, WGS84 | | Always |
+| `longitude_degrees` | double | degrees, WGS84 | | Always |
+| `horizontal_accuracy_meters` | float | metres | 68% confidence radius | Always |
+| `mock` | boolean-as-string | — | Android flagged this as a mock location | Always |
+| `altitude_meters` | double | metres, WGS84 ellipsoid | | Only when the platform supplies it |
+| `vertical_accuracy_meters` | float | metres | | Only when supplied |
+| `speed_meters_per_second` | float | m/s | | Only when supplied |
+| `speed_accuracy_meters_per_second` | float | m/s | | Only when supplied |
+| `bearing_degrees` | float | degrees from true north | | Only when supplied |
+| `bearing_accuracy_degrees` | float | degrees | | Only when supplied |
+
+Optional fields are **omitted, never null**. Their absence means the platform reported no value, which is itself information about fix quality.
+
+**Interpretation limits.** A fix is an estimate. Indoor and urban environments degrade accuracy substantially, and the fix rate is a request that Android is free to service more slowly under power management. Gaps are expected. The `mock` flag is worth checking before analysis. This collector uses Play Services only, with no platform `LocationManager` fallback, so a device without Play Services produces no location data at all.
+
+Not recorded: provider name, extras bundle, raw GNSS or satellite data, geocoded addresses, cell or Wi-Fi scan lists.
+
+---
+
+## `keyboard_touch.v1`
+
+Touch dynamics on the study's own keyboard surface. This is the only collector classed `RESTRICTED`, and it needs the most careful disclosure in consent content.
+
+**Configuration:**
+
+| Parameter | JSON key | Type | Unit | Range |
+| --- | --- | --- | --- | --- |
+| Trajectory sampling rate | `trajectory_sampling_hz` | int | Hz | 1–120 |
+
+**Access:** the research keyboard must be both enabled in Android Settings and selected as the active input method. These are two separate, explicit participant actions, and neither is an Android runtime permission.
+
+**Payload type:** `KEYBOARD_TOUCH`.
+
+| Field | Type | Unit | Meaning |
+| --- | --- | --- | --- |
+| `action` | string | — | `"DOWN"`, `"MOVE"`, `"UP"`, or `"CANCEL"` |
+| `event_uptime_millis` | long | ms, **uptime base** | Touch event time. Excludes deep sleep — a different base from `observed_time`. |
+| `down_uptime_millis` | long | ms, uptime base | When the gesture began. `event_uptime_millis − down_uptime_millis` is dwell time. |
+| `pointer_id` | int | — | Pointer identity within the gesture |
+| `relative_x` | float | fraction 0.0–1.0 | X position **within the touched key's bounds**, clamped |
+| `relative_y` | float | fraction 0.0–1.0 | Y position within the touched key's bounds, clamped |
+| `pressure` | float | device-relative | Raw `MotionEvent` pressure. **Uncalibrated and not comparable across devices.** Not a force in newtons. |
+| `size` | float | device-relative | Raw contact size, same caveat |
+| `orientation_radians` | float | radians | Touch major-axis orientation |
+| `tool_type` | int | enum ordinal | Raw `MotionEvent` tool type, unmapped |
+| `key_category` | string | — | One of `"LETTER"`, `"SPACE"`, `"BACKSPACE"`, `"ENTER"` — **the category only, never which key** |
+| `geometry_version` | string | — | Constant `"qwerty-v1"`, identifying the fixed layout that makes relative coordinates interpretable |
+
+**What is structurally impossible here.** Key identity and text never reach the event path. The keyboard's typing path and its observation path are separate, and only the key's *category* is passed to the observer — so an event can tell you a letter key was pressed, never which letter. There is no way to reconstruct typed text from this data.
+
+**Capture is disabled entirely** when the input field is a password field of any variation, when the editor sets `IME_FLAG_NO_PERSONALIZED_LEARNING`, or when no field information is available at all. The keyboard keeps working; only observation stops. This is fail-closed: an unknown field is treated as sensitive.
+
+Only `MOVE` events are rate-limited, at the configured sampling rate. `DOWN`, `UP`, and `CANCEL` are never dropped. Touches that land outside a key, and secondary pointers in a multi-touch gesture, produce no events.
+
+**This is still identifying.** No text does not mean no risk. Typing rhythm, dwell times, and within-key touch position are behaviourally distinctive and can support inference about the person and, in aggregate, about what kind of input they were producing. It must be disclosed explicitly in consent content, and participants should be told they can switch back to their normal keyboard before sensitive input.
+
+Not recorded: characters, committed text, surrounding text, clipboard, suggestions or autocorrect data, absolute screen coordinates, keyboard pixel dimensions, the target app's package, `EditorInfo` contents, or calibrated force.
+
+---
+
+## Volume and quota
+
+A study declares a local storage quota between 8 MiB and 8 GiB (8,388,608 to 8,589,934,592 bytes). Events are written into 4 MiB segments, at most 2,048 of them resident at once, which is what lets a study reach the top of that range while still reclaiming space 4 MiB at a time. A single encoded event may not exceed 64 KiB. A segment is appended to and never rewritten.
+
+The ceiling is high because high-rate collectors fill space quickly — an accelerometer at 100 Hz produces tens of megabytes per hour — but a quota is space claimed on someone's personal phone, so ask for what the study needs rather than for the maximum.
+
+When the quota is exhausted, the write fails and the study **fail-closes to `PAUSED`** with a storage-failure reason. It does not drop events silently and it does not overwrite the oldest data. Size your quota against your collectors' event rate before deployment, and check the accelerometer in particular: at 200 Hz it will exhaust a small quota quickly.
+
+In a study that uploads, a confirmed delivery lets the device reclaim space. Above 80% of the quota, whole leading segments are released — down to 60% — provided every event in them was confirmed by the endpoint and they are not the segment still being written. Nothing undelivered is ever released, so an endpoint that stops answering brings a study back to the fail-closed case above rather than to a device that discards data. `StudyMetadata.retainedFromSequence` records the lowest sequence still present, sequence numbers are never reissued, and the participant's dashboard states how many earlier events were delivered and removed.
+
+Study metadata is held separately from the events. It is capped at 1 MiB and kept outside the event budget by a 2 MiB reserve, so the record of what a study is and how far it has been delivered cannot be crowded out by the events it describes. Its container header is `ADCMET01`.
+
+Opening a study does not decrypt its event log. Framing and sequence contiguity are checked from the plaintext frame headers, and each collector's most recent event is persisted in that metadata rather than recovered by scanning, so start-up cost is linear in frames rather than in bytes decrypted. Event payloads are therefore authenticated when they are read rather than when a study is opened, which means a damaged payload surfaces at export or upload time rather than at launch.
+
+Per-collector byte ceilings appear in each collector's descriptor, but they are declarative and not enforced at runtime. The 64 KiB global limit is the one that applies.

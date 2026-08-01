@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+title: Android Data Collector
+message: If you use this software in published work, please cite it.
+type: software
+authors:
+  # TODO: confirm the name split and add an ORCID if you have one.
+  - given-names: Jacob
+    family-names: Lin
+    alias: JacobLinCool
+    email: jacoblincool@gmail.com
+repository-code: https://github.com/JacobLinCool/android-data-collector
+url: https://github.com/JacobLinCool/android-data-collector
+abstract: >-
+  A local-first, participant-controlled Android platform for research data
+  collection. Study content is fixed by an Ed25519-signed configuration that can
+  only select collectors already compiled into the application. Events are
+  encrypted on device with a non-exportable Android Keystore key. Data reaches
+  the research team as a bundle encrypted to the researcher's HPKE public key,
+  either through a participant-initiated export or, when the signed
+  configuration declares an endpoint and the consent screen discloses it,
+  through scheduled upload of the same encrypted bundles.
+keywords:
+  - mobile sensing
+  - digital phenotyping
+  - ecological momentary assessment
+  - research data collection
+  - privacy by design
+  - participant control
+  - android
+license: MIT
+# TODO: update version and date-released at each tagged release.
+version: 0.1.0
+date-released: "2026-08-01"

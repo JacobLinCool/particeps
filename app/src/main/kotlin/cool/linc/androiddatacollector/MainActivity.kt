@@ -1,0 +1,106 @@
+package cool.linc.androiddatacollector
+
+import android.Manifest
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import cool.linc.androiddatacollector.core.collector.AccessKind
+import java.time.Instant
+
+class MainActivity : ComponentActivity() {
+    private val collectorApplication: CollectorApplication
+        get() = application as CollectorApplication
+    private val viewModel by viewModels<StudyViewModel> {
+        StudyViewModel.Factory(collectorApplication.session)
+    }
+
+    private val importLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        viewModel.importSignedConfiguration {
+            requireNotNull(contentResolver.openInputStream(uri)) { "Cannot open signed configuration" }
+                .use { it.readNBytes(MAXIMUM_CONFIGURATION_ENVELOPE_BYTES + 1) }
+        }
+    }
+
+    private val exportLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        viewModel.export {
+            requireNotNull(contentResolver.openOutputStream(uri, "w")) { "Cannot open export destination" }
+        }
+    }
+
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { viewModel.refreshAccess() }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        setContent {
+            val state = viewModel.state.collectAsStateWithLifecycle().value
+            CollectorApp(
+                state = state,
+                actions = StudyUiActions(
+                    import = { importLauncher.launch(arrayOf("application/octet-stream", "*/*")) },
+                    demo = demoAction,
+                    review = viewModel::reviewStudy,
+                    acceptConsent = viewModel::acceptConsent,
+                    completeAccess = viewModel::completeAccessSetup,
+                    requestAccess = ::requestAccess,
+                    start = viewModel::start,
+                    pause = viewModel::pause,
+                    resume = viewModel::resume,
+                    finish = viewModel::finish,
+                    withdraw = viewModel::withdraw,
+                    export = {
+                        val id = (state as? StudyUiState.ActiveStudy)?.configuration?.experimentId ?: "research"
+                        exportLauncher.launch("$id-${Instant.now().epochSecond}.adcexp")
+                    },
+                    delete = viewModel::deleteLocalData,
+                ),
+            )
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel.refreshAccess()
+    }
+
+    /**
+     * Null in a release build, which ships no demonstration study, so the dashboard leaves the
+     * entry point out entirely rather than showing something that cannot work.
+     */
+    private val demoAction: (() -> Unit)? = DemoStudy.load?.let { load ->
+        { viewModel.importSignedConfiguration { load(resources) } }
+    }
+
+    private fun requestAccess(kind: AccessKind) {
+        when (kind) {
+            AccessKind.FINE_LOCATION -> permissionLauncher.launch(
+                arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION),
+            )
+            AccessKind.BACKGROUND_LOCATION -> permissionLauncher.launch(
+                arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
+            )
+            AccessKind.NOTIFICATIONS -> permissionLauncher.launch(
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+            )
+            AccessKind.RESEARCH_KEYBOARD_SELECTED -> collectorApplication.accessManager.showInputMethodPicker()
+            AccessKind.USAGE_ACCESS,
+            AccessKind.RESEARCH_KEYBOARD_ENABLED -> collectorApplication.accessManager.settingsIntent(kind)?.let(::startActivity)
+                ?: viewModel.reportMessage("ACCESS_SETTINGS_UNAVAILABLE")
+            AccessKind.ACCELEROMETER_HARDWARE -> Unit
+        }
+    }
+
+    private companion object {
+        const val MAXIMUM_CONFIGURATION_ENVELOPE_BYTES = 1_100_000
+    }
+}

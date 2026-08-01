@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  English is the default locale. Every string a participant can see lives here; nothing user-facing
+  is written into Kotlin. Researcher-supplied text — the study title, purpose, contact, and consent
+  summary — is never translated: it is rendered exactly as it was signed.
+-->
+<resources>
+    <!-- A product name, not prose: the same in every locale. -->
+    <string name="app_name" translatable="false">Android Data Collector</string>
+
+    <!-- Header -->
+    <string name="header_no_study">Research Data Collector</string>
+    <string name="header_starting">Starting up</string>
+    <string name="header_elapsed_minutes">%1$dm</string>
+    <string name="header_elapsed_hours">%1$dh %2$dm</string>
+    <string name="header_elapsed_days">%1$dd %2$dh</string>
+
+    <!-- Setup steps, in order -->
+    <string name="step_study">Study</string>
+    <string name="step_data">Data</string>
+    <string name="step_consent">Consent</string>
+    <string name="step_access">Access</string>
+    <string name="step_start">Start</string>
+
+    <!-- States shown once setup is over -->
+    <string name="state_running">Collecting</string>
+    <string name="state_paused">Paused</string>
+    <string name="state_completed">Completed</string>
+    <string name="state_withdrawn">Withdrawn</string>
+
+    <!-- Actions -->
+    <string name="action_choose_configuration">Choose a study file</string>
+    <string name="action_load_demo">Load demo study</string>
+    <string name="action_continue">Continue</string>
+    <string name="action_agree">Agree</string>
+    <string name="action_done">Done</string>
+    <string name="action_start">Start study</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_resume">Resume</string>
+    <string name="action_finish">Finish early</string>
+    <string name="action_export">Export encrypted data</string>
+    <string name="action_withdraw">Withdraw</string>
+    <string name="action_delete">Delete local data</string>
+    <string name="action_confirm">Confirm</string>
+    <string name="action_cancel">Cancel</string>
+
+    <!-- Content descriptions for controls that carry no text -->
+    <string name="cd_language">Language</string>
+    <string name="cd_details">Details</string>
+
+    <!-- Step 1: the study -->
+    <plurals name="study_duration_hours">
+        <item quantity="one">%1$d hour</item>
+        <item quantity="other">%1$d hours</item>
+    </plurals>
+    <plurals name="study_duration_days">
+        <item quantity="one">%1$d day</item>
+        <item quantity="other">%1$d days</item>
+    </plurals>
+    <string name="study_duration_days_hours">%1$dd %2$dh</string>
+
+    <!-- Step 2: what is collected. One template per collector, filled from the signed study. -->
+    <string name="data_optional">Optional</string>
+
+    <string name="collector_app_lifecycle_name">App activity</string>
+    <string name="collector_app_lifecycle_detail">When this app itself is opened and closed</string>
+
+    <string name="collector_accelerometer_name">Motion</string>
+    <plurals name="collector_accelerometer_detail">
+        <item quantity="one">Movement of the phone, about once a second or more</item>
+        <item quantity="other">Movement of the phone, about %1$d times per second or more</item>
+    </plurals>
+
+    <string name="collector_network_state_name">Connection type</string>
+    <string name="collector_network_state_detail">Whether you are on Wi-Fi or mobile data, and whether it is metered</string>
+
+    <string name="collector_network_usage_name">Data volume</string>
+    <string name="collector_network_usage_detail">Total bytes your phone sent and received, every %1$s</string>
+
+    <string name="collector_usage_events_name">App and screen use</string>
+    <string name="collector_usage_events_detail">Which apps open and close, and when the screen turns on, every %1$s</string>
+
+    <string name="collector_location_name">Location</string>
+    <string name="collector_location_detail">Where the phone is, about every %1$s, after it moves at least %2$s</string>
+
+    <string name="collector_keyboard_touch_name">Keyboard touch</string>
+    <string name="collector_keyboard_touch_detail">How you touch the keys — position, timing, pressure — inside the research keyboard only</string>
+
+    <!-- Units, used to fill the templates above -->
+    <string name="unit_seconds">%1$d s</string>
+    <string name="unit_minutes">%1$d min</string>
+    <string name="unit_hours">%1$d h</string>
+    <plurals name="unit_days">
+        <item quantity="one">%1$d day</item>
+        <item quantity="other">%1$d days</item>
+    </plurals>
+    <string name="unit_metres">%1$d m</string>
+
+    <!-- Step 3: consent -->
+    <string name="consent_signature_title">Configuration signature</string>
+    <string name="consent_signature_anchored">This app trusts this signer.</string>
+    <string name="consent_signature_compare">Check this against the fingerprint your research team published.</string>
+    <string name="consent_signature_unverified">A signature shows the file has not been altered since it was signed. It does not show who wrote it.</string>
+
+    <string name="consent_upload_none_title">This study does not send data automatically</string>
+    <string name="consent_upload_none_body">What it collects stays on this phone until you export it yourself.</string>
+    <string name="consent_upload_title">This study sends data automatically</string>
+    <string name="consent_upload_destination">To %1$s</string>
+    <string name="consent_upload_cadence">%1$s, %2$s</string>
+    <string name="consent_upload_encrypted">Only the research team\'s key can open what is sent. Neither the network it travels over nor the server that receives it can read the contents.</string>
+    <string name="consent_upload_instance_id">A randomly generated code travels with the data so the team can tell participants apart. It contains no name and no account.</string>
+    <string name="consent_upload_mandatory">Automatic sending is part of this study and cannot be switched off on its own. Pausing or withdrawing stops new collection, but data already collected and not yet sent still goes to the research team.</string>
+    <string name="consent_checkbox">I have read and agree to the data collection and export described above.</string>
+
+    <plurals name="upload_every_minutes">
+        <item quantity="one">About every minute</item>
+        <item quantity="other">About every %1$d minutes</item>
+    </plurals>
+    <plurals name="upload_every_hours">
+        <item quantity="one">About every hour</item>
+        <item quantity="other">About every %1$d hours</item>
+    </plurals>
+    <plurals name="upload_every_days">
+        <item quantity="one">About every day</item>
+        <item quantity="other">About every %1$d days</item>
+    </plurals>
+    <string name="upload_wifi_only">Wi-Fi only</string>
+    <string name="upload_any_network">Wi-Fi or mobile data</string>
+
+    <!-- Step 4: access -->
+    <string name="access_fine_location">Precise location</string>
+    <string name="access_background_location">Background location</string>
+    <string name="access_notifications">Notifications</string>
+    <string name="access_usage_access">Usage access</string>
+    <string name="access_research_keyboard_enabled">Enable the research keyboard</string>
+    <string name="access_research_keyboard_selected">Select the research keyboard</string>
+    <string name="access_accelerometer_hardware">Motion sensor</string>
+
+    <!-- Collecting -->
+    <plurals name="meter_events">
+        <item quantity="one">%1$s event</item>
+        <item quantity="other">%1$s events</item>
+    </plurals>
+    <string name="meter_sent">%1$s sent</string>
+    <string name="meter_reclaimed">The first %1$s events have been sent and removed from this phone. A later export will not include them.</string>
+
+    <!-- Details, behind a toggle: identifiers matter when something goes wrong and are noise otherwise -->
+    <string name="details_configuration">Configuration</string>
+    <string name="details_consent_document">Consent document</string>
+    <string name="details_signature">Signature</string>
+    <string name="details_last_export">Last export</string>
+    <string name="details_last_export_value">%1$s events · %2$s</string>
+
+    <!-- Irreversible actions are exactly where text earns its place -->
+    <string name="confirm_finish_title">Finish this study early?</string>
+    <string name="confirm_finish_body">You cannot restart it afterwards, but you can still export as many times as you like.</string>
+    <string name="confirm_withdraw_title">Withdraw from this study?</string>
+    <string name="confirm_withdraw_body">All collection stops permanently. You can still export what was already collected, until you delete it.</string>
+    <string name="confirm_delete_title">Delete local data permanently?</string>
+    <string name="confirm_delete_body">Encrypted events, study state, and the configuration are all removed. This cannot be undone.</string>
+
+    <!-- Language -->
+    <string name="language_title">Language</string>
+    <string name="language_system">System default</string>
+</resources>

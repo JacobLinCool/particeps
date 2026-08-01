@@ -25,3 +25,28 @@ replay_pid*
 
 # Kotlin Gradle plugin data, see https://kotlinlang.org/docs/whatsnew20.html#new-directory-for-kotlin-data-in-gradle-projects
 .kotlin/
+
+# Android and Gradle
+.gradle/
+.idea/
+**/build/
+local.properties
+captures/
+
+# Eclipse/Buildship copies each module's sources into bin/, so these are stale
+# duplicates of src/ that would otherwise be committed.
+bin/
+.classpath
+.project
+.settings/
+
+# Research and Android signing secrets. The two negated files are deliberately
+# public emulator fixtures and must never be reused for a real study.
+.signing/
+*-private.key
+*-private.json
+*.jks
+*.keystore
+*.adcexp
+!researcher-tools/examples/INSECURE-demo-signing-private.key
+!researcher-tools/examples/INSECURE-demo-hpke-private.json

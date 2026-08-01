@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Traditional Chinese (Taiwan). Kept in the same order as values/strings.xml so the two can be read
+  side by side. Researcher-supplied text is never translated and never appears here.
+-->
+<resources>
+    <string name="header_no_study">研究資料收集器</string>
+    <string name="header_starting">準備中</string>
+    <string name="header_elapsed_minutes">%1$d 分</string>
+    <string name="header_elapsed_hours">%1$d 小時 %2$d 分</string>
+    <string name="header_elapsed_days">%1$d 天 %2$d 小時</string>
+
+    <string name="step_study">研究</string>
+    <string name="step_data">資料</string>
+    <string name="step_consent">同意</string>
+    <string name="step_access">權限</string>
+    <string name="step_start">開始</string>
+
+    <string name="state_running">收集中</string>
+    <string name="state_paused">已暫停</string>
+    <string name="state_completed">已完成</string>
+    <string name="state_withdrawn">已退出</string>
+
+    <string name="action_choose_configuration">選擇設定檔</string>
+    <string name="action_load_demo">載入展示研究</string>
+    <string name="action_continue">繼續</string>
+    <string name="action_agree">同意</string>
+    <string name="action_done">完成</string>
+    <string name="action_start">開始研究</string>
+    <string name="action_pause">暫停</string>
+    <string name="action_resume">繼續收集</string>
+    <string name="action_finish">提早完成</string>
+    <string name="action_export">匯出加密資料</string>
+    <string name="action_withdraw">退出研究</string>
+    <string name="action_delete">刪除本機資料</string>
+    <string name="action_confirm">確認</string>
+    <string name="action_cancel">取消</string>
+
+    <string name="cd_language">語言</string>
+    <string name="cd_details">詳細資訊</string>
+
+    <plurals name="study_duration_hours">
+        <item quantity="other">%1$d 小時</item>
+    </plurals>
+    <plurals name="study_duration_days">
+        <item quantity="other">%1$d 天</item>
+    </plurals>
+    <string name="study_duration_days_hours">%1$d 天 %2$d 小時</string>
+
+    <string name="data_optional">選用</string>
+
+    <string name="collector_app_lifecycle_name">App 使用狀況</string>
+    <string name="collector_app_lifecycle_detail">這個 App 本身何時被開啟與關閉</string>
+
+    <string name="collector_accelerometer_name">動作</string>
+    <plurals name="collector_accelerometer_detail">
+        <item quantity="other">手機的移動，每秒約 %1$d 次或更多</item>
+    </plurals>
+
+    <string name="collector_network_state_name">連線類型</string>
+    <string name="collector_network_state_detail">你目前是 Wi-Fi 還是行動網路，以及是否計費</string>
+
+    <string name="collector_network_usage_name">流量</string>
+    <string name="collector_network_usage_detail">手機每 %1$s傳送與接收的總位元組數</string>
+
+    <string name="collector_usage_events_name">App 與螢幕使用</string>
+    <string name="collector_usage_events_detail">每 %1$s記錄哪些 App 被開啟關閉、螢幕何時亮起</string>
+
+    <string name="collector_location_name">位置</string>
+    <string name="collector_location_detail">手機所在位置，約每 %1$s一次，且移動超過 %2$s才記錄</string>
+
+    <string name="collector_keyboard_touch_name">鍵盤觸控</string>
+    <string name="collector_keyboard_touch_detail">你按鍵的方式——位置、時間、力道——僅限研究鍵盤內</string>
+
+    <string name="unit_seconds">%1$d 秒</string>
+    <string name="unit_minutes">%1$d 分鐘</string>
+    <string name="unit_hours">%1$d 小時</string>
+    <plurals name="unit_days">
+        <item quantity="other">%1$d 天</item>
+    </plurals>
+    <string name="unit_metres">%1$d 公尺</string>
+
+    <string name="consent_signature_title">設定檔簽章</string>
+    <string name="consent_signature_anchored">這個 App 內建信任此簽章者。</string>
+    <string name="consent_signature_compare">請與研究團隊公佈的金鑰指紋核對。</string>
+    <string name="consent_signature_unverified">簽章證明設定檔在簽署後未被竄改，但不能證明是誰寫的。</string>
+
+    <string name="consent_upload_none_title">這個研究不會自動傳送資料</string>
+    <string name="consent_upload_none_body">資料只留在這支手機，直到你自己匯出。</string>
+    <string name="consent_upload_title">這個研究會自動傳送資料</string>
+    <string name="consent_upload_destination">傳送對象：%1$s</string>
+    <string name="consent_upload_cadence">%1$s，%2$s</string>
+    <string name="consent_upload_encrypted">傳送內容只有研究團隊的金鑰能解開，傳輸過程與伺服器都讀不到內容。</string>
+    <string name="consent_upload_instance_id">為了讓研究團隊能分辨不同參與者，傳送的資料會附帶一組隨機產生的代號，不含你的姓名或帳號。</string>
+    <string name="consent_upload_mandatory">自動傳送是這個研究的一部分，無法單獨關閉。暫停或退出會停止收集新資料，但已經收集、還沒傳送出去的資料仍然會傳送給研究團隊。</string>
+    <string name="consent_checkbox">我已閱讀並同意上述資料收集與匯出方式。</string>
+
+    <plurals name="upload_every_minutes">
+        <item quantity="other">約每 %1$d 分鐘</item>
+    </plurals>
+    <plurals name="upload_every_hours">
+        <item quantity="other">約每 %1$d 小時</item>
+    </plurals>
+    <plurals name="upload_every_days">
+        <item quantity="other">約每 %1$d 天</item>
+    </plurals>
+    <string name="upload_wifi_only">僅在 Wi-Fi 下</string>
+    <string name="upload_any_network">Wi-Fi 或行動網路</string>
+
+    <string name="access_fine_location">精確位置</string>
+    <string name="access_background_location">背景位置</string>
+    <string name="access_notifications">通知</string>
+    <string name="access_usage_access">使用情況存取權</string>
+    <string name="access_research_keyboard_enabled">啟用研究鍵盤</string>
+    <string name="access_research_keyboard_selected">選用研究鍵盤</string>
+    <string name="access_accelerometer_hardware">加速度感測器</string>
+
+    <plurals name="meter_events">
+        <item quantity="other">%1$s 筆</item>
+    </plurals>
+    <string name="meter_sent">已送出 %1$s</string>
+    <string name="meter_reclaimed">前 %1$s 筆已傳送並從手機移除，之後的匯出不會包含這些事件。</string>
+
+    <string name="details_configuration">設定</string>
+    <string name="details_consent_document">同意書</string>
+    <string name="details_signature">簽章</string>
+    <string name="details_last_export">上次匯出</string>
+    <string name="details_last_export_value">%1$s 筆 · %2$s</string>
+
+    <string name="confirm_finish_title">提早完成研究？</string>
+    <string name="confirm_finish_body">完成後不能重新開始，但仍可重複匯出。</string>
+    <string name="confirm_withdraw_title">確定退出研究？</string>
+    <string name="confirm_withdraw_body">所有收集會永久停止；刪除前仍可匯出既有資料。</string>
+    <string name="confirm_delete_title">永久刪除本機資料？</string>
+    <string name="confirm_delete_body">加密事件、研究狀態與設定都會移除，且無法復原。</string>
+
+    <string name="language_title">語言</string>
+    <string name="language_system">跟隨系統</string>
+</resources>

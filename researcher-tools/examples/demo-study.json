@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "experiment_id": "modular-sensing-demo",
+  "configuration_id": "demo-config-2026",
+  "issued_at": "2026-01-01T00:00:00Z",
+  "expires_at": "2035-01-01T00:00:00Z",
+  "minimum_app_version": 1,
+  "title": "Modular sensing demonstration",
+  "researcher": {
+    "name": "Android Data Collector maintainers",
+    "contact": "research@example.invalid"
+  },
+  "purpose": "Verify the complete on-device collection, pause, export, and researcher-decryption loop.",
+  "duration_hours": 24,
+  "consent": {
+    "document_version": "demo-1",
+    "summary": "This demonstration can collect precise location, motion, network state, aggregate Wi-Fi/mobile usage, app and screen usage events, this app's lifecycle, and touch dynamics made inside the optional research keyboard. It never records keyboard text. Data stays encrypted on this device until you choose Export. You can pause, withdraw, export repeatedly, or delete local data."
+  },
+  "collectors": [
+    {
+      "id": "app_lifecycle.v1",
+      "required": true,
+      "config": {}
+    },
+    {
+      "id": "accelerometer.v1",
+      "required": true,
+      "config": {
+        "sampling_period_us": 100000,
+        "maximum_report_latency_us": 1000000
+      }
+    },
+    {
+      "id": "network_state.v1",
+      "required": true,
+      "config": {
+        "include_bandwidth_estimates": true
+      }
+    },
+    {
+      "id": "network_usage.v1",
+      "required": false,
+      "config": {
+        "transports": [
+          "mobile",
+          "wifi"
+        ],
+        "poll_interval_minutes": 5
+      }
+    },
+    {
+      "id": "usage_events.v1",
+      "required": false,
+      "config": {
+        "poll_interval_minutes": 15
+      }
+    },
+    {
+      "id": "location.v1",
+      "required": false,
+      "config": {
+        "interval_millis": 10000,
+        "minimum_interval_millis": 5000,
+        "maximum_batch_delay_millis": 30000,
+        "minimum_displacement_meters": 5,
+        "priority": "BALANCED"
+      }
+    },
+    {
+      "id": "keyboard_touch.v1",
+      "required": false,
+      "config": {
+        "trajectory_sampling_hz": 60
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "demo-check-in",
+      "delay_minutes": 60,
+      "message": "Please check that the study is still running as expected."
+    }
+  ],
+  "storage": {
+    "maximum_local_bytes": 16777216
+  },
+  "signer": {
+    "key_id": "demo-signer-2026",
+    "public_key": "MCowBQYDK2VwAyEAsRSaTpZmTSBL7eN6nS/HBsNmLM8n1hdRmIt1vtLZsC0="
+  },
+  "export": {
+    "researcher_key_id": "demo-hpke-2026",
+    "tink_hpke_public_keyset": {
+      "primaryKeyId": 218992727,
+      "key": [
+        {
+          "keyData": {
+            "typeUrl": "type.googleapis.com/google.crypto.tink.HpkePublicKey",
+            "value": "EgYIARABGAIaIBpyQ3w4fFx9XgEUx5kyzZaIPXLq7aYU6RJ+y9+rGNEA",
+            "keyMaterialType": "ASYMMETRIC_PUBLIC"
+          },
+          "status": "ENABLED",
+          "keyId": 218992727,
+          "outputPrefixType": "TINK"
+        }
+      ]
+    }
+  },
+  "upload": {}
+}

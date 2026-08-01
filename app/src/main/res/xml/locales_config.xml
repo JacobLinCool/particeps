@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The locales this app ships. Declaring them is what makes the system's per-app language screen
+  offer a choice, and what the in-app picker writes through LocaleManager, so both are one setting
+  rather than two that can disagree.
+-->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="zh-TW" />
+</locale-config>

@@ -1,0 +1,154 @@
+name: Android Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Verify, sign, and publish APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ANDROID_PLATFORM_PACKAGE: platforms;android-37.0
+      ANDROID_BUILD_TOOLS_PACKAGE: build-tools;37.0.0
+      ANDROID_BUILD_TOOLS_VERSION: 37.0.0
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release tag
+        id: release_metadata
+        shell: bash
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must be a SemVer tag such as v1.2.3." >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Release tag must point to a commit contained in main." >&2
+            exit 1
+          fi
+          echo "version_name=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Require release-signing secrets
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              case "$name" in
+                KEYSTORE_BASE64) secret=ANDROID_KEYSTORE_BASE64 ;;
+                KEYSTORE_PASSWORD) secret=ANDROID_KEYSTORE_PASSWORD ;;
+                KEY_ALIAS) secret=ANDROID_KEY_ALIAS ;;
+                KEY_PASSWORD) secret=ANDROID_KEY_PASSWORD ;;
+              esac
+              echo "Missing required GitHub Actions secret: $secret" >&2
+              exit 1
+            fi
+          done
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@0f4528296b4bc09e8ae0fc7be30185a4ab435545 # v6.0.0
+
+      - name: Install Android SDK packages
+        run: sdkmanager "$ANDROID_PLATFORM_PACKAGE" "$ANDROID_BUILD_TOOLS_PACKAGE"
+
+      - name: Materialize release-signing files
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          umask 077
+          mkdir -p .signing
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > .signing/android-data-collector-release.jks
+          {
+            printf 'storeFile=.signing/android-data-collector-release.jks\n'
+            printf 'storePassword=%s\n' "$KEYSTORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+          } > .signing/release-signing.properties
+
+      - name: Test, lint, and build signed release APK
+        run: >-
+          ./gradlew --no-daemon
+          test testDebugUnitTest lintDebug assembleRelease
+          -PreleaseVersionName=${{ steps.release_metadata.outputs.version_name }}
+          -PreleaseVersionCode=${{ github.run_number }}
+
+      - name: Verify and package signed APK
+        id: signed_apk
+        shell: bash
+        run: |
+          build_tools="$ANDROID_SDK_ROOT/build-tools/$ANDROID_BUILD_TOOLS_VERSION"
+          signed_apk="app/build/outputs/apk/release/app-release.apk"
+          release_dir="$RUNNER_TEMP/android-release"
+          release_apk="$release_dir/android-data-collector-$GITHUB_REF_NAME.apk"
+
+          test -f "$signed_apk"
+          mkdir -p "$release_dir"
+          cp "$signed_apk" "$release_apk"
+          "$build_tools/apksigner" verify --verbose --print-certs "$release_apk"
+
+          (
+            cd "$release_dir"
+            sha256sum "$(basename "$release_apk")" > "$(basename "$release_apk").sha256"
+          )
+          echo "apk=$release_apk" >> "$GITHUB_OUTPUT"
+          echo "checksum=$release_apk.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APK: ${{ steps.signed_apk.outputs.apk }}
+          CHECKSUM: ${{ steps.signed_apk.outputs.checksum }}
+          IS_PRERELEASE: ${{ steps.release_metadata.outputs.prerelease }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$APK" "$CHECKSUM" --clobber
+          else
+            release_kind=()
+            if [[ "$IS_PRERELEASE" == "true" ]]; then
+              release_kind+=(--prerelease)
+            fi
+            gh release create "$GITHUB_REF_NAME" "$APK" "$CHECKSUM" \
+              --verify-tag \
+              --generate-notes \
+              --title "$GITHUB_REF_NAME" \
+              "${release_kind[@]}"
+          fi
+
+      - name: Remove materialized signing files
+        if: always()
+        run: rm -f .signing/android-data-collector-release.jks .signing/release-signing.properties
