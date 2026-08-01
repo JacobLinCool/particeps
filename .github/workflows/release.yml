@@ -79,7 +79,27 @@ jobs:
         uses: gradle/actions/setup-gradle@0f4528296b4bc09e8ae0fc7be30185a4ab435545 # v6.0.0
 
       - name: Install Android SDK packages
-        run: sdkmanager "$ANDROID_PLATFORM_PACKAGE" "$ANDROID_BUILD_TOOLS_PACKAGE"
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The runner image ships the SDK but does not put cmdline-tools on PATH, and the
+          # directory under cmdline-tools is not always named "latest". Resolve it rather than
+          # assume either, and fail loudly instead of building against whatever happens to exist.
+          sdkmanager=""
+          for candidate in "$ANDROID_SDK_ROOT"/cmdline-tools/latest/bin/sdkmanager \
+                           "$ANDROID_SDK_ROOT"/cmdline-tools/*/bin/sdkmanager \
+                           "$ANDROID_SDK_ROOT"/tools/bin/sdkmanager; do
+            if [[ -x "$candidate" ]]; then
+              sdkmanager="$candidate"
+              break
+            fi
+          done
+          if [[ -z "$sdkmanager" ]]; then
+            echo "No sdkmanager under $ANDROID_SDK_ROOT" >&2
+            exit 1
+          fi
+          "$sdkmanager" "$ANDROID_PLATFORM_PACKAGE" "$ANDROID_BUILD_TOOLS_PACKAGE"
+          echo "$(dirname "$sdkmanager")" >> "$GITHUB_PATH"
 
       - name: Materialize release-signing files
         shell: bash
