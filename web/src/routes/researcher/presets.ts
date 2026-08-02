@@ -44,7 +44,6 @@ export const PRESETS = {
   maximum_local_bytes: [256, 512, 1_024, 2_048, 4_096, 8_192],
   // 1, 3, 7, 14 and 28 days, in the unit the schema counts: how long one participant runs.
   duration_hours: [24, 72, 168, 336, 672],
-  delay_minutes: [60, 360, 1_440, 4_320, 10_080],
   upload_interval_minutes: [15, 60, 360, 1_440, 10_080]
 } as const satisfies Record<string, readonly number[]>;
 
@@ -80,11 +79,6 @@ export const LADDERS = {
     2_160, 4_320, 8_760
   ],
   // 8 MiB → 8 GiB. Every rung is a size somebody would say out loud, 512 MiB included.
-  // 1 min → 1 year, the prompt's own delay from the participant's start.
-  delay_minutes: [
-    1, 5, 10, 15, 30, 60, 120, 180, 240, 360, 720, 1_440, 2_880, 4_320, 5_760, 7_200, 10_080,
-    14_400, 20_160, 30_240, 40_320, 60_480, 129_600, 259_200, 525_600
-  ],
   // 1 min → 7 days.
   upload_interval_minutes: [
     1, 5, 15, 30, 60, 120, 180, 360, 720, 1_440, 2_880, 4_320, 7_200, 10_080

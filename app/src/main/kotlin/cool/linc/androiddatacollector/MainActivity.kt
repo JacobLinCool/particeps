@@ -1,6 +1,7 @@
 package cool.linc.androiddatacollector
 
 import android.Manifest
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -8,8 +9,12 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import cool.linc.androiddatacollector.platform.InterventionWorker
 import cool.linc.androiddatacollector.core.collector.AccessKind
 import java.time.Instant
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val collectorApplication: CollectorApplication
@@ -41,6 +46,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        openOccurrence(intent)
         enableEdgeToEdge()
         setContent {
             val state = viewModel.state.collectAsStateWithLifecycle().value
@@ -71,6 +77,21 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshAccess()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        openOccurrence(intent)
+    }
+
+    private fun openOccurrence(intent: Intent) {
+        if (intent.action != InterventionWorker.ACTION_OPEN_OCCURRENCE) return
+        val occurrenceId = intent.getStringExtra(InterventionWorker.KEY_OCCURRENCE_ID) ?: return
+        lifecycleScope.launch {
+            val ready = collectorApplication.session.snapshot.first { it.initialized }
+            if (ready.configuration != null) collectorApplication.session.openOccurrence(occurrenceId)
+        }
     }
 
     /**

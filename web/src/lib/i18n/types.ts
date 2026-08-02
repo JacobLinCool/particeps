@@ -77,6 +77,10 @@ export interface IssueMessages {
   signer_missing: string;
   export_key_missing: string;
   keyset_unusable: string;
+  language_tag: string;
+  unknown_reference: string;
+  selection_bounds: string;
+  schedule_bounds: string;
 }
 
 export type IssueCode = keyof IssueMessages;
@@ -103,7 +107,6 @@ export interface Messages {
     download: string;
     copy: string;
     importDraft: string;
-    addPrompt: string;
     back: string;
     next: string;
     /** The reader asserting a downloaded private key reached their disk. */
@@ -113,6 +116,43 @@ export interface Messages {
     startOver: string;
     confirm: string;
     cancel: string;
+  };
+
+  intervention: {
+    title: string;
+    empty: string;
+    notificationTiming: string;
+    anonymous: string;
+    personalized: string;
+    assignedId: string;
+    addNotification: string;
+    addSurvey: string;
+    addQuestion: string;
+    addTrigger: string;
+    survey: string;
+    surveyTitle: string;
+    surveyDescription: string;
+    question: string;
+    questionType: string;
+    prompt: string;
+    required: string;
+    maximumLength: string;
+    scaleBounds: string;
+    endpointLabels: string;
+    options: string;
+    selectionBounds: string;
+    notificationTitle: string;
+    notificationMessage: string;
+    trigger: string;
+    scheduleType: string;
+    clock: string;
+    offset: string;
+    interval: string;
+    localTime: string;
+    availability: string;
+    types: { shortText: string; scale: string; singleChoice: string; multipleChoice: string };
+    schedules: { oneTime: string; interval: string; dailyLocal: string };
+    clocks: { calendar: string; active: string };
   };
 
   /** Accessible names for controls that carry no text. Visible verbs live in `action`. */
@@ -194,9 +234,6 @@ export interface Messages {
       displacement: string;
       priority: string;
       trajectoryRate: string;
-      promptId: string;
-      promptDelay: string;
-      promptMessage: string;
       upload: string;
       endpoint: string;
       uploadInterval: string;
@@ -232,7 +269,6 @@ export interface Messages {
       fastestInterval: string;
       batchDelay: string;
       priority: string;
-      promptDelay: string;
       endpoint: string;
       allowMetered: string;
     };
@@ -255,7 +291,6 @@ export interface Messages {
   };
 
   empty: {
-    prompts: string;
     files: string;
   };
 
@@ -279,8 +314,6 @@ export interface Messages {
   researcher: {
     title: string;
     lede: string;
-    /** A prompt scheduled past the study's own duration. Legal, and it will never fire. */
-    beyond: string;
     how: {
       file: Passage;
       keys: Passage;
@@ -312,7 +345,7 @@ export interface Messages {
         validity: SectionTitle;
         collectors: SectionTitle;
         consent: SectionTitle;
-        prompts: SectionTitle;
+        interventions: SectionTitle;
         /** The one note left: it says what happens with the toggle off, which is the toggle's
          *  meaning and not advice about filling the section in. */
         delivery: Section;

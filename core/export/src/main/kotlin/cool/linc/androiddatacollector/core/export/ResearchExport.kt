@@ -197,6 +197,7 @@ object ResearchExport {
         writer.name("experiment_id").value(metadata.experimentId)
         writer.name("configuration_id").value(metadata.configurationId)
         writer.name("participant_instance_id").value(metadata.participantInstanceId)
+        metadata.assignedParticipantId?.let { writer.name("assigned_participant_id").value(it) }
         writer.name("state").value(metadata.state.name)
         writer.name("next_sequence_number").value(metadata.nextSequenceNumber)
         writer.name("transitions").beginArray()

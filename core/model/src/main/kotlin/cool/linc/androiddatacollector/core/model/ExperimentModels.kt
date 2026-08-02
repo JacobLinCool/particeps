@@ -70,7 +70,9 @@ data class EventDraft(
         private val PAYLOAD_TYPE = Regex("[A-Z][A-Z0-9_]{1,63}")
         private val FIELD_KEY = Regex("[a-z][a-z0-9_]{0,63}")
         private const val MAX_FIELDS = 32
-        private const val MAX_FIELD_VALUE_LENGTH = 1_024
+        // Survey submissions are one bounded, immutable JSON value so they cannot be partially
+        // committed. The encrypted event frame remains capped at 64 KiB by storage.
+        private const val MAX_FIELD_VALUE_LENGTH = 60 * 1_024
     }
 }
 

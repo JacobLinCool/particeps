@@ -74,6 +74,25 @@ class ConfigurationProtocolTest {
     }
 
     @Test
+    fun v1IdentityLocalizationAndOccurrenceBoundsAreStrict() {
+        assertEquals("每日確認", LocalizedText("Default", mapOf("zh-TW" to "每日確認")).resolve("zh-Hant-TW"))
+        assertThrows(IllegalArgumentException::class.java) {
+            configuration().copy(assignedParticipantId = "contains space")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            configuration().copy(
+                interventions = listOf(
+                    InterventionConfiguration(
+                        "too-frequent",
+                        NotificationAction("Check-in", "Check in now."),
+                        listOf(InterventionTrigger("every-minute", IntervalSchedule(0, 1, RelativeClock.CALENDAR_TIME), 5)),
+                    ),
+                ),
+            )
+        }
+    }
+
+    @Test
     fun verifierAuthenticatesSignerAndValidityWindow() {
         val keyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
         val envelope = sign(keyPair)
@@ -182,6 +201,7 @@ class ConfigurationProtocolTest {
         schemaVersion = StudyConfiguration.CURRENT_SCHEMA_VERSION,
         experimentId = "protocol-test",
         configurationId = "protocol-config",
+        assignedParticipantId = "arm-a-017",
         issuedAt = Instant.parse("2026-01-01T00:00:00Z"),
         expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
         minimumAppVersion = 1,
@@ -201,7 +221,29 @@ class ConfigurationProtocolTest {
             LocationConfiguration(false, 10_000, 5_000, 30_000, 5f, LocationPriority.BALANCED),
             KeyboardTouchConfiguration(false, 60),
         ),
-        prompts = listOf(PromptConfiguration("daily-check", 60, "Check in.")),
+        surveys = listOf(
+            SurveyDefinition(
+                id = "daily-survey",
+                title = LocalizedText("Daily check-in", mapOf("zh-TW" to "每日確認")),
+                description = LocalizedText("Tell us how today went."),
+                questions = listOf(
+                    ShortTextQuestion("daily-note", LocalizedText("Anything to share?"), false, 500),
+                ),
+            ),
+        ),
+        interventions = listOf(
+            InterventionConfiguration(
+                id = "daily-check",
+                action = SurveyAction("Daily check-in", "A short survey is ready.", "daily-survey"),
+                triggers = listOf(
+                    InterventionTrigger(
+                        "after-hour",
+                        OneTimeSchedule(60, RelativeClock.ACTIVE_RUNNING_TIME),
+                        1_440,
+                    ),
+                ),
+            ),
+        ),
         maximumLocalBytes = 16_777_216,
         signer = SignerIdentity("test-signer", signerPublicKey),
         export = ExportConfiguration(

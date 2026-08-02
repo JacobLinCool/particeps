@@ -2,7 +2,7 @@
 
 Android Data Collector runs a study from a signed configuration file, so a new study does
 not need a new app. You describe the study in JSON — which collectors run and with what
-sampling parameters, how long it lasts, what the consent summary says, which prompts are
+sampling parameters, how long it lasts, what the consent summary says, which interventions and surveys are
 scheduled, how much local storage it may use, which public key its bundles are encrypted to,
 and whether it delivers them to an endpoint on a schedule — sign that file with your study
 key, and hand it to participants. The participant app verifies the signature, presents the
@@ -169,8 +169,9 @@ The full command surface is:
 ```text
 signing-keygen --private FILE --public FILE
 hpke-keygen    --private FILE --public FILE
-canonicalize   --input FILE --output FILE
-sign           --config FILE --private FILE --key-id ID --output FILE
+canonicalize   --input FILE --output FILE [--assigned-participant-id ID]
+sign           --config FILE --private FILE --key-id ID --output FILE [--assigned-participant-id ID]
+personalize    --config FILE --mapping TSV --private FILE --key-id ID --output-dir DIRECTORY
 check-config   --envelope FILE [--public FILE --key-id ID] [--app-version N] [--now ISO_INSTANT]
 decrypt        --bundle FILE --private FILE --config FILE --output FILE
 ```
@@ -182,10 +183,10 @@ as a runnable starting point. The root object must contain exactly these keys, n
 no fewer:
 
 ```text
-schema_version, experiment_id, configuration_id,
+schema_version, experiment_id, configuration_id, assigned_participant_id,
 issued_at, expires_at, minimum_app_version,
 title, researcher, purpose, duration_hours,
-consent, collectors, prompts, storage, signer, export, upload
+consent, collectors, surveys, interventions, storage, signer, export, upload
 ```
 
 The decoder rejects unknown keys, missing keys, and wrong JSON types outright. There is no
@@ -196,7 +197,7 @@ Constraints enforced by
 
 - `schema_version` is always `1`. There is no fallback reader and no migration path: a
   configuration either matches the current schema exactly or is refused.
-- IDs (`experiment_id`, `configuration_id`, prompt `id`, `signer.key_id`,
+- Stable IDs (`experiment_id`, `configuration_id`, survey/question/option/intervention/trigger IDs, `signer.key_id`,
   `export.researcher_key_id`) are
   3–64 characters matching `[a-z0-9][a-z0-9-]{2,63}`: lowercase alphanumerics and `-`, with
   an alphanumeric first character.
@@ -213,10 +214,18 @@ Constraints enforced by
 - At least one collector; collector IDs must be unique. An unknown collector ID is
   rejected for the whole configuration — it is never skipped because it was marked
   optional.
-- Prompt IDs must be unique, `delay_minutes` is 1–525,600 from first start, and `message`
-  is 1–500 characters. Prompt delivery uses WorkManager and is inexact; do not build a
-  protocol that assumes a prompt lands at a precise minute. A configuration containing any
-  prompt makes notification access a required access.
+- `assigned_participant_id` is either `null` (anonymous/pseudonymous distribution) or an opaque
+  1–64 byte code matching `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`. Do not put names, email addresses,
+  phone numbers, or other direct identifiers in it.
+- Survey, question, option, intervention, and trigger IDs are unique in their respective scope.
+  A survey has 1–100 questions and localized text has a required default plus at most 32 BCP 47
+  overrides. Question types are `short_text`, `scale`, `single_choice`, and `multiple_choice`.
+- An intervention owns one notification or survey action and one or more reusable triggers.
+  One-time and interval triggers explicitly choose `CALENDAR_TIME` or `ACTIVE_RUNNING_TIME`;
+  daily triggers use `HH:mm` in the device's current time zone. Offsets must fall inside the study,
+  availability is 1–525,600 minutes, and the signed study is capped at 512 total occurrences so
+  durable idempotency metadata remains inside its encrypted 1 MiB bound.
+  WorkManager timing is best effort, not an exact alarm. Any intervention requires notification access.
 - `storage.maximum_local_bytes` is 8 MiB–8 GiB (8,388,608–8,589,934,592).
 - `signer` carries exactly `key_id` and `public_key`. `public_key` is the base64 X.509
   Ed25519 public half of the key you sign with, 32–1,024 characters. `key_id` must equal the
@@ -231,6 +240,41 @@ Constraints enforced by
   non-empty host. `interval_minutes` is 1–10,080: the floor is a minute so that a pilot shows
   within a minute whether delivery works at all, and the ceiling is a week. `allow_metered` is
   a boolean; `false` restricts delivery to unmetered networks.
+
+### Identity modes and personalized batches
+
+With `"assigned_participant_id": null`, one signed artifact may be distributed to everyone. Each
+import independently mints a random `participant_instance_id`, including repeated imports of the
+same file. With a non-null assigned code, make a distinct artifact and `configuration_id` for each
+participant. The assigned code remains inside encrypted metadata and exports; only the random
+instance UUID appears in upload routing headers.
+
+For a batch, supply a UTF-8 tab-separated mapping with exactly
+`configuration_id<TAB>assigned_participant_id` per line, then run:
+
+```bash
+researcher-tools personalize --config template.json --mapping participants.tsv \
+  --private /secure/signing.key --key-id lab-signer-2026 --output-dir issued
+```
+
+The command validates every row and rejects duplicate configuration IDs before creating the output
+directory. It writes `<configuration_id>.json` and `<configuration_id>.adccfg`; assigned codes are
+never placed in filenames or printed. `canonicalize` and `sign` also accept
+`--assigned-participant-id` for issuing one artifact.
+
+### Interventions and surveys
+
+An action is defined once and reused by all of an intervention's triggers. Calendar-relative
+schedules include pauses; active-running schedules exclude them. Daily local schedules follow the
+phone's current time zone and are recomputed after time or zone changes. Each planned firing has a
+SHA-256 `occurrence_id` derived from its configuration, intervention, trigger, and schedule key, so
+reboot, process recovery, WorkManager retry, or duplicate execution cannot create a second firing.
+Occurrences stop at the study lifetime and expire after their availability window.
+
+A survey action references a reusable survey by ID. Display text uses `{ "default": "...",
+"translations": { "zh-TW": "..." } }`; stable IDs, never labels, appear in answers. Submissions
+are validated and appended atomically once to the encrypted event stream. Draft typing, abandoned
+answers, and validation failures are not research events. A submitted response is review-only.
 
 The `signer` block looks like this:
 
@@ -309,16 +353,14 @@ language screen rather than a second one that can disagree with it. Everything t
 authors is translated: the step names, the collector descriptions, the signature and upload
 disclosures, the dashboard, and the confirmation dialogs.
 
-**Nothing you supply is translated.** `title`, `purpose`, `researcher.name`,
-`researcher.contact`, and `consent.summary` are part of the signed bytes and render exactly
-as they were signed, in whatever language you wrote them, whatever language the app is in. A
-configuration written in English stays English on a phone set to Chinese, and the reverse.
-That is a property of signing rather than an omission: text translated on the device would be
-text nobody signed, and the consent summary has to be the wording your ethics committee
-approved.
+**Study-level prose is not translated.** `title`, `purpose`, `researcher.name`,
+`researcher.contact`, and `consent.summary` render exactly as signed. Survey titles, descriptions,
+questions, endpoint labels, and choice labels are the exception: author their required default and
+explicit BCP 47 overrides in the signed localized-text objects. The app selects an exact or
+compatible signed language tag, then the signed default; it never invents a translation.
 
 The deployment consequence is real and worth planning for. **A study recruiting across
-languages needs one signed configuration per language** — same collectors, same parameters,
+languages may still need one signed configuration per language for study and consent prose — same collectors, same parameters,
 its own consent document version, its own `configuration_id`, and its own signature — with
 each participant given the one written in theirs. Keep `experiment_id` shared across them so
 the arms are recognisable as one study, and remember that bundles are de-duplicated on
@@ -344,7 +386,7 @@ A populated block looks like this:
 
 ```json
 "upload": {
-  "endpoint": "https://collect.example.edu/adc/v2/bundle",
+  "endpoint": "https://collect.example.edu/adc/v1/bundle",
   "interval_minutes": 360,
   "allow_metered": false
 }
@@ -364,7 +406,7 @@ attempt retries with exponential backoff from one minute.
 
 Delivery continues while the study is `PAUSED`, for data collected before the pause, and it
 continues after the study ends: finishing, completing on the duration deadline, and withdrawing
-cancel prompts and the study deadline but leave delivery running, so an undelivered tail still
+cancel future interventions and the study deadline but leave delivery running, so an undelivered tail still
 reaches you. The chain stops renewing once the study is `COMPLETED` or `WITHDRAWN` and
 everything it collected has been delivered. Deleting local data cancels delivery outright, so
 plan for a tail you may never receive and keep manual export in your protocol as the fallback.
@@ -431,18 +473,24 @@ cannot read — that is ciphertext. **File and de-duplicate on `X-ADC-Sequence-F
 pair is unique per chunk. An endpoint that records `X-ADC-Sequence-To-At-Most` as a held range
 will claim sequences it does not have, and nothing later will correct it.
 
+`assigned_participant_id` is intentionally absent from the URL and every header. It is sensitive
+join data and exists only inside the HPKE-encrypted configuration/experiment content. Do not add it
+to reverse-proxy logs or invent a routing header for it.
+
 Your endpoint must answer 2xx only once it has durably stored the body. The device advances its
 watermark to wherever the bundle actually stopped, never sends those sequences again, and may
 release them locally if the study's storage runs high — so a 2xx you have not earned can cost
 data that exists nowhere else. Answer 408, 429, or 5xx to ask for a retry; any other 4xx is
 treated as a request that will keep failing and is not worth the participant's battery.
 
-**The participant instance ID.** A random UUID generated on the device when the study is
+**The participant instance ID.** A fresh random UUID generated on the device for every import when the study is
 imported, stored in that study's metadata, and included in every bundle and every upload
 request. Without it, bundles from different participants arrive indistinguishable — a manual
 export carries that information out of band, an upload does not. It is pseudonymous: it
 contains no name, account, device identifier, or advertising ID, and it is not shared across
-studies. Treat it as personal data anyway, because it links every chunk one person produced.
+studies. Re-importing the same anonymous or personalized artifact generates a different UUID, so
+its upload chunk identity cannot collide. Treat it as personal data anyway, because it links every
+chunk one import produced.
 
 **You must disclose upload in your consent text.** The app renders the endpoint host, the
 cadence, the network condition, the fact that only your key can open the payload, and the
@@ -531,7 +579,7 @@ configuration is refused before `issued_at` and after `expires_at` without chang
 system clock.
 
 Any change to the configuration bytes invalidates the signature. When consent text,
-collector optionality or frequency, prompts, quota, or the export key changes, mint a new
+collector optionality or frequency, interventions, surveys, identity mode, quota, or the export key changes, mint a new
 `configuration_id`, re-sign, and obtain consent again. Never edit a `.adccfg` that has
 already been distributed.
 
@@ -732,6 +780,7 @@ exported_at_utc_millis
 configuration                   the canonical study configuration
 experiment:
   experiment_id, configuration_id, participant_instance_id,
+  assigned_participant_id (personalized studies only),
   state, next_sequence_number,
   transitions[]:
     from, to, reason,
@@ -747,7 +796,8 @@ experiment:
 so a chunk is never mistaken for a whole study. An uploaded chunk starts after the last sequence
 the endpoint confirmed. A manual export starts at 1, or at the lowest sequence still on the
 phone if the device has reclaimed a delivered prefix. `participant_instance_id` is the
-pseudonymous per-install identifier described in section 4.
+pseudonymous per-import identifier described in section 4. A personalized export additionally
+carries `assigned_participant_id`; use it only as the researcher's opaque join key.
 
 The two window fields are written after `events`, not before it, because a budget decides where
 an uploaded bundle stops while it is still streaming. Declaring the window up front would let a
@@ -793,11 +843,11 @@ An export is a snapshot, not a state change:
   then the reassembled chunks plus the final export, and `first_sequence_number` on each
   bundle tells you where it starts. Keep the chunks; do not treat a late manual export as a
   replacement for them.
-- De-duplicate on `experiment_id` + `configuration_id` + `collector_id` +
-  `sequence_number`. Sequence numbers come from a single monotonic counter per study, so
+- De-duplicate events on `participant_instance_id` + `sequence_number`; the sequence is global to
+  collectors, intervention lifecycle, and survey responses within one import. `experiment_id` and
+  `configuration_id` identify the signed artifact rather than a unique device run. Sequence numbers come from a single monotonic counter per study, so
   they are stable across exports and uploads alike, and reclaiming never reissues one. In an
-  uploading study, `participant_instance_id` is what separates one participant's counter from
-  another's.
+  uploading study, `participant_instance_id` is what separates repeated imports and devices.
 - A gap in the delivered sequence range is not proof of data loss. A chunk may not have been
   delivered yet, or may have been cut short when the study ended, and events below a
   participant's retained floor were released only because your endpoint confirmed them — look
@@ -808,6 +858,14 @@ An export is a snapshot, not a state change:
   them from export times.
 
 ## 11. Analysis notes
+
+### Intervention and survey events
+
+Join `INTERVENTION_SCHEDULED`, `INTERVENTION_RESCHEDULED`, `NOTIFICATION_POSTED`, `SURVEY_OPENED`, `SURVEY_SUBMITTED`, and
+`SURVEY_EXPIRED` on `occurrence_id`. These are app-observable states: `NOTIFICATION_POSTED` means
+Android accepted `notify()`, never that the participant saw it. Parse `answers_json` by stable
+question IDs and choice option IDs; labels are presentation text and may differ by language. Use
+the scheduled/opened/submitted research-time objects to preserve wall, elapsed, and boot context.
 
 ### Acceleration, posture, and movement
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import demoStudyJson from '../../researcher-tools/examples/demo-study.json?raw';
-import { canonicalize, parseInstant } from '$lib/adc/canonical';
+import { parseInstant } from '$lib/adc/canonical';
 import { validate } from '$lib/adc/schema';
 import { isUsableHpkePublicKeyset } from '$lib/adc/tink';
 import { parseConfiguration } from '../src/routes/researcher/parse';
@@ -58,13 +58,10 @@ describe('a collector the codec cannot write', () => {
     });
   });
 
-  /** `"collectors":[{"id":"accelerometer.v1","required":true}]` used to throw out of `validate`. */
-  it('fills a missing config instead of throwing out of validate', () => {
-    const configuration = load((document) => {
+  it('refuses a missing collector config instead of inventing defaults', () => {
+    refuses((document) => {
       document.collectors = [{ id: 'accelerometer.v1', required: true }];
     });
-    expect(codes(configuration)).toEqual([]);
-    expect(canonicalize(configuration)).toContain('"sampling_period_us":');
   });
 
   it('survives a collector that is a bare string', () => {
@@ -125,12 +122,46 @@ describe('location priority', () => {
   });
 });
 
-describe('prompts', () => {
-  it('fills a prompt with no id instead of throwing', () => {
-    const configuration = load((document) => {
-      document.prompts = [{ delay_minutes: 5, message: 'hi' }];
+describe('legacy prompts', () => {
+  it('rejects the removed prompt shape instead of silently migrating it', () => {
+    refuses((document) => {
+      delete document.interventions;
+      document.prompts = [{ id: 'old-prompt', delay_minutes: 5, message: 'hi' }];
     });
-    expect(codes(configuration)).toContain('required');
+  });
+});
+
+describe('closed-world v1 shape', () => {
+  it('refuses unknown nested fields instead of dropping them before signing', () => {
+    refuses((document) => {
+      (document.researcher as Record<string, unknown>).legacy_name = 'discard me';
+    });
+  });
+
+  it('refuses a mistyped scalar instead of replacing it with a default', () => {
+    refuses((document) => {
+      document.duration_hours = '24';
+    });
+  });
+
+  it.each(['', 'contains space', 'é', 'a'.repeat(65)])('reports an invalid assigned ID %j', (id) => {
+    const configuration = load((document) => { document.assigned_participant_id = id; });
+    expect(codes(configuration)).toContain('id_format');
+  });
+
+  it('reports a schedule whose durable lifetime occurrence set exceeds the metadata bound', () => {
+    const configuration = load((document) => {
+      document.interventions = [{
+        id: 'too-frequent',
+        action: { type: 'notification', notification_title: 'Check-in', notification_message: 'Check in now.' },
+        triggers: [{
+          id: 'every-minute',
+          schedule: { type: 'interval', start_offset_minutes: 0, interval_minutes: 1, clock: 'CALENDAR_TIME' },
+          availability_minutes: 5
+        }]
+      }];
+    });
+    expect(codes(configuration)).toContain('schedule_bounds');
   });
 });
 

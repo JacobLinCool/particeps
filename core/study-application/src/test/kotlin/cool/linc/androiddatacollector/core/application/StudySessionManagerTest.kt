@@ -16,13 +16,18 @@ import cool.linc.androiddatacollector.core.collector.StudyAccessGateway
 import cool.linc.androiddatacollector.core.definition.AppLifecycleConfiguration
 import cool.linc.androiddatacollector.core.definition.CollectorConfiguration
 import cool.linc.androiddatacollector.core.definition.ExportConfiguration
-import cool.linc.androiddatacollector.core.definition.PromptConfiguration
+import cool.linc.androiddatacollector.core.definition.InterventionConfiguration
+import cool.linc.androiddatacollector.core.definition.InterventionTrigger
+import cool.linc.androiddatacollector.core.definition.NotificationAction
+import cool.linc.androiddatacollector.core.definition.OneTimeSchedule
+import cool.linc.androiddatacollector.core.definition.RelativeClock
 import cool.linc.androiddatacollector.core.definition.SignerIdentity
 import cool.linc.androiddatacollector.core.definition.StudyConfiguration
 import cool.linc.androiddatacollector.core.definition.UploadConfiguration
 import cool.linc.androiddatacollector.core.export.ExportReceipt
 import cool.linc.androiddatacollector.core.model.EventDraft
 import cool.linc.androiddatacollector.core.model.ExperimentState
+import cool.linc.androiddatacollector.core.model.InterventionOccurrence
 import cool.linc.androiddatacollector.core.model.RecordedEvent
 import cool.linc.androiddatacollector.core.model.ResearchTime
 import cool.linc.androiddatacollector.core.model.StorageUsage
@@ -94,9 +99,21 @@ class StudySessionManagerTest {
     }
 
     @Test
-    fun promptNotificationIsPartOfCanonicalRequiredAccess() = runTest {
+    fun interventionNotificationIsPartOfCanonicalRequiredAccess() = runTest {
         val configuration = configuration(
-            prompts = listOf(PromptConfiguration("prompt-one", 1, "Check in")),
+            interventions = listOf(
+                InterventionConfiguration(
+                    "notice-one",
+                    NotificationAction("Study check-in", "Check in"),
+                    listOf(
+                        InterventionTrigger(
+                            "after-minute",
+                            OneTimeSchedule(1, RelativeClock.CALENDAR_TIME),
+                            60,
+                        ),
+                    ),
+                ),
+            ),
         )
         val fixture = fixture(configuration)
         fixture.manager.initialize()
@@ -444,6 +461,10 @@ class StudySessionManagerTest {
         override suspend fun initialize(metadata: StudyMetadata) { this.metadata = metadata }
         override suspend fun saveMetadata(metadata: StudyMetadata) { this.metadata = metadata }
         override suspend fun appendEvent(event: RecordedEvent) { events += event }
+        override suspend fun appendEventAtomically(event: RecordedEvent, metadata: StudyMetadata) {
+            events += event
+            this.metadata = metadata
+        }
         override suspend fun readEvents(
             fromSequenceInclusive: Long,
             upToSequenceInclusive: Long,
@@ -539,6 +560,14 @@ class StudySessionManagerTest {
             scheduleCount += 1
             if (failSchedule) error("Scheduling failed")
         }
+        override fun replaceInterventionWork(
+            configuration: StudyConfiguration,
+            occurrences: List<InterventionOccurrence>,
+        ) = Unit
+        override fun enqueueOccurrence(
+            configuration: StudyConfiguration,
+            occurrence: InterventionOccurrence,
+        ) = Unit
         override fun cancelCollectionWork(experimentId: String) { cancelCollectionCount += 1 }
         override fun cancel(experimentId: String) { cancelCount += 1 }
     }
@@ -587,12 +616,13 @@ class StudySessionManagerTest {
     }
 
     private fun configuration(
-        prompts: List<PromptConfiguration> = emptyList(),
+        interventions: List<InterventionConfiguration> = emptyList(),
         upload: UploadConfiguration? = null,
     ) = StudyConfiguration(
         schemaVersion = StudyConfiguration.CURRENT_SCHEMA_VERSION,
         experimentId = "session-test",
         configurationId = "session-config",
+        assignedParticipantId = null,
         issuedAt = Instant.parse("2026-01-01T00:00:00Z"),
         expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
         minimumAppVersion = 1,
@@ -604,7 +634,8 @@ class StudySessionManagerTest {
         consentDocumentVersion = "v1",
         consentSummary = "Test consent",
         collectors = listOf(AppLifecycleConfiguration(required = true)),
-        prompts = prompts,
+        surveys = emptyList(),
+        interventions = interventions,
         maximumLocalBytes = 16_777_216,
         signer = SignerIdentity("test-signer", TEST_SIGNER_PUBLIC_KEY),
         export = ExportConfiguration("export-key", "x".repeat(32)),

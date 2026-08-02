@@ -3,8 +3,8 @@
  *
  * `lib/adc` writes these three and never reads them, because the app and the CLI are the readers.
  * The editor is the fourth, and the cross-language workflow depends on it — one signed
- * configuration per language means opening the first one, changing the prose, and issuing a new
- * `configuration_id` under the same signer.
+ * configuration variant means opening the first one, changing the signed content, and issuing a
+ * new `configuration_id` under the same signer.
  *
  * Nothing here judges a *value*. `schema.ts` refuses a document; this only decides whether the bytes
  * were a study configuration at all, and fills the shape so the editor always has something to draw.
@@ -18,18 +18,18 @@
  * quietly dropped or a priority quietly changed is worse than a study that will not open.
  */
 
-import { defaultCollector, emptyConfiguration } from '$lib/adc/schema';
 import {
-  BOUNDS,
-  DEFAULT_MINIMUM_APP_VERSION,
   isCollectorId,
   isLocationPriority,
   isNetworkTransport,
   MAXIMUM_CONFIGURATION_BYTES,
-  NETWORK_TRANSPORTS,
   type CollectorConfig,
+  type InterventionConfig,
+  type InterventionSchedule,
+  type LocalizedText,
   type NetworkTransport,
-  type PromptConfig,
+  type SurveyDefinition,
+  type SurveyQuestion,
   type StudyConfiguration
 } from '$lib/adc/types';
 
@@ -78,9 +78,8 @@ export function isEnvelope(bytes: Uint8Array): boolean {
 }
 
 /**
- * A structural read, field by field, defaulting anything absent. Unknown keys are dropped rather
- * than carried: the encoder emits a fixed set in a fixed order, so a key it would not write is a
- * key that cannot survive a round trip anyway.
+ * A closed-world structural read, field by field. Unknown, absent, or mistyped fields are refused
+ * exactly as the Android codec refuses them. The editor never invents replacement study content.
  *
  * `tink_hpke_public_keyset` is the exception and is kept exactly as parsed, property order
  * included — the canonicaliser re-emits it in the order it was built, so re-ordering it here would
@@ -97,8 +96,8 @@ export function parseConfiguration(bytes: Uint8Array): StudyConfiguration {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('parse_shape');
   const raw = parsed as Record<string, unknown>;
   if (!('experiment_id' in raw) && !('collectors' in raw)) throw new Error('parse_shape');
+  requireExactKeys(raw, ROOT_KEYS);
 
-  const base = emptyConfiguration();
   const researcher = object(raw.researcher);
   const consent = object(raw.consent);
   const storage = object(raw.storage);
@@ -106,75 +105,94 @@ export function parseConfiguration(bytes: Uint8Array): StudyConfiguration {
   const exported = object(raw.export);
   const upload = object(raw.upload);
 
+  requireExactKeys(researcher, ['name', 'contact']);
+  requireExactKeys(consent, ['document_version', 'summary']);
+  requireExactKeys(storage, ['maximum_local_bytes']);
+  requireExactKeys(signer, ['key_id', 'public_key']);
+  requireExactKeys(exported, ['researcher_key_id', 'tink_hpke_public_keyset']);
+  if (Object.keys(upload).length > 0) requireExactKeys(upload, ['endpoint', 'interval_minutes', 'allow_metered']);
+
   return {
-    schema_version: numeric(raw.schema_version, base.schema_version),
-    experiment_id: string(raw.experiment_id, ''),
-    configuration_id: string(raw.configuration_id, ''),
-    issued_at: string(raw.issued_at, base.issued_at),
-    expires_at: string(raw.expires_at, base.expires_at),
+    schema_version: numeric(raw.schema_version),
+    experiment_id: string(raw.experiment_id),
+    configuration_id: string(raw.configuration_id),
+    assigned_participant_id: nullableString(raw.assigned_participant_id),
+    issued_at: string(raw.issued_at),
+    expires_at: string(raw.expires_at),
     minimum_app_version: appVersion(raw.minimum_app_version),
-    title: string(raw.title, ''),
+    title: string(raw.title),
     researcher: {
-      name: string(researcher.name, ''),
-      contact: string(researcher.contact, '')
+      name: string(researcher.name),
+      contact: string(researcher.contact)
     },
-    purpose: string(raw.purpose, ''),
-    duration_hours: numeric(raw.duration_hours, base.duration_hours),
+    purpose: string(raw.purpose),
+    duration_hours: numeric(raw.duration_hours),
     consent: {
-      document_version: string(consent.document_version, ''),
-      summary: string(consent.summary, '')
+      document_version: string(consent.document_version),
+      summary: string(consent.summary)
     },
-    collectors: Array.isArray(raw.collectors) ? raw.collectors.map(collector) : [],
-    prompts: Array.isArray(raw.prompts) ? raw.prompts.map(prompt) : [],
+    collectors: array(raw.collectors).map(collector),
+    surveys: array(raw.surveys).map(survey),
+    interventions: array(raw.interventions).map(intervention),
     storage: {
-      maximum_local_bytes: numeric(storage.maximum_local_bytes, base.storage.maximum_local_bytes)
+      maximum_local_bytes: numeric(storage.maximum_local_bytes)
     },
     signer: {
-      key_id: string(signer.key_id, ''),
-      public_key: string(signer.public_key, '')
+      key_id: string(signer.key_id),
+      public_key: string(signer.public_key)
     },
     export: {
-      researcher_key_id: string(exported.researcher_key_id, ''),
+      researcher_key_id: string(exported.researcher_key_id),
       tink_hpke_public_keyset: isKeysetShaped(exported.tink_hpke_public_keyset)
         ? (exported.tink_hpke_public_keyset as StudyConfiguration['export']['tink_hpke_public_keyset'])
-        : base.export.tink_hpke_public_keyset
+        : fail('parse_keyset')
     },
     // `{}` is how an absent upload block is written, so an empty object is "no", not "malformed".
     upload:
-      typeof upload.endpoint === 'string'
+      Object.keys(upload).length > 0
         ? {
-            endpoint: upload.endpoint,
-            interval_minutes: numeric(upload.interval_minutes, 60),
-            allow_metered: upload.allow_metered === true
+            endpoint: string(upload.endpoint),
+            interval_minutes: numeric(upload.interval_minutes),
+            allow_metered: boolean(upload.allow_metered)
           }
         : null
   };
 }
 
+const ROOT_KEYS = [
+  'schema_version', 'experiment_id', 'configuration_id', 'assigned_participant_id', 'issued_at',
+  'expires_at', 'minimum_app_version', 'title', 'researcher', 'purpose', 'duration_hours', 'consent',
+  'collectors', 'surveys', 'interventions', 'storage', 'signer', 'export', 'upload'
+] as const;
+
+function requireExactKeys(value: Record<string, unknown>, expected: readonly string[]): void {
+  const actual = Object.keys(value);
+  if (actual.length !== expected.length || expected.some((key) => !(key in value))) {
+    throw new Error('parse_keys');
+  }
+}
+
 const object = (value: unknown): Record<string, unknown> =>
-  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : fail('parse_object');
 
-const string = (value: unknown, fallback: string): string =>
-  typeof value === 'string' ? value : fallback;
+const string = (value: unknown): string => typeof value === 'string' ? value : fail('parse_string');
+const nullableString = (value: unknown): string | null =>
+  value === null || typeof value === 'string' ? value : fail('parse_string');
+const boolean = (value: unknown): boolean => typeof value === 'boolean' ? value : fail('parse_boolean');
+const array = (value: unknown): unknown[] => Array.isArray(value) ? value : fail('parse_array');
 
-const numeric = (value: unknown, fallback: number): number =>
-  typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+const numeric = (value: unknown): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : fail('parse_number');
+
+function fail(message: string): never { throw new Error(message); }
 
 /**
- * The one number that is clamped rather than carried through, because the page has no control for
- * it: an out-of-range floor read out of a file would raise an issue on a path with nowhere to land.
- *
- * A legal one survives, deliberately. A file `researcher-tools` wrote with `minimum_app_version: 7`
- * round-trips here unchanged — silently widening a compatibility floor somebody set on purpose
- * would be an edit to a signed document that nobody asked for.
+ * Kept as a named seam because this field has no editor control. Its value is never clamped:
+ * `validate` reports an illegal floor, and a legal value round-trips byte for byte.
  */
-const appVersion = (value: unknown): number =>
-  typeof value === 'number' &&
-  Number.isInteger(value) &&
-  value >= BOUNDS.minimumAppVersion[0] &&
-  value <= BOUNDS.minimumAppVersion[1]
-    ? value
-    : DEFAULT_MINIMUM_APP_VERSION;
+const appVersion = (value: unknown): number => numeric(value);
 
 /**
  * Whatever it turns out to be, it is kept property-for-property: the canonicaliser re-emits this
@@ -186,96 +204,82 @@ function isKeysetShaped(value: unknown): boolean {
 }
 
 /**
- * One collector, with every field of the declared type. The defaults stand in for anything missing
- * or of the wrong type; a value of the right type is carried through even when it is out of range,
- * because a repaired number is a number the researcher never chose and `validate` is what says so.
+ * One collector with the codec's exact closed-world shape. Values of the right type are carried
+ * through even when out of range so `validate` can point at them; absent or mistyped structure is
+ * refused because inventing a signed value would change the study.
  */
 function collector(raw: unknown): CollectorConfig {
   const source = object(raw);
+  requireExactKeys(source, ['id', 'required', 'config']);
   if (!isCollectorId(source.id)) throw new Error('parse_collector');
-  const base = defaultCollector(source.id);
   const config = object(source.config);
-  const required = source.required === undefined ? base.required : source.required === true;
+  const required = boolean(source.required);
 
-  switch (base.id) {
+  switch (source.id) {
     case 'app_lifecycle.v1':
-      return { ...base, required };
+      requireExactKeys(config, []);
+      return { id: source.id, required, config: {} };
     case 'accelerometer.v1':
+      requireExactKeys(config, ['sampling_period_us', 'maximum_report_latency_us']);
       return {
-        ...base,
+        id: source.id,
         required,
         config: {
-          sampling_period_us: numeric(config.sampling_period_us, base.config.sampling_period_us),
-          maximum_report_latency_us: numeric(
-            config.maximum_report_latency_us,
-            base.config.maximum_report_latency_us
-          )
+          sampling_period_us: numeric(config.sampling_period_us),
+          maximum_report_latency_us: numeric(config.maximum_report_latency_us)
         }
       };
     case 'network_state.v1':
+      requireExactKeys(config, ['include_bandwidth_estimates']);
       return {
-        ...base,
+        id: source.id,
         required,
-        config: { include_bandwidth_estimates: config.include_bandwidth_estimates === true }
+        config: { include_bandwidth_estimates: boolean(config.include_bandwidth_estimates) }
       };
     case 'network_usage.v1':
+      requireExactKeys(config, ['transports', 'poll_interval_minutes']);
       return {
-        ...base,
+        id: source.id,
         required,
         config: {
           transports: transports(config.transports),
-          poll_interval_minutes: numeric(
-            config.poll_interval_minutes,
-            base.config.poll_interval_minutes
-          )
+          poll_interval_minutes: numeric(config.poll_interval_minutes)
         }
       };
     case 'usage_events.v1':
+      requireExactKeys(config, ['poll_interval_minutes']);
       return {
-        ...base,
+        id: source.id,
         required,
-        config: {
-          poll_interval_minutes: numeric(
-            config.poll_interval_minutes,
-            base.config.poll_interval_minutes
-          )
-        }
+        config: { poll_interval_minutes: numeric(config.poll_interval_minutes) }
       };
     case 'location.v1': {
-      const priority = config.priority ?? base.config.priority;
+      requireExactKeys(config, [
+        'interval_millis', 'minimum_interval_millis', 'maximum_batch_delay_millis',
+        'minimum_displacement_meters', 'priority'
+      ]);
+      const priority = config.priority;
       if (!isLocationPriority(priority)) throw new Error('parse_collector');
       return {
-        ...base,
+        id: source.id,
         required,
         config: {
-          interval_millis: numeric(config.interval_millis, base.config.interval_millis),
-          minimum_interval_millis: numeric(
-            config.minimum_interval_millis,
-            base.config.minimum_interval_millis
-          ),
-          maximum_batch_delay_millis: numeric(
-            config.maximum_batch_delay_millis,
-            base.config.maximum_batch_delay_millis
-          ),
-          minimum_displacement_meters: numeric(
-            config.minimum_displacement_meters,
-            base.config.minimum_displacement_meters
-          ),
+          interval_millis: numeric(config.interval_millis),
+          minimum_interval_millis: numeric(config.minimum_interval_millis),
+          maximum_batch_delay_millis: numeric(config.maximum_batch_delay_millis),
+          minimum_displacement_meters: numeric(config.minimum_displacement_meters),
           priority
         }
       };
     }
-    case 'keyboard_touch.v1':
+    case 'keyboard_touch.v1': {
+      requireExactKeys(config, ['trajectory_sampling_hz']);
       return {
-        ...base,
+        id: source.id,
         required,
-        config: {
-          trajectory_sampling_hz: numeric(
-            config.trajectory_sampling_hz,
-            base.config.trajectory_sampling_hz
-          )
-        }
+        config: { trajectory_sampling_hz: numeric(config.trajectory_sampling_hz) }
       };
+    }
   }
 }
 
@@ -289,7 +293,6 @@ function collector(raw: unknown): CollectorConfig {
  * same problem.
  */
 function transports(raw: unknown): NetworkTransport[] {
-  if (raw === undefined) return [...NETWORK_TRANSPORTS];
   if (!Array.isArray(raw)) throw new Error('parse_collector');
   const named: NetworkTransport[] = [];
   for (const entry of raw) {
@@ -299,11 +302,125 @@ function transports(raw: unknown): NetworkTransport[] {
   return named;
 }
 
-function prompt(raw: unknown): PromptConfig {
+function localized(raw: unknown): LocalizedText {
   const source = object(raw);
+  requireExactKeys(source, ['default', 'translations']);
+  const translations = object(source.translations);
   return {
-    id: string(source.id, ''),
-    delay_minutes: numeric(source.delay_minutes, 0),
-    message: string(source.message, '')
+    default: string(source.default),
+    translations: Object.fromEntries(Object.entries(translations).map(([key, value]) => [key, string(value)]))
+  };
+}
+
+function survey(raw: unknown): SurveyDefinition {
+  const source = object(raw);
+  requireExactKeys(source, ['id', 'title', 'description', 'questions']);
+  return {
+    id: string(source.id),
+    title: localized(source.title),
+    description: localized(source.description),
+    questions: array(source.questions).map(question)
+  };
+}
+
+function question(raw: unknown): SurveyQuestion {
+  const source = object(raw);
+  const commonKeys = ['type', 'id', 'prompt', 'required'];
+  const common = {
+    id: string(source.id),
+    prompt: localized(source.prompt),
+    required: boolean(source.required)
+  };
+  switch (source.type) {
+    case 'short_text':
+      requireExactKeys(source, [...commonKeys, 'maximum_length']);
+      return { type: 'short_text', ...common, maximum_length: numeric(source.maximum_length) };
+    case 'scale': {
+      requireExactKeys(source, [...commonKeys, 'minimum', 'maximum', 'minimum_label', 'maximum_label']);
+      return {
+        type: 'scale', ...common, minimum: numeric(source.minimum), maximum: numeric(source.maximum),
+        minimum_label: localized(source.minimum_label), maximum_label: localized(source.maximum_label)
+      };
+    }
+    case 'single_choice':
+      requireExactKeys(source, [...commonKeys, 'options']);
+      return { type: 'single_choice', ...common, options: choices(source.options) };
+    case 'multiple_choice': {
+      requireExactKeys(source, [...commonKeys, 'options', 'minimum_selections', 'maximum_selections']);
+      return {
+        type: 'multiple_choice', ...common, options: choices(source.options),
+        minimum_selections: numeric(source.minimum_selections),
+        maximum_selections: numeric(source.maximum_selections)
+      };
+    }
+    default: throw new Error('parse_question');
+  }
+}
+
+function choices(raw: unknown) {
+  return array(raw).map((value) => {
+    const choice = object(value);
+    requireExactKeys(choice, ['id', 'label']);
+    return { id: string(choice.id), label: localized(choice.label) };
+  });
+}
+
+function intervention(raw: unknown): InterventionConfig {
+  const source = object(raw);
+  requireExactKeys(source, ['id', 'action', 'triggers']);
+  const action = object(source.action);
+  const actionType = action.type;
+  if (actionType !== 'notification' && actionType !== 'survey') throw new Error('parse_action');
+  let parsedAction: InterventionConfig['action'];
+  if (actionType === 'survey') {
+    requireExactKeys(action, ['type', 'notification_title', 'notification_message', 'survey_id']);
+    parsedAction = {
+        type: 'survey',
+        notification_title: string(action.notification_title),
+        notification_message: string(action.notification_message),
+        survey_id: string(action.survey_id)
+    };
+  } else {
+    requireExactKeys(action, ['type', 'notification_title', 'notification_message']);
+    parsedAction = {
+      type: 'notification',
+      notification_title: string(action.notification_title),
+      notification_message: string(action.notification_message)
+    };
+  }
+  return {
+    id: string(source.id),
+    action: parsedAction,
+    triggers: array(source.triggers).map((rawTrigger) => {
+      const trigger = object(rawTrigger);
+      requireExactKeys(trigger, ['id', 'schedule', 'availability_minutes']);
+      const schedule = object(trigger.schedule);
+      const type = schedule.type;
+      if (type !== 'one_time' && type !== 'interval' && type !== 'daily_local') throw new Error('parse_schedule');
+      let parsedSchedule: InterventionSchedule;
+      if (type === 'daily_local') {
+        requireExactKeys(schedule, ['type', 'local_time']);
+        parsedSchedule = { type, local_time: string(schedule.local_time) };
+      } else {
+        const clock = schedule.clock;
+        if (clock !== 'CALENDAR_TIME' && clock !== 'ACTIVE_RUNNING_TIME') throw new Error('parse_schedule');
+        if (type === 'one_time') {
+          requireExactKeys(schedule, ['type', 'offset_minutes', 'clock']);
+          parsedSchedule = { type, offset_minutes: numeric(schedule.offset_minutes), clock };
+        } else {
+          requireExactKeys(schedule, ['type', 'start_offset_minutes', 'interval_minutes', 'clock']);
+          parsedSchedule = {
+            type,
+            start_offset_minutes: numeric(schedule.start_offset_minutes),
+            interval_minutes: numeric(schedule.interval_minutes),
+            clock
+          };
+        }
+      }
+      return {
+        id: string(trigger.id), schedule: parsedSchedule,
+        availability_minutes: numeric(trigger.availability_minutes)
+      };
+    })
   };
 }

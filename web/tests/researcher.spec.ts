@@ -131,7 +131,7 @@ describe('paths', () => {
   it('routes every issue a document can raise to a named step', () => {
     for (const path of [
       'experiment_id', 'consent.summary', 'collectors.2.config.interval_millis',
-      'prompts.0.id', 'storage.maximum_local_bytes', 'upload.endpoint',
+      'interventions.0.id', 'surveys.0.questions.0.id', 'storage.maximum_local_bytes', 'upload.endpoint',
       'signer.key_id', 'export.tink_hpke_public_keyset', ''
     ]) {
       expect(['keys', 'study', 'sign', 'files']).toContain(stepForPath(path));
@@ -154,7 +154,11 @@ describe('issue messages', () => {
       { id: 'network_usage.v1', required: false, config: { transports: [], poll_interval_minutes: 0 } },
       { id: 'location.v1', required: false, config: { interval_millis: 1000, minimum_interval_millis: 3000, maximum_batch_delay_millis: 0, minimum_displacement_meters: -1, priority: 'BALANCED' } }
     ];
-    configuration.prompts = [{ id: 'a', delay_minutes: 0, message: '' }, { id: 'a', delay_minutes: 1, message: 'x' }];
+    configuration.interventions = [{
+      id: 'a',
+      action: { type: 'notification', notification_title: '', notification_message: '' },
+      triggers: [{ id: 'b', schedule: { type: 'one_time', offset_minutes: -1, clock: 'CALENDAR_TIME' }, availability_minutes: 0 }]
+    }];
     configuration.upload = { endpoint: 'http://x', interval_minutes: 0, allow_metered: false };
     configuration.expires_at = configuration.issued_at;
     for (const m of [en, zhTW]) {

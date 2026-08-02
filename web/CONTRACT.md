@@ -27,8 +27,9 @@ guesses, and code that contradicts them produces a file the Android app rejects.
    leading zeros, no trailing `.0`.
 4. **`tink_hpke_public_keyset`** is re-emitted from Gson's `JsonObject.toString()`: compact, no
    whitespace, keys in the order they appeared. Emit it in the same order the keyset was built in.
-5. **Root key order is fixed** by `StudyConfigurationCodec.encode` and is not alphabetical. Take it
-   from that function, in order.
+5. **Root key order is fixed** by `StudyConfigurationCodec.encode` and is not alphabetical. The v1
+   shape includes `assigned_participant_id`, `surveys`, and `interventions`; the former prompt shape
+   is invalid and has no compatibility path. Take the complete order from that function.
 6. **`upload: null`** encodes as `"upload":{}`.
 
 ## `src/lib/adc/canonical.ts`
@@ -121,7 +122,7 @@ picture genuinely cannot carry the meaning.
 ## Tests
 
 `pnpm test` runs the unit suites, including `tests/compat.spec.ts`, which shells out to
-`researcher-tools` — building it with Gradle if it is missing — and asserts byte for byte that this
+`researcher-tools` — rebuilding its distribution before the suite — and asserts byte for byte that this
 encoder and the Kotlin one agree, then signs a study here and has `check-config` accept it.
 
 `pnpm e2e` is separate because it needs a build, a static server, and a browser. It drives the

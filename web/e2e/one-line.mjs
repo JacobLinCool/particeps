@@ -60,7 +60,8 @@ const LOCALES = [
 /**
  * The researcher page holds its step in component state, not in the URL, so a view is a route plus
  * whatever has to be clicked to reach it. `expand` opens the parts of the Study step that are
- * behind a switch: seven collectors, a prompt, and scheduled delivery. Those reveal labels and
+ * behind a switch or add action: seven collectors, both intervention action types, and scheduled
+ * delivery. Those reveal labels and
  * hints the site wrote, so leaving them closed would inventory half the step.
  */
 const VIEWS = [
@@ -431,7 +432,8 @@ async function expandStudy(page) {
     const one = switches.nth(i);
     if ((await one.getAttribute('aria-checked')) === 'false') await one.click();
   }
-  await page.locator('[data-testid="prompt-add"]').click();
+  await page.locator('[data-testid="intervention-add"]').click();
+  await page.locator('[data-testid="survey-add"]').click();
   const delivery = page.locator('#delivery [role="switch"]').first();
   if ((await delivery.getAttribute('aria-checked')) === 'false') await delivery.click();
   await page.waitForTimeout(500);

@@ -133,7 +133,6 @@ for (const [name, catalogue, locale] of CATALOGUES) {
         maximum_batch_delay_millis: [600_000],
         duration_hours: [504, 2_160, 4_320],
         maximum_local_bytes: [512 * 1_024 * 1_024],
-        delay_minutes: [720, 2_880],
         upload_interval_minutes: [720]
       };
       // In stored units, because that is what the file carries and what was measured.

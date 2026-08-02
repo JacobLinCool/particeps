@@ -33,6 +33,7 @@ class EncryptedExperimentStore(
     private val keyAlias = "adc-core-$opaqueId"
     private val rootDirectory = context.noBackupFilesDir.resolve(STORAGE_DIRECTORY)
     private val metadataFile = AtomicFile(rootDirectory.resolve("$opaqueId.metadata.adc"))
+    private val transactionFile = AtomicFile(rootDirectory.resolve("$opaqueId.transaction.adc"))
     private val eventDirectory = rootDirectory.resolve("$opaqueId.events")
     private var persistedSequenceBoundary = 0L
     private var persistedRetainedFrom = 1L
@@ -62,11 +63,27 @@ class EncryptedExperimentStore(
                 decryptPayloads = false,
             )
             val encodedMetadata = decryptMetadata(metadataFile.readFully(), key)
-            val metadata = StudyDataJsonCodec.decodeMetadata(
+            var metadata = StudyDataJsonCodec.decodeMetadata(
                 encodedMetadata,
                 scan.firstSequence,
                 scan.lastSequence,
             )
+            if (transactionFile.baseFile.exists()) {
+                val recovered = runCatching {
+                    StudyDataJsonCodec.decodeMetadata(
+                        decryptDocument(transactionFile.readFully(), key, TRANSACTION_HEADER),
+                        scan.firstSequence,
+                        scan.lastSequence,
+                    )
+                }.getOrNull()
+                if (recovered != null && recovered.eventCount == scan.lastSequence &&
+                    recovered.eventCount == metadata.eventCount + 1
+                ) {
+                    metadata = recovered
+                    writeMetadata(encryptDocument(StudyDataJsonCodec.encodeMetadata(metadata), key, METADATA_HEADER))
+                }
+                transactionFile.delete()
+            }
             require(metadata.experimentId == experimentId) { "Encrypted experiment ID mismatch" }
             // The lifetime counter comes from metadata, not from the scan: reclaimed events are
             // gone from disk but their sequence numbers must never be handed out again.
@@ -100,20 +117,36 @@ class EncryptedExperimentStore(
     override suspend fun appendEvent(event: RecordedEvent) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val metadata = requireNotNull(persistedMetadata) { "Study storage is not initialized" }
-            require(event.sequenceNumber == persistedSequenceBoundary + 1) { "Non-contiguous event append" }
-            val key = existingKey() ?: error("Encrypted experiment key is unavailable")
-            appendEncryptedEvent(event, key)
-            persistedSequenceBoundary = event.sequenceNumber
-            persistMetadata(
+            appendTransaction(
+                event,
                 metadata.copy(
-                    eventCount = persistedSequenceBoundary,
-                    nextSequenceNumber = persistedSequenceBoundary + 1,
+                    eventCount = event.sequenceNumber,
+                    nextSequenceNumber = event.sequenceNumber + 1,
                     lastEvents = metadata.lastEvents + (event.collectorId to event),
                     retainedFromSequence = persistedRetainedFrom,
                 ),
-                key,
             )
         }
+    }
+
+    override suspend fun appendEventAtomically(event: RecordedEvent, metadata: StudyMetadata) =
+        withContext(Dispatchers.IO) { mutex.withLock { appendTransaction(event, metadata) } }
+
+    private fun appendTransaction(event: RecordedEvent, metadata: StudyMetadata) {
+        requireNotNull(persistedMetadata) { "Study storage is not initialized" }
+        require(event.sequenceNumber == persistedSequenceBoundary + 1) { "Non-contiguous event append" }
+        require(metadata.eventCount == event.sequenceNumber && metadata.nextSequenceNumber == event.sequenceNumber + 1) {
+            "Atomic metadata boundary mismatch"
+        }
+        require(metadata.experimentId == experimentId) { "Experiment ID mismatch" }
+        val key = existingKey() ?: error("Encrypted experiment key is unavailable")
+        val encoded = StudyDataJsonCodec.encodeMetadata(metadata)
+        require(encoded.size <= MAXIMUM_METADATA_BYTES) { "Experiment metadata quota exceeded" }
+        writeAtomic(transactionFile, encryptDocument(encoded, key, TRANSACTION_HEADER))
+        appendEncryptedEvent(event, key)
+        persistedSequenceBoundary = event.sequenceNumber
+        persistMetadata(metadata, key)
+        transactionFile.delete()
     }
 
     override suspend fun readEvents(
@@ -185,6 +218,7 @@ class EncryptedExperimentStore(
     override suspend fun clear() = withContext(Dispatchers.IO) {
         mutex.withLock {
             metadataFile.delete()
+            transactionFile.delete()
             eventDirectory.listFiles()?.forEach { file -> check(file.delete()) { "Cannot delete event segment" } }
             if (eventDirectory.exists()) check(eventDirectory.delete()) { "Cannot delete event directory" }
             if (keyStore.containsAlias(keyAlias)) keyStore.deleteEntry(keyAlias)
@@ -200,7 +234,7 @@ class EncryptedExperimentStore(
     ) {
         val encoded = StudyDataJsonCodec.encodeMetadata(metadata)
         require(encoded.size <= MAXIMUM_METADATA_BYTES) { "Experiment metadata quota exceeded" }
-        writeMetadata(encryptMetadata(encoded, key))
+        writeMetadata(encryptDocument(encoded, key, METADATA_HEADER))
         persistedMetadata = metadata
     }
 
@@ -368,18 +402,19 @@ class EncryptedExperimentStore(
     private fun storageBytes(): Long = metadataFile.baseFile.length() +
         eventDirectory.listFiles().orEmpty().sumOf(File::length)
 
-    private fun encryptMetadata(
+    private fun encryptDocument(
         plaintext: ByteArray,
         key: SecretKey,
+        header: ByteArray,
     ): ByteArray {
         val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION).apply {
             init(Cipher.ENCRYPT_MODE, key)
-            updateAAD(METADATA_HEADER)
+            updateAAD(header)
         }
         val ciphertext = cipher.doFinal(plaintext)
         check(cipher.iv.size == IV_BYTES) { "Android Keystore returned an invalid GCM IV" }
-        return ByteBuffer.allocate(METADATA_HEADER.size + IV_BYTES + ciphertext.size)
-            .put(METADATA_HEADER)
+        return ByteBuffer.allocate(header.size + IV_BYTES + ciphertext.size)
+            .put(header)
             .put(cipher.iv)
             .put(ciphertext)
             .array()
@@ -388,18 +423,20 @@ class EncryptedExperimentStore(
     private fun decryptMetadata(
         encoded: ByteArray,
         key: SecretKey,
-    ): ByteArray {
+    ): ByteArray = decryptDocument(encoded, key, METADATA_HEADER)
+
+    private fun decryptDocument(encoded: ByteArray, key: SecretKey, expectedHeader: ByteArray): ByteArray {
         require(encoded.size in MINIMUM_METADATA_FILE_BYTES..MAXIMUM_METADATA_FILE_BYTES) {
             "Encrypted experiment metadata has an invalid size"
         }
         val buffer = ByteBuffer.wrap(encoded)
-        val header = ByteArray(METADATA_HEADER.size).also(buffer::get)
-        require(header.contentEquals(METADATA_HEADER)) { "Unsupported experiment metadata format" }
+        val header = ByteArray(expectedHeader.size).also(buffer::get)
+        require(header.contentEquals(expectedHeader)) { "Unsupported encrypted document format" }
         val iv = ByteArray(IV_BYTES).also(buffer::get)
         val ciphertext = ByteArray(buffer.remaining()).also(buffer::get)
         return Cipher.getInstance(CIPHER_TRANSFORMATION).run {
             init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-            updateAAD(METADATA_HEADER)
+            updateAAD(expectedHeader)
             doFinal(ciphertext)
         }
     }
@@ -436,14 +473,16 @@ class EncryptedExperimentStore(
         .putLong(sequenceNumber)
         .array()
 
-    private fun writeMetadata(encrypted: ByteArray) {
+    private fun writeMetadata(encrypted: ByteArray) = writeAtomic(metadataFile, encrypted)
+
+    private fun writeAtomic(file: AtomicFile, encrypted: ByteArray) {
         require(rootDirectory.exists() || rootDirectory.mkdirs()) { "Cannot create experiment storage directory" }
-        val output = metadataFile.startWrite()
+        val output = file.startWrite()
         try {
             output.write(encrypted)
-            metadataFile.finishWrite(output)
+            file.finishWrite(output)
         } catch (failure: Throwable) {
-            metadataFile.failWrite(output)
+            file.failWrite(output)
             throw failure
         }
     }
@@ -514,6 +553,7 @@ class EncryptedExperimentStore(
         // The metadata codec has no fallback reader by design: a file whose header is not this
         // exact string is refused rather than migrated.
         val METADATA_HEADER = "ADCMET01".toByteArray(Charsets.US_ASCII)
+        val TRANSACTION_HEADER = "ADCTXN01".toByteArray(Charsets.US_ASCII)
         val SEGMENT_HEADER = "ADCEVT01".toByteArray(Charsets.US_ASCII)
         val SEGMENT_PATTERN = Regex("events-([0-9]{8})\\.adcs")
         val SEGMENT_HEADER_BYTES = SEGMENT_HEADER.size + Int.SIZE_BYTES

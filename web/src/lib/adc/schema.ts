@@ -12,8 +12,10 @@ import { canonicalBytes, formatInstant, keysetJson, parseInstant, type Instant }
 import { isUsableHpkePublicKeyset } from './tink';
 import {
   BOUNDS,
+  ASSIGNED_PARTICIPANT_ID_PATTERN,
   DEFAULT_MINIMUM_APP_VERSION,
   ID_PATTERN,
+  MAXIMUM_INTERVENTION_OCCURRENCES,
   MAXIMUM_CONFIGURATION_BYTES,
   MAXIMUM_LOCAL_BYTES,
   MINIMUM_LOCAL_BYTES,
@@ -22,6 +24,8 @@ import {
   UPLOAD_MINIMUM_INTERVAL_MINUTES,
   type CollectorConfig,
   type CollectorId,
+  type LocalizedText,
+  type SurveyQuestion,
   type StudyConfiguration
 } from './types';
 
@@ -42,7 +46,11 @@ export type IssueCode =
   | 'document_too_large'
   | 'signer_missing'
   | 'export_key_missing'
-  | 'keyset_unusable';
+  | 'keyset_unusable'
+  | 'language_tag'
+  | 'unknown_reference'
+  | 'selection_bounds'
+  | 'schedule_bounds';
 
 export interface Issue {
   /** Dotted path into the document, `collectors.2.config.interval_millis`. Empty is the document. */
@@ -73,6 +81,10 @@ export function validate(configuration: StudyConfiguration): Issue[] {
   }
   identifier(issues, 'experiment_id', configuration.experiment_id);
   identifier(issues, 'configuration_id', configuration.configuration_id);
+  if (configuration.assigned_participant_id !== null &&
+      !ASSIGNED_PARTICIPANT_ID_PATTERN.test(configuration.assigned_participant_id)) {
+    issues.push({ path: 'assigned_participant_id', code: 'id_format' });
+  }
 
   const issued = instant(issues, 'issued_at', configuration.issued_at);
   const expires = instant(issues, 'expires_at', configuration.expires_at);
@@ -105,15 +117,54 @@ export function validate(configuration: StudyConfiguration): Issue[] {
     collectorConfig(issues, `${path}.config`, collector);
   });
 
-  const promptIds = new Set<string>();
-  configuration.prompts.forEach((prompt, index) => {
-    const path = `prompts.${index}`;
-    identifier(issues, `${path}.id`, prompt.id);
-    if (promptIds.has(prompt.id)) issues.push({ path: `${path}.id`, code: 'duplicate_id' });
-    promptIds.add(prompt.id);
-    integer(issues, `${path}.delay_minutes`, prompt.delay_minutes, BOUNDS.promptDelayMinutes);
-    text(issues, `${path}.message`, prompt.message, BOUNDS.promptMessage);
+  const surveyIds = new Set<string>();
+  configuration.surveys.forEach((survey, index) => {
+    const path = `surveys.${index}`;
+    identifier(issues, `${path}.id`, survey.id);
+    if (surveyIds.has(survey.id)) issues.push({ path: `${path}.id`, code: 'duplicate_id' });
+    surveyIds.add(survey.id);
+    localized(issues, `${path}.title`, survey.title);
+    localized(issues, `${path}.description`, survey.description);
+    if (survey.questions.length < 1 || survey.questions.length > 100) {
+      issues.push(range(`${path}.questions`, [1, 100]));
+    }
+    const questionIds = new Set<string>();
+    survey.questions.forEach((question, questionIndex) => {
+      const questionPath = `${path}.questions.${questionIndex}`;
+      identifier(issues, `${questionPath}.id`, question.id);
+      if (questionIds.has(question.id)) issues.push({ path: `${questionPath}.id`, code: 'duplicate_id' });
+      questionIds.add(question.id);
+      surveyQuestion(issues, questionPath, question);
+    });
   });
+
+  const interventionIds = new Set<string>();
+  const triggerIds = new Set<string>();
+  let maximumOccurrences = 0;
+  configuration.interventions.forEach((intervention, index) => {
+    const path = `interventions.${index}`;
+    identifier(issues, `${path}.id`, intervention.id);
+    if (interventionIds.has(intervention.id)) issues.push({ path: `${path}.id`, code: 'duplicate_id' });
+    interventionIds.add(intervention.id);
+    text(issues, `${path}.action.notification_title`, intervention.action.notification_title, BOUNDS.notificationTitle);
+    text(issues, `${path}.action.notification_message`, intervention.action.notification_message, BOUNDS.notificationMessage);
+    if (intervention.action.type === 'survey' && !surveyIds.has(intervention.action.survey_id)) {
+      issues.push({ path: `${path}.action.survey_id`, code: 'unknown_reference' });
+    }
+    if (intervention.triggers.length === 0) issues.push({ path: `${path}.triggers`, code: 'required' });
+    intervention.triggers.forEach((trigger, triggerIndex) => {
+      const triggerPath = `${path}.triggers.${triggerIndex}`;
+      identifier(issues, `${triggerPath}.id`, trigger.id);
+      if (triggerIds.has(trigger.id)) issues.push({ path: `${triggerPath}.id`, code: 'duplicate_id' });
+      triggerIds.add(trigger.id);
+      integer(issues, `${triggerPath}.availability_minutes`, trigger.availability_minutes, BOUNDS.availabilityMinutes);
+      validateSchedule(issues, `${triggerPath}.schedule`, trigger.schedule, configuration.duration_hours * 60);
+      maximumOccurrences += occurrenceCount(trigger.schedule, configuration.duration_hours * 60);
+    });
+  });
+  if (maximumOccurrences > MAXIMUM_INTERVENTION_OCCURRENCES) {
+    issues.push({ path: 'interventions', code: 'schedule_bounds' });
+  }
 
   integer(issues, 'storage.maximum_local_bytes', configuration.storage.maximum_local_bytes, [
     MINIMUM_LOCAL_BYTES,
@@ -166,7 +217,9 @@ export function emptyConfiguration(): StudyConfiguration {
     duration_hours: 24,
     consent: { document_version: '', summary: '' },
     collectors: [],
-    prompts: [],
+    assigned_participant_id: null,
+    surveys: [],
+    interventions: [],
     storage: { maximum_local_bytes: DEFAULT_LOCAL_BYTES },
     signer: { key_id: '', public_key: '' },
     export: { researcher_key_id: '', tink_hpke_public_keyset: { primaryKeyId: 0, key: [] } },
@@ -232,6 +285,91 @@ function text(issues: Issue[], path: string, value: string, [min, max]: Bounds):
   } else if (value.length < min || value.length > max) {
     issues.push({ path, code: 'length_range', bounds: { min, max } });
   }
+}
+
+const BCP47 = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
+
+function localized(issues: Issue[], path: string, value: LocalizedText): void {
+  text(issues, `${path}.default`, value.default, BOUNDS.surveyText);
+  const languages = Object.keys(value.translations);
+  if (languages.length > 32) issues.push(range(`${path}.translations`, [0, 32]));
+  languages.forEach((language) => {
+    if (!BCP47.test(language)) issues.push({ path: `${path}.translations.${language}`, code: 'language_tag' });
+    text(issues, `${path}.translations.${language}`, value.translations[language], BOUNDS.surveyText);
+  });
+  if (new Set(languages.map((language) => language.toLowerCase())).size !== languages.length) {
+    issues.push({ path: `${path}.translations`, code: 'duplicate_id' });
+  }
+}
+
+function surveyQuestion(issues: Issue[], path: string, question: SurveyQuestion): void {
+  localized(issues, `${path}.prompt`, question.prompt);
+  if (question.type === 'short_text') {
+    integer(issues, `${path}.maximum_length`, question.maximum_length, BOUNDS.shortTextMaximumLength);
+    return;
+  }
+  if (question.type === 'scale') {
+    integer(issues, `${path}.minimum`, question.minimum, [-1_000, 1_000]);
+    integer(issues, `${path}.maximum`, question.maximum, [-1_000, 1_000]);
+    if (question.minimum >= question.maximum) issues.push({ path: `${path}.maximum`, code: 'window_order' });
+    localized(issues, `${path}.minimum_label`, question.minimum_label);
+    localized(issues, `${path}.maximum_label`, question.maximum_label);
+    return;
+  }
+  if (question.options.length < 2 || question.options.length > 50) {
+    issues.push(range(`${path}.options`, [2, 50]));
+  }
+  const optionIds = new Set<string>();
+  question.options.forEach((option, index) => {
+    identifier(issues, `${path}.options.${index}.id`, option.id);
+    if (optionIds.has(option.id)) issues.push({ path: `${path}.options.${index}.id`, code: 'duplicate_id' });
+    optionIds.add(option.id);
+    localized(issues, `${path}.options.${index}.label`, option.label);
+  });
+  if (question.type === 'multiple_choice') {
+    integer(issues, `${path}.minimum_selections`, question.minimum_selections, [0, question.options.length]);
+    integer(issues, `${path}.maximum_selections`, question.maximum_selections, [1, question.options.length]);
+    if (question.minimum_selections > question.maximum_selections ||
+        (question.required && question.minimum_selections === 0)) {
+      issues.push({ path: `${path}.maximum_selections`, code: 'selection_bounds' });
+    }
+  }
+}
+
+function validateSchedule(
+  issues: Issue[],
+  path: string,
+  schedule: StudyConfiguration['interventions'][number]['triggers'][number]['schedule'],
+  studyMinutes: number
+): void {
+  if (schedule.type === 'daily_local') {
+    if (!/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(schedule.local_time)) {
+      issues.push({ path: `${path}.local_time`, code: 'instant' });
+    }
+    return;
+  }
+  const offset = schedule.type === 'one_time' ? schedule.offset_minutes : schedule.start_offset_minutes;
+  integer(issues, `${path}.${schedule.type === 'one_time' ? 'offset_minutes' : 'start_offset_minutes'}`, offset, [0, 525_599]);
+  if (offset >= studyMinutes) issues.push({ path, code: 'schedule_bounds' });
+  if (schedule.type === 'interval') {
+    integer(issues, `${path}.interval_minutes`, schedule.interval_minutes, [1, 525_600]);
+    if (schedule.interval_minutes > 0 && Math.ceil((studyMinutes - offset) / schedule.interval_minutes) > 10_000) {
+      issues.push({ path, code: 'schedule_bounds' });
+    }
+  }
+}
+
+function occurrenceCount(
+  schedule: StudyConfiguration['interventions'][number]['triggers'][number]['schedule'],
+  studyMinutes: number
+): number {
+  if (!Number.isInteger(studyMinutes) || studyMinutes <= 0) return 0;
+  if (schedule.type === 'one_time') return 1;
+  if (schedule.type === 'daily_local') return Math.ceil(studyMinutes / 1_440) + 1;
+  if (!Number.isInteger(schedule.start_offset_minutes) || !Number.isInteger(schedule.interval_minutes) ||
+      schedule.start_offset_minutes < 0 || schedule.start_offset_minutes >= studyMinutes ||
+      schedule.interval_minutes <= 0) return 0;
+  return Math.ceil((studyMinutes - schedule.start_offset_minutes) / schedule.interval_minutes);
 }
 
 function integer(issues: Issue[], path: string, value: number, bounds: Bounds): void {

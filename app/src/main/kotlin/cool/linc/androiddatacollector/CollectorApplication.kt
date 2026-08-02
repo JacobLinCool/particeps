@@ -102,6 +102,7 @@ class CollectorApplication : Application() {
             // The delivery chain is one-time work, so it has no platform-side repetition to fall
             // back on. Re-establishing it here covers a link lost to a crash or a force stop.
             session.snapshot.value.configuration?.let(workScheduler::reschedulePendingWork)
+            session.rescheduleInterventions()
         }
     }
 

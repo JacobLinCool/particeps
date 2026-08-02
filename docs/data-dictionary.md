@@ -17,6 +17,7 @@ A decrypted bundle is a `research-bundle-v1` JSON document.
     "experiment_id": "...",
     "configuration_id": "...",
     "participant_instance_id": "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+    "assigned_participant_id": "cohortA-0042",
     "state": "RUNNING",
     "next_sequence_number": 4211,
     "transitions": [ { "from": "READY", "to": "RUNNING", "reason": "...", "time": { } } ],
@@ -32,9 +33,7 @@ a stream, and an uploaded one stops at the first event boundary past a plaintext
 last sequence it contains is not known until the events have been written. Declaring the window
 before them would let a bundle claim a range it does not contain. JSON object member order
 carries no meaning, so a parser that reads by key is unaffected, and decryption is unaffected
-too — the format string is unchanged and bundles written by earlier builds decrypt exactly as
-they did. Code that consumes a bundle as a token stream and expects the window before the events
-it describes does need to change.
+too. Code that consumes a bundle as a token stream must still follow the v1 order shown here.
 
 `configuration` is the canonical study configuration the participant consented to, reproduced verbatim. Every dataset therefore carries its own definition of what was supposed to be collected — including its `upload` block, so a dataset states whether the study it came from delivered data to an endpoint.
 
@@ -42,7 +41,8 @@ It also includes the `signer` block, so provenance travels with the data: `confi
 
 | Field | Meaning |
 | --- | --- |
-| `participant_instance_id` | A random UUID generated on the device when this participant imported the study, and stable for that install. It is pseudonymous: no name, account, device identifier, or advertising ID. It exists so that bundles from different participants in an uploading study can be told apart, and it is disclosed on the consent screen. Treat it as personal data — it links every bundle one person produced. |
+| `participant_instance_id` | A random UUID generated on the device for each import. Importing the same signed configuration again creates a different ID and independent sequence space. It is pseudonymous: no name, account, device identifier, or advertising ID. It is disclosed on the consent screen and exposed in upload routing, so treat it as personal data. |
+| `assigned_participant_id` | Optional researcher-assigned opaque code copied from the signed configuration. It exists only for a personalized study. It is stored in encrypted metadata and appears in the encrypted export, but is deliberately absent from clear upload headers. It can link the dataset to a research roster and must be governed as personal data. |
 | `next_sequence_number` | The device's counter at the moment the bundle was written: one past the last event durably stored, across the whole study rather than this bundle. |
 | `first_sequence_number` | The first event sequence this bundle contains, inclusive. |
 | `last_sequence_number` | The last event sequence this bundle contains, inclusive. |
@@ -96,7 +96,7 @@ This is the most important thing to know before writing a parser.
 
 `fields` is a string-to-string map. Numbers and booleans are stringified: acceleration appears as `"9.81"`, not `9.81`, and flags appear as `"true"` / `"false"`, not `true` / `false`. Only the envelope's `sequence_number`, `payload_schema_version`, and the three `observed_time` values are real JSON numbers.
 
-Field keys match `[a-z][a-z0-9_]{0,63}`, at most 32 fields per event, each value at most 1024 characters.
+Field keys match `[a-z][a-z0-9_]{0,63}` and an event has at most 32 fields. A field value is capped at 60 KiB of characters; storage independently caps the complete encoded event at 64 KiB. Ordinary collectors emit much smaller scalar values. The larger bound exists so one survey submission can be committed as a single immutable value.
 
 ### Time
 
@@ -119,7 +119,26 @@ Several collectors also carry a source-supplied time in their payload. **Do not 
 
 ### Deduplication
 
-Exports overlap by design — a participant can export repeatedly, and each export contains everything from its retained floor up to its boundary. Uploaded chunks do not overlap each other, and a manual export overlaps every chunk after that floor. Deduplicate on `experiment_id` + `configuration_id` + `collector_id` + `sequence_number`, and separate participants on `participant_instance_id` when bundles arrive at an endpoint rather than by hand. Sequence numbers are never reissued, so a number identifies the same event across every bundle regardless of what has been reclaimed.
+Exports overlap by design — a participant can export repeatedly, and each export contains everything from its retained floor up to its boundary. Uploaded chunks do not overlap each other, and a manual export overlaps every chunk after that floor. Deduplicate on `participant_instance_id` + `sequence_number`. Do not merge solely on an assigned ID: two imports for one assigned participant intentionally have different instance IDs and independent sequence spaces. Sequence numbers are never reissued within one instance.
+
+### Intervention and survey events (`interventions.v1`)
+
+The runtime, not a data collector, emits these v1 events. All share `intervention_id`, `trigger_id`, `occurrence_id`, and `scheduled_for_utc_millis`. The occurrence ID is a 64-character lowercase SHA-256 identity derived from the logical schedule position; it is the primary join key across lifecycle events.
+
+| `payload_type` | Meaning | Additional fields |
+| --- | --- | --- |
+| `INTERVENTION_SCHEDULED` | The logical occurrence became durable | none |
+| `INTERVENTION_RESCHEDULED` | A pending active-time or daily-local occurrence received a new target after pause, clock, or timezone reconciliation; its occurrence ID is unchanged | none |
+| `NOTIFICATION_POSTED` | Android was asked to display its notification; this does **not** prove the participant saw it | none |
+| `INTERVENTION_OPENED` | A notification-only occurrence was opened | none |
+| `SURVEY_OPENED` | The exact survey occurrence was opened | none |
+| `SURVEY_EXPIRED` | Its signed availability window ended without a submission | none |
+| `INTERVENTION_EXPIRED` | A notification-only occurrence expired | none |
+| `SURVEY_SUBMITTED` | One validated, final survey response was atomically committed | `survey_id`, `scheduled_time`, `opened_time`, `submitted_time`, `answers_json` |
+
+The three `*_time` fields are compact JSON encodings of the same three-clock `ResearchTime` shape documented above. `answers_json` is one compact JSON object keyed only by stable question IDs. Short text is a JSON string, scale is an integer, and choice answers are arrays of stable option IDs. Question wording, translated labels, and option display text are never copied into the answer. Optional unanswered questions are absent. There are no draft, answer-change, or partial-submission events.
+
+For compliance metrics, start with the lifecycle event that actually supports the claim: scheduled is not posted, posted is not seen, opened is not submitted, and expired is not declined. Join on `participant_instance_id` and `occurrence_id`; use `assigned_participant_id` only when an approved personalized-study roster requires it.
 
 ### Gaps are real and are not errors
 

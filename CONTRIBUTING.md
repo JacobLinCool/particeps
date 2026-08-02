@@ -16,7 +16,7 @@ A collector is three pieces:
 
 ### Design constraints
 
-Collectors observe a source and emit events. They do not write files, change study state, start activities, schedule prompts, export, or request permissions. This is not a rule imposed on collector authors so much as a consequence of the module graph: a `collector:*` module depends only on `core:collector-api` and `core:study-definition`, so storage, the runtime, and the protocol layer are not on its classpath.
+Collectors observe a source and emit events. They do not write files, change study state, start activities, schedule interventions, render surveys, export, or request permissions. This is not a rule imposed on collector authors so much as a consequence of the module graph: a `collector:*` module depends only on `core:collector-api` and `core:study-definition`, so storage, the runtime, and the protocol layer are not on its classpath.
 
 That boundary is what keeps a new data source cheap to add and cheap to review. It also means the answer to "how do I persist this myself?" is that you do not — everything goes through the `EventSink` in your `CollectorContext`, which is what makes sequence numbers contiguous and monotone, quota accounting correct, and a bundle able to declare the exact window it carries.
 

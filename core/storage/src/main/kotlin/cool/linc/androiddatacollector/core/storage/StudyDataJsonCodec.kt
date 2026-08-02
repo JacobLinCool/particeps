@@ -2,6 +2,8 @@ package cool.linc.androiddatacollector.core.storage
 
 import cool.linc.androiddatacollector.core.model.ExperimentState
 import cool.linc.androiddatacollector.core.model.ExperimentTransition
+import cool.linc.androiddatacollector.core.model.InterventionOccurrence
+import cool.linc.androiddatacollector.core.model.OccurrenceState
 import cool.linc.androiddatacollector.core.model.RecordedEvent
 import cool.linc.androiddatacollector.core.model.ResearchTime
 import cool.linc.androiddatacollector.core.model.StudyMetadata
@@ -17,6 +19,8 @@ internal object StudyDataJsonCodec {
         "next_sequence_number",
         "transitions",
         "participant_instance_id",
+        "assigned_participant_id",
+        "occurrences",
         "uploaded_through_sequence",
         "retained_from_sequence",
         "last_events",
@@ -31,6 +35,18 @@ internal object StudyDataJsonCodec {
         "payload_type",
         "fields",
     )
+    private val OCCURRENCE_KEYS = setOf(
+        "occurrence_id",
+        "intervention_id",
+        "trigger_id",
+        "schedule_key",
+        "scheduled_for",
+        "expires_at_utc_millis",
+        "state",
+        "opened_at",
+        "submitted_at",
+        "submission_sequence",
+    )
 
     fun encodeMetadata(metadata: StudyMetadata): ByteArray = JSONObject()
         .put("experiment_id", metadata.experimentId)
@@ -41,6 +57,10 @@ internal object StudyDataJsonCodec {
             metadata.transitions.forEach { put(encodeTransition(it)) }
         })
         .put("participant_instance_id", metadata.participantInstanceId)
+        .put("assigned_participant_id", metadata.assignedParticipantId ?: JSONObject.NULL)
+        .put("occurrences", JSONObject().apply {
+            metadata.occurrences.toSortedMap().forEach { (id, occurrence) -> put(id, encodeOccurrence(occurrence)) }
+        })
         .put("uploaded_through_sequence", metadata.uploadedThroughSequence)
         .put("retained_from_sequence", metadata.retainedFromSequence)
         // Durable rather than rebuilt by scanning, so opening a study never has to decrypt its
@@ -119,6 +139,10 @@ internal object StudyDataJsonCodec {
                 }
             },
             participantInstanceId = root.getString("participant_instance_id"),
+            assignedParticipantId = if (root.isNull("assigned_participant_id")) null else root.getString("assigned_participant_id"),
+            occurrences = root.getJSONObject("occurrences").let { occurrences ->
+                occurrences.keys().asSequence().associateWith { id -> decodeOccurrence(occurrences.getJSONObject(id)) }
+            },
             uploadedThroughSequence = uploadedThrough,
             retainedFromSequence = retainedFrom,
         )
@@ -164,6 +188,34 @@ internal object StudyDataJsonCodec {
             to = enumValueOf(json.getString("to")),
             reason = enumValueOf<TransitionReason>(json.getString("reason")),
             time = decodeTime(json.getJSONObject("time")),
+        )
+    }
+
+    private fun encodeOccurrence(occurrence: InterventionOccurrence): JSONObject = JSONObject()
+        .put("occurrence_id", occurrence.occurrenceId)
+        .put("intervention_id", occurrence.interventionId)
+        .put("trigger_id", occurrence.triggerId)
+        .put("schedule_key", occurrence.scheduleKey)
+        .put("scheduled_for", encodeTime(occurrence.scheduledFor))
+        .put("expires_at_utc_millis", occurrence.expiresAtUtcMillis)
+        .put("state", occurrence.state.name)
+        .put("opened_at", occurrence.openedAt?.let(::encodeTime) ?: JSONObject.NULL)
+        .put("submitted_at", occurrence.submittedAt?.let(::encodeTime) ?: JSONObject.NULL)
+        .put("submission_sequence", occurrence.submissionSequence ?: JSONObject.NULL)
+
+    private fun decodeOccurrence(json: JSONObject): InterventionOccurrence {
+        json.requireExactKeys(OCCURRENCE_KEYS)
+        return InterventionOccurrence(
+            occurrenceId = json.getString("occurrence_id"),
+            interventionId = json.getString("intervention_id"),
+            triggerId = json.getString("trigger_id"),
+            scheduleKey = json.getString("schedule_key"),
+            scheduledFor = decodeTime(json.getJSONObject("scheduled_for")),
+            expiresAtUtcMillis = json.getLong("expires_at_utc_millis"),
+            state = enumValueOf<OccurrenceState>(json.getString("state")),
+            openedAt = if (json.isNull("opened_at")) null else decodeTime(json.getJSONObject("opened_at")),
+            submittedAt = if (json.isNull("submitted_at")) null else decodeTime(json.getJSONObject("submitted_at")),
+            submissionSequence = if (json.isNull("submission_sequence")) null else json.getLong("submission_sequence"),
         )
     }
 

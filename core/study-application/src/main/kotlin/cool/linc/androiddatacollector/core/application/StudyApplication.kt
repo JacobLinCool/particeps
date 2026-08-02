@@ -8,13 +8,18 @@ import cool.linc.androiddatacollector.core.collector.StudyAccessGateway
 import cool.linc.androiddatacollector.core.definition.StudyConfiguration
 import cool.linc.androiddatacollector.core.export.ExportReceipt
 import cool.linc.androiddatacollector.core.model.ExperimentState
+import cool.linc.androiddatacollector.core.model.InterventionOccurrence
+import cool.linc.androiddatacollector.core.model.ResearchTime
 import cool.linc.androiddatacollector.core.model.StudyMetadata
 import cool.linc.androiddatacollector.core.model.StudyStore
 import cool.linc.androiddatacollector.core.protocol.ActiveStudyStore
 import cool.linc.androiddatacollector.core.protocol.VerifiedConfiguration
 import cool.linc.androiddatacollector.core.runtime.CommandResult
 import cool.linc.androiddatacollector.core.runtime.ExperimentRuntime
+import cool.linc.androiddatacollector.core.runtime.OccurrenceDispatch
 import cool.linc.androiddatacollector.core.runtime.RuntimeSnapshot
+import cool.linc.androiddatacollector.core.runtime.SurveyAnswer
+import cool.linc.androiddatacollector.core.runtime.SurveySubmissionResult
 import java.io.OutputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +48,12 @@ interface StudyCollectionHost {
 
 interface StudyWorkScheduler {
     fun schedule(configuration: StudyConfiguration)
+
+    /** Replaces all pending occurrence work after state, clock, reboot, or time-zone recovery. */
+    fun replaceInterventionWork(configuration: StudyConfiguration, occurrences: List<InterventionOccurrence>)
+
+    /** Adds the successor of a completed trigger without disturbing unrelated work. */
+    fun enqueueOccurrence(configuration: StudyConfiguration, occurrence: InterventionOccurrence)
 
     /**
      * Cancels reminders and the study deadline, leaving scheduled delivery in place.
@@ -124,12 +135,12 @@ data class StudySessionSnapshot(
 
 class StudyAccessPolicy {
     fun requirements(configuration: StudyConfiguration, collectorRequirements: Set<AccessRequirement>): Set<AccessRequirement> {
-        val promptRequirements = if (configuration.prompts.isEmpty()) {
+        val interventionRequirements = if (configuration.interventions.isEmpty()) {
             emptySet()
         } else {
             setOf(AccessRequirement(AccessKind.NOTIFICATIONS, required = true))
         }
-        return (collectorRequirements + promptRequirements)
+        return (collectorRequirements + interventionRequirements)
             .groupBy(AccessRequirement::kind)
             .mapTo(mutableSetOf()) { (kind, entries) ->
                 AccessRequirement(kind, entries.any(AccessRequirement::required))
@@ -150,6 +161,7 @@ class StudySessionManager(
     private val uploader: StudyUploader,
     private val accessPolicy: StudyAccessPolicy,
     private val scope: CoroutineScope,
+    private val schedulePlanner: InterventionSchedulePlanner = InterventionSchedulePlanner(),
 ) {
     private val sessionMutex = Mutex()
 
@@ -223,6 +235,7 @@ class StudySessionManager(
         }
         try {
             workScheduler.schedule(current.configuration)
+            syncInterventionsLocked(current, replace = true)
             publish(result)
         } catch (failure: Throwable) {
             failure.rethrowCancellation()
@@ -233,10 +246,15 @@ class StudySessionManager(
         }
     }
 
-    suspend fun pause(): CommandResult = command(
-        execute = { it.pause() },
-        onSuccess = collectionHost::stop,
-    )
+    suspend fun pause(): CommandResult = sessionMutex.withLock {
+        val current = requireRuntime()
+        val result = current.pause()
+        if (result == CommandResult.Success) {
+            collectionHost.stop()
+            syncInterventionsLocked(current, replace = true)
+        }
+        publish(result)
+    }
     suspend fun resume(): CommandResult = sessionMutex.withLock {
         refreshAccess()
         val current = requireRuntime()
@@ -247,9 +265,42 @@ class StudySessionManager(
             return@withLock publish(CommandResult.Failed(INCIDENT_COLLECTION_HOST_FAILED))
         }
         val result = current.resume()
-        if (result != CommandResult.Success) collectionHost.stop()
+        if (result != CommandResult.Success) {
+            collectionHost.stop()
+        } else {
+            syncInterventionsLocked(current, replace = true)
+        }
         publish(result)
     }
+
+    suspend fun rescheduleInterventions() = sessionMutex.withLock {
+        runtime?.let { syncInterventionsLocked(it, replace = true) }
+    }
+
+    suspend fun claimOccurrence(occurrenceId: String): OccurrenceDispatch? = sessionMutex.withLock {
+        val current = requireRuntime()
+        current.claimOccurrence(occurrenceId).also { dispatch ->
+            if (dispatch == null) scheduleNextLocked(current, occurrenceId)
+        }
+    }
+
+    suspend fun markNotificationPosted(occurrenceId: String) = sessionMutex.withLock {
+        requireRuntime().markNotificationPosted(occurrenceId)
+        scheduleNextLocked(requireRuntime(), occurrenceId)
+    }
+
+    suspend fun openOccurrence(occurrenceId: String): OccurrenceDispatch? =
+        sessionMutex.withLock { requireRuntime().openOccurrence(occurrenceId) }
+
+    suspend fun submitSurvey(
+        occurrenceId: String,
+        answers: Map<String, SurveyAnswer>,
+    ): SurveySubmissionResult = sessionMutex.withLock {
+        requireRuntime().submitSurvey(occurrenceId, answers)
+    }
+
+    suspend fun surveySubmissionEvent(occurrenceId: String) =
+        sessionMutex.withLock { requireRuntime().surveySubmissionEvent(occurrenceId) }
 
     suspend fun finish(): CommandResult = terminalCommand { it.finishEarly() }
     suspend fun completeAfterDuration(): CommandResult = terminalCommand { it.completeAfterDuration() }
@@ -444,6 +495,31 @@ class StudySessionManager(
         val result = execute(requireRuntime())
         if (result == CommandResult.Success) onSuccess()
         publish(result)
+    }
+
+    private suspend fun syncInterventionsLocked(current: ExperimentRuntime, replace: Boolean) {
+        val metadata = current.snapshot.value.metadata ?: return
+        val plans = schedulePlanner.next(
+            current.configuration,
+            metadata,
+            current.now(),
+            java.time.ZoneId.systemDefault(),
+        ).map { current.ensureOccurrence(it) }
+        if (replace) workScheduler.replaceInterventionWork(current.configuration, plans)
+        else plans.forEach { workScheduler.enqueueOccurrence(current.configuration, it) }
+    }
+
+    private suspend fun scheduleNextLocked(current: ExperimentRuntime, completedOccurrenceId: String) {
+        val triggerId = current.snapshot.value.metadata?.occurrences?.get(completedOccurrenceId)?.triggerId ?: return
+        val metadata = current.snapshot.value.metadata ?: return
+        schedulePlanner.next(
+            current.configuration,
+            metadata,
+            current.now(),
+            java.time.ZoneId.systemDefault(),
+            triggerId,
+        ).map { current.ensureOccurrence(it) }
+            .forEach { workScheduler.enqueueOccurrence(current.configuration, it) }
     }
 
     private suspend fun terminalCommand(

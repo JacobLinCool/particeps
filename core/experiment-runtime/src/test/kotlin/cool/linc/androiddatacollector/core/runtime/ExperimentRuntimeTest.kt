@@ -2,6 +2,8 @@ package cool.linc.androiddatacollector.core.runtime
 
 import cool.linc.androiddatacollector.core.model.EventDraft
 import cool.linc.androiddatacollector.core.model.ExperimentState
+import cool.linc.androiddatacollector.core.model.InterventionOccurrence
+import cool.linc.androiddatacollector.core.model.OccurrenceState
 import cool.linc.androiddatacollector.core.model.RecordedEvent
 import cool.linc.androiddatacollector.core.model.ResearchTime
 import cool.linc.androiddatacollector.core.model.StorageUsage
@@ -19,11 +21,25 @@ import cool.linc.androiddatacollector.core.collector.EmitResult
 import cool.linc.androiddatacollector.core.definition.AppLifecycleConfiguration
 import cool.linc.androiddatacollector.core.definition.CollectorConfiguration
 import cool.linc.androiddatacollector.core.definition.ExportConfiguration
+import cool.linc.androiddatacollector.core.definition.ChoiceOption
+import cool.linc.androiddatacollector.core.definition.InterventionConfiguration
+import cool.linc.androiddatacollector.core.definition.InterventionTrigger
+import cool.linc.androiddatacollector.core.definition.LocalizedText
+import cool.linc.androiddatacollector.core.definition.MultipleChoiceQuestion
+import cool.linc.androiddatacollector.core.definition.OneTimeSchedule
+import cool.linc.androiddatacollector.core.definition.RelativeClock
+import cool.linc.androiddatacollector.core.definition.ScaleQuestion
+import cool.linc.androiddatacollector.core.definition.ShortTextQuestion
+import cool.linc.androiddatacollector.core.definition.SingleChoiceQuestion
 import cool.linc.androiddatacollector.core.collector.PrivacyClass
 import cool.linc.androiddatacollector.core.collector.ResearchClocks
 import cool.linc.androiddatacollector.core.definition.SignerIdentity
 import cool.linc.androiddatacollector.core.definition.StudyConfiguration
+import cool.linc.androiddatacollector.core.definition.SurveyAction
+import cool.linc.androiddatacollector.core.definition.SurveyDefinition
 import java.time.Instant
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -104,6 +120,88 @@ class ExperimentRuntimeTest {
         assertEquals(ExperimentState.RUNNING, runtime.snapshot.value.metadata?.state)
         assertEquals(1, plugin.collector.startCount)
         assertTrue(plugin.emit("ACTIVITY_RESUMED") is EmitResult.Accepted)
+    }
+
+    @Test
+    fun surveySubmissionValidatesEveryQuestionTypeAndCommitsExactlyOnce() = runTest {
+        val store = InMemoryStudyStore()
+        val clocks = FakeClocks()
+        val runtime = ExperimentRuntime(
+            configuration = configuration(surveys = listOf(survey()), interventions = listOf(surveyIntervention())),
+            store = store,
+            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
+            clocks = clocks,
+            scope = backgroundScope,
+            availableAccess = { emptySet() },
+        )
+        start(runtime)
+        val occurrence = InterventionOccurrence(
+            occurrenceId = "a".repeat(64),
+            interventionId = "survey-notice",
+            triggerId = "after-minute",
+            scheduleKey = "relative:1",
+            scheduledFor = ResearchTime(1_000, 1_000, "boot-test"),
+            expiresAtUtcMillis = 60_000,
+            state = OccurrenceState.SCHEDULED,
+        )
+        runtime.ensureOccurrence(occurrence)
+        assertTrue(runtime.claimOccurrence(occurrence.occurrenceId)?.action is SurveyAction)
+        runtime.markNotificationPosted(occurrence.occurrenceId)
+        assertEquals(OccurrenceState.OPENED, runtime.openOccurrence(occurrence.occurrenceId)?.occurrence?.state)
+
+        val incomplete = mapOf("mood-scale" to SurveyAnswer.Integer(3))
+        assertEquals(SurveySubmissionResult.INVALID, runtime.submitSurvey(occurrence.occurrenceId, incomplete))
+        val answers = mapOf(
+            "daily-note" to SurveyAnswer.Text("felt focused"),
+            "mood-scale" to SurveyAnswer.Integer(4),
+            "primary-place" to SurveyAnswer.Choices(listOf("place-home")),
+            "symptoms" to SurveyAnswer.Choices(listOf("symptom-tired", "symptom-headache")),
+        )
+        val concurrent = listOf(
+            async { runtime.submitSurvey(occurrence.occurrenceId, answers) },
+            async { runtime.submitSurvey(occurrence.occurrenceId, answers) },
+        ).awaitAll()
+        assertEquals(1, concurrent.count { it == SurveySubmissionResult.ACCEPTED })
+        assertEquals(1, concurrent.count { it == SurveySubmissionResult.ALREADY_SUBMITTED })
+
+        val submitted = requireNotNull(runtime.surveySubmissionEvent(occurrence.occurrenceId))
+        assertEquals("SURVEY_SUBMITTED", submitted.payloadType)
+        assertEquals("daily-survey", submitted.fields["survey_id"])
+        val encoded = requireNotNull(submitted.fields["answers_json"])
+        assertTrue(encoded.contains("\"daily-note\":\"felt focused\""))
+        assertTrue(encoded.contains("\"primary-place\":[\"place-home\"]"))
+        assertTrue(encoded.contains("\"symptoms\":[\"symptom-tired\",\"symptom-headache\"]"))
+        assertTrue(!encoded.contains("Home"))
+        assertEquals(4L, store.events.count().toLong())
+    }
+
+    @Test
+    fun lateSurveyOccurrenceExpiresWithoutOpeningOrSubmission() = runTest {
+        val store = InMemoryStudyStore()
+        val clocks = FakeClocks()
+        val runtime = ExperimentRuntime(
+            configuration = configuration(surveys = listOf(survey()), interventions = listOf(surveyIntervention())),
+            store = store,
+            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
+            clocks = clocks,
+            scope = backgroundScope,
+            availableAccess = { emptySet() },
+        )
+        start(runtime)
+        val occurrence = InterventionOccurrence(
+            occurrenceId = "b".repeat(64),
+            interventionId = "survey-notice",
+            triggerId = "after-minute",
+            scheduleKey = "relative:1",
+            scheduledFor = ResearchTime(1, 1, "boot-test"),
+            expiresAtUtcMillis = 2_500,
+            state = OccurrenceState.SCHEDULED,
+        )
+        runtime.ensureOccurrence(occurrence)
+        assertNull(runtime.claimOccurrence(occurrence.occurrenceId))
+        assertNull(runtime.openOccurrence(occurrence.occurrenceId))
+        assertEquals(OccurrenceState.EXPIRED, runtime.snapshot.value.metadata?.occurrences?.get(occurrence.occurrenceId)?.state)
+        assertEquals(listOf("INTERVENTION_SCHEDULED", "SURVEY_EXPIRED"), store.events.map { it.payloadType })
     }
 
     @Test
@@ -203,6 +301,13 @@ class ExperimentRuntimeTest {
                 nextSequenceNumber = event.sequenceNumber + 1,
                 lastEvents = current.lastEvents + (event.collectorId to event),
             )
+            saveCount += 1
+        }
+
+        override suspend fun appendEventAtomically(event: RecordedEvent, metadata: StudyMetadata) {
+            require(event.sequenceNumber == requireNotNull(this.metadata).nextSequenceNumber)
+            events += event
+            this.metadata = metadata
             saveCount += 1
         }
 
@@ -311,10 +416,13 @@ class ExperimentRuntimeTest {
 
         fun configuration(
             collectors: List<CollectorConfiguration> = listOf(AppLifecycleConfiguration(required = true)),
+            surveys: List<SurveyDefinition> = emptyList(),
+            interventions: List<InterventionConfiguration> = emptyList(),
         ) = StudyConfiguration(
             schemaVersion = StudyConfiguration.CURRENT_SCHEMA_VERSION,
             experimentId = EXPERIMENT_ID,
             configurationId = CONFIGURATION_ID,
+            assignedParticipantId = null,
             issuedAt = Instant.parse("2026-01-01T00:00:00Z"),
             expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
             minimumAppVersion = 1,
@@ -326,7 +434,8 @@ class ExperimentRuntimeTest {
             consentDocumentVersion = "test-1",
             consentSummary = "Test consent",
             collectors = collectors,
-            prompts = emptyList(),
+            surveys = surveys,
+            interventions = interventions,
             maximumLocalBytes = 16_777_216,
             signer = SignerIdentity("test-signer", TEST_SIGNER_PUBLIC_KEY),
             export = ExportConfiguration(
@@ -334,6 +443,48 @@ class ExperimentRuntimeTest {
                 tinkHpkePublicKeysetJson = "{\"placeholder\":\"not-used-in-runtime-tests\"}",
             ),
             upload = null,
+        )
+
+        suspend fun start(runtime: ExperimentRuntime) {
+            assertEquals(CommandResult.Success, runtime.initialize())
+            assertEquals(CommandResult.Success, runtime.reviewStudy())
+            assertEquals(CommandResult.Success, runtime.acceptConsent())
+            assertEquals(CommandResult.Success, runtime.completeAccessSetup(emptySet()))
+            assertEquals(CommandResult.Success, runtime.start())
+        }
+
+        fun survey() = SurveyDefinition(
+            "daily-survey",
+            LocalizedText("Daily survey", mapOf("zh-TW" to "每日問卷")),
+            LocalizedText("Answer four questions."),
+            listOf(
+                ShortTextQuestion("daily-note", LocalizedText("How was today?"), false, 40),
+                ScaleQuestion("mood-scale", LocalizedText("Mood"), true, 1, 5, LocalizedText("Low"), LocalizedText("High")),
+                SingleChoiceQuestion(
+                    "primary-place",
+                    LocalizedText("Where were you?"),
+                    true,
+                    listOf(ChoiceOption("place-home", LocalizedText("Home")), ChoiceOption("place-work", LocalizedText("Work"))),
+                ),
+                MultipleChoiceQuestion(
+                    "symptoms",
+                    LocalizedText("Symptoms"),
+                    true,
+                    listOf(
+                        ChoiceOption("symptom-tired", LocalizedText("Tired")),
+                        ChoiceOption("symptom-headache", LocalizedText("Headache")),
+                        ChoiceOption("symptom-none", LocalizedText("None")),
+                    ),
+                    1,
+                    2,
+                ),
+            ),
+        )
+
+        fun surveyIntervention() = InterventionConfiguration(
+            "survey-notice",
+            SurveyAction("Daily survey", "Your survey is ready.", "daily-survey"),
+            listOf(InterventionTrigger("after-minute", OneTimeSchedule(1, RelativeClock.CALENDAR_TIME), 60)),
         )
     }
 }

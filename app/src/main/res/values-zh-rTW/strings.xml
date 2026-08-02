@@ -4,6 +4,20 @@
   side by side. Researcher-supplied text is never translated and never appears here.
 -->
 <resources>
+    <string name="intervention_channel">研究活動</string>
+    <string name="survey_title">問卷</string>
+    <string name="survey_loading">正在開啟問卷…</string>
+    <string name="survey_required">必填</string>
+    <string name="survey_optional">選填</string>
+    <string name="survey_submit">送出一次</string>
+    <string name="survey_close">關閉</string>
+    <string name="survey_cancel">繼續檢查</string>
+    <string name="survey_confirm_title">要送出這份回答嗎？</string>
+    <string name="survey_confirm_body">送出後即為最終版本；你仍可查看，但不能修改或再次送出。</string>
+    <string name="survey_submitted">已送出。這份回答現在只能查看。</string>
+    <string name="survey_expired">這次問卷已過期，無法送出。</string>
+    <string name="survey_invalid">請完成必填題目，並檢查每一項回答。</string>
+    <string name="survey_unavailable">無法開啟這次問卷。</string>
     <string name="header_no_study">研究資料收集器</string>
     <string name="header_starting">準備中</string>
     <string name="header_elapsed_minutes">%1$d 分</string>
@@ -84,6 +98,12 @@
     <string name="consent_signature_anchored">這個 App 內建信任此簽章者。</string>
     <string name="consent_signature_compare">請與研究團隊公佈的金鑰指紋核對。</string>
     <string name="consent_signature_unverified">簽章證明設定檔在簽署後未被竄改，但不能證明是誰寫的。</string>
+    <string name="consent_identity_anonymous_title">匿名或假名研究</string>
+    <string name="consent_identity_anonymous_body">這份設定檔不含研究團隊指定的參與者代碼。</string>
+    <string name="consent_identity_personalized_title">個人化研究</string>
+    <string name="consent_identity_assigned_code">你的指定代碼：%1$s</string>
+    <string name="consent_identity_personalized_body">請與研究團隊交給你的不透明代碼核對。App 不會要求姓名、電子郵件或電話號碼。</string>
+    <string name="consent_identity_instance_body">每次匯入也會產生另一組隨機安裝代碼，用來串連這次安裝的加密資料分段，並區分重複匯入。</string>
 
     <string name="consent_upload_none_title">這個研究不會自動傳送資料</string>
     <string name="consent_upload_none_body">資料只留在這支手機，直到你自己匯出。</string>
@@ -123,6 +143,8 @@
 
     <string name="details_configuration">設定</string>
     <string name="details_consent_document">同意書</string>
+    <string name="details_instance_id">安裝代碼</string>
+    <string name="details_assigned_id">指定代碼</string>
     <string name="details_signature">簽章</string>
     <string name="details_last_export">上次匯出</string>
     <string name="details_last_export_value">%1$s 筆 · %2$s</string>

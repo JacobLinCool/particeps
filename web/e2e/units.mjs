@@ -15,7 +15,7 @@
  * Exit code: non-zero if any control on `/researcher/` shows a storage-unit number.
  *
  * It drives the researcher page the way a person would — reach the Study step, switch on all seven
- * collectors, add a prompt, switch on delivery — so that every control the site has is mounted, and
+ * collectors, add an intervention, switch on delivery — so that every control the site has is mounted, and
  * then reads what is actually on screen. It does this in both locales, and it does it again after
  * clicking every preset chip on every control, so the assertions cover the values the page itself
  * advertises rather than only the ones it opens on.
@@ -424,7 +424,7 @@ async function openEverything(page) {
     if (state !== 'true') throw new Error(`collector ${i} would not switch on`);
   }
 
-  await page.locator('[data-testid="prompt-add"]').click();
+  await page.locator('[data-testid="intervention-add"]').click();
   const delivery = page.locator('#delivery [role="switch"]').first();
   if ((await delivery.getAttribute('aria-checked')) === 'false') await delivery.click();
   await page.waitForTimeout(400);

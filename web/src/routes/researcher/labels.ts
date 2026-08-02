@@ -84,15 +84,12 @@ export function fieldLabel(m: Messages, path: string): string {
       return label.priority;
     case 'trajectory_sampling_hz':
       return label.trajectoryRate;
-    case 'delay_minutes':
-      return label.promptDelay;
-    case 'message':
-      return label.promptMessage;
     case 'collectors':
       return m.researcher.study.section.collectors.title;
   }
 
-  if (segments[0] === 'prompts' && tail === 'id') return label.promptId;
+  if (segments[0] === 'interventions') return m.researcher.study.section.interventions.title;
+  if (segments[0] === 'surveys') return m.intervention.survey;
   // The whole document, and anything a future rule invents: the path itself, never nothing.
   return path || m.researcher.sign.canonical;
 }

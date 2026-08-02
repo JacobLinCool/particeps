@@ -13,6 +13,7 @@ object StudyConfigurationCodec {
         "schema_version",
         "experiment_id",
         "configuration_id",
+        "assigned_participant_id",
         "issued_at",
         "expires_at",
         "minimum_app_version",
@@ -22,7 +23,8 @@ object StudyConfigurationCodec {
         "duration_hours",
         "consent",
         "collectors",
-        "prompts",
+        "surveys",
+        "interventions",
         "storage",
         "signer",
         "export",
@@ -48,6 +50,7 @@ object StudyConfigurationCodec {
             schemaVersion = root.requireInt("schema_version"),
             experimentId = root.requireString("experiment_id"),
             configurationId = root.requireString("configuration_id"),
+            assignedParticipantId = root.requireNullableString("assigned_participant_id"),
             issuedAt = Instant.parse(root.requireString("issued_at")),
             expiresAt = Instant.parse(root.requireString("expires_at")),
             minimumAppVersion = root.requireInt("minimum_app_version"),
@@ -63,7 +66,8 @@ object StudyConfigurationCodec {
             }.requireString("document_version"),
             consentSummary = root.requireObject("consent").requireString("summary"),
             collectors = root.requireArray("collectors").mapElements(::decodeCollector),
-            prompts = root.requireArray("prompts").mapElements(::decodePrompt),
+            surveys = root.requireArray("surveys").mapElements(::decodeSurvey),
+            interventions = root.requireArray("interventions").mapElements(::decodeIntervention),
             maximumLocalBytes = root.requireObject("storage").also {
                 it.requireExactKeys(setOf("maximum_local_bytes"))
             }.requireLong("maximum_local_bytes"),
@@ -83,6 +87,7 @@ object StudyConfigurationCodec {
             writer.name("schema_version").value(configuration.schemaVersion)
             writer.name("experiment_id").value(configuration.experimentId)
             writer.name("configuration_id").value(configuration.configurationId)
+            writer.name("assigned_participant_id").value(configuration.assignedParticipantId)
             writer.name("issued_at").value(configuration.issuedAt.toString())
             writer.name("expires_at").value(configuration.expiresAt.toString())
             writer.name("minimum_app_version").value(configuration.minimumAppVersion)
@@ -100,14 +105,11 @@ object StudyConfigurationCodec {
             writer.name("collectors").beginArray()
             configuration.collectors.forEach { encodeCollector(writer, it) }
             writer.endArray()
-            writer.name("prompts").beginArray()
-            configuration.prompts.forEach { prompt ->
-                writer.beginObject()
-                writer.name("id").value(prompt.id)
-                writer.name("delay_minutes").value(prompt.delayMinutes)
-                writer.name("message").value(prompt.message)
-                writer.endObject()
-            }
+            writer.name("surveys").beginArray()
+            configuration.surveys.forEach { encodeSurvey(writer, it) }
+            writer.endArray()
+            writer.name("interventions").beginArray()
+            configuration.interventions.forEach { encodeIntervention(writer, it) }
             writer.endArray()
             writer.name("storage").beginObject()
             writer.name("maximum_local_bytes").value(configuration.maximumLocalBytes)
@@ -226,14 +228,234 @@ object StudyConfigurationCodec {
         writer.endObject()
     }
 
-    private fun decodePrompt(element: JsonElement): PromptConfiguration {
-        val root = element.requireObject("prompt")
-        root.requireExactKeys(setOf("id", "delay_minutes", "message"))
-        return PromptConfiguration(
-            root.requireString("id"),
-            root.requireInt("delay_minutes"),
-            root.requireString("message"),
+    private fun decodeIntervention(element: JsonElement): InterventionConfiguration {
+        val root = element.requireObject("intervention")
+        root.requireExactKeys(setOf("id", "action", "triggers"))
+        return InterventionConfiguration(
+            id = root.requireString("id"),
+            action = decodeAction(root.requireObject("action")),
+            triggers = root.requireArray("triggers").mapElements(::decodeTrigger),
         )
+    }
+
+    private fun decodeAction(root: JsonObject): InterventionAction = when (root.requireString("type")) {
+        "notification" -> {
+            root.requireExactKeys(setOf("type", "notification_title", "notification_message"))
+            NotificationAction(root.requireString("notification_title"), root.requireString("notification_message"))
+        }
+        "survey" -> {
+            root.requireExactKeys(setOf("type", "notification_title", "notification_message", "survey_id"))
+            SurveyAction(
+                root.requireString("notification_title"),
+                root.requireString("notification_message"),
+                root.requireString("survey_id"),
+            )
+        }
+        else -> throw IllegalArgumentException("Unknown intervention action")
+    }
+
+    private fun decodeTrigger(element: JsonElement): InterventionTrigger {
+        val root = element.requireObject("trigger")
+        root.requireExactKeys(setOf("id", "schedule", "availability_minutes"))
+        val schedule = root.requireObject("schedule")
+        return InterventionTrigger(
+            root.requireString("id"),
+            when (schedule.requireString("type")) {
+                "one_time" -> {
+                    schedule.requireExactKeys(setOf("type", "offset_minutes", "clock"))
+                    OneTimeSchedule(schedule.requireInt("offset_minutes"), enumValueOf(schedule.requireString("clock")))
+                }
+                "interval" -> {
+                    schedule.requireExactKeys(setOf("type", "start_offset_minutes", "interval_minutes", "clock"))
+                    IntervalSchedule(
+                        schedule.requireInt("start_offset_minutes"),
+                        schedule.requireInt("interval_minutes"),
+                        enumValueOf(schedule.requireString("clock")),
+                    )
+                }
+                "daily_local" -> {
+                    schedule.requireExactKeys(setOf("type", "local_time"))
+                    DailyLocalSchedule(schedule.requireString("local_time"))
+                }
+                else -> throw IllegalArgumentException("Unknown intervention schedule")
+            },
+            root.requireInt("availability_minutes"),
+        )
+    }
+
+    private fun decodeSurvey(element: JsonElement): SurveyDefinition {
+        val root = element.requireObject("survey")
+        root.requireExactKeys(setOf("id", "title", "description", "questions"))
+        return SurveyDefinition(
+            root.requireString("id"),
+            decodeLocalizedText(root.requireObject("title")),
+            decodeLocalizedText(root.requireObject("description")),
+            root.requireArray("questions").mapElements(::decodeQuestion),
+        )
+    }
+
+    private fun decodeLocalizedText(root: JsonObject): LocalizedText {
+        root.requireExactKeys(setOf("default", "translations"))
+        val translations = root.requireObject("translations")
+        return LocalizedText(
+            root.requireString("default"),
+            translations.keySet().associateWith { language -> translations.requireString(language) },
+        )
+    }
+
+    private fun decodeQuestion(element: JsonElement): SurveyQuestion {
+        val root = element.requireObject("question")
+        val id = root.requireString("id")
+        val prompt = decodeLocalizedText(root.requireObject("prompt"))
+        val required = root.requireBoolean("required")
+        return when (root.requireString("type")) {
+            "short_text" -> {
+                root.requireExactKeys(setOf("type", "id", "prompt", "required", "maximum_length"))
+                ShortTextQuestion(id, prompt, required, root.requireInt("maximum_length"))
+            }
+            "scale" -> {
+                root.requireExactKeys(
+                    setOf("type", "id", "prompt", "required", "minimum", "maximum", "minimum_label", "maximum_label"),
+                )
+                ScaleQuestion(
+                    id,
+                    prompt,
+                    required,
+                    root.requireInt("minimum"),
+                    root.requireInt("maximum"),
+                    decodeLocalizedText(root.requireObject("minimum_label")),
+                    decodeLocalizedText(root.requireObject("maximum_label")),
+                )
+            }
+            "single_choice" -> {
+                root.requireExactKeys(setOf("type", "id", "prompt", "required", "options"))
+                SingleChoiceQuestion(id, prompt, required, root.requireArray("options").mapElements(::decodeChoice))
+            }
+            "multiple_choice" -> {
+                root.requireExactKeys(
+                    setOf("type", "id", "prompt", "required", "options", "minimum_selections", "maximum_selections"),
+                )
+                MultipleChoiceQuestion(
+                    id,
+                    prompt,
+                    required,
+                    root.requireArray("options").mapElements(::decodeChoice),
+                    root.requireInt("minimum_selections"),
+                    root.requireInt("maximum_selections"),
+                )
+            }
+            else -> throw IllegalArgumentException("Unknown survey question type")
+        }
+    }
+
+    private fun decodeChoice(element: JsonElement): ChoiceOption {
+        val root = element.requireObject("choice")
+        root.requireExactKeys(setOf("id", "label"))
+        return ChoiceOption(root.requireString("id"), decodeLocalizedText(root.requireObject("label")))
+    }
+
+    private fun encodeIntervention(writer: JsonWriter, intervention: InterventionConfiguration) {
+        writer.beginObject()
+        writer.name("id").value(intervention.id)
+        writer.name("action").beginObject()
+        when (val action = intervention.action) {
+            is NotificationAction -> writer.name("type").value("notification")
+            is SurveyAction -> writer.name("type").value("survey")
+        }
+        writer.name("notification_title").value(intervention.action.notificationTitle)
+        writer.name("notification_message").value(intervention.action.notificationMessage)
+        (intervention.action as? SurveyAction)?.let { writer.name("survey_id").value(it.surveyId) }
+        writer.endObject()
+        writer.name("triggers").beginArray()
+        intervention.triggers.forEach { trigger ->
+            writer.beginObject()
+            writer.name("id").value(trigger.id)
+            writer.name("schedule").beginObject()
+            when (val schedule = trigger.schedule) {
+                is OneTimeSchedule -> {
+                    writer.name("type").value("one_time")
+                    writer.name("offset_minutes").value(schedule.offsetMinutes)
+                    writer.name("clock").value(schedule.clock.name)
+                }
+                is IntervalSchedule -> {
+                    writer.name("type").value("interval")
+                    writer.name("start_offset_minutes").value(schedule.startOffsetMinutes)
+                    writer.name("interval_minutes").value(schedule.intervalMinutes)
+                    writer.name("clock").value(schedule.clock.name)
+                }
+                is DailyLocalSchedule -> {
+                    writer.name("type").value("daily_local")
+                    writer.name("local_time").value(schedule.localTime)
+                }
+            }
+            writer.endObject()
+            writer.name("availability_minutes").value(trigger.availabilityMinutes)
+            writer.endObject()
+        }
+        writer.endArray()
+        writer.endObject()
+    }
+
+    private fun encodeSurvey(writer: JsonWriter, survey: SurveyDefinition) {
+        writer.beginObject()
+        writer.name("id").value(survey.id)
+        writer.name("title").also { encodeLocalizedText(writer, survey.title) }
+        writer.name("description").also { encodeLocalizedText(writer, survey.description) }
+        writer.name("questions").beginArray()
+        survey.questions.forEach { encodeQuestion(writer, it) }
+        writer.endArray()
+        writer.endObject()
+    }
+
+    private fun encodeLocalizedText(writer: JsonWriter, text: LocalizedText) {
+        writer.beginObject()
+        writer.name("default").value(text.default)
+        writer.name("translations").beginObject()
+        text.translations.toSortedMap().forEach { (language, value) -> writer.name(language).value(value) }
+        writer.endObject()
+        writer.endObject()
+    }
+
+    private fun encodeQuestion(writer: JsonWriter, question: SurveyQuestion) {
+        writer.beginObject()
+        writer.name("type").value(
+            when (question) {
+                is ShortTextQuestion -> "short_text"
+                is ScaleQuestion -> "scale"
+                is SingleChoiceQuestion -> "single_choice"
+                is MultipleChoiceQuestion -> "multiple_choice"
+            },
+        )
+        writer.name("id").value(question.id)
+        writer.name("prompt").also { encodeLocalizedText(writer, question.prompt) }
+        writer.name("required").value(question.required)
+        when (question) {
+            is ShortTextQuestion -> writer.name("maximum_length").value(question.maximumLength)
+            is ScaleQuestion -> {
+                writer.name("minimum").value(question.minimum)
+                writer.name("maximum").value(question.maximum)
+                writer.name("minimum_label").also { encodeLocalizedText(writer, question.minimumLabel) }
+                writer.name("maximum_label").also { encodeLocalizedText(writer, question.maximumLabel) }
+            }
+            is SingleChoiceQuestion -> writer.name("options").also { encodeChoices(writer, question.options) }
+            is MultipleChoiceQuestion -> {
+                writer.name("options").also { encodeChoices(writer, question.options) }
+                writer.name("minimum_selections").value(question.minimumSelections)
+                writer.name("maximum_selections").value(question.maximumSelections)
+            }
+        }
+        writer.endObject()
+    }
+
+    private fun encodeChoices(writer: JsonWriter, choices: List<ChoiceOption>) {
+        writer.beginArray()
+        choices.forEach { choice ->
+            writer.beginObject()
+            writer.name("id").value(choice.id)
+            writer.name("label").also { encodeLocalizedText(writer, choice.label) }
+            writer.endObject()
+        }
+        writer.endArray()
     }
 
     private fun decodeExport(root: JsonObject): ExportConfiguration {
@@ -263,6 +485,10 @@ object StudyConfigurationCodec {
 
     private fun JsonObject.requireString(name: String): String =
         requireNotNull(get(name)).requireStringValue(name)
+
+    private fun JsonObject.requireNullableString(name: String): String? = requireNotNull(get(name)).let {
+        if (it.isJsonNull) null else it.requireStringValue(name)
+    }
 
     private fun JsonElement.requireStringValue(name: String): String {
         require(isJsonPrimitive && asJsonPrimitive.isString) { "$name must be a string" }

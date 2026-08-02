@@ -23,8 +23,7 @@
   import TextField from '$lib/ui/TextField.svelte';
   import ToggleField from '$lib/ui/ToggleField.svelte';
   import CollectorCard from './CollectorCard.svelte';
-  import PromptRow from './PromptRow.svelte';
-  import PromptTimeline from './PromptTimeline.svelte';
+  import InterventionEditor from './InterventionEditor.svelte';
   import QuotaMeter from './QuotaMeter.svelte';
   import WindowStrip from './WindowStrip.svelte';
   import { COLLECTOR_ORDER, type Draft } from './draft.svelte';
@@ -255,44 +254,8 @@
     <Note icon="info" tone="plain" text={m.researcher.study.note.disclosure} />
   </Section>
 
-  <Section id="prompts" title={section.prompts.title} icon="bell">
-    {#if configuration.prompts.length === 0}
-      <Note icon="info" tone="plain" text={m.empty.prompts} />
-    {:else}
-      <PromptTimeline
-        prompts={configuration.prompts}
-        durationHours={configuration.duration_hours}
-        label={section.prompts.title}
-      />
-      <!-- Any prompt makes notification access required for the participant. A state, not a
-           warning: --accent, not --caution. A `Chip` is a pill with a 30px floor, so a sentence
-           inside one wraps to two lines in a lozenge; `Note` is the component built for sentences. -->
-      <Note icon="bell" tone="accent" text={m.field.hint.required} />
-      {#each configuration.prompts as prompt, index (index)}
-        <PromptRow
-          {prompt}
-          {index}
-          {m}
-          unit={S.delay_minutes}
-          onremove={() => draft.removePrompt(index)}
-        />
-      {/each}
-    {/if}
-
-    <button
-      class="addtile"
-      type="button"
-      aria-label={m.action.addPrompt}
-      onclick={() =>
-        draft.addPrompt({
-          id: `prompt-${configuration.prompts.length + 1}`,
-          delay_minutes: 1_440,
-          message: ''
-        })}
-      data-testid="prompt-add"
-    >
-      <Icon name="plus" size={24} />
-    </button>
+  <Section id="interventions" title={section.interventions.title} icon="bell">
+    <InterventionEditor {draft} {m} />
   </Section>
 
   <Section id="delivery" title={section.delivery.title} lead={section.delivery.note} icon="send-auto">

@@ -74,7 +74,6 @@ export type ScaleKey =
   | 'trajectory_sampling_hz'
   | 'duration_hours'
   | 'maximum_local_bytes'
-  | 'delay_minutes'
   | 'upload_interval_minutes';
 
 /** Shape B, where control space is stored space and the ladder is the reachable set. */
@@ -230,9 +229,6 @@ export function scales(m: Messages, u: Units): Record<ScaleKey, Scale> {
       format: exactBinary
     },
 
-    // 1 min → 1 year. 12 hours used to land on 715 min, 2 days on 2 891.
-    delay_minutes: laddered(LADDERS.delay_minutes, PRESETS.delay_minutes, u.minutes),
-
     // 1 min → 7 days. 12 hours used to land on 722 min.
     upload_interval_minutes: laddered(
       LADDERS.upload_interval_minutes,
@@ -256,6 +252,5 @@ export const SCALE_BOUNDS: Record<ScaleKey, readonly [number, number]> = {
   trajectory_sampling_hz: BOUNDS.trajectorySamplingHz,
   duration_hours: BOUNDS.durationHours,
   maximum_local_bytes: [MINIMUM_LOCAL_BYTES, MAXIMUM_LOCAL_BYTES],
-  delay_minutes: BOUNDS.promptDelayMinutes,
   upload_interval_minutes: [UPLOAD_MINIMUM_INTERVAL_MINUTES, UPLOAD_MAXIMUM_INTERVAL_MINUTES]
 };

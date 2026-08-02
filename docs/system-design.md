@@ -9,8 +9,8 @@ a researcher endpoint is an option a study configuration turns on.
 ## 1. Goals and boundaries
 
 - Android 14-17 (`minSdk 34`, `compileSdk`/`targetSdk 37`).
-- A signed study configuration determines the study content, the collectors, their parameters, the
-  prompts, the local storage quota, the export public key, and whether the study uploads.
+- A signed v1 study configuration determines study content, participant identity mode, collectors,
+  localized surveys, intervention actions and triggers, local storage quota, export key, and upload.
 - Every study event is encrypted on the device before it is stored, and nothing leaves the device
   in plaintext.
 - Data reaches the researcher two ways: an export the participant directs, and — when the
@@ -73,8 +73,8 @@ flowchart LR
 | `:core:collector-api` | Collector lifecycle, health, registry, access contract, and the shared callback dispatcher |
 | `:core:crypto` | Tink HPKE key handling, wrapping, and unwrapping |
 | `:core:access` | Runtime permission, Usage Access, input-method, and hardware preflight |
-| `:core:experiment-runtime` | Command serialization, state machine, collector supervision, event admission gate |
-| `:core:study-application` | The single active-study session; recovery and coordination of the storage/access/host/work/export/upload ports, and the upload watermark |
+| `:core:experiment-runtime` | Command serialization, state machine, collector supervision, event admission gate, durable occurrence lifecycle, and atomic survey submission |
+| `:core:study-application` | The single active-study session; recovery and coordination of storage/access/host/work/export/upload ports, schedule reconciliation, and the upload watermark |
 | `:core:storage` | Android Keystore, encrypted metadata, appended event segments, reclaiming delivered ones, recovery |
 | `:core:export` | Streaming JSON/AES-GCM over a requested sequence window under an optional plaintext budget, HPKE key wrapping, and receipts |
 | `:collector:*` | One independent module per data source |
@@ -254,7 +254,8 @@ SHA-256 into an opaque file and key locator. All data lives under `noBackupFiles
 The manifest disables backup, and the cloud-backup and device-transfer rules exclude all app data.
 
 - Metadata: an `AtomicFile` in the format `ADCMET01 | random 96-bit IV | ciphertext+tag`. `ADCMET01`
-  carries the participant instance ID, the upload watermark, and the retained floor. It also holds
+  carries the fresh-per-import instance ID, optional researcher-assigned ID, upload watermark,
+  retained floor, and durable intervention occurrence states. It also holds
   `last_events`, the most recent event per collector, which is why opening a study needs no scan of
   the log to rebuild it. There is no fallback reader, so an `ADCMET01` file is refused rather than
   migrated.
@@ -268,6 +269,11 @@ The manifest disables backup, and the cloud-backup and device-transfer rules exc
 - Each frame: `sequence(u64) | ciphertextLength(u32) | random IV(12) | ciphertext+tag`.
 - The AAD binds the event format, the opaque study locator, and the sequence number.
 - Every event append is followed by an `fsync`; metadata is committed through `AtomicFile`.
+- An event plus its resulting metadata is one recoverable commit. Before appending, the store writes
+  an encrypted `ADCTXN01` journal containing the resulting metadata before the event append.
+  Recovery either completes that exact commit or
+  recognizes it as already complete, then removes the journal. This is the one write path used for
+  occurrence lifecycle events and survey submissions; there is no independent draft store.
 - The active signed configuration is held separately, under its own Keystore key, as
   `ADCACT01 | random 96-bit IV | ciphertext+tag`.
 - The local quota comes from the configuration and is bounded to 8 MiB-8 GiB. Encoded metadata is
@@ -391,7 +397,8 @@ researcherKeyId | TinkHPKEWrappedAESKey | AES-GCMCiphertext
 ```
 
 - Content: `research-bundle-v1` JSON containing the canonical configuration, the snapshot time, the
-  current state, the participant instance ID, all transitions, the events in the window, and then
+  current state, the participant instance ID, optional assigned participant ID, all transitions,
+  the events in the window, and then
   the bundle's own `first_sequence_number` and `last_sequence_number`. Those two sit *after* the
   `events` array, because a budget decides where a bundle stops while it streams; declaring the
   window up front would let a bundle claim a range it does not contain. A reader that needs the
@@ -406,7 +413,7 @@ researcherKeyId | TinkHPKEWrappedAESKey | AES-GCMCiphertext
 
 A state can be exported any number of times, and each file uses a new random key. Repeated exports
 normally overlap, so the research side should deduplicate on
-`configuration_id + collector_id + sequence_number`. In a study that has reclaimed space, an export
+`participant_instance_id + sequence_number`. In a study that has reclaimed space, an export
 starts at the retained floor instead of at 1 and its `first_sequence_number` says so, which makes
 it a window over the events still on the device rather than the whole history. The wrong private
 key, the wrong configuration, or any tampering with the header or the ciphertext leaves the bundle
@@ -437,7 +444,7 @@ a collector's health reason, so nothing that reaches a screen or a log can hold 
 response becomes `UPLOAD_HTTP_<status>`. The dashboard renders that code in place of the delivered
 count, and a collector in `FAILED` or `BLOCKED_ACCESS` shows its own reason code the same way.
 
-## 9. Background execution, prompts, and recovery
+## 9. Background execution, interventions, and recovery
 
 - `CollectionService` runs as a `specialUse` foreground service on start and resume. The `location`
   service type is added when a location collector is present and fine location has been granted.
@@ -446,15 +453,28 @@ count, and a collector in `FAILED` or `BLOCKED_ACCESS` shows its own reason code
   re-verifies the signed envelope and loads the encrypted metadata. Collectors are constructed on
   every initialization, but the admission gate, collector activation, and the foreground service are
   restored only when the persisted state was `RUNNING`.
-- Prompts are WorkManager one-time work, scheduled as a delay in minutes measured from the first
-  start. The timing is not precise and is not guaranteed.
+- Each intervention combines a reusable action with one or more triggers. Actions are localized
+  notifications or localized native surveys. Triggers are one-time offsets, repeating intervals,
+  or daily local times; each declares whether elapsed study time means calendar time or active
+  collecting time. WorkManager timing is inexact and delivery can be late.
+- `InterventionSchedulePlanner` derives every occurrence ID from configuration, intervention,
+  trigger, and logical schedule position. The ID is independent of current timezone and process
+  history. The durable occurrence record owns its scheduled instant, expiry, and lifecycle
+  (`SCHEDULED`, `POSTING`, `NOTIFICATION_POSTED`, `OPENED`, `SURVEY_SUBMITTED`, `EXPIRED`). Recovery,
+  boot, time changes, timezone changes, pause, and resume reconcile by that identity, so they do not
+  enqueue a second logical occurrence. A configuration is bounded to 512 lifetime occurrences so
+  this exact durable set remains inside the encrypted metadata ceiling.
+- A notification content intent carries only the exact occurrence ID. Opening resolves its signed
+  action from durable state. Survey answers validate against stable survey/question/option IDs and
+  commit as one immutable `SURVEY_SUBMITTED` event plus terminal occurrence state. Closing the UI
+  before that commit persists no answer or draft.
 - The study deadline is a unique WorkManager job. On expiry it moves `RUNNING` or `PAUSED` to
   `COMPLETED`.
 - `UploadWorker` is a self-renewing chain of unique one-time work rather than a
   `PeriodicWorkRequest`. Each link is enqueued with an initial delay of the configuration's
   `interval_minutes` and enqueues its successor when it finishes. The reason is that WorkManager's
   periodic floor is 15 minutes: silently clamping a shorter configured cadence would make the
-  frequency stated on the consent screen untrue. The first link goes out alongside prompts and the
+  frequency stated on the consent screen untrue. The first link goes out alongside interventions and the
   deadline when the participant starts a study that declares an endpoint.
 - Constraints are `NetworkType.UNMETERED` — `CONNECTED` when `allow_metered` is true — and
   `requiresBatteryNotLow`, with exponential backoff from 1 minute.
@@ -464,7 +484,7 @@ count, and a collector in `FAILED` or `BLOCKED_ACCESS` shows its own reason code
   not have its delay reset on every app start.
 - The worker acts in `RUNNING`, `PAUSED`, `COMPLETED`, and `WITHDRAWN`, and no-ops in every other
   state or when the active study is not the one the job was scheduled for. Finishing or withdrawing
-  cancels prompts and the deadline but leaves delivery running, so a study that has ended still
+  cancels interventions and the deadline but leaves delivery running, so a study that has ended still
   sends its undelivered tail. The chain is simply not renewed once `uploadDrained()` reports that a
   terminal study has nothing outstanding; deleting local data cancels it outright.
 - A failed run returns `Result.retry()` rather than `failure()`: the usual cause is a network or
@@ -477,6 +497,10 @@ count, and a collector in `FAILED` or `BLOCKED_ACCESS` shows its own reason code
   validity window, or app-version floor fails. A build that pins signers additionally refuses every
   signer it does not list.
 - No dynamically downloaded collector, no parsing fallback, no legacy reader.
+- The current shape remains schema v1. Earlier prompt-shaped v1 configurations are rejected; there
+  is no compatibility decoder or schema-version alias.
+- The researcher-assigned ID is present only inside the signed configuration and encrypted bundle.
+  Upload routing exposes the random per-import instance ID but never the assigned ID.
 - No plaintext study file, no plaintext export scratch file, no secret key in a log.
 - Study data leaves the device only as an HPKE-wrapped bundle, and only to a destination the
   participant chose or to the endpoint the signed configuration names. No analytics, no crash
@@ -514,6 +538,13 @@ carrying and declaring only their window, the watermark advancing on success and
 a failure not masking a collection incident, an upload before collection starting as a no-op, a
 finished study still delivering its backlog and then reporting itself drained, and a study without
 an `upload` block never contacting an endpoint.
+
+Schedule tests cover calendar and active-time one-shots, intervals, daily local time across timezone
+changes, restart reconstruction, terminal occurrences, and pause accounting. Runtime tests cover all
+four survey question types, required/optional validation, stable IDs without labels, expiry, and
+concurrent submission proving exactly one immutable event. Identity tests cover distinct import
+instance IDs, assigned-ID persistence/export, upload-header exclusion, CLI bulk uniqueness, and
+cross-language canonical bytes.
 
 The budget and streaming decryption have their own export tests: a budget stopping at an event
 boundary with the receipt naming that boundary and the bundle declaring the window it actually

@@ -16,7 +16,7 @@
  * @vitest-environment node
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -26,8 +26,10 @@ import { canonicalBytes, canonicalize } from '../src/lib/adc/canonical';
 import { encodeEnvelope } from '../src/lib/adc/envelope';
 import { fingerprint, generateSigningKeyPair, sign, verify } from '../src/lib/adc/crypto';
 import { generateHpkeKeyset } from '../src/lib/adc/tink';
+import { decodeEnvelope } from '../src/routes/researcher/parse';
 import type {
   CollectorConfig,
+  InterventionConfig,
   NetworkTransport,
   StudyConfiguration,
   TinkKeyset
@@ -39,13 +41,18 @@ const CLI = join(REPOSITORY, 'researcher-tools/build/install/researcher-tools/bi
 let workspace = '';
 let sequence = 0;
 
-beforeAll(() => {
-  if (!existsSync(CLI)) {
-    execFileSync(join(REPOSITORY, 'gradlew'), [':researcher-tools:installDist'], {
-      cwd: REPOSITORY,
-      stdio: 'inherit'
-    });
-  }
+beforeAll(async () => {
+  await new Promise<void>((resolve, reject) => {
+    execFile(
+      join(REPOSITORY, 'gradlew'),
+      [':researcher-tools:installDist'],
+      { cwd: REPOSITORY },
+      (error, stdout, stderr) => {
+        if (!error) resolve();
+        else reject(new Error(`researcher-tools build failed\n${stderr || stdout || error.message}`));
+      }
+    );
+  });
   workspace = mkdtempSync(join(tmpdir(), 'adc-compat-'));
 }, 600_000);
 
@@ -127,6 +134,7 @@ const BASE: StudyConfiguration = {
   schema_version: 1,
   experiment_id: 'compat-harness',
   configuration_id: 'compat-case-001',
+  assigned_participant_id: null,
   issued_at: '2026-01-01T00:00:00Z',
   expires_at: '2035-01-01T00:00:00Z',
   minimum_app_version: 1,
@@ -136,7 +144,8 @@ const BASE: StudyConfiguration = {
   duration_hours: 24,
   consent: { document_version: 'harness-1', summary: 'A fixture. Nothing is collected.' },
   collectors: [{ id: 'app_lifecycle.v1', required: true, config: {} }],
-  prompts: [],
+  surveys: [],
+  interventions: [],
   storage: { maximum_local_bytes: 16 * 1024 * 1024 },
   signer: { key_id: 'compat-signer', public_key: DEMO_PUBLIC_KEY },
   export: { researcher_key_id: 'compat-hpke', tink_hpke_public_keyset: DEMO_KEYSET },
@@ -145,6 +154,23 @@ const BASE: StudyConfiguration = {
 
 function study(overrides: Partial<StudyConfiguration>): StudyConfiguration {
   return { ...BASE, ...overrides };
+}
+
+function notification(
+  id: string,
+  offsetMinutes: number,
+  message: string,
+  availabilityMinutes = 1_440
+): InterventionConfig {
+  return {
+    id,
+    action: { type: 'notification', notification_title: 'Study notice', notification_message: message },
+    triggers: [{
+      id: `${id.slice(0, 56)}-trigger`,
+      schedule: { type: 'one_time', offset_minutes: offsetMinutes, clock: 'CALENDAR_TIME' },
+      availability_minutes: availabilityMinutes
+    }]
+  };
 }
 
 function everyCollector(required: boolean): CollectorConfig[] {
@@ -236,6 +262,7 @@ const DEMO: StudyConfiguration = {
   schema_version: 1,
   experiment_id: 'modular-sensing-demo',
   configuration_id: 'demo-config-2026',
+  assigned_participant_id: null,
   issued_at: '2026-01-01T00:00:00Z',
   expires_at: '2035-01-01T00:00:00Z',
   minimum_app_version: 1,
@@ -279,13 +306,8 @@ const DEMO: StudyConfiguration = {
     },
     { id: 'keyboard_touch.v1', required: false, config: { trajectory_sampling_hz: 60 } }
   ],
-  prompts: [
-    {
-      id: 'demo-check-in',
-      delay_minutes: 60,
-      message: 'Please check that the study is still running as expected.'
-    }
-  ],
+  surveys: [],
+  interventions: [notification('demo-check-in', 60, 'Please check that the study is still running as expected.')],
   storage: { maximum_local_bytes: 16_777_216 },
   signer: { key_id: 'demo-signer-2026', public_key: DEMO_PUBLIC_KEY },
   export: { researcher_key_id: 'demo-hpke-2026', tink_hpke_public_keyset: DEMO_KEYSET },
@@ -304,12 +326,12 @@ const DISPLACEMENTS = [
 const CASES: Array<{ name: string; configuration: StudyConfiguration }> = [
   { name: 'the demonstration study the CLI ships', configuration: DEMO },
   {
-    name: 'every collector, all required, with upload and prompts',
+    name: 'every collector, all required, with upload and interventions',
     configuration: study({
       collectors: everyCollector(true),
-      prompts: [
-        { id: 'check-in-one', delay_minutes: 60, message: 'Still running?' },
-        { id: 'check-in-two', delay_minutes: 1_440, message: '研究の確認 😀' }
+      interventions: [
+        notification('check-in-one', 60, 'Still running?'),
+        notification('check-in-two', 1_200, '研究の確認 😀')
       ],
       upload: {
         endpoint: 'https://uploads.example.invalid/v1',
@@ -319,8 +341,8 @@ const CASES: Array<{ name: string; configuration: StudyConfiguration }> = [
     })
   },
   {
-    name: 'every collector, none required, no upload, no prompts',
-    configuration: study({ collectors: everyCollector(false), prompts: [], upload: null })
+    name: 'every collector, none required, no upload, no interventions',
+    configuration: study({ collectors: everyCollector(false), interventions: [], upload: null })
   },
 
   ...everyCollector(true).map((collector) => ({
@@ -344,7 +366,7 @@ const CASES: Array<{ name: string; configuration: StudyConfiguration }> = [
       researcher: { name: '林\t"Lin"\\研究員 😀', contact: 'mail@example.invalid\n<研究>' },
       purpose: NASTY,
       consent: { document_version: 'v1\\"研究"', summary: NASTY },
-      prompts: [{ id: 'nasty-prompt', delay_minutes: 5, message: NASTY.slice(0, 200) }],
+      interventions: [notification('nasty-notice', 5, NASTY.slice(0, 500))],
       upload: {
         endpoint: 'https://uploads.example.invalid/v1?a=b&c=d#研究',
         interval_minutes: 15,
@@ -406,7 +428,7 @@ const CASES: Array<{ name: string; configuration: StudyConfiguration }> = [
         },
         { id: 'keyboard_touch.v1', required: false, config: { trajectory_sampling_hz: 1 } }
       ],
-      prompts: [{ id: 'a-b', delay_minutes: 1, message: 'M' }],
+      interventions: [notification('a-b', 0, 'M', 1)],
       upload: { endpoint: 'https://a', interval_minutes: 1, allow_metered: false }
     })
   },
@@ -448,7 +470,7 @@ const CASES: Array<{ name: string; configuration: StudyConfiguration }> = [
         },
         { id: 'keyboard_touch.v1', required: true, config: { trajectory_sampling_hz: 120 } }
       ],
-      prompts: [{ id: `p${'-q8'.repeat(21)}`, delay_minutes: 525_600, message: 'M'.repeat(500) }],
+      interventions: [notification(`p${'-q8'.repeat(21)}`, 525_599, 'M'.repeat(500), 525_600)],
       upload: {
         endpoint: `https://e.invalid/${'a'.repeat(2_030)}`,
         interval_minutes: 10_080,
@@ -462,14 +484,22 @@ const CASES: Array<{ name: string; configuration: StudyConfiguration }> = [
   { name: 'transports: written in the other order', configuration: usage(['wifi', 'mobile']) },
   { name: 'transports: repeated', configuration: usage(['wifi', 'wifi']) },
 
-  { name: 'prompts: absent', configuration: study({ prompts: [] }) },
+  { name: 'interventions: absent', configuration: study({ interventions: [] }) },
   {
-    name: 'prompts: three of them, at both delay bounds',
+    name: 'interventions: one-time, interval, and local daily schedules',
     configuration: study({
-      prompts: [
-        { id: 'first-prompt', delay_minutes: 1, message: 'A' },
-        { id: 'second-prompt', delay_minutes: 262_800, message: '請確認研究仍在執行 😀' },
-        { id: 'third-prompt', delay_minutes: 525_600, message: 'Z'.repeat(500) }
+      interventions: [
+        notification('first-notice', 0, 'A'),
+        {
+          id: 'interval-notice',
+          action: { type: 'notification', notification_title: 'Check in', notification_message: 'B' },
+          triggers: [{ id: 'every-six-hours', schedule: { type: 'interval', start_offset_minutes: 60, interval_minutes: 360, clock: 'ACTIVE_RUNNING_TIME' }, availability_minutes: 120 }]
+        },
+        {
+          id: 'daily-notice',
+          action: { type: 'notification', notification_title: 'Check in', notification_message: '請確認研究仍在執行 😀' },
+          triggers: [{ id: 'local-evening', schedule: { type: 'daily_local', local_time: '20:30' }, availability_minutes: 720 }]
+        }
       ]
     })
   },
@@ -587,7 +617,7 @@ describe('a browser-made .adccfg is one the app accepts', () => {
         title: '瀏覽器簽署的研究 😀 "end to end"',
         consent: { document_version: 'e2e-1', summary: NASTY },
         collectors: everyCollector(true),
-        prompts: [{ id: 'e2e-prompt', delay_minutes: 30, message: '請確認 😀' }],
+        interventions: [notification('e2e-notice', 30, '請確認 😀')],
         signer: { key_id: keyId, public_key: signing.publicX509Base64 },
         export: { researcher_key_id: 'browser-hpke', tink_hpke_public_keyset: hpke.publicKeyset },
         upload: {
@@ -651,6 +681,68 @@ describe('a browser-made .adccfg is one the app accepts', () => {
         cliEnvelopePath
       );
       expect(difference(envelope, readFileSync(cliEnvelopePath))).toBe('identical');
+    },
+    120_000
+  );
+
+  it(
+    'bulk-personalizes unique configurations without putting assigned codes in filenames',
+    () => {
+      const signing = generateSigningKeyPair();
+      const directory = scratch();
+      const config = study({
+        configuration_id: 'personalization-template',
+        signer: { key_id: 'personalize-signer', public_key: signing.publicX509Base64 }
+      });
+      const configPath = join(directory, 'template.json');
+      const privatePath = join(directory, 'signer.key');
+      const mappingPath = join(directory, 'mapping.tsv');
+      const output = join(directory, 'artifacts');
+      writeFileSync(configPath, canonicalBytes(config));
+      writeFileSync(privatePath, signing.privatePkcs8Base64, 'utf8');
+      writeFileSync(mappingPath, 'arm-a-config\tAssigned_A-017\narm-b-config\tAssigned_B-018\n', 'utf8');
+
+      const canonicalWithId = join(directory, 'personalized.json');
+      runCli(
+        'canonicalize', '--input', configPath, '--output', canonicalWithId,
+        '--assigned-participant-id', 'Assigned_C-019'
+      );
+      expect(JSON.parse(readFileSync(canonicalWithId, 'utf8')).assigned_participant_id).toBe('Assigned_C-019');
+
+      const signedWithId = join(directory, 'personalized.adccfg');
+      runCli(
+        'sign', '--config', configPath, '--private', privatePath,
+        '--key-id', 'personalize-signer', '--output', signedWithId,
+        '--assigned-participant-id', 'Assigned_D-020'
+      );
+      const signedConfiguration = JSON.parse(
+        new TextDecoder().decode(decodeEnvelope(readFileSync(signedWithId)).configurationBytes)
+      );
+      expect(signedConfiguration.assigned_participant_id).toBe('Assigned_D-020');
+
+      expect(runCli(
+        'personalize', '--config', configPath, '--mapping', mappingPath,
+        '--private', privatePath, '--key-id', 'personalize-signer', '--output-dir', output
+      )).toContain('personalized 2 configurations');
+      const first = JSON.parse(readFileSync(join(output, 'arm-a-config.json'), 'utf8'));
+      const second = JSON.parse(readFileSync(join(output, 'arm-b-config.json'), 'utf8'));
+      expect(first.assigned_participant_id).toBe('Assigned_A-017');
+      expect(second.assigned_participant_id).toBe('Assigned_B-018');
+      expect(first.configuration_id).not.toBe(second.configuration_id);
+      expect(existsSync(join(output, 'Assigned_A-017.adccfg'))).toBe(false);
+      expect(runCli(
+        'check-config', '--envelope', join(output, 'arm-a-config.adccfg'),
+        '--now', '2026-06-01T00:00:00Z'
+      )).toContain('valid compat-harness arm-a-config');
+
+      const duplicateMapping = join(directory, 'duplicate.tsv');
+      writeFileSync(duplicateMapping, 'same-config\tAssigned_A\nsame-config\tAssigned_B\n', 'utf8');
+      expect(() => runCli(
+        'personalize', '--config', configPath, '--mapping', duplicateMapping,
+        '--private', privatePath, '--key-id', 'personalize-signer',
+        '--output-dir', join(directory, 'duplicate-output')
+      )).toThrow(/Duplicate configuration ID/);
+      expect(existsSync(join(directory, 'duplicate-output'))).toBe(false);
     },
     120_000
   );

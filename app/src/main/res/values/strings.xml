@@ -7,6 +7,20 @@
 <resources>
     <!-- A product name, not prose: the same in every locale. -->
     <string name="app_name" translatable="false">Android Data Collector</string>
+    <string name="intervention_channel">Research activities</string>
+    <string name="survey_title">Survey</string>
+    <string name="survey_loading">Opening survey…</string>
+    <string name="survey_required">Required</string>
+    <string name="survey_optional">Optional</string>
+    <string name="survey_submit">Submit once</string>
+    <string name="survey_close">Close</string>
+    <string name="survey_cancel">Keep reviewing</string>
+    <string name="survey_confirm_title">Submit this response?</string>
+    <string name="survey_confirm_body">A submitted response is final. You can review it, but you cannot change or submit it again.</string>
+    <string name="survey_submitted">Submitted. This response is now read-only.</string>
+    <string name="survey_expired">This survey occurrence has expired and cannot be submitted.</string>
+    <string name="survey_invalid">Complete the required questions and check each answer.</string>
+    <string name="survey_unavailable">This survey occurrence is unavailable.</string>
 
     <!-- Header -->
     <string name="header_no_study">Research Data Collector</string>
@@ -101,6 +115,12 @@
     <string name="consent_signature_anchored">This app trusts this signer.</string>
     <string name="consent_signature_compare">Check this against the fingerprint your research team published.</string>
     <string name="consent_signature_unverified">A signature shows the file has not been altered since it was signed. It does not show who wrote it.</string>
+    <string name="consent_identity_anonymous_title">Anonymous or pseudonymous study</string>
+    <string name="consent_identity_anonymous_body">This configuration contains no researcher-assigned participant code.</string>
+    <string name="consent_identity_personalized_title">Personalized study</string>
+    <string name="consent_identity_assigned_code">Your assigned code: %1$s</string>
+    <string name="consent_identity_personalized_body">Check this opaque code against the one the research team gave you. The app does not ask for your name, email, or phone number.</string>
+    <string name="consent_identity_instance_body">This import also gets a separate random installation code. It links this installation’s encrypted chunks and distinguishes repeated imports.</string>
 
     <string name="consent_upload_none_title">This study does not send data automatically</string>
     <string name="consent_upload_none_body">What it collects stays on this phone until you export it yourself.</string>
@@ -147,6 +167,8 @@
     <!-- Details, behind a toggle: identifiers matter when something goes wrong and are noise otherwise -->
     <string name="details_configuration">Configuration</string>
     <string name="details_consent_document">Consent document</string>
+    <string name="details_instance_id">Installation code</string>
+    <string name="details_assigned_id">Assigned code</string>
     <string name="details_signature">Signature</string>
     <string name="details_last_export">Last export</string>
     <string name="details_last_export_value">%1$s events · %2$s</string>

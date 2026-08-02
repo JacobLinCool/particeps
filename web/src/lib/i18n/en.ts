@@ -26,7 +26,6 @@ export const en: Messages = {
     download: 'Download',
     copy: 'Copy',
     importDraft: 'Import JSON',
-    addPrompt: 'Add prompt',
     back: 'Back',
     next: 'Next',
     confirmSaved: 'I have the file',
@@ -34,6 +33,43 @@ export const en: Messages = {
     startOver: 'Start over',
     confirm: 'Confirm',
     cancel: 'Cancel'
+  },
+
+  intervention: {
+    title: 'Interventions and surveys',
+    empty: 'No scheduled activities.',
+    notificationTiming: 'Android notification timing is best effort, not an exact wall-clock instant.',
+    anonymous: 'Anonymous / pseudonymous',
+    personalized: 'Personalized',
+    assignedId: 'Assigned participant code',
+    addNotification: 'Add notification',
+    addSurvey: 'Add survey',
+    addQuestion: 'Add question',
+    addTrigger: 'Add schedule',
+    survey: 'Survey',
+    surveyTitle: 'Survey title',
+    surveyDescription: 'Survey description',
+    question: 'Question ID',
+    questionType: 'Question type',
+    prompt: 'Question text',
+    required: 'Required',
+    maximumLength: 'Maximum characters',
+    scaleBounds: 'Scale minimum / maximum',
+    endpointLabels: 'Endpoint labels',
+    options: 'Options (stable ID | label, one per line)',
+    selectionBounds: 'Minimum / maximum selections',
+    notificationTitle: 'Notification title',
+    notificationMessage: 'Notification message',
+    trigger: 'Schedule ID',
+    scheduleType: 'Schedule type',
+    clock: 'Relative clock',
+    offset: 'Offset in minutes',
+    interval: 'Interval in minutes',
+    localTime: 'Local time',
+    availability: 'Available for minutes',
+    types: { shortText: 'Short text', scale: 'Numeric scale', singleChoice: 'Single choice', multipleChoice: 'Multiple choice' },
+    schedules: { oneTime: 'One time', interval: 'Recurring interval', dailyLocal: 'Daily local time' },
+    clocks: { calendar: 'Calendar time (pauses included)', active: 'Running time (pauses excluded)' }
   },
 
   control: {
@@ -106,9 +142,6 @@ export const en: Messages = {
       displacement: 'Minimum displacement',
       priority: 'Priority',
       trajectoryRate: 'Trajectory sampling',
-      promptId: 'Prompt ID',
-      promptDelay: 'Delay',
-      promptMessage: 'Message',
       upload: 'Scheduled upload',
       endpoint: 'Endpoint',
       uploadInterval: 'Interval',
@@ -139,7 +172,6 @@ export const en: Messages = {
       fastestInterval: 'Never longer than the interval.',
       batchDelay: 'Higher means fewer, larger deliveries.',
       priority: 'Both need precise location. High accuracy uses GPS.',
-      promptDelay: 'From the first start. Delivery is inexact.',
       endpoint: 'https, and yours to run.',
       allowMetered: 'Off means Wi-Fi only. Mobile data is a cost nobody agreed to.'
     }
@@ -206,7 +238,11 @@ export const en: Messages = {
       `The whole configuration must stay under ${number.format(max)} bytes`,
     signer_missing: 'Generate the signing key first',
     export_key_missing: 'Generate the export key first',
-    keyset_unusable: 'Not a keyset the app can encrypt to. Generate or import the export key again'
+    keyset_unusable: 'Not a keyset the app can encrypt to. Generate or import the export key again',
+    language_tag: 'Use a valid BCP 47 language tag',
+    unknown_reference: 'Choose a survey defined in this configuration',
+    selection_bounds: 'Selection limits do not match this question',
+    schedule_bounds: 'This schedule is outside the study or creates too many occurrences'
   },
 
   status: {
@@ -217,7 +253,6 @@ export const en: Messages = {
   },
 
   empty: {
-    prompts: 'None. Most studies need none.',
     files: 'Nothing to hand out until the configuration is signed.'
   },
 
@@ -245,8 +280,6 @@ export const en: Messages = {
 
   researcher: {
     title: 'Prepare a study',
-    beyond:
-      'After the study ends. This prompt will never reach a participant who finishes on time.',
     lede: 'Keys, study, and signature, in this tab. Nothing leaves it.',
     how: {
       file: {
@@ -305,7 +338,7 @@ export const en: Messages = {
         validity: { title: 'How long does this run?' },
         collectors: { title: 'Data' },
         consent: { title: 'Consent' },
-        prompts: { title: 'Prompts' },
+        interventions: { title: 'Interventions' },
         delivery: {
           title: 'Delivery',
           note: 'With this off, data only leaves when they export it.'

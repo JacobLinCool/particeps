@@ -23,6 +23,33 @@ import org.junit.Test
 
 class ResearchExportTest {
     @Test
+    fun personalizedExportEncryptsAssignedAndInstanceIdentifiersTogether() = runBlocking {
+        val keys = HpkeCrypto.generateKeyset()
+        val configuration = configuration(keys.publicKeysetJson).copy(assignedParticipantId = "arm-a-017")
+        val time = ResearchTime(1_000, 2_000, "boot-test")
+        val event = RecordedEvent(1, "app_lifecycle.v1", 1, time, "ACTIVITY_RESUMED", emptyMap())
+        val metadata = StudyMetadata.initial(
+            "export-test",
+            "export-config",
+            assignedParticipantId = "arm-a-017",
+            participantInstanceId = "00000000-0000-4000-8000-000000000017",
+        ).copy(
+            state = ExperimentState.RUNNING,
+            eventCount = 1,
+            nextSequenceNumber = 2,
+            lastEvents = mapOf(event.collectorId to event),
+        )
+        val encrypted = ByteArrayOutputStream()
+        ResearchExport.encrypt(ExportSnapshot(configuration, metadata, 10_000), SnapshotStore(metadata, listOf(event)), encrypted)
+
+        val plaintext = ResearchExport.decrypt(encrypted.toByteArray(), keys.privateKeysetJson, configuration)
+            .toString(Charsets.UTF_8)
+        assertTrue(plaintext.contains("\"assigned_participant_id\":\"arm-a-017\""))
+        assertTrue(plaintext.contains("\"participant_instance_id\":\"${metadata.participantInstanceId}\""))
+        assertFalse(encrypted.toByteArray().toString(Charsets.ISO_8859_1).contains("arm-a-017"))
+    }
+
+    @Test
     fun repeatedExportsAreIndependentDecryptableSnapshotsWithoutAStateTransition() = runBlocking {
         val keys = HpkeCrypto.generateKeyset()
         val configuration = configuration(keys.publicKeysetJson)
@@ -248,6 +275,7 @@ class ResearchExportTest {
         override suspend fun initialize(metadata: StudyMetadata) { this.metadata = metadata }
         override suspend fun saveMetadata(metadata: StudyMetadata) { this.metadata = metadata }
         override suspend fun appendEvent(event: RecordedEvent) { storedEvents += event }
+        override suspend fun appendEventAtomically(event: RecordedEvent, metadata: StudyMetadata) { storedEvents += event }
         override suspend fun readEvents(
             fromSequenceInclusive: Long,
             upToSequenceInclusive: Long,
@@ -269,6 +297,7 @@ class ResearchExportTest {
         schemaVersion = StudyConfiguration.CURRENT_SCHEMA_VERSION,
         experimentId = "export-test",
         configurationId = "export-config",
+        assignedParticipantId = null,
         issuedAt = Instant.parse("2026-01-01T00:00:00Z"),
         expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
         minimumAppVersion = 1,
@@ -280,7 +309,8 @@ class ResearchExportTest {
         consentDocumentVersion = "v1",
         consentSummary = "Export test consent.",
         collectors = listOf(AppLifecycleConfiguration(true)),
-        prompts = emptyList(),
+        surveys = emptyList(),
+        interventions = emptyList(),
         maximumLocalBytes = 16_777_216,
         signer = SignerIdentity("test-signer", TEST_SIGNER_PUBLIC_KEY),
         export = ExportConfiguration("export-key", publicKeyset),
