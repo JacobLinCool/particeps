@@ -78,26 +78,43 @@ for (const [name, catalogue, locale] of CATALOGUES) {
     for (const key of keys) {
       const scale = S[key];
 
+      /**
+       * The lattice is walked in plain JavaScript and asserted once at the end, rather than through
+       * one `expect` per value. Displacement alone has 100 001 stops, and four matchers apiece is
+       * 400 000 matcher contexts — enough to pass on a developer's machine in a second and time out
+       * on a CI runner at five. The coverage is identical; only the accounting is cheap.
+       */
       it(`${key} round-trips every value the control can produce`, () => {
+        const broken: string[] = [];
         for (const human of lattice(scale)) {
-          expect(scale.toHuman(scale.toStored(human)), `${key} at ${human}`).toBe(human);
+          const back = scale.toHuman(scale.toStored(human));
+          if (back !== human) broken.push(`${human} came back as ${back}`);
         }
+        expect(broken.slice(0, 8), `${key}: ${broken.length} of its stops do not round-trip`).toEqual(
+          []
+        );
       });
 
       it(`${key} stores something the encoder can write`, () => {
         const [low, high] = SCALE_BOUNDS[key];
+        const broken: string[] = [];
         for (const human of lattice(scale)) {
           const stored = scale.toStored(human);
-          expect(stored, `${key} at ${human}`).toBeGreaterThanOrEqual(low);
-          expect(stored, `${key} at ${human}`).toBeLessThanOrEqual(high);
-          if (key === 'minimum_displacement_meters') {
+          if (stored < low || stored > high) {
+            broken.push(`${human} stores ${stored}, outside ${low}..${high}`);
+          } else if (key === 'minimum_displacement_meters') {
             // A Float, and the shortest decimal that round-trips to it is what the file carries.
-            expect(Math.fround(stored)).toBe(stored);
-            expect(Number(formatFloat(stored)), `${key} at ${human}`).toBe(human);
-          } else {
-            expect(Number.isInteger(stored), `${key} at ${human} stored ${stored}`).toBe(true);
+            if (Math.fround(stored) !== stored) broken.push(`${human} stores a non-float32`);
+            else if (Number(formatFloat(stored)) !== human) {
+              broken.push(`${human} writes as ${formatFloat(stored)}`);
+            }
+          } else if (!Number.isInteger(stored)) {
+            broken.push(`${human} stores ${stored}, which is not an integer`);
           }
         }
+        expect(broken.slice(0, 8), `${key}: ${broken.length} of its stops are unencodable`).toEqual(
+          []
+        );
       });
 
       it(`${key} can reach every value on its chip row`, () => {
