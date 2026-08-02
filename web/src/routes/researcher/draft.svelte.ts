@@ -48,7 +48,8 @@ import {
   ID_PATTERN,
   type CollectorConfig,
   type CollectorId,
-  type PromptConfig,
+  type InterventionConfig,
+  type SurveyDefinition,
   type StudyConfiguration
 } from '$lib/adc/types';
 import type { StepState } from '$lib/ui/types';
@@ -88,7 +89,9 @@ function studyStarted(configuration: StudyConfiguration): boolean {
     configuration.consent.document_version !== '' ||
     configuration.consent.summary !== '' ||
     configuration.collectors.length > 0 ||
-    configuration.prompts.length > 0 ||
+    configuration.surveys.length > 0 ||
+    configuration.interventions.length > 0 ||
+    configuration.assigned_participant_id !== null ||
     configuration.upload !== null
   );
 }
@@ -166,7 +169,7 @@ export function createDraft() {
 
   /**
    * What is validated, canonicalised, signed, and downloaded. Never the editable object: the spread
-   * is shallow, so `collectors` and `prompts` pass through by reference as the `$state` proxies they
+   * is shallow, so collection and intervention arrays pass through as the `$state` proxies they
    * are and stay reactive.
    *
    * `signer` and `export` are the exception — they are replaced by fresh literals above, so that
@@ -457,12 +460,24 @@ export function createDraft() {
       if (index >= 0) configuration.collectors.splice(index, 1);
     },
 
-    addPrompt(prompt: PromptConfig) {
-      configuration.prompts.push(prompt);
+    addSurvey(survey: SurveyDefinition) {
+      configuration.surveys.push(survey);
     },
 
-    removePrompt(index: number) {
-      configuration.prompts.splice(index, 1);
+    removeSurvey(index: number) {
+      const removed = configuration.surveys[index]?.id;
+      configuration.surveys.splice(index, 1);
+      configuration.interventions = configuration.interventions.filter(
+        (item) => item.action.type !== 'survey' || item.action.survey_id !== removed
+      );
+    },
+
+    addIntervention(intervention: InterventionConfig) {
+      configuration.interventions.push(intervention);
+    },
+
+    removeIntervention(index: number) {
+      configuration.interventions.splice(index, 1);
     },
 
     generateSigning,

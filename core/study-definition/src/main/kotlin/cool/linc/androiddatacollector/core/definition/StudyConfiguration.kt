@@ -16,8 +16,11 @@ data class StudyConfiguration(
     val durationHours: Int,
     val consentDocumentVersion: String,
     val consentSummary: String,
+    /** Researcher-assigned opaque code. Null means anonymous/pseudonymous distribution. */
+    val assignedParticipantId: String?,
     val collectors: List<CollectorConfiguration>,
-    val prompts: List<PromptConfiguration>,
+    val surveys: List<SurveyDefinition>,
+    val interventions: List<InterventionConfiguration>,
     val maximumLocalBytes: Long,
     val signer: SignerIdentity,
     val export: ExportConfiguration,
@@ -36,9 +39,29 @@ data class StudyConfiguration(
         require(durationHours in 1..8_760) { "Invalid study duration" }
         require(consentDocumentVersion.length in 1..64) { "Invalid consent document version" }
         require(consentSummary.length in 1..8_000) { "Invalid consent summary" }
+        assignedParticipantId?.let {
+            require(ASSIGNED_PARTICIPANT_ID.matches(it) && it.toByteArray().size <= 64) {
+                "Invalid assigned participant ID"
+            }
+        }
         require(collectors.isNotEmpty()) { "At least one collector is required" }
         require(collectors.map { it.id }.distinct().size == collectors.size) { "Duplicate collector ID" }
-        require(prompts.map { it.id }.distinct().size == prompts.size) { "Duplicate prompt ID" }
+        require(surveys.map { it.id }.distinct().size == surveys.size) { "Duplicate survey ID" }
+        require(interventions.map { it.id }.distinct().size == interventions.size) { "Duplicate intervention ID" }
+        require(interventions.flatMap { intervention -> intervention.triggers.map { it.id } }.let {
+            it.distinct().size == it.size
+        }) { "Duplicate intervention trigger ID" }
+        var maximumOccurrenceCount = 0L
+        interventions.forEach { intervention ->
+            intervention.triggers.forEach { it.schedule.requireWithin(durationHours * 60) }
+            maximumOccurrenceCount += intervention.triggers.sumOf {
+                it.schedule.maximumOccurrences(durationHours * 60)
+            }
+            (intervention.action as? SurveyAction)?.let { action ->
+                require(surveys.any { it.id == action.surveyId }) { "Unknown survey ID" }
+            }
+        }
+        require(maximumOccurrenceCount <= MAXIMUM_OCCURRENCES) { "Too many intervention occurrences" }
         require(maximumLocalBytes in MINIMUM_LOCAL_BYTES..MAXIMUM_LOCAL_BYTES) { "Invalid local quota" }
     }
 
@@ -59,6 +82,8 @@ data class StudyConfiguration(
         const val MINIMUM_LOCAL_BYTES = 8L shl 20
         const val MAXIMUM_LOCAL_BYTES = 8L shl 30
         val ID = Regex("[a-z0-9][a-z0-9-]{2,63}")
+        val ASSIGNED_PARTICIPANT_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+        const val MAXIMUM_OCCURRENCES = 512L
     }
 }
 
@@ -164,16 +189,217 @@ data class KeyboardTouchConfiguration(
     companion object { const val ID = "keyboard_touch.v1" }
 }
 
-data class PromptConfiguration(
+data class InterventionConfiguration(
     val id: String,
-    val delayMinutes: Int,
-    val message: String,
+    val action: InterventionAction,
+    val triggers: List<InterventionTrigger>,
 ) {
     init {
-        require(StudyConfiguration.ID.matches(id)) { "Invalid prompt ID" }
-        require(delayMinutes in 1..525_600) { "Invalid prompt delay" }
-        require(message.length in 1..500) { "Invalid prompt message" }
+        require(StudyConfiguration.ID.matches(id)) { "Invalid intervention ID" }
+        require(triggers.isNotEmpty()) { "An intervention needs at least one trigger" }
+        require(triggers.map { it.id }.distinct().size == triggers.size) { "Duplicate trigger ID" }
     }
+}
+
+sealed interface InterventionAction {
+    val notificationTitle: String
+    val notificationMessage: String
+}
+
+data class NotificationAction(
+    override val notificationTitle: String,
+    override val notificationMessage: String,
+) : InterventionAction {
+    init { validateNotificationText(notificationTitle, notificationMessage) }
+}
+
+data class SurveyAction(
+    override val notificationTitle: String,
+    override val notificationMessage: String,
+    val surveyId: String,
+) : InterventionAction {
+    init {
+        validateNotificationText(notificationTitle, notificationMessage)
+        require(StudyConfiguration.ID.matches(surveyId)) { "Invalid survey ID" }
+    }
+}
+
+private fun validateNotificationText(title: String, message: String) {
+    require(title.length in 1..120) { "Invalid notification title" }
+    require(message.length in 1..500) { "Invalid notification message" }
+}
+
+data class InterventionTrigger(
+    val id: String,
+    val schedule: InterventionSchedule,
+    val availabilityMinutes: Int,
+) {
+    init {
+        require(StudyConfiguration.ID.matches(id)) { "Invalid trigger ID" }
+        require(availabilityMinutes in 1..525_600) { "Invalid availability window" }
+    }
+}
+
+sealed interface InterventionSchedule {
+    fun requireWithin(studyMinutes: Int)
+    fun maximumOccurrences(studyMinutes: Int): Long
+}
+
+enum class RelativeClock { CALENDAR_TIME, ACTIVE_RUNNING_TIME }
+
+data class OneTimeSchedule(
+    val offsetMinutes: Int,
+    val clock: RelativeClock,
+) : InterventionSchedule {
+    init { require(offsetMinutes >= 0) { "Invalid one-time offset" } }
+    override fun requireWithin(studyMinutes: Int) {
+        require(offsetMinutes < studyMinutes) { "One-time trigger is outside the study" }
+    }
+    override fun maximumOccurrences(studyMinutes: Int) = 1L
+}
+
+data class IntervalSchedule(
+    val startOffsetMinutes: Int,
+    val intervalMinutes: Int,
+    val clock: RelativeClock,
+) : InterventionSchedule {
+    init {
+        require(startOffsetMinutes >= 0) { "Invalid interval start" }
+        require(intervalMinutes in 1..525_600) { "Invalid trigger interval" }
+    }
+    override fun requireWithin(studyMinutes: Int) {
+        require(startOffsetMinutes < studyMinutes) { "Interval trigger is outside the study" }
+    }
+    override fun maximumOccurrences(studyMinutes: Int): Long =
+        (studyMinutes - startOffsetMinutes + intervalMinutes - 1L) / intervalMinutes
+}
+
+data class DailyLocalSchedule(
+    /** Strict 24-hour local time, `HH:mm`. */
+    val localTime: String,
+) : InterventionSchedule {
+    init { require(LOCAL_TIME.matches(localTime)) { "Invalid daily local time" } }
+    override fun requireWithin(studyMinutes: Int) = Unit
+    override fun maximumOccurrences(studyMinutes: Int): Long = (studyMinutes + 1_439L) / 1_440L + 1
+
+    companion object { private val LOCAL_TIME = Regex("(?:[01][0-9]|2[0-3]):[0-5][0-9]") }
+}
+
+data class SurveyDefinition(
+    val id: String,
+    val title: LocalizedText,
+    val description: LocalizedText,
+    val questions: List<SurveyQuestion>,
+) {
+    init {
+        require(StudyConfiguration.ID.matches(id)) { "Invalid survey ID" }
+        require(questions.size in 1..100) { "Invalid survey question count" }
+        require(questions.map { it.id }.distinct().size == questions.size) { "Duplicate survey question ID" }
+    }
+}
+
+data class LocalizedText(
+    val default: String,
+    val translations: Map<String, String> = emptyMap(),
+) {
+    init {
+        require(default.length in 1..2_000) { "Invalid default localized text" }
+        require(translations.size <= 32) { "Too many localized values" }
+        require(translations.keys.map(String::lowercase).distinct().size == translations.size) {
+            "Duplicate localized language tag"
+        }
+        translations.forEach { (language, value) ->
+            require(BCP47.matches(language)) { "Invalid language tag" }
+            require(value.length in 1..2_000) { "Invalid localized text" }
+        }
+    }
+    fun resolve(languageTag: String): String {
+        translations.entries.firstOrNull { it.key.equals(languageTag, ignoreCase = true) }?.let { return it.value }
+        val requested = languageTag.lowercase().split('-')
+        return translations.entries
+            .filter { it.key.substringBefore('-').equals(requested.first(), ignoreCase = true) }
+            .sortedByDescending { it.key.count { character -> character == '-' } }
+            .firstOrNull { (tag) -> tag.lowercase().split('-').drop(1).all(requested::contains) }
+            ?.value
+            ?: default
+    }
+    companion object { private val BCP47 = Regex("[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*") }
+}
+
+sealed interface SurveyQuestion {
+    val id: String
+    val prompt: LocalizedText
+    val required: Boolean
+}
+
+data class ShortTextQuestion(
+    override val id: String,
+    override val prompt: LocalizedText,
+    override val required: Boolean,
+    val maximumLength: Int,
+) : SurveyQuestion {
+    init {
+        validateQuestionId(id)
+        require(maximumLength in 1..4_000) { "Invalid short-text limit" }
+    }
+}
+
+data class ScaleQuestion(
+    override val id: String,
+    override val prompt: LocalizedText,
+    override val required: Boolean,
+    val minimum: Int,
+    val maximum: Int,
+    val minimumLabel: LocalizedText,
+    val maximumLabel: LocalizedText,
+) : SurveyQuestion {
+    init {
+        validateQuestionId(id)
+        require(minimum in -1_000..1_000 && maximum in -1_000..1_000 && minimum < maximum) {
+            "Invalid scale bounds"
+        }
+    }
+}
+
+data class SingleChoiceQuestion(
+    override val id: String,
+    override val prompt: LocalizedText,
+    override val required: Boolean,
+    val options: List<ChoiceOption>,
+) : SurveyQuestion {
+    init {
+        validateQuestionId(id)
+        validateOptions(options)
+    }
+}
+
+data class MultipleChoiceQuestion(
+    override val id: String,
+    override val prompt: LocalizedText,
+    override val required: Boolean,
+    val options: List<ChoiceOption>,
+    val minimumSelections: Int,
+    val maximumSelections: Int,
+) : SurveyQuestion {
+    init {
+        validateQuestionId(id)
+        validateOptions(options)
+        require(minimumSelections in 0..options.size) { "Invalid minimum selections" }
+        require(maximumSelections in maxOf(1, minimumSelections)..options.size) { "Invalid maximum selections" }
+        if (required) require(minimumSelections > 0) { "Required multiple choice needs a selection" }
+    }
+}
+
+data class ChoiceOption(val id: String, val label: LocalizedText) {
+    init { require(StudyConfiguration.ID.matches(id)) { "Invalid choice option ID" } }
+}
+
+private fun validateQuestionId(id: String) =
+    require(StudyConfiguration.ID.matches(id)) { "Invalid survey question ID" }
+
+private fun validateOptions(options: List<ChoiceOption>) {
+    require(options.size in 2..50) { "Invalid choice option count" }
+    require(options.map { it.id }.distinct().size == options.size) { "Duplicate choice option ID" }
 }
 
 /**

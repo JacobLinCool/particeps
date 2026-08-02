@@ -3,7 +3,7 @@
    *  rotates rather than swapping glyphs, so the control's identity survives the state change. */
   import Icon from './Icon.svelte';
   import type { IconRef } from './icons';
-  import type { Snippet } from 'svelte';
+  import { untrack, type Snippet } from 'svelte';
 
   interface Props {
     label: string;
@@ -16,7 +16,7 @@
 
   let { label, icon, open = false, trailing, testid, children }: Props = $props();
 
-  let expanded = $state(open);
+  let expanded = $state(untrack(() => open));
   const uid = $props.id();
 </script>
 

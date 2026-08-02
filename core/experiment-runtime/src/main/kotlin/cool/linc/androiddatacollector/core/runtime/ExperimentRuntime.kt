@@ -12,8 +12,17 @@ import cool.linc.androiddatacollector.core.collector.EmitResult
 import cool.linc.androiddatacollector.core.collector.EventSink
 import cool.linc.androiddatacollector.core.collector.ResearchClocks
 import cool.linc.androiddatacollector.core.definition.StudyConfiguration
+import cool.linc.androiddatacollector.core.definition.InterventionAction
+import cool.linc.androiddatacollector.core.definition.MultipleChoiceQuestion
+import cool.linc.androiddatacollector.core.definition.ScaleQuestion
+import cool.linc.androiddatacollector.core.definition.ShortTextQuestion
+import cool.linc.androiddatacollector.core.definition.SingleChoiceQuestion
+import cool.linc.androiddatacollector.core.definition.SurveyAction
+import cool.linc.androiddatacollector.core.definition.SurveyDefinition
 import cool.linc.androiddatacollector.core.model.EventDraft
 import cool.linc.androiddatacollector.core.model.ExperimentState
+import cool.linc.androiddatacollector.core.model.InterventionOccurrence
+import cool.linc.androiddatacollector.core.model.OccurrenceState
 import cool.linc.androiddatacollector.core.model.ExperimentStateMachine
 import cool.linc.androiddatacollector.core.model.RecordedEvent
 import cool.linc.androiddatacollector.core.model.StudyMetadata
@@ -43,6 +52,19 @@ sealed interface CommandResult {
     data class Failed(val reasonCode: String) : CommandResult
 }
 
+data class OccurrenceDispatch(
+    val occurrence: InterventionOccurrence,
+    val action: InterventionAction,
+)
+
+sealed interface SurveyAnswer {
+    data class Text(val value: String) : SurveyAnswer
+    data class Integer(val value: Int) : SurveyAnswer
+    data class Choices(val optionIds: List<String>) : SurveyAnswer
+}
+
+enum class SurveySubmissionResult { ACCEPTED, ALREADY_SUBMITTED, EXPIRED, INVALID }
+
 class ExperimentRuntime(
     val configuration: StudyConfiguration,
     private val store: StudyStore,
@@ -62,16 +84,20 @@ class ExperimentRuntime(
     private val mutableSnapshot = MutableStateFlow(RuntimeSnapshot())
     val snapshot: StateFlow<RuntimeSnapshot> = mutableSnapshot.asStateFlow()
 
+    fun now() = clocks.now()
+
     suspend fun initialize(): CommandResult = executeCommand(requireInitialized = false) {
         check(currentMetadata == null) { "Runtime is already initialized" }
         val loaded = store.loadMetadata() ?: StudyMetadata.initial(
             configuration.experimentId,
             configuration.configurationId,
+            configuration.assignedParticipantId,
         ).also { initial ->
             store.initialize(initial)
         }
         check(loaded.experimentId == configuration.experimentId) { "Experiment ID mismatch" }
         check(loaded.configurationId == configuration.configurationId) { "Configuration ID mismatch" }
+        check(loaded.assignedParticipantId == configuration.assignedParticipantId) { "Assigned participant ID mismatch" }
         currentMetadata = loaded
         createCollectors()
         mutableSnapshot.update {
@@ -178,6 +204,141 @@ class ExperimentRuntime(
         }
     }
 
+    suspend fun ensureOccurrence(planned: InterventionOccurrence): InterventionOccurrence = metadataMutex.withLock {
+        val metadata = requireMetadata()
+        metadata.occurrences[planned.occurrenceId]?.let { existing ->
+            if (existing.state == OccurrenceState.SCHEDULED &&
+                (existing.scheduledFor.wallTimeUtcMillis != planned.scheduledFor.wallTimeUtcMillis ||
+                    existing.expiresAtUtcMillis != planned.expiresAtUtcMillis)
+            ) {
+                val revised = existing.copy(
+                    scheduledFor = planned.scheduledFor,
+                    expiresAtUtcMillis = planned.expiresAtUtcMillis,
+                )
+                appendOccurrenceEvent(
+                    metadata.copy(occurrences = metadata.occurrences + (revised.occurrenceId to revised)),
+                    revised,
+                    "INTERVENTION_RESCHEDULED",
+                    clocks.now(),
+                )
+                return@withLock revised
+            }
+            return@withLock existing
+        }
+        require(configuration.interventions.any { it.id == planned.interventionId }) { "Unknown intervention" }
+        appendOccurrenceEvent(
+            metadata.copy(occurrences = metadata.occurrences + (planned.occurrenceId to planned)),
+            planned,
+            "INTERVENTION_SCHEDULED",
+            clocks.now(),
+        )
+        planned
+    }
+
+    suspend fun claimOccurrence(occurrenceId: String): OccurrenceDispatch? = metadataMutex.withLock {
+        val metadata = requireMetadata()
+        val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock null
+        val now = clocks.now()
+        if (now.wallTimeUtcMillis >= occurrence.expiresAtUtcMillis) {
+            expireOccurrence(metadata, occurrence, now)
+            return@withLock null
+        }
+        if (occurrence.state !in setOf(OccurrenceState.SCHEDULED, OccurrenceState.POSTING)) return@withLock null
+        val claimed = if (occurrence.state == OccurrenceState.SCHEDULED) {
+            occurrence.copy(state = OccurrenceState.POSTING).also { next ->
+                val updated = metadata.copy(occurrences = metadata.occurrences + (occurrenceId to next))
+                store.saveMetadata(updated)
+                currentMetadata = updated
+                publishMetadata(updated)
+            }
+        } else {
+            occurrence
+        }
+        OccurrenceDispatch(claimed, intervention(claimed).action)
+    }
+
+    suspend fun markNotificationPosted(occurrenceId: String) = metadataMutex.withLock {
+        val metadata = requireMetadata()
+        val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock
+        if (occurrence.state != OccurrenceState.POSTING) return@withLock
+        val posted = occurrence.copy(state = OccurrenceState.NOTIFICATION_POSTED)
+        appendOccurrenceEvent(
+            metadata.copy(occurrences = metadata.occurrences + (occurrenceId to posted)),
+            posted,
+            "NOTIFICATION_POSTED",
+            clocks.now(),
+        )
+    }
+
+    suspend fun openOccurrence(occurrenceId: String): OccurrenceDispatch? = metadataMutex.withLock {
+        val metadata = requireMetadata()
+        val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock null
+        val now = clocks.now()
+        if (now.wallTimeUtcMillis >= occurrence.expiresAtUtcMillis && occurrence.state != OccurrenceState.SURVEY_SUBMITTED) {
+            expireOccurrence(metadata, occurrence, now)
+            return@withLock null
+        }
+        if (occurrence.state in setOf(OccurrenceState.EXPIRED, OccurrenceState.SCHEDULED, OccurrenceState.POSTING)) {
+            return@withLock null
+        }
+        if (occurrence.state == OccurrenceState.NOTIFICATION_POSTED) {
+            val opened = occurrence.copy(state = OccurrenceState.OPENED, openedAt = now)
+            appendOccurrenceEvent(
+                metadata.copy(occurrences = metadata.occurrences + (occurrenceId to opened)),
+                opened,
+                if (intervention(opened).action is SurveyAction) "SURVEY_OPENED" else "INTERVENTION_OPENED",
+                now,
+            )
+            return@withLock OccurrenceDispatch(opened, intervention(opened).action)
+        }
+        OccurrenceDispatch(occurrence, intervention(occurrence).action)
+    }
+
+    suspend fun submitSurvey(
+        occurrenceId: String,
+        answers: Map<String, SurveyAnswer>,
+    ): SurveySubmissionResult = metadataMutex.withLock {
+        val metadata = requireMetadata()
+        val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock SurveySubmissionResult.INVALID
+        if (occurrence.state == OccurrenceState.SURVEY_SUBMITTED) return@withLock SurveySubmissionResult.ALREADY_SUBMITTED
+        val now = clocks.now()
+        if (now.wallTimeUtcMillis >= occurrence.expiresAtUtcMillis) {
+            expireOccurrence(metadata, occurrence, now)
+            return@withLock SurveySubmissionResult.EXPIRED
+        }
+        if (occurrence.state != OccurrenceState.OPENED) return@withLock SurveySubmissionResult.INVALID
+        val survey = surveyFor(occurrence) ?: return@withLock SurveySubmissionResult.INVALID
+        val encoded = validateAndEncodeAnswers(survey, answers) ?: return@withLock SurveySubmissionResult.INVALID
+        val submitted = occurrence.copy(
+            state = OccurrenceState.SURVEY_SUBMITTED,
+            submittedAt = now,
+            submissionSequence = metadata.nextSequenceNumber,
+        )
+        appendOccurrenceEvent(
+            metadata.copy(occurrences = metadata.occurrences + (occurrenceId to submitted)),
+            submitted,
+            "SURVEY_SUBMITTED",
+            now,
+            mapOf(
+                "survey_id" to survey.id,
+                "scheduled_time" to researchTimeJson(submitted.scheduledFor),
+                "opened_time" to researchTimeJson(requireNotNull(submitted.openedAt)),
+                "submitted_time" to researchTimeJson(now),
+                "answers_json" to encoded,
+            ),
+        )
+        SurveySubmissionResult.ACCEPTED
+    }
+
+    suspend fun surveySubmissionEvent(occurrenceId: String): RecordedEvent? = metadataMutex.withLock {
+        val metadata = requireMetadata()
+        val sequence = metadata.occurrences[occurrenceId]?.submissionSequence ?: return@withLock null
+        if (sequence < metadata.retainedFromSequence) return@withLock null
+        var found: RecordedEvent? = null
+        store.readEvents(sequence, sequence) { found = it }
+        found
+    }
+
     suspend fun metadataForExport(): StudyMetadata = metadataMutex.withLock {
         val metadata = requireMetadata()
         require(metadata.state in EXPORTABLE_STATES) { "Experiment cannot be exported from ${metadata.state}" }
@@ -270,7 +431,7 @@ class ExperimentRuntime(
                 lastEvents = metadata.lastEvents + (recorded.collectorId to recorded),
             )
             try {
-                store.appendEvent(recorded)
+                store.appendEventAtomically(recorded, updated)
                 currentMetadata = updated
                 publishMetadata(updated)
                 EmitResult.Accepted(recorded.sequenceNumber)
@@ -439,6 +600,112 @@ class ExperimentRuntime(
 
     private fun requireMetadata(): StudyMetadata = checkNotNull(currentMetadata) { "Runtime is not initialized" }
 
+    private fun intervention(occurrence: InterventionOccurrence) =
+        configuration.interventions.first { it.id == occurrence.interventionId }
+
+    private fun surveyFor(occurrence: InterventionOccurrence): SurveyDefinition? =
+        (intervention(occurrence).action as? SurveyAction)?.let { action ->
+            configuration.surveys.firstOrNull { it.id == action.surveyId }
+        }
+
+    private suspend fun expireOccurrence(
+        metadata: StudyMetadata,
+        occurrence: InterventionOccurrence,
+        now: cool.linc.androiddatacollector.core.model.ResearchTime,
+    ) {
+        if (occurrence.state in setOf(OccurrenceState.EXPIRED, OccurrenceState.SURVEY_SUBMITTED)) return
+        if (occurrence.state == OccurrenceState.OPENED && intervention(occurrence).action !is SurveyAction) return
+        val expired = occurrence.copy(state = OccurrenceState.EXPIRED)
+        appendOccurrenceEvent(
+            metadata.copy(occurrences = metadata.occurrences + (occurrence.occurrenceId to expired)),
+            expired,
+            if (intervention(expired).action is SurveyAction) "SURVEY_EXPIRED" else "INTERVENTION_EXPIRED",
+            now,
+        )
+    }
+
+    private suspend fun appendOccurrenceEvent(
+        metadataAfterState: StudyMetadata,
+        occurrence: InterventionOccurrence,
+        payloadType: String,
+        observedAt: cool.linc.androiddatacollector.core.model.ResearchTime,
+        additionalFields: Map<String, String> = emptyMap(),
+    ) {
+        val event = RecordedEvent(
+            sequenceNumber = metadataAfterState.nextSequenceNumber,
+            collectorId = "interventions.v1",
+            payloadSchemaVersion = 1,
+            observedTime = observedAt,
+            payloadType = payloadType,
+            fields = mapOf(
+                "intervention_id" to occurrence.interventionId,
+                "trigger_id" to occurrence.triggerId,
+                "occurrence_id" to occurrence.occurrenceId,
+                "scheduled_for_utc_millis" to occurrence.scheduledFor.wallTimeUtcMillis.toString(),
+            ) + additionalFields,
+        )
+        val updated = metadataAfterState.copy(
+            eventCount = event.sequenceNumber,
+            nextSequenceNumber = event.sequenceNumber + 1,
+            lastEvents = metadataAfterState.lastEvents + (event.collectorId to event),
+        )
+        store.appendEventAtomically(event, updated)
+        currentMetadata = updated
+        publishMetadata(updated)
+    }
+
+    private fun validateAndEncodeAnswers(survey: SurveyDefinition, answers: Map<String, SurveyAnswer>): String? {
+        if (answers.keys.any { key -> survey.questions.none { it.id == key } }) return null
+        survey.questions.forEach { question ->
+            val answer = answers[question.id]
+            if (answer == null) {
+                if (question.required) return null
+                return@forEach
+            }
+            val valid = when (question) {
+                is ShortTextQuestion -> answer is SurveyAnswer.Text &&
+                    answer.value.length <= question.maximumLength && (!question.required || answer.value.isNotBlank())
+                is ScaleQuestion -> answer is SurveyAnswer.Integer && answer.value in question.minimum..question.maximum
+                is SingleChoiceQuestion -> answer is SurveyAnswer.Choices && answer.optionIds.size == 1 &&
+                    answer.optionIds.single() in question.options.map { it.id }
+                is MultipleChoiceQuestion -> answer is SurveyAnswer.Choices &&
+                    answer.optionIds.distinct().size == answer.optionIds.size &&
+                    answer.optionIds.size in question.minimumSelections..question.maximumSelections &&
+                    answer.optionIds.all { id -> id in question.options.map { it.id } }
+            }
+            if (!valid) return null
+        }
+        val encoded = answers.toSortedMap().entries.joinToString(separator = ",", prefix = "{", postfix = "}") { (id, answer) ->
+            "${jsonString(id)}:${when (answer) {
+                is SurveyAnswer.Text -> jsonString(answer.value)
+                is SurveyAnswer.Integer -> answer.value.toString()
+                is SurveyAnswer.Choices -> answer.optionIds.joinToString(separator = ",", prefix = "[", postfix = "]") { jsonString(it) }
+            }}"
+        }
+        return encoded.takeIf { it.toByteArray().size <= MAXIMUM_SURVEY_ANSWERS_BYTES }
+    }
+
+    private fun researchTimeJson(time: cool.linc.androiddatacollector.core.model.ResearchTime): String =
+        "{\"wall_time_utc_millis\":${time.wallTimeUtcMillis},\"elapsed_realtime_nanos\":${time.elapsedRealtimeNanos}," +
+            "\"boot_session_id\":${jsonString(time.bootSessionId)}}"
+
+    private fun jsonString(value: String): String = buildString {
+        append('"')
+        value.forEach { character ->
+            when (character) {
+                '"' -> append("\\\"")
+                '\\' -> append("\\\\")
+                '\b' -> append("\\b")
+                '\u000C' -> append("\\f")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> if (character.code < 0x20) append("\\u%04x".format(character.code)) else append(character)
+            }
+        }
+        append('"')
+    }
+
     private fun publishMetadata(metadata: StudyMetadata) {
         mutableSnapshot.update { it.copy(metadata = metadata) }
     }
@@ -477,6 +744,7 @@ class ExperimentRuntime(
 
         const val INCIDENT_STORAGE_WRITE_FAILED = "STORAGE_WRITE_FAILED"
         const val INCIDENT_PAUSE_PERSISTENCE_FAILED = "PAUSE_PERSISTENCE_FAILED"
+        const val MAXIMUM_SURVEY_ANSWERS_BYTES = 60 * 1024
     }
 }
 

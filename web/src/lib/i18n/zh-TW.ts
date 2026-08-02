@@ -27,7 +27,6 @@ export const zhTW: Messages = {
     download: '下載',
     copy: '複製',
     importDraft: '匯入 JSON',
-    addPrompt: '新增提示通知',
     back: '上一步',
     next: '下一步',
     confirmSaved: '檔案已存好',
@@ -35,6 +34,43 @@ export const zhTW: Messages = {
     startOver: '重新開始',
     confirm: '確認',
     cancel: '取消'
+  },
+
+  intervention: {
+    title: '介入活動與問卷',
+    empty: '沒有排定的活動。',
+    notificationTiming: 'Android 會盡力依排程發出通知，但不保證精準的時刻。',
+    anonymous: '匿名／假名',
+    personalized: '個人化',
+    assignedId: '指定參與者代碼',
+    addNotification: '新增通知',
+    addSurvey: '新增問卷',
+    addQuestion: '新增題目',
+    addTrigger: '新增排程',
+    survey: '問卷',
+    surveyTitle: '問卷標題',
+    surveyDescription: '問卷說明',
+    question: '題目 ID',
+    questionType: '題型',
+    prompt: '題目文字',
+    required: '必填',
+    maximumLength: '最多字元數',
+    scaleBounds: '量尺最小值／最大值',
+    endpointLabels: '兩端標籤',
+    options: '選項（穩定 ID | 標籤，每行一項）',
+    selectionBounds: '最少／最多選項數',
+    notificationTitle: '通知標題',
+    notificationMessage: '通知訊息',
+    trigger: '排程 ID',
+    scheduleType: '排程類型',
+    clock: '相對時間算法',
+    offset: '延後分鐘數',
+    interval: '間隔分鐘數',
+    localTime: '本地時間',
+    availability: '可填寫分鐘數',
+    types: { shortText: '簡短文字', scale: '數字量尺', singleChoice: '單選', multipleChoice: '複選' },
+    schedules: { oneTime: '單次', interval: '固定間隔', dailyLocal: '每日本地時間' },
+    clocks: { calendar: '日曆時間（包含暫停）', active: '收集中時間（排除暫停）' }
   },
 
   control: {
@@ -106,9 +142,6 @@ export const zhTW: Messages = {
       displacement: '最小位移',
       priority: '定位模式',
       trajectoryRate: '軌跡取樣率',
-      promptId: '提示通知 ID',
-      promptDelay: '延遲',
-      promptMessage: '訊息',
       upload: '自動傳送',
       endpoint: '接收端點',
       uploadInterval: '傳送間隔',
@@ -137,7 +170,6 @@ export const zhTW: Messages = {
       fastestInterval: '不能比定位間隔長。',
       batchDelay: '設得越大，送出的次數越少，一次送的越多。',
       priority: '兩種模式都需要精確位置。高精確度會用 GPS。',
-      promptDelay: '從第一次開始算起。送達時間不精確。',
       endpoint: '必須是 https，而且由你自己營運。',
       allowMetered: '關閉時只走 Wi-Fi。行動網路要花錢，沒有人同意過要付。'
     }
@@ -203,7 +235,11 @@ export const zhTW: Messages = {
     document_too_large: ({ max }) => `整份設定必須小於 ${number.format(max)} 個位元組`,
     signer_missing: '請先產生簽章金鑰',
     export_key_missing: '請先產生匯出金鑰',
-    keyset_unusable: 'App 無法用這組金鑰加密。請重新產生匯出金鑰，或改匯入一組'
+    keyset_unusable: 'App 無法用這組金鑰加密。請重新產生匯出金鑰，或改匯入一組',
+    language_tag: '請使用有效的 BCP 47 語言標籤',
+    unknown_reference: '請選擇這份設定中已定義的問卷',
+    selection_bounds: '選取數量限制與這題不相容',
+    schedule_bounds: '排程超出研究期間，或產生過多次活動'
   },
 
   status: {
@@ -214,7 +250,6 @@ export const zhTW: Messages = {
   },
 
   empty: {
-    prompts: '沒有提示通知，多數研究也不需要。',
     files: '要先簽署設定檔，才會有檔案可以交付。'
   },
 
@@ -242,7 +277,6 @@ export const zhTW: Messages = {
 
   researcher: {
     title: '準備一份研究',
-    beyond: '這則提示排在研究結束之後，準時完成的參與者不會收到。',
     lede: '金鑰、設定、簽章都在這個分頁裡，不會外流。',
     how: {
       file: {
@@ -299,7 +333,7 @@ export const zhTW: Messages = {
         validity: { title: '這個研究會進行多久？' },
         collectors: { title: '資料來源' },
         consent: { title: '知情同意' },
-        prompts: { title: '提示通知' },
+        interventions: { title: '介入活動' },
         delivery: {
           title: '自動傳送',
           note: '關閉時，資料要等參與者自己匯出才會離開手機。'

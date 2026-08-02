@@ -13,9 +13,13 @@
 
 import type {
   CollectorConfig,
+  ChoiceOption,
+  InterventionConfig,
+  LocalizedText,
   NetworkTransport,
-  PromptConfig,
   StudyConfiguration,
+  SurveyDefinition,
+  SurveyQuestion,
   TinkKeyset,
   UploadConfig
 } from './types';
@@ -340,12 +344,42 @@ function collectorConfig(collector: CollectorConfig): string {
   }
 }
 
-function encodePrompt(prompt: PromptConfig): string {
-  return (
-    `{"id":${quoted(prompt.id)}` +
-    `,"delay_minutes":${integer(prompt.delay_minutes)}` +
-    `,"message":${quoted(prompt.message)}}`
-  );
+function localized(text: LocalizedText): string {
+  const translations = Object.entries(text.translations).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{"default":${quoted(text.default)},"translations":{${translations.map(
+    ([language, value]) => `${quoted(language)}:${quoted(value)}`
+  ).join(',')}}}`;
+}
+
+function choices(options: ChoiceOption[]): string {
+  return `[${options.map((option) => `{"id":${quoted(option.id)},"label":${localized(option.label)}}`).join(',')}]`;
+}
+
+function question(value: SurveyQuestion): string {
+  const common = `"type":${quoted(value.type)},"id":${quoted(value.id)},"prompt":${localized(value.prompt)},"required":${boolean(value.required)}`;
+  switch (value.type) {
+    case 'short_text': return `{${common},"maximum_length":${integer(value.maximum_length)}}`;
+    case 'scale': return `{${common},"minimum":${integer(value.minimum)},"maximum":${integer(value.maximum)},"minimum_label":${localized(value.minimum_label)},"maximum_label":${localized(value.maximum_label)}}`;
+    case 'single_choice': return `{${common},"options":${choices(value.options)}}`;
+    case 'multiple_choice': return `{${common},"options":${choices(value.options)},"minimum_selections":${integer(value.minimum_selections)},"maximum_selections":${integer(value.maximum_selections)}}`;
+  }
+}
+
+function survey(value: SurveyDefinition): string {
+  return `{"id":${quoted(value.id)},"title":${localized(value.title)},"description":${localized(value.description)},"questions":[${value.questions.map(question).join(',')}]}`;
+}
+
+function intervention(value: InterventionConfig): string {
+  const action = `{"type":${quoted(value.action.type)},"notification_title":${quoted(value.action.notification_title)},"notification_message":${quoted(value.action.notification_message)}${value.action.type === 'survey' ? `,"survey_id":${quoted(value.action.survey_id)}` : ''}}`;
+  const triggers = value.triggers.map((trigger) => {
+    const schedule = trigger.schedule.type === 'one_time'
+      ? `{"type":"one_time","offset_minutes":${integer(trigger.schedule.offset_minutes)},"clock":${quoted(trigger.schedule.clock)}}`
+      : trigger.schedule.type === 'interval'
+        ? `{"type":"interval","start_offset_minutes":${integer(trigger.schedule.start_offset_minutes)},"interval_minutes":${integer(trigger.schedule.interval_minutes)},"clock":${quoted(trigger.schedule.clock)}}`
+        : `{"type":"daily_local","local_time":${quoted(trigger.schedule.local_time)}}`;
+    return `{"id":${quoted(trigger.id)},"schedule":${schedule},"availability_minutes":${integer(trigger.availability_minutes)}}`;
+  });
+  return `{"id":${quoted(value.id)},"action":${action},"triggers":[${triggers.join(',')}]}`;
 }
 
 /** The exact string `researcher-tools canonicalize` writes, root key order included. */
@@ -355,6 +389,7 @@ export function canonicalize(configuration: StudyConfiguration): string {
     `"schema_version":${integer(configuration.schema_version)}` +
     `,"experiment_id":${quoted(configuration.experiment_id)}` +
     `,"configuration_id":${quoted(configuration.configuration_id)}` +
+    `,"assigned_participant_id":${configuration.assigned_participant_id === null ? 'null' : quoted(configuration.assigned_participant_id)}` +
     `,"issued_at":${instantText(configuration.issued_at)}` +
     `,"expires_at":${instantText(configuration.expires_at)}` +
     `,"minimum_app_version":${integer(configuration.minimum_app_version)}` +
@@ -366,7 +401,8 @@ export function canonicalize(configuration: StudyConfiguration): string {
     `,"consent":{"document_version":${quoted(configuration.consent.document_version)}` +
     `,"summary":${quoted(configuration.consent.summary)}}` +
     `,"collectors":[${configuration.collectors.map(encodeCollector).join(',')}]` +
-    `,"prompts":[${configuration.prompts.map(encodePrompt).join(',')}]` +
+    `,"surveys":[${configuration.surveys.map(survey).join(',')}]` +
+    `,"interventions":[${configuration.interventions.map(intervention).join(',')}]` +
     `,"storage":{"maximum_local_bytes":${integer(configuration.storage.maximum_local_bytes)}}` +
     `,"signer":{"key_id":${quoted(configuration.signer.key_id)}` +
     `,"public_key":${quoted(configuration.signer.public_key)}}` +

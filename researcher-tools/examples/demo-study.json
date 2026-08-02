@@ -2,6 +2,7 @@
   "schema_version": 1,
   "experiment_id": "modular-sensing-demo",
   "configuration_id": "demo-config-2026",
+  "assigned_participant_id": null,
   "issued_at": "2026-01-01T00:00:00Z",
   "expires_at": "2035-01-01T00:00:00Z",
   "minimum_app_version": 1,
@@ -74,11 +75,53 @@
       }
     }
   ],
-  "prompts": [
+  "surveys": [
+    {
+      "id": "demo-survey",
+      "title": {
+        "default": "Study check-in",
+        "translations": {
+          "zh-TW": "研究確認"
+        }
+      },
+      "description": {
+        "default": "Tell us how the study is going.",
+        "translations": {}
+      },
+      "questions": [
+        {
+          "type": "short_text",
+          "id": "status-note",
+          "prompt": {
+            "default": "How is it going?",
+            "translations": {}
+          },
+          "required": false,
+          "maximum_length": 500
+        }
+      ]
+    }
+  ],
+  "interventions": [
     {
       "id": "demo-check-in",
-      "delay_minutes": 60,
-      "message": "Please check that the study is still running as expected."
+      "action": {
+        "type": "survey",
+        "notification_title": "Study check-in",
+        "notification_message": "Please complete the study check-in.",
+        "survey_id": "demo-survey"
+      },
+      "triggers": [
+        {
+          "id": "after-one-hour",
+          "schedule": {
+            "type": "one_time",
+            "offset_minutes": 60,
+            "clock": "ACTIVE_RUNNING_TIME"
+          },
+          "availability_minutes": 1440
+        }
+      ]
     }
   ],
   "storage": {

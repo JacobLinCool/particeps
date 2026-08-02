@@ -423,6 +423,7 @@ private fun ConsentPanel(study: StudyUiState.ActiveStudy, actions: StudyUiAction
         // prose, so they describe what the app will actually do even if the summary leaves it out.
         // Their wording is deliberately complete.
         PublisherDisclosure(study.configuration, study.signerAnchored)
+        IdentityDisclosure(study.configuration.assignedParticipantId)
         UploadDisclosure(study.configuration.upload)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(
@@ -438,6 +439,27 @@ private fun ConsentPanel(study: StudyUiState.ActiveStudy, actions: StudyUiAction
             modifier = Modifier.fillMaxWidth().testTag(UiTags.PREPARE),
         ) { Text(stringResource(R.string.action_agree)) }
         WithdrawLink(actions, busy)
+    }
+}
+
+@Composable
+private fun IdentityDisclosure(assignedParticipantId: String?) {
+    Disclosure(
+        mark = { GlyphIcon(Glyph.PERSON, MaterialTheme.colorScheme.primary, 16.dp) },
+        title = stringResource(
+            if (assignedParticipantId == null) R.string.consent_identity_anonymous_title
+            else R.string.consent_identity_personalized_title,
+        ),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (assignedParticipantId == null) {
+                Text(stringResource(R.string.consent_identity_anonymous_body))
+            } else {
+                Text(stringResource(R.string.consent_identity_assigned_code, assignedParticipantId), fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.consent_identity_personalized_body))
+            }
+            Text(stringResource(R.string.consent_identity_instance_body))
+        }
     }
 }
 
@@ -727,6 +749,10 @@ private fun StudyDetails(study: StudyUiState.ActiveStudy) {
         if (expanded) {
             HorizontalDivider()
             DetailRow(stringResource(R.string.details_configuration), configuration.configurationId)
+            DetailRow(stringResource(R.string.details_instance_id), study.metadata.participantInstanceId)
+            configuration.assignedParticipantId?.let {
+                DetailRow(stringResource(R.string.details_assigned_id), it)
+            }
             DetailRow(stringResource(R.string.details_consent_document), configuration.consentDocumentVersion)
             DetailRow(stringResource(R.string.details_signature), configuration.signer.fingerprint)
             study.lastExport?.let {

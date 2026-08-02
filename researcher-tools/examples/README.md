@@ -10,6 +10,8 @@
 
 These exist so a debug build can exercise signing and export decryption end to end, and so the example configuration in the [researcher guide](../../docs/researcher-guide.md) is runnable. That is their only purpose. The signing public key is not stored separately: it travels inside the configuration, as `demo-study.json`'s `signer.public_key`.
 
+The example is an anonymous v1 configuration with one localized short-answer survey and one one-time survey intervention. It deliberately has no researcher-assigned participant code.
+
 **Never use them for a real study.** A study signed with these keys is not authentic, and an export encrypted to this HPKE key is readable by anyone who clones this repository.
 
 **A release build ships no demonstration study.** The signed envelope and the code that loads it live in the app's `debug` source set, so neither is compiled into the release APK: a released app can only run a study that a research team signed and handed to a participant. A debug build still offers the demo, which is what the instrumentation test drives.

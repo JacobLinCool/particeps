@@ -8,15 +8,20 @@ import kotlinx.coroutines.launch
 
 class BootRecoveryReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        if (intent.action !in RECOVERY_ACTIONS) return
         val pending = goAsync()
         val application = context.applicationContext as CollectorApplication
         application.applicationScope.launch {
             try {
                 application.session.snapshot.first { it.initialized }
+                application.session.rescheduleInterventions()
             } finally {
                 pending.finish()
             }
         }
+    }
+
+    private companion object {
+        val RECOVERY_ACTIONS = setOf(Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED)
     }
 }

@@ -69,20 +69,16 @@ class OkHttpStudyUploader(
             }
         }
 
-        val request = Request.Builder()
-            .url(upload.endpoint)
-            .header("Content-Type", "application/octet-stream")
-            .header("X-ADC-Bundle-Format", ResearchExport.BUNDLE_FORMAT)
-            .header("X-ADC-Experiment-Id", configuration.experimentId)
-            .header("X-ADC-Configuration-Id", configuration.configurationId)
-            .header("X-ADC-Participant-Instance", metadata.participantInstanceId)
-            .header("X-ADC-Sequence-From", fromSequence.toString())
+        val requestBuilder = Request.Builder().url(upload.endpoint)
+        uploadHeaders(configuration, metadata, fromSequence, toSequence).forEach { (name, value) ->
+            requestBuilder.header(name, value)
+        }
+        val request = requestBuilder
             // Named "at most" because headers are sent before the body is generated, and a budget
             // can stop the bundle at any earlier event boundary. The endpoint cannot learn the true
             // upper bound — that is inside the ciphertext — so it must not file by this value.
             // `X-ADC-Sequence-From` is exact and strictly increasing per participant, which is what
             // makes a usable deduplication key.
-            .header("X-ADC-Sequence-To-At-Most", toSequence.toString())
             .post(body)
             .build()
 
@@ -126,6 +122,22 @@ class OkHttpStudyUploader(
             .build()
     }
 }
+
+/** The complete unencrypted request surface. Assigned participant IDs are deliberately absent. */
+internal fun uploadHeaders(
+    configuration: StudyConfiguration,
+    metadata: StudyMetadata,
+    fromSequence: Long,
+    toSequence: Long,
+): Map<String, String> = mapOf(
+    "Content-Type" to "application/octet-stream",
+    "X-ADC-Bundle-Format" to ResearchExport.BUNDLE_FORMAT,
+    "X-ADC-Experiment-Id" to configuration.experimentId,
+    "X-ADC-Configuration-Id" to configuration.configurationId,
+    "X-ADC-Participant-Instance" to metadata.participantInstanceId,
+    "X-ADC-Sequence-From" to fromSequence.toString(),
+    "X-ADC-Sequence-To-At-Most" to toSequence.toString(),
+)
 
 /** Maps a transport failure onto a fixed code, so what reaches a screen or a log is never data. */
 private fun Throwable.reasonCode(): String = when (this) {

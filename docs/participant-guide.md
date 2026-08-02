@@ -16,7 +16,7 @@ That picker is not a private setting inside the app. It writes Android's own per
 
 Because English is the default, this guide quotes the screen in English and gives the Traditional Chinese in parentheses where you might be running it: Start study (開始研究).
 
-**Text the research team wrote is never translated.** The study title, the purpose, the contact details, and the consent text are shown exactly as they were signed, in whatever language the research team wrote them. Only the app's own words change with this setting.
+**Ordinary study prose is never translated.** The study title, purpose, contact details, and consent text are shown exactly as signed. Survey titles, descriptions, questions, and choices are different: the signed configuration can carry an English and Traditional Chinese version, and the survey uses the best exact language match with the signed default as its fallback.
 
 Two pieces of text stay in English whichever language you pick, because they are written into the code rather than into the translated set:
 
@@ -108,6 +108,12 @@ In that case the check has already been done for you, at the time the app was bu
 
 Nothing in the researcher name, contact details, or study description proves who wrote them — they are part of the file, so whoever signed the file chose them. The fingerprint is the part you can check independently.
 
+### Your study codes
+
+The consent step also says whether the study is **Anonymous or pseudonymous** (匿名或假名研究) or **Personalized** (個人化研究). An anonymous configuration contains no code assigned by the research team. A personalized configuration shows the exact opaque code embedded in your signed file; compare it with the code the team gave you. The app never asks you to enter a name, email address, or phone number.
+
+Every import also creates a fresh random installation code. Importing the same configuration twice therefore produces two different installation codes. A personalized export contains both codes inside its encrypted body; an upload exposes only the random installation code in its headers, never the researcher-assigned code. Treat either code as linkable study data even though neither is required to be a name.
+
 ### Whether the study sends data automatically
 
 The consent step always answers this, in a block above the agreement checkbox. A study that sends nothing says so, under a check mark:
@@ -191,7 +197,7 @@ Tap anywhere on a row that is not granted yet and the app sends you straight to 
 
 ### Notifications (通知)
 
-Used for study prompts and for the notification that stays visible while collection is running. Prompts are scheduled through Android's background work system, which is not an exact alarm: battery saving, Doze, or system scheduling can delay them.
+Used for scheduled study activities and for the notification that stays visible while collection is running. Activities use Android's background work system, which is not an exact alarm: battery saving, Doze, or system scheduling can delay them.
 
 ### Motion sensor (加速度感測器) and basic network state
 
@@ -237,10 +243,16 @@ The moment you do, the five dots are replaced, permanently, by a status line, an
 While a study is collecting:
 
 - Continuous sources run under a visible research foreground service, so the ongoing "Research collection active" notification is present the whole time.
-- Prompts are scheduled according to the study configuration, counted from the first start.
+- Signed interventions are scheduled as one-time, repeating-interval, or daily local-time activities. A schedule may count calendar time or only time spent actively collecting.
 - When the study's duration is reached, the system completes a collecting or paused study for you. Battery-saving scheduling can delay this.
 
 After you restart your phone, only a study that was Collecting (收集中) tries to resume. If you force stop the app, Android may block its work until you open it again. Open the app and check the status line if you are unsure.
+
+### Scheduled activities and surveys
+
+Each scheduled activity has a durable occurrence identity. Restarting the phone, reopening the app, changing time zone, pausing, or recovering WorkManager reschedules that same occurrence instead of creating another one. Android can deliver a notification late, but the app records separately when it was scheduled, posted, opened, submitted, or expired; a notification being posted is not evidence that you saw it.
+
+Tapping a survey notification opens exactly that occurrence. Surveys are native app screens with screen-reader labels, progress, required/optional indicators, and four answer types: short text, numeric scale, one choice, or multiple choices. Closing before submission stores no research answer or draft. Reopening returns to the same unanswered survey. Submission requires confirmation and is atomic: after one successful submission, the answer is read-only and cannot be edited or submitted again, even after restart or competing taps. An expired occurrence cannot be submitted.
 
 ### The status line
 
@@ -392,7 +404,8 @@ Uninstalling the app or clearing its app data also destroys the local keys and d
 | A source shows a red dot and any other code | Pause first, check that permission or special access, then try to resume; if it still fails, contact the research team and quote the code |
 | Data volume does not change in real time | Android's accounting is coarse and delayed, and the study sets how often the app polls; this is a normal limit |
 | There are gaps in location | Check location access, your phone's location services, and the research foreground service; indoors it can still be inaccurate |
-| Prompts do not arrive on time | Check the notification permission and battery-saving settings; prompts use inexact background scheduling |
+| A scheduled activity does not arrive on time | Check the notification permission and battery-saving settings; interventions use inexact background scheduling |
+| A survey says it expired or is unavailable | It cannot be submitted after its signed response window; contact the research team if the timing was unexpected |
 | Export fails | Check that the destination is writable and has enough space, and retry in another location; the study status does not change because of a failed export |
 | An `UPLOAD_…` code appears where the sent figure usually is | Nothing to do. Collection carries on and the app retries by itself; connect to Wi-Fi and charge the phone if it persists for days, then contact the research team and quote the code |
 | Storage failure / paused | The app fails closed and stops accepting events; do not clear the app's data, contact the research team first, or export if you need to |

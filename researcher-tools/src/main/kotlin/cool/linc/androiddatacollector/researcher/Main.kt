@@ -8,6 +8,7 @@ import cool.linc.androiddatacollector.core.protocol.SignedConfigurationEnvelope
 import cool.linc.androiddatacollector.core.definition.StudyConfigurationCodec
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.Signature
@@ -24,6 +25,7 @@ fun main(arguments: Array<String>) {
         "hpke-keygen" -> hpkeKeygen(args)
         "canonicalize" -> canonicalize(args)
         "sign" -> sign(args)
+        "personalize" -> personalize(args)
         "check-config" -> checkConfig(args)
         "decrypt" -> decrypt(args)
         else -> throw IllegalArgumentException(usage())
@@ -43,45 +45,108 @@ private fun hpkeKeygen(args: Arguments) {
 }
 
 private fun canonicalize(args: Arguments) {
-    val canonical = StudyConfigurationCodec.canonicalize(Files.readAllBytes(args.path("--input")))
+    var canonical = StudyConfigurationCodec.canonicalize(Files.readAllBytes(args.path("--input")))
+    args.optionalValue("--assigned-participant-id")?.let { assignedId ->
+        canonical = StudyConfigurationCodec.encode(
+            StudyConfigurationCodec.decode(canonical).copy(assignedParticipantId = assignedId),
+        )
+    }
     writeNew(args.path("--output"), canonical)
 }
 
 private fun sign(args: Arguments) {
-    val configurationBytes = Files.readAllBytes(args.path("--config"))
-    val configuration = StudyConfigurationCodec.decode(configurationBytes)
+    var configurationBytes = Files.readAllBytes(args.path("--config"))
+    var configuration = StudyConfigurationCodec.decode(configurationBytes)
+    args.optionalValue("--assigned-participant-id")?.let { assignedId ->
+        configuration = configuration.copy(assignedParticipantId = assignedId)
+        configurationBytes = StudyConfigurationCodec.encode(configuration)
+    }
     val keyId = args.value("--key-id")
     require(configuration.signer.keyId == keyId) {
         "Configuration declares signer '${configuration.signer.keyId}' but --key-id is '$keyId'"
     }
-    val privateKeyBytes = Base64.getDecoder().decode(Files.readString(args.path("--private")).trim())
-    val privateKey = KeyFactory.getInstance("Ed25519").generatePrivate(PKCS8EncodedKeySpec(privateKeyBytes))
+    val envelope = signEnvelope(
+        configurationBytes,
+        configuration.signer.publicKey,
+        keyId,
+        Files.readString(args.path("--private")),
+    )
+    writeNew(args.path("--output"), envelope)
+    println("signed ${configuration.experimentId} ${configuration.configurationId}")
+    println("fingerprint ${configuration.signer.fingerprint}")
+}
+
+/**
+ * Produces one canonical JSON and signed envelope per tab-separated
+ * `configuration_id<TAB>assigned_participant_id` row. The assigned code never appears in a
+ * filename or command output; researchers keep the supplied mapping as the join table.
+ */
+private fun personalize(args: Arguments) {
+    val baseBytes = StudyConfigurationCodec.canonicalize(Files.readAllBytes(args.path("--config")))
+    val base = StudyConfigurationCodec.decode(baseBytes)
+    val keyId = args.value("--key-id")
+    require(base.signer.keyId == keyId) { "Configuration signer does not match --key-id" }
+    val privateKey = Files.readString(args.path("--private"))
+    val assignments = Files.readAllLines(args.path("--mapping")).mapIndexed { index, line ->
+        require(line.isNotBlank()) { "Blank mapping row ${index + 1}" }
+        val fields = line.split('\t')
+        require(fields.size == 2) { "Mapping row ${index + 1} must contain exactly two tab-separated fields" }
+        base.copy(configurationId = fields[0], assignedParticipantId = fields[1])
+    }
+    require(assignments.isNotEmpty()) { "Mapping is empty" }
+    require(assignments.map { it.configurationId }.distinct().size == assignments.size) {
+        "Duplicate configuration ID in mapping"
+    }
+
+    val output = args.path("--output-dir")
+    require(!Files.exists(output)) { "Refusing to overwrite ${output.toAbsolutePath()}" }
+    output.parent?.let(Files::createDirectories)
+    val staging = Files.createTempDirectory(output.parent, ".adc-personalize-")
+    try {
+        assignments.forEach { configuration ->
+            val canonical = StudyConfigurationCodec.encode(configuration)
+            val envelope = signEnvelope(canonical, configuration.signer.publicKey, keyId, privateKey)
+            writeNew(staging.resolve("${configuration.configurationId}.json"), canonical)
+            writeNew(staging.resolve("${configuration.configurationId}.adccfg"), envelope)
+        }
+        Files.move(staging, output, StandardCopyOption.ATOMIC_MOVE)
+    } catch (failure: Throwable) {
+        deleteTree(staging)
+        throw failure
+    }
+    println("personalized ${assignments.size} configurations")
+}
+
+private fun signEnvelope(
+    configurationBytes: ByteArray,
+    declaredPublicKey: String,
+    keyId: String,
+    privateKeyBase64: String,
+): ByteArray {
+    val privateKey = KeyFactory.getInstance("Ed25519").generatePrivate(
+        PKCS8EncodedKeySpec(Base64.getDecoder().decode(privateKeyBase64.trim())),
+    )
     val signature = Signature.getInstance("Ed25519").run {
         initSign(privateKey)
         update(configurationBytes)
         sign()
     }
-    // The configuration carries the public key participants will verify with, so a mismatch here
-    // would produce a file that signs cleanly and then fails on every device. Catch it now.
     val declaredKey = KeyFactory.getInstance("Ed25519").generatePublic(
-        X509EncodedKeySpec(Base64.getDecoder().decode(configuration.signer.publicKey)),
+        X509EncodedKeySpec(Base64.getDecoder().decode(declaredPublicKey)),
     )
-    val selfCheck = Signature.getInstance("Ed25519").run {
+    require(Signature.getInstance("Ed25519").run {
         initVerify(declaredKey)
         update(configurationBytes)
         verify(signature)
-    }
-    require(selfCheck) { "signer.public_key in the configuration does not match --private" }
-    val envelope = SignedConfigurationCodec.encode(
-        SignedConfigurationEnvelope(
-            signerKeyId = keyId,
-            configurationBytes = configurationBytes,
-            signature = signature,
-        ),
+    }) { "signer.public_key in the configuration does not match --private" }
+    return SignedConfigurationCodec.encode(
+        SignedConfigurationEnvelope(keyId, configurationBytes, signature),
     )
-    writeNew(args.path("--output"), envelope)
-    println("signed ${configuration.experimentId} ${configuration.configurationId}")
-    println("fingerprint ${configuration.signer.fingerprint}")
+}
+
+private fun deleteTree(root: Path) {
+    if (!Files.exists(root)) return
+    Files.walk(root).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists) }
 }
 
 private fun checkConfig(args: Arguments) {
@@ -154,8 +219,9 @@ private fun usage(): String = """
     Commands:
       signing-keygen --private FILE --public FILE
       hpke-keygen --private FILE --public FILE
-      canonicalize --input FILE --output FILE
-      sign --config FILE --private FILE --key-id ID --output FILE
+      canonicalize --input FILE --output FILE [--assigned-participant-id ID]
+      sign --config FILE --private FILE --key-id ID --output FILE [--assigned-participant-id ID]
+      personalize --config FILE --mapping TSV --private FILE --key-id ID --output-dir DIRECTORY
       check-config --envelope FILE [--public FILE --key-id ID] [--app-version N] [--now ISO_INSTANT]
       decrypt --bundle FILE --private FILE --config FILE --output FILE
 """.trimIndent()

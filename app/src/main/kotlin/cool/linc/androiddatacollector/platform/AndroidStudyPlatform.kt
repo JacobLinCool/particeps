@@ -3,8 +3,11 @@ package cool.linc.androiddatacollector.platform
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.Data
@@ -12,16 +15,22 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
-import androidx.work.Worker
+import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import cool.linc.androiddatacollector.CollectionService
 import cool.linc.androiddatacollector.ExperimentDeadlineWorker
+import cool.linc.androiddatacollector.MainActivity
+import cool.linc.androiddatacollector.R
+import cool.linc.androiddatacollector.SurveyActivity
 import cool.linc.androiddatacollector.UploadWorker
 import cool.linc.androiddatacollector.core.application.StudyCollectionHost
 import cool.linc.androiddatacollector.core.application.StudyWorkScheduler
 import cool.linc.androiddatacollector.core.definition.StudyConfiguration
+import cool.linc.androiddatacollector.core.definition.SurveyAction
 import cool.linc.androiddatacollector.core.definition.UploadConfiguration
+import cool.linc.androiddatacollector.core.model.InterventionOccurrence
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.flow.first
 
 class AndroidStudyCollectionHost(
     private val context: Context,
@@ -41,23 +50,6 @@ class AndroidStudyWorkScheduler(
     private val workManager = WorkManager.getInstance(context.applicationContext)
 
     override fun schedule(configuration: StudyConfiguration) {
-        configuration.prompts.forEach { prompt ->
-            val request = OneTimeWorkRequestBuilder<PromptWorker>()
-                .setInitialDelay(prompt.delayMinutes.toLong(), TimeUnit.MINUTES)
-                .setInputData(
-                    Data.Builder()
-                        .putString(PromptWorker.KEY_PROMPT_ID, prompt.id)
-                        .putString(PromptWorker.KEY_MESSAGE, prompt.message)
-                        .build(),
-                )
-                .addTag(promptTag(configuration.experimentId))
-                .build()
-            workManager.enqueueUniqueWork(
-                promptWorkName(configuration.experimentId, prompt.id),
-                ExistingWorkPolicy.REPLACE,
-                request,
-            )
-        }
         val deadline = OneTimeWorkRequestBuilder<ExperimentDeadlineWorker>()
             .setInitialDelay(configuration.durationHours.toLong(), TimeUnit.HOURS)
             .setInputData(
@@ -72,6 +64,47 @@ class AndroidStudyWorkScheduler(
             deadline,
         )
         configuration.upload?.let { scheduleUpload(configuration.experimentId, it, ExistingWorkPolicy.REPLACE) }
+    }
+
+    override fun replaceInterventionWork(
+        configuration: StudyConfiguration,
+        occurrences: List<InterventionOccurrence>,
+    ) {
+        workManager.cancelAllWorkByTag(interventionTag(configuration.experimentId))
+        occurrences.forEach { enqueueOccurrence(configuration, it, ExistingWorkPolicy.REPLACE) }
+    }
+
+    override fun enqueueOccurrence(configuration: StudyConfiguration, occurrence: InterventionOccurrence) {
+        enqueueOccurrence(configuration, occurrence, ExistingWorkPolicy.KEEP)
+    }
+
+    private fun enqueueOccurrence(
+        configuration: StudyConfiguration,
+        occurrence: InterventionOccurrence,
+        policy: ExistingWorkPolicy,
+    ) {
+        val now = System.currentTimeMillis()
+        val delay = (occurrence.scheduledFor.wallTimeUtcMillis - now).coerceAtLeast(0)
+        val request = OneTimeWorkRequestBuilder<InterventionWorker>()
+            .setInitialDelay(delay, TimeUnit.MILLISECONDS)
+            .setInputData(Data.Builder().putString(InterventionWorker.KEY_OCCURRENCE_ID, occurrence.occurrenceId).build())
+            .addTag(interventionTag(configuration.experimentId))
+            .build()
+        workManager.enqueueUniqueWork(
+            occurrenceWorkName(configuration.experimentId, occurrence.occurrenceId),
+            policy,
+            request,
+        )
+        val expiry = OneTimeWorkRequestBuilder<InterventionExpiryWorker>()
+            .setInitialDelay((occurrence.expiresAtUtcMillis - now).coerceAtLeast(0), TimeUnit.MILLISECONDS)
+            .setInputData(Data.Builder().putString(InterventionWorker.KEY_OCCURRENCE_ID, occurrence.occurrenceId).build())
+            .addTag(interventionTag(configuration.experimentId))
+            .build()
+        workManager.enqueueUniqueWork(
+            "${occurrenceWorkName(configuration.experimentId, occurrence.occurrenceId)}-expiry",
+            policy,
+            expiry,
+        )
     }
 
     /**
@@ -121,7 +154,7 @@ class AndroidStudyWorkScheduler(
     }
 
     override fun cancelCollectionWork(experimentId: String) {
-        workManager.cancelAllWorkByTag(promptTag(experimentId))
+        workManager.cancelAllWorkByTag(interventionTag(experimentId))
         workManager.cancelUniqueWork(deadlineWorkName(experimentId))
     }
 
@@ -130,46 +163,84 @@ class AndroidStudyWorkScheduler(
         workManager.cancelUniqueWork(uploadWorkName(experimentId))
     }
 
-    private fun promptTag(experimentId: String) = "adc-prompt-$experimentId"
-    private fun promptWorkName(experimentId: String, promptId: String) = "adc-prompt-$experimentId-$promptId"
+    private fun interventionTag(experimentId: String) = "adc-intervention-$experimentId"
+    private fun occurrenceWorkName(experimentId: String, occurrenceId: String) = "adc-intervention-$experimentId-$occurrenceId"
     private fun deadlineWorkName(experimentId: String) = "adc-deadline-$experimentId"
     companion object {
         fun uploadWorkName(experimentId: String) = "adc-upload-$experimentId"
     }
 }
 
-class PromptWorker(
+class InterventionWorker(
     context: Context,
     parameters: WorkerParameters,
-) : Worker(context, parameters) {
-    override fun doWork(): Result {
+) : CoroutineWorker(context, parameters) {
+    override suspend fun doWork(): Result {
+        val occurrenceId = inputData.getString(KEY_OCCURRENCE_ID) ?: return Result.failure()
+        val application = applicationContext as cool.linc.androiddatacollector.CollectorApplication
+        if (application.session.snapshot.first { it.initialized }.configuration == null) return Result.success()
+        val dispatch = application.session.claimOccurrence(occurrenceId) ?: return Result.success()
         if (applicationContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
-            return Result.failure()
+            // The durable claim remains POSTING. A retry can post it after permission is restored,
+            // or atomically expire it once its availability window closes.
+            return Result.retry()
         }
-        val promptId = inputData.getString(KEY_PROMPT_ID) ?: return Result.failure()
-        val message = inputData.getString(KEY_MESSAGE) ?: return Result.failure()
+        val target = if (dispatch.action is SurveyAction) SurveyActivity::class.java else MainActivity::class.java
+        val intent = Intent(applicationContext, target)
+            .setAction(ACTION_OPEN_OCCURRENCE)
+            .setData(Uri.Builder().scheme("adc").authority("occurrence").appendPath(occurrenceId).build())
+            .putExtra(KEY_OCCURRENCE_ID, occurrenceId)
+        val pendingIntent = PendingIntent.getActivity(
+            applicationContext,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Research prompts", NotificationManager.IMPORTANCE_DEFAULT),
+            NotificationChannel(
+                CHANNEL_ID,
+                applicationContext.getString(R.string.intervention_channel),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ),
         )
         manager.notify(
-            promptId.hashCode(),
+            occurrenceId,
+            0,
             android.app.Notification.Builder(applicationContext, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle("Research prompt")
-                .setContentText(message)
-                .setStyle(android.app.Notification.BigTextStyle().bigText(message))
+                .setContentTitle(dispatch.action.notificationTitle)
+                .setContentText(dispatch.action.notificationMessage)
+                .setStyle(android.app.Notification.BigTextStyle().bigText(dispatch.action.notificationMessage))
+                .setContentIntent(pendingIntent)
                 .setAutoCancel(true)
+                .setTimeoutAfter((dispatch.occurrence.expiresAtUtcMillis - System.currentTimeMillis()).coerceAtLeast(1))
                 .build(),
         )
+        application.session.markNotificationPosted(occurrenceId)
         return Result.success()
     }
 
     companion object {
-        const val KEY_PROMPT_ID = "prompt_id"
-        const val KEY_MESSAGE = "message"
-        private const val CHANNEL_ID = "research-prompts"
+        const val KEY_OCCURRENCE_ID = "occurrence_id"
+        const val ACTION_OPEN_OCCURRENCE = "cool.linc.androiddatacollector.OPEN_OCCURRENCE"
+        private const val CHANNEL_ID = "research-interventions-v1"
+    }
+}
+
+/** Records the terminal no-response outcome even when the participant never taps a notification. */
+class InterventionExpiryWorker(
+    context: Context,
+    parameters: WorkerParameters,
+) : CoroutineWorker(context, parameters) {
+    override suspend fun doWork(): Result {
+        val occurrenceId = inputData.getString(InterventionWorker.KEY_OCCURRENCE_ID) ?: return Result.failure()
+        val application = applicationContext as cool.linc.androiddatacollector.CollectorApplication
+        if (application.session.snapshot.first { it.initialized }.configuration == null) return Result.success()
+        application.session.claimOccurrence(occurrenceId)
+        applicationContext.getSystemService(NotificationManager::class.java).cancel(occurrenceId, 0)
+        return Result.success()
     }
 }

@@ -48,6 +48,7 @@ const demoStudy: StudyConfiguration = {
   schema_version: 1,
   experiment_id: 'modular-sensing-demo',
   configuration_id: 'demo-config-2026',
+  assigned_participant_id: null,
   issued_at: '2026-01-01T00:00:00Z',
   expires_at: '2035-01-01T00:00:00Z',
   minimum_app_version: 1,
@@ -87,11 +88,38 @@ const demoStudy: StudyConfiguration = {
     },
     { id: 'keyboard_touch.v1', required: false, config: { trajectory_sampling_hz: 60 } }
   ],
-  prompts: [
+  surveys: [
+    {
+      id: 'demo-survey',
+      title: { default: 'Study check-in', translations: { 'zh-TW': '研究確認' } },
+      description: { default: 'Tell us how the study is going.', translations: {} },
+      questions: [
+        {
+          type: 'short_text',
+          id: 'status-note',
+          prompt: { default: 'How is it going?', translations: {} },
+          required: false,
+          maximum_length: 500
+        }
+      ]
+    }
+  ],
+  interventions: [
     {
       id: 'demo-check-in',
-      delay_minutes: 60,
-      message: 'Please check that the study is still running as expected.'
+      action: {
+        type: 'survey',
+        notification_title: 'Study check-in',
+        notification_message: 'Please complete the study check-in.',
+        survey_id: 'demo-survey'
+      },
+      triggers: [
+        {
+          id: 'after-one-hour',
+          schedule: { type: 'one_time', offset_minutes: 60, clock: 'ACTIVE_RUNNING_TIME' },
+          availability_minutes: 1440
+        }
+      ]
     }
   ],
   storage: { maximum_local_bytes: 16777216 },
@@ -214,6 +242,7 @@ describe('canonicalize', () => {
       '{"schema_version":1' +
         ',"experiment_id":"modular-sensing-demo"' +
         ',"configuration_id":"demo-config-2026"' +
+        ',"assigned_participant_id":null' +
         ',"issued_at":"2026-01-01T00:00:00Z"' +
         ',"expires_at":"2035-01-01T00:00:00Z"' +
         ',"minimum_app_version":1' +
@@ -234,7 +263,8 @@ describe('canonicalize', () => {
         ',{"id":"location.v1","required":false,"config":{"interval_millis":10000,"minimum_interval_millis":5000,"maximum_batch_delay_millis":30000,"minimum_displacement_meters":5.0,"priority":"BALANCED"}}' +
         ',{"id":"keyboard_touch.v1","required":false,"config":{"trajectory_sampling_hz":60}}' +
         ']' +
-        ',"prompts":[{"id":"demo-check-in","delay_minutes":60,"message":"Please check that the study is still running as expected."}]' +
+        ',"surveys":[{"id":"demo-survey","title":{"default":"Study check-in","translations":{"zh-TW":"研究確認"}},"description":{"default":"Tell us how the study is going.","translations":{}},"questions":[{"type":"short_text","id":"status-note","prompt":{"default":"How is it going?","translations":{}},"required":false,"maximum_length":500}]}]' +
+        ',"interventions":[{"id":"demo-check-in","action":{"type":"survey","notification_title":"Study check-in","notification_message":"Please complete the study check-in.","survey_id":"demo-survey"},"triggers":[{"id":"after-one-hour","schedule":{"type":"one_time","offset_minutes":60,"clock":"ACTIVE_RUNNING_TIME"},"availability_minutes":1440}]}]' +
         ',"storage":{"maximum_local_bytes":16777216}' +
         ',"signer":{"key_id":"demo-signer-2026","public_key":"' +
         DEMO_PUBLIC_KEY +
@@ -253,7 +283,9 @@ describe('canonicalize', () => {
       title: '心理韌性研究 "2026"',
       purpose: 'Line one\nline two\ttabbed',
       researcher: { name: 'Lin\\Chen', contact: 'lab@example.invalid' },
-      prompts: [],
+      assigned_participant_id: 'Cohort_A-017',
+      surveys: [],
+      interventions: [],
       collectors: [{ id: 'app_lifecycle.v1', required: true, config: {} }],
       upload: {
         endpoint: 'https://intake.example.invalid/v1/bundles?study=1',
@@ -265,7 +297,9 @@ describe('canonicalize', () => {
     expect(canonical).toContain('"title":"心理韌性研究 \\"2026\\""');
     expect(canonical).toContain('"purpose":"Line one\\nline two\\ttabbed"');
     expect(canonical).toContain('"name":"Lin\\\\Chen"');
-    expect(canonical).toContain('"prompts":[]');
+    expect(canonical).toContain('"assigned_participant_id":"Cohort_A-017"');
+    expect(canonical).toContain('"surveys":[]');
+    expect(canonical).toContain('"interventions":[]');
     expect(canonical).toContain(
       '"upload":{"endpoint":"https://intake.example.invalid/v1/bundles?study=1","interval_minutes":720,"allow_metered":false}'
     );
@@ -328,7 +362,8 @@ describe('canonicalBytes', () => {
     const configuration = { ...demoStudy, title: '研究' };
     const bytes = canonicalBytes(configuration);
     expect(bytes).toBeInstanceOf(Uint8Array);
-    expect(bytes.length).toBe(canonicalize(configuration).length + 4);
+    expect(bytes).toEqual(new TextEncoder().encode(canonicalize(configuration)));
+    expect(bytes.length).toBeGreaterThan(canonicalize(configuration).length);
     expect(new TextDecoder().decode(bytes)).toBe(canonicalize(configuration));
   });
 });
