@@ -10,6 +10,12 @@
  * signed, and any difference retires the signature and the envelope. Comparing the canonical
  * *string* rather than diffing fields is not laziness — those bytes are the only thing that
  * decides whether the signature is still over the right document.
+ *
+ * Two fields are held apart from the rest. `configuration` is the editable object, and nothing in
+ * it names it: `experiment_id` and `configuration_id` are derived here (`lib/adc/ids.ts`) and
+ * written into `document`, which is what gets validated, canonicalised, signed, and downloaded.
+ * Nobody types an identifier, and the property the old section note asked a researcher to maintain
+ * by hand — change anything, change the configuration ID — is now true by construction.
  */
 
 import { canonicalBytes, canonicalize } from '$lib/adc/canonical';
@@ -21,10 +27,12 @@ import {
   type SigningKeyPair
 } from '$lib/adc/crypto';
 import { encodeEnvelope } from '$lib/adc/envelope';
+import { deriveConfigurationId, deriveExperimentId } from '$lib/adc/ids';
 import { defaultCollector, emptyConfiguration, validate, type Issue } from '$lib/adc/schema';
 import { generateHpkeKeyset, type HpkeKeyset } from '$lib/adc/tink';
 import {
   COLLECTOR_ORDER,
+  ID_PATTERN,
   type CollectorConfig,
   type CollectorId,
   type PromptConfig,
@@ -60,8 +68,6 @@ const NO_ARTIFACTS: Record<ArtifactId, boolean> = {
  */
 function studyStarted(configuration: StudyConfiguration): boolean {
   return (
-    configuration.experiment_id !== '' ||
-    configuration.configuration_id !== '' ||
     configuration.title !== '' ||
     configuration.purpose !== '' ||
     configuration.researcher.name !== '' ||
@@ -95,10 +101,40 @@ export function createDraft() {
   let kept = $state<Record<ArtifactId, boolean>>({ ...NO_ARTIFACTS });
   const touched = new SvelteSet<string>();
 
-  const canonical = $derived(canonicalize(configuration));
-  const bytes = $derived(canonicalBytes(configuration));
-  const issues = $derived(validate(configuration));
-  const cost = $derived(estimate(configuration));
+  /**
+   * `''` means "derive from the title". Anything else is what the study is called, verbatim.
+   *
+   * Two forces pull against each other: the id has to come from nothing but the title, and it must
+   * not move when the title changes for a second-language arm — same experiment, different title,
+   * different configuration. So it derives until it is real and then latches: `sign()` pins it,
+   * because that is the moment it enters a file somebody else will hold, and `load()` adopts the
+   * one it read. Opening the English `.adccfg`, retyping the prose in Chinese, and re-signing
+   * therefore inherits the experiment and regenerates the configuration, with nothing to remember.
+   */
+  let experimentIdPin = $state('');
+
+  const experimentId = $derived(
+    experimentIdPin !== '' ? experimentIdPin : deriveExperimentId(configuration.title)
+  );
+
+  /** The document minus its own name, which is what its name is a digest of. */
+  const unnamed = $derived({
+    ...configuration,
+    experiment_id: experimentId,
+    configuration_id: ''
+  });
+  const configurationId = $derived(deriveConfigurationId(experimentId, canonicalize(unnamed)));
+
+  /**
+   * What is validated, canonicalised, signed, and downloaded. Never the editable object: the spread
+   * is shallow, so every nested `$state` proxy passes through by reference and stays reactive.
+   */
+  const document = $derived({ ...unnamed, configuration_id: configurationId });
+
+  const canonical = $derived(canonicalize(document));
+  const bytes = $derived(canonicalBytes(document));
+  const issues = $derived(validate(document));
+  const cost = $derived(estimate(document));
   const stale = $derived(signedCanonical !== null && signedCanonical !== canonical);
 
   const issuesByStep = $derived.by(() => {
@@ -180,8 +216,23 @@ export function createDraft() {
   }
 
   return {
+    /** The editable object. Its `experiment_id` and `configuration_id` are inert placeholders. */
     get configuration() {
       return configuration;
+    },
+    /** The document as it will be signed, with both identifiers in it. */
+    get document() {
+      return document;
+    },
+    get experimentId() {
+      return experimentId;
+    },
+    get configurationId() {
+      return configurationId;
+    },
+    /** The override's own value, which is what the field is bound to. `''` is "derived". */
+    get experimentIdPin() {
+      return experimentIdPin;
     },
     get signing() {
       return signing;
@@ -256,6 +307,11 @@ export function createDraft() {
       touched.add(path);
     },
 
+    /** Empty restores the derived name. Anything else is taken as typed, and `validate` judges it. */
+    pinExperimentId(value: string) {
+      experimentIdPin = value;
+    },
+
     /** Always in the codec's order, so two otherwise-identical studies stay diffable. */
     enableCollector(id: CollectorId) {
       if (indexOf(id) >= 0) return;
@@ -324,6 +380,9 @@ export function createDraft() {
       if (signing.kind === 'held') loaded.signer.public_key = signing.material.publicX509Base64;
       if (hpke.kind === 'held') loaded.export.tink_hpke_public_keyset = hpke.material.publicKeyset;
       configuration = loaded;
+      // The file's own name, adopted. A file whose name this editor could not have written is not
+      // inherited: the title derives one instead, and the researcher can still override it.
+      experimentIdPin = ID_PATTERN.test(loaded.experiment_id) ? loaded.experiment_id : '';
       signature = null;
       envelope = null;
       signedCanonical = null;
@@ -356,20 +415,27 @@ export function createDraft() {
       attempted = true;
       if (signing.kind !== 'held') return 'failed';
       const material = signing.material;
-      if (configuration.signer.public_key !== material.publicX509Base64) return 'mismatch';
-      const payload = canonicalBytes(configuration);
+      // One snapshot for the whole act, so the bytes that are signed, the bytes that go in the
+      // envelope, and the string staleness is measured against cannot be three different documents.
+      const target = document;
+      if (target.signer.public_key !== material.publicX509Base64) return 'mismatch';
+      const text = canonicalize(target);
+      const payload = canonicalBytes(target);
       let produced: Uint8Array;
       let container: Uint8Array;
       try {
         produced = signBytes(payload, material.privatePkcs8Base64);
-        if (!verify(payload, produced, configuration.signer.public_key)) return 'mismatch';
-        container = encodeEnvelope(configuration.signer.key_id, payload, produced);
+        if (!verify(payload, produced, target.signer.public_key)) return 'mismatch';
+        container = encodeEnvelope(target.signer.key_id, payload, produced);
       } catch {
         return 'failed';
       }
       signature = produced;
       envelope = container;
-      signedCanonical = canonicalize(configuration);
+      signedCanonical = text;
+      // The name is now in a file somebody else will hold, so it stops following the title. After
+      // this, editing the prose moves `configuration_id` — which is correct — and nothing else.
+      if (experimentIdPin === '') experimentIdPin = target.experiment_id;
       sent = { ...sent, canonical: false, adccfg: false };
       kept = { ...kept, canonical: false, adccfg: false };
       return 'signed';
@@ -377,6 +443,7 @@ export function createDraft() {
 
     reset() {
       configuration = emptyConfiguration();
+      experimentIdPin = '';
       signing = { kind: 'empty' };
       hpke = { kind: 'empty' };
       signature = null;

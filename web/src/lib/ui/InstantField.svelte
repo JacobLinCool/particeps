@@ -1,3 +1,18 @@
+<script module lang="ts">
+  /**
+   * The zones offered beside an instant: the reader's own, and UTC. Exported because a caller
+   * governing two instants with one selector needs the same list this control would have drawn.
+   * A full IANA list is scope creep until somebody actually needs to author in a third zone.
+   */
+  export function zoneOptions(): string[] {
+    const local =
+      typeof Intl === 'undefined'
+        ? 'UTC'
+        : (Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC');
+    return local === 'UTC' ? ['UTC'] : [local, 'UTC'];
+  }
+</script>
+
 <script lang="ts">
   /**
    * A wall-clock picker that emits an instant, and shows the instant it emitted.
@@ -8,8 +23,10 @@
    * offset form. `2026-01-01T00:00Z` parses in Java and re-emits with seconds, which makes the
    * file non-canonical and gets it refused.
    *
-   * The literal string sits under the picker in monospace, because it is the byte-level truth and
-   * a researcher may need to match it against a file the CLI produced.
+   * The literal string can sit under the picker in monospace, because it is the byte-level truth
+   * and a researcher may need to match it against a file the CLI produced. `echo` turns it off
+   * where the caller shows those bytes somewhere better — the canonical JSON on the sign step
+   * carries both instants at once, in context.
    */
   import Field from './Field.svelte';
   import { fieldSource } from './field-context';
@@ -20,21 +37,26 @@
     value: string;
     path?: string;
     hint?: string;
-    /** IANA zone. Defaults to the browser's. */
+    /**
+     * IANA zone. Given one, the caller owns the zone — this control follows it and draws no
+     * selector of its own, which is what lets two instants share one. Omitted, it picks the
+     * browser's and offers the selector itself.
+     */
     zone?: string;
     /** `control.timezone`. The name of the control, never one of its values. */
     zoneLabel?: string;
+    /** The instant, echoed underneath in monospace. */
+    echo?: boolean;
     onchange: (value: string) => void;
   }
 
-  let { label, value, path, hint, zone, zoneLabel, onchange }: Props = $props();
+  let { label, value, path, hint, zone, zoneLabel, echo = true, onchange }: Props = $props();
 
   const source = fieldSource();
-  const browserZone =
-    typeof Intl === 'undefined' ? 'UTC' : (Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC');
+  const zones = zoneOptions();
 
-  let picked = $state(zone ?? browserZone);
-  const zones = $derived(browserZone === 'UTC' ? ['UTC'] : [browserZone, 'UTC']);
+  let own = $state(zones[0]);
+  const picked = $derived(zone ?? own);
 
   function partsIn(date: Date, timeZone: string): number[] {
     const parts = new Intl.DateTimeFormat('en-CA', {
@@ -95,14 +117,14 @@
         oninput={(event) => edit(event.currentTarget.value)}
         onblur={() => path && source.touch?.(path)}
       />
-      {#if zones.length > 1}
+      {#if zone === undefined && zones.length > 1}
         <select
           class="input"
           style="inline-size: auto"
           aria-label={zoneLabel}
           value={picked}
           onchange={(event) => {
-            picked = event.currentTarget.value;
+            own = event.currentTarget.value;
           }}
         >
           {#each zones as option (option)}
@@ -111,6 +133,8 @@
         </select>
       {/if}
     </div>
-    <p class="mono micro faint">{value}</p>
+    {#if echo}
+      <p class="mono micro faint">{value}</p>
+    {/if}
   {/snippet}
 </Field>

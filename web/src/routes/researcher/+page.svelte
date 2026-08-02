@@ -110,18 +110,19 @@
   });
 
   /**
-   * Two things that are legal and still worth knowing, so neither is an `Issue`: `validate` mirrors
+   * One thing that is legal and still worth knowing, so it is not an `Issue`: `validate` mirrors
    * the device's own rules exactly, and a rule the device does not have must never block a
    * signature the device would accept.
    *
    * A prompt past the end of the study is the one the timeline could only say in colour — the tick
    * turned `--caution` and nothing else on the page mentioned it, so a researcher could ship a
    * prompt that will never fire for anyone who finishes on time.
+   *
+   * `configuration_id` used to have one too, telling a researcher to change the id by hand after an
+   * edit. The id is derived from the document now, so the advice is the code's job; `status.stale`
+   * on the sign step is what still has to be said, and it is said there.
    */
   function advisoryFor(path: string): string | null {
-    if (path === 'configuration_id' && draft.stale) {
-      return m.researcher.study.section.identity.note;
-    }
     const prompt = /^prompts\.(\d+)\.delay_minutes$/.exec(path);
     if (prompt) {
       const delay = draft.configuration.prompts[Number(prompt[1])]?.delay_minutes;

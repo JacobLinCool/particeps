@@ -10,9 +10,8 @@ function ready() {
   draft.generateSigning();
   draft.generateHpke();
   const c = draft.configuration;
-  c.experiment_id = 'demo-study';
-  c.configuration_id = 'demo-study-v1';
-  c.title = 'T';
+  // No identifier is typed anywhere: the title names the study and the bytes name the file.
+  c.title = 'Sleep and screen time';
   c.researcher.name = 'R';
   c.researcher.contact = 'r@example.org';
   c.purpose = 'P';
@@ -36,6 +35,43 @@ describe('draft', () => {
     expect(draft.collectorPath('location.v1')).toBe('collectors.2');
   });
 
+  it('names the study from the title and the file from its own bytes', () => {
+    const draft = ready();
+    expect(draft.experimentId).toBe('sleep-and-screen-time');
+    expect(draft.configurationId.startsWith('sleep-and-screen-time-')).toBe(true);
+    expect(draft.document.experiment_id).toBe(draft.experimentId);
+    expect(draft.document.configuration_id).toBe(draft.configurationId);
+    // The editable object is never named. Nothing reads these two off it.
+    expect(draft.configuration.experiment_id).toBe('');
+    expect(draft.configuration.configuration_id).toBe('');
+
+    const before = draft.configurationId;
+    draft.configuration.purpose = 'A different purpose entirely';
+    flushSync();
+    expect(draft.configurationId).not.toBe(before);
+  });
+
+  it('holds the study name once it is in a file, and takes an override at any time', () => {
+    const draft = ready();
+    expect(draft.sign()).toBe('signed');
+    flushSync();
+    const latched = draft.experimentId;
+    draft.configuration.title = '睡眠與螢幕使用時間';
+    flushSync();
+    // A second-language arm: same experiment, new title, new configuration.
+    expect(draft.experimentId).toBe(latched);
+    expect(draft.configurationId.startsWith(`${latched}-`)).toBe(true);
+
+    draft.pinExperimentId('pilot-2026');
+    flushSync();
+    expect(draft.experimentId).toBe('pilot-2026');
+    draft.pinExperimentId('');
+    flushSync();
+    // Emptied, it derives again — from the title that is there now, which is Chinese and yields
+    // no ASCII stem at all.
+    expect(draft.experimentId).toMatch(/^study-[0-9a-z]{6}$/);
+  });
+
   it('signs, verifies, and retires the envelope on any edit', () => {
     const draft = ready();
     expect(draft.issues).toEqual([]);
@@ -45,7 +81,8 @@ describe('draft', () => {
     const decoded = decodeEnvelope(envelope);
     expect(decoded.signerKeyId).toBe('demo-signer');
     expect(verify(decoded.configurationBytes, decoded.signature, draft.configuration.signer.public_key)).toBe(true);
-    expect(new TextDecoder().decode(decoded.configurationBytes)).toBe(canonicalize(draft.configuration));
+    expect(new TextDecoder().decode(decoded.configurationBytes)).toBe(draft.canonical);
+    expect(draft.canonical).toBe(canonicalize(draft.document));
 
     draft.configuration.title = 'T2';
     flushSync();
@@ -140,7 +177,11 @@ describe('draft', () => {
     const mine = other.configuration.signer.public_key;
     other.load(envelope);
     flushSync();
-    expect(other.configuration.experiment_id).toBe('demo-study');
+    // The file's own name, inherited — which is what makes the second-language arm automatic.
+    expect(other.experimentId).toBe(draft.experimentId);
+    other.configuration.title = 'A second-language arm of the same study';
+    flushSync();
+    expect(other.experimentId).toBe(draft.experimentId);
     expect(other.configuration.signer.public_key).toBe(mine);
     expect(other.configuration.signer.public_key).not.toBe(before);
     expect(other.envelope).toBeNull();

@@ -34,6 +34,13 @@
     scale?: 'linear' | 'log';
     invert?: boolean;
     presets?: readonly number[];
+    /**
+     * Whether the exact value is worth typing. True for a count in the unit a person thinks in — 24
+     * hours, 5 minutes, 60 Hz. False where the stored unit is not that unit: a storage quota is
+     * chosen as "1 GiB", and offering `1073741824` as the box to edit asks a researcher to do
+     * arithmetic to say something the presets already say.
+     */
+    numericInput?: boolean;
     icon?: IconRef;
     /** Marks the readout --caution without raising an issue: legal, but worth a second look. */
     caution?: boolean;
@@ -54,7 +61,8 @@
     presets,
     icon,
     caution = false,
-    onchange
+    onchange,
+    numericInput = true
   }: Props = $props();
 
   const source = fieldSource();
@@ -149,21 +157,23 @@
           {/if}
         </div>
 
-        <div class="range__readout">
-          <input
-            class="input input--num"
-            type="number"
-            {min}
-            {max}
-            {step}
-            aria-label={label}
-            aria-invalid={outside || undefined}
-            value={draft ?? value}
-            oninput={(event) => {
-              draft = event.currentTarget.value;
-            }}
-            onblur={commitDraft}
-          />
+        <div class="range__readout" class:range__readout--human={!numericInput}>
+          {#if numericInput}
+            <input
+              class="input input--num"
+              type="number"
+              {min}
+              {max}
+              {step}
+              aria-label={label}
+              aria-invalid={outside || undefined}
+              value={draft ?? value}
+              oninput={(event) => {
+                draft = event.currentTarget.value;
+              }}
+              onblur={commitDraft}
+            />
+          {/if}
           <span class="range__human">{format(value)}</span>
         </div>
       </div>

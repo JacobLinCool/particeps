@@ -12,6 +12,7 @@ import { canonicalBytes, formatInstant, keysetJson, parseInstant, type Instant }
 import { isUsableHpkePublicKeyset } from './tink';
 import {
   BOUNDS,
+  DEFAULT_MINIMUM_APP_VERSION,
   ID_PATTERN,
   MAXIMUM_CONFIGURATION_BYTES,
   MAXIMUM_LOCAL_BYTES,
@@ -54,7 +55,14 @@ export interface Issue {
 type Bounds = readonly [number, number];
 
 const DEFAULT_VALIDITY_DAYS = 90;
-const DEFAULT_LOCAL_BYTES = 64 * 1024 * 1024;
+
+/**
+ * The quota a study opens on: 1 GiB, which is also a preset chip on the control. Exported so a test
+ * can assert against the name rather than a literal. It lives here rather than in `types.ts`
+ * because it is an authoring default and not a schema bound — `MINIMUM_LOCAL_BYTES` and
+ * `MAXIMUM_LOCAL_BYTES` are the bounds, and they are the app's.
+ */
+export const DEFAULT_LOCAL_BYTES = 1_024 * 1_024 * 1_024;
 
 export function validate(configuration: StudyConfiguration): Issue[] {
   const issues: Issue[] = [];
@@ -141,13 +149,16 @@ export function emptyConfiguration(): StudyConfiguration {
   const now = Math.floor(Date.now() / 1_000);
   return {
     schema_version: SCHEMA_VERSION,
+    // Inert placeholders. The editor derives both — `lib/adc/ids.ts` — and the document it signs
+    // carries the derived values, never these. `validate` still checks them, because it also judges
+    // documents this editor did not build (`tests/hostile.spec.ts`).
     experiment_id: '',
     configuration_id: '',
     // Verification needs the current time inside this window, and an issued file cannot be
     // revoked, so the default window is short enough to be a mistake worth noticing.
     issued_at: formatInstant({ second: now, nano: 0 }),
     expires_at: formatInstant({ second: now + DEFAULT_VALIDITY_DAYS * 86_400, nano: 0 }),
-    minimum_app_version: 1,
+    minimum_app_version: DEFAULT_MINIMUM_APP_VERSION,
     title: '',
     researcher: { name: '', contact: '' },
     purpose: '',

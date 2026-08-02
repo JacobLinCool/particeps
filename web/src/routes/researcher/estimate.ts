@@ -1,11 +1,14 @@
 /**
- * What a study costs on someone else's phone, to one significant figure.
+ * How many events an hour a study records, and how many bytes that is.
  *
- * The researcher guide is emphatic about minimisation — fewest collectors, lowest usable rate,
- * smallest quota — and a form cannot say anything about cost. Two numbers can: an intensity bar per
- * collector, and a fill line against the quota. Both are advisory. Nothing here ever produces an
- * `Issue`, because none of it is a rule; a study may knowingly exceed its quota and fail closed,
- * which is what the app does at the limit.
+ * Both numbers are arithmetic over values in the document being written — sampling periods, poll
+ * intervals, a location interval, a trajectory rate, a count of transports — and nothing here says
+ * anything about power, battery, or hardware, none of which this site has measured. What it does
+ * say is volume: a rate per collector, and a fill line against the quota, which is the one cost the
+ * app actually enforces (collection stops at the limit rather than dropping events).
+ *
+ * Everything is advisory. Nothing here ever produces an `Issue`, because none of it is a rule: a
+ * study may knowingly exceed its quota and fail closed.
  *
  * The constants are order-of-magnitude and live in one place so they can be argued with as a set.
  */
@@ -82,10 +85,14 @@ export function estimate(configuration: StudyConfiguration): Estimate {
   };
 }
 
-export type Intensity = 0 | 1 | 2 | 3 | 4;
+export type Volume = 0 | 1 | 2 | 3 | 4;
 
-/** Four decades, so seven cards side by side say at a glance which one is the expensive one. */
-export function intensityOf(eventsPerHour: number): Intensity {
+/**
+ * Which decade of events per hour this collector is in. Four steps rather than a continuous
+ * position, because the constants above are order-of-magnitude and a smooth bar would claim a
+ * precision they do not have. Seven cards side by side then say which one writes the most.
+ */
+export function volumeOf(eventsPerHour: number): Volume {
   if (!(eventsPerHour > 0)) return 0;
   if (eventsPerHour < 100) return 1;
   if (eventsPerHour < 1_000) return 2;

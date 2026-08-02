@@ -77,7 +77,10 @@
     {#if meta}<div class="tile__meta">{@render meta()}</div>{/if}
   </div>
 
-  {#if trailing}{@render trailing()}{/if}
+  <!-- One grid cell, however many controls a caller puts in it. Rendered straight into the tile,
+       a snippet holding a button *and* a live region became a fourth column, and the column it took
+       the width from was the text — which is how `0 B · Ed25519` came to wrap in a 79px slot. -->
+  {#if trailing}<div class="tile__actions">{@render trailing()}</div>{/if}
 
   {#if warning}
     <p class="tile__warn">

@@ -157,7 +157,6 @@ export interface Messages {
       configurationId: string;
       issuedAt: string;
       expiresAt: string;
-      minimumAppVersion: string;
       title: string;
       researcherName: string;
       researcherContact: string;
@@ -191,12 +190,21 @@ export interface Messages {
       exportKeyset: string;
       fingerprint: string;
     };
+    /**
+     * No hint may state or imply a power, battery, or energy cost: nothing here has been measured,
+     * and a hint is not the place to guess. Bytes and hours are measured, and the quota meter says
+     * those.
+     */
     hint: {
       id: string;
+      /** The one identifier a researcher may type. Both are otherwise derived. */
+      experimentIdOverride: string;
+      title: string;
       contact: string;
+      expiresAt: string;
       duration: string;
       consentSummary: string;
-      minimumAppVersion: string;
+      storageQuota: string;
       required: string;
       samplingPeriod: string;
       bandwidthEstimates: string;
@@ -267,18 +275,28 @@ export interface Messages {
       replace: string;
     };
     study: {
+      /**
+       * Six, not eight. Neither identifier is typed here any more — both are derived and read out
+       * on the sign step — and the quota sits with the collectors that fill it.
+       */
       section: {
-        identity: Section;
-        validity: Section;
         about: Section;
-        consent: Section;
+        validity: Section;
         collectors: Section;
+        consent: Section;
         prompts: Section;
-        storage: Section;
         delivery: Section;
+      };
+      /** One line each, under the control the sentence is about, not in the section heading. */
+      note: {
+        irrevocable: string;
+        disclosure: string;
+        delivery: string;
       };
     };
     sign: {
+      /** What the study is about to be called. Read out here, because this is where it becomes real. */
+      identity: Section;
       canonical: string;
       size: (extent: { bytes: number; max: number }) => string;
       blocked: (count: number) => string;

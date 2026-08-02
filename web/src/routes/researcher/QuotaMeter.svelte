@@ -45,6 +45,7 @@
     scale="log"
     icon="storage"
     format={units.bytes}
+    numericInput={false}
     presets={PRESETS.maximum_local_bytes}
     onchange={onquota}
   />
@@ -70,6 +71,13 @@
 </div>
 
 <style>
+  /* Ten digits. This is the one control whose value gets there — 1 073 741 824 is the default and
+     8 589 934 592 the ceiling — and at the shared width the last digit was cut off the end of the
+     box, which reads as a different number rather than as a clipped one. */
+  .quota :global(.input--num) {
+    inline-size: 8.5rem;
+  }
+
   .quota__read > span {
     display: inline-flex;
     align-items: center;

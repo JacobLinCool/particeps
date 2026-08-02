@@ -10,7 +10,7 @@
   import Field from './Field.svelte';
   import Icon from './Icon.svelte';
   import { fieldSource } from './field-context';
-  import { ID_PATTERN } from '$lib/adc/types';
+  import { deriveExperimentId } from '$lib/adc/ids';
 
   interface Props {
     label: string;
@@ -29,21 +29,15 @@
   const source = fieldSource();
   const uid = $props.id();
 
-  function slug(from: string): string | null {
-    const candidate = from
-      .toLowerCase()
-      .normalize('NFKD')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 64)
-      .replace(/-+$/, '');
-    return ID_PATTERN.test(candidate) ? candidate : null;
-  }
-
+  /**
+   * The same derivation the document itself uses, so the button offers exactly the name the study
+   * already has. It cannot fail: a title with no ASCII in it gets a digest stem rather than no
+   * suggestion, which is what used to leave a Chinese title with nothing to click.
+   */
   const suggestion = $derived.by(() => {
     if (!suggestFrom) return null;
-    const candidate = slug(suggestFrom);
-    return candidate && candidate !== value ? candidate : null;
+    const candidate = deriveExperimentId(suggestFrom);
+    return candidate !== value ? candidate : null;
   });
 </script>
 

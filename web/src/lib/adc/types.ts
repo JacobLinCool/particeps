@@ -14,6 +14,14 @@
 
 export const SCHEMA_VERSION = 1;
 
+/**
+ * Pinned. The lowest `versionCode` the schema allows, and the only one this page authors — there is
+ * no control for it, because a floor a researcher has no way to measure is a floor they cannot set
+ * honestly. `BOUNDS.minimumAppVersion` stays: `validate` still has to judge documents written
+ * elsewhere, and `researcher-tools` can raise the floor deliberately.
+ */
+export const DEFAULT_MINIMUM_APP_VERSION = 1;
+
 /** `[a-z0-9][a-z0-9-]{2,63}` — experiment, configuration, prompt, signer, and researcher key IDs. */
 export const ID_PATTERN = /^[a-z0-9][a-z0-9-]{2,63}$/;
 

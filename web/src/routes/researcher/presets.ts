@@ -8,6 +8,8 @@
  * Keyed by the schema path so a control and its presets cannot drift apart.
  */
 
+import { DEFAULT_LOCAL_BYTES } from '$lib/adc/schema';
+
 const KIB = 1_024;
 const MIB = 1_024 * KIB;
 
@@ -20,7 +22,11 @@ export const PRESETS = {
   maximum_batch_delay_millis: [0, 30_000, 300_000, 3_600_000, 86_400_000],
   minimum_displacement_meters: [0, 5, 25, 100, 1_000],
   trajectory_sampling_hz: [30, 60, 120],
-  maximum_local_bytes: [8 * MIB, 64 * MIB, 256 * MIB, 1_024 * MIB, 4_096 * MIB, 8_192 * MIB],
+  // `DEFAULT_LOCAL_BYTES` rather than a fourth literal: the study opens on that value, so the chip
+  // showing it has to be the same number and cannot be left behind if the default moves.
+  maximum_local_bytes: [8 * MIB, 64 * MIB, 256 * MIB, DEFAULT_LOCAL_BYTES, 4_096 * MIB, 8_192 * MIB],
+  // 1, 3, 7, 14 and 28 days, in the unit the schema counts: how long one participant runs.
+  duration_hours: [24, 72, 168, 336, 672],
   delay_minutes: [60, 360, 1_440, 4_320, 10_080],
   upload_interval_minutes: [15, 60, 360, 1_440, 10_080]
 } as const satisfies Record<string, readonly number[]>;

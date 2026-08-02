@@ -230,6 +230,20 @@
     overflow-wrap: break-word;
   }
 
+  /* At that width the download control and the text are competing for about 130px, and the text
+     loses: `0 B · Ed25519` is thirteen characters and had 79px to sit in. The control takes its own
+     row instead — the tile grows by one button height and nothing has to be read twice. */
+  @container (max-width: 340px) {
+    .handoff :global(.tile) {
+      grid-template-columns: 40px minmax(0, 1fr);
+    }
+
+    .handoff :global(.tile__actions) {
+      grid-column: 1 / -1;
+      justify-self: end;
+    }
+  }
+
   /* Eye-comparison against a printed sheet is the whole point of the plaque, and eight groups
      packed to fit break as 7 + 1 or 3 + 3 + 2 — three different shapes for the same value. Where
      the column is wide enough for four groups but not eight, it becomes two rows of four. The

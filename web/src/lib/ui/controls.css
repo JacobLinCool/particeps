@@ -641,6 +641,12 @@ button.chip:hover {
   flex: none;
 }
 
+/* With no number box beside it the value is the readout, so it carries the weight the box had. */
+.range__readout--human .range__human {
+  font-size: var(--type-base);
+  color: var(--ink);
+}
+
 .range__human {
   font-size: var(--type-fine);
   color: var(--ink-faint);

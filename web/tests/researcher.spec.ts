@@ -6,11 +6,11 @@ import { canonicalBytes, canonicalize, keysetJson } from '$lib/adc/canonical';
 import { encodeEnvelope } from '$lib/adc/envelope';
 import { fingerprint, generateSigningKeyPair, sign, verify } from '$lib/adc/crypto';
 import { generateHpkeKeyset } from '$lib/adc/tink';
-import { emptyConfiguration, validate } from '$lib/adc/schema';
+import { DEFAULT_LOCAL_BYTES, emptyConfiguration, validate } from '$lib/adc/schema';
 import { hpkeKeysetFromPrivate, signingKeyPairFromPrivate } from '../src/routes/researcher/keys';
 import { decodeEnvelope, parseConfiguration } from '../src/routes/researcher/parse';
 import { units } from '../src/routes/researcher/units';
-import { estimate, intensityOf } from '../src/routes/researcher/estimate';
+import { estimate, volumeOf } from '../src/routes/researcher/estimate';
 import { stepForPath } from '../src/routes/researcher/steps';
 import { en } from '$lib/i18n/en';
 import { zhTW } from '$lib/i18n/zh-TW';
@@ -105,6 +105,8 @@ describe('units and estimate', () => {
       expect(u.metres(1234.5678)).toBe(`1234.5677 ${m.unit.metres}`);
       expect(u.metres(0)).toBe(`0.0 ${m.unit.metres}`);
       expect(u.bytes(64 * 1024 * 1024)).toBe('64 MiB');
+      // The default a study opens on, in the words the control renders it in.
+      expect(u.bytes(DEFAULT_LOCAL_BYTES)).toBe('1 GiB');
       expect(u.about('x')).toBe('≈ x');
     });
   }
@@ -117,9 +119,11 @@ describe('units and estimate', () => {
     ];
     const result = estimate(configuration);
     expect(result.eventsPerHour).toBeGreaterThan(700_000);
-    expect(result.hoursToQuota).toBeLessThan(2);
-    expect(intensityOf(720_000)).toBe(4);
-    expect(intensityOf(20)).toBe(1);
+    // 200 Hz fills the default quota inside a day. The bound is a day rather than the quota, so
+    // this says what it means and does not have to move when the default does.
+    expect(result.hoursToQuota).toBeLessThan(24);
+    expect(volumeOf(720_000)).toBe(4);
+    expect(volumeOf(20)).toBe(1);
   });
 });
 
@@ -135,6 +139,11 @@ describe('paths', () => {
     expect(stepForPath('signer.public_key')).toBe('keys');
     expect(stepForPath('')).toBe('sign');
     expect(stepForPath('collectors.2.config.interval_millis')).toBe('study');
+    // The three the study step no longer owns. Both identifiers are read out on the sign step,
+    // which is where their issue rows now land; `minimum_app_version` has no control at all.
+    expect(stepForPath('experiment_id')).toBe('sign');
+    expect(stepForPath('configuration_id')).toBe('sign');
+    expect(stepForPath('minimum_app_version')).toBe('sign');
   });
 });
 

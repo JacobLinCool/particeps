@@ -70,7 +70,6 @@ export type IconName =
   | 'exit'
   | 'wifi'
   | 'mobile'
-  | 'battery'
   | 'target'
   | 'researcher'
   | 'participant'
@@ -252,9 +251,8 @@ export const ICONS: Record<IconName, string> = {
 
   mobile: `<path d="M4.2 20.4V17M9.4 20.4v-6.6M14.6 20.4V10M19.8 20.4V5.6"/>`,
 
-  battery: `<rect x="2.6" y="7.2" width="16.4" height="9.6" rx="2.4"/>
-<path d="M21.4 10.8v2.4"/><path d="M6.2 10.8v3.6"/>`,
-
+  // No `battery`. The site has measured no power cost, so it draws none: a battery beside a control
+  // is the claim whatever the label says, and an icon set is where that claim comes back from.
   target: `<circle cx="12" cy="12" r="8.4"/><circle cx="12" cy="12" r="3.4"/>
 <path d="M12 1.2v3.6M12 19.2v3.6M1.2 12h3.6M19.2 12h3.6"/>`,
 

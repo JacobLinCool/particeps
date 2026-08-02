@@ -20,6 +20,8 @@
 
 import { defaultCollector, emptyConfiguration } from '$lib/adc/schema';
 import {
+  BOUNDS,
+  DEFAULT_MINIMUM_APP_VERSION,
   isCollectorId,
   isLocationPriority,
   isNetworkTransport,
@@ -110,7 +112,7 @@ export function parseConfiguration(bytes: Uint8Array): StudyConfiguration {
     configuration_id: string(raw.configuration_id, ''),
     issued_at: string(raw.issued_at, base.issued_at),
     expires_at: string(raw.expires_at, base.expires_at),
-    minimum_app_version: numeric(raw.minimum_app_version, 1),
+    minimum_app_version: appVersion(raw.minimum_app_version),
     title: string(raw.title, ''),
     researcher: {
       name: string(researcher.name, ''),
@@ -157,6 +159,22 @@ const string = (value: unknown, fallback: string): string =>
 
 const numeric = (value: unknown, fallback: number): number =>
   typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+
+/**
+ * The one number that is clamped rather than carried through, because the page has no control for
+ * it: an out-of-range floor read out of a file would raise an issue on a path with nowhere to land.
+ *
+ * A legal one survives, deliberately. A file `researcher-tools` wrote with `minimum_app_version: 7`
+ * round-trips here unchanged — silently widening a compatibility floor somebody set on purpose
+ * would be an edit to a signed document that nobody asked for.
+ */
+const appVersion = (value: unknown): number =>
+  typeof value === 'number' &&
+  Number.isInteger(value) &&
+  value >= BOUNDS.minimumAppVersion[0] &&
+  value <= BOUNDS.minimumAppVersion[1]
+    ? value
+    : DEFAULT_MINIMUM_APP_VERSION;
 
 /**
  * Whatever it turns out to be, it is kept property-for-property: the canonicaliser re-emits this

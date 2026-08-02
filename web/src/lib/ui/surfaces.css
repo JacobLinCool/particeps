@@ -668,6 +668,12 @@ button.rail__step:hover {
   color: var(--ink-faint);
 }
 
+.tile__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
 .tile__meta b {
   font-family: var(--font-mono);
   font-weight: var(--w-regular);
@@ -998,15 +1004,18 @@ button.fingerprint--plaque:hover {
   padding: 0 var(--sp-6) var(--sp-5);
 }
 
-/* ---- intensity ---------------------------------------------------------------------------- */
+/* ---- rate --------------------------------------------------------------------------------- */
 
-.intensity {
+/* One ink, not a ramp. A lit segment is read against the unlit one beside it, and both tokens flip
+   with the theme (`--ink-soft` is nord3 on light and nord4 on dark, `--rule` the other way round),
+   so the contrast that makes this a length at all holds in both. */
+.rate {
   display: flex;
   gap: 3px;
   flex: none;
 }
 
-.intensity__seg {
+.rate__seg {
   inline-size: 6px;
   block-size: 14px;
   border-radius: 1px;
@@ -1014,17 +1023,8 @@ button.fingerprint--plaque:hover {
   transition: background-color var(--motion-state);
 }
 
-.intensity__seg[data-on='true'][data-level='1'] {
-  background: var(--intensity-1);
-}
-.intensity__seg[data-on='true'][data-level='2'] {
-  background: var(--intensity-2);
-}
-.intensity__seg[data-on='true'][data-level='3'] {
-  background: var(--intensity-3);
-}
-.intensity__seg[data-on='true'][data-level='4'] {
-  background: var(--intensity-4);
+.rate__seg[data-on='true'] {
+  background: var(--ink-soft);
 }
 
 /* ---- quota -------------------------------------------------------------------------------- */

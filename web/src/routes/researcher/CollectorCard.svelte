@@ -19,9 +19,9 @@
   import ToggleField from '$lib/ui/ToggleField.svelte';
   import ChoiceField from '$lib/ui/ChoiceField.svelte';
   import ChipSet from '$lib/ui/ChipSet.svelte';
-  import IntensityBar from './IntensityBar.svelte';
+  import RateBar from './RateBar.svelte';
   import { PRESETS } from './presets';
-  import { collectorRate, intensityOf } from './estimate';
+  import { collectorRate, volumeOf } from './estimate';
   import { BOUNDS, type CollectorConfig, type CollectorId, type LocationPriority, type NetworkTransport } from '$lib/adc/types';
   import type { IconRef } from '$lib/ui/icons';
   import type { Messages } from '$lib/i18n/types';
@@ -52,15 +52,21 @@
 
   const copy = $derived(m.collector[id]);
   const on = $derived(config !== null);
-  const level = $derived(config ? intensityOf(collectorRate(config).events) : 0);
+  const level = $derived(config ? volumeOf(collectorRate(config).events) : 0);
 
   const TRANSPORTS: readonly { value: NetworkTransport; label: string; icon: IconRef }[] = $derived([
     { value: 'wifi', label: m.option.transport.wifi, icon: 'wifi' },
     { value: 'mobile', label: m.option.transport.mobile, icon: 'mobile' }
   ]);
 
+  /**
+   * A plain pin against a target: less precise beside more precise, which is the only property
+   * `LocationPriority` names. `BALANCED` carried a battery, and a battery beside a word is a power
+   * claim however the word reads — the enum name itself stays, because the app's own summary shows
+   * the participant the same one.
+   */
   const PRIORITIES: readonly { value: LocationPriority; label: string; icon: IconRef }[] = $derived([
-    { value: 'BALANCED', label: m.option.priority.balanced, icon: 'battery' },
+    { value: 'BALANCED', label: m.option.priority.balanced, icon: 'location' },
     { value: 'HIGH_ACCURACY', label: m.option.priority.highAccuracy, icon: 'target' }
   ]);
 </script>
@@ -80,7 +86,7 @@
   >
     <Icon name={GLYPHS[id]} size={22} class="collector__glyph" />
     <span class="collector__name">{copy.name}</span>
-    <IntensityBar {level} />
+    <RateBar {level} />
   </button>
 
   <!-- What it records is what the choice is between, so it is readable before the choice is made.
@@ -213,7 +219,7 @@
           min={BOUNDS.maximumBatchDelayMillis[0]}
           max={BOUNDS.maximumBatchDelayMillis[1]}
           scale="log"
-          icon="battery"
+          icon="package"
           format={units.millis}
           presets={PRESETS.maximum_batch_delay_millis}
           onchange={(value) => (cfg.maximum_batch_delay_millis = value)}

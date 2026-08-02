@@ -83,15 +83,6 @@
   --voice-wash: color-mix(in oklab, var(--voice) 16%, var(--surface));
   --neutral-wash: var(--surface-sunk);
 
-  /* Four steps of cost, for the collector intensity bar. Aurora warms as the rate climbs. Each step
-     is read against the unlit segment beside it rather than against the page, so the bar is a
-     length before it is a colour — and at Nord's own values a one-segment bar was 1.5:1 against a
-     zero-segment one, which is no bar at all. */
-  --intensity-1: #6c8556;
-  --intensity-2: #4f8695;
-  --intensity-3: #977a3b;
-  --intensity-4: #b26c56;
-
   --shadow-rest: 0 1px 2px rgb(46 52 64 / 0.07), 0 1px 1px rgb(46 52 64 / 0.04);
   --shadow-lift: 0 2px 6px rgb(46 52 64 / 0.09), 0 1px 2px rgb(46 52 64 / 0.05);
   --shadow-float: 0 10px 30px rgb(46 52 64 / 0.14), 0 2px 6px rgb(46 52 64 / 0.08);
@@ -190,11 +181,6 @@
     --voice-ink: #96c4c3;
 
     --focus: var(--accent-lift);
-
-    --intensity-1: var(--nord14);
-    --intensity-2: var(--nord8);
-    --intensity-3: var(--nord13);
-    --intensity-4: #de947c;
 
     --shadow-rest: 0 1px 2px rgb(0 0 0 / 0.3);
     --shadow-lift: 0 2px 6px rgb(0 0 0 / 0.34);

@@ -51,8 +51,9 @@ export function fieldLabel(m: Messages, path: string): string {
       return label.issuedAt;
     case 'expires_at':
       return label.expiresAt;
-    case 'minimum_app_version':
-      return label.minimumAppVersion;
+    // No `minimum_app_version`: it is pinned, `parse.ts` clamps it, and the path is unreachable. If
+    // a future rule resurrects it, the fallback at the end renders the path itself, which is what
+    // that fallback is for.
     case 'title':
       return label.title;
     case 'purpose':

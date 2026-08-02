@@ -82,17 +82,16 @@ export const zhTW: Messages = {
     label: {
       experimentId: '實驗 ID',
       configurationId: '設定檔 ID',
-      issuedAt: '生效時間',
-      expiresAt: '失效時間',
-      minimumAppVersion: '最低 App 版本',
+      issuedAt: '開始',
+      expiresAt: '結束',
       title: '研究名稱',
       researcherName: '研究者',
       researcherContact: '聯絡方式',
       purpose: '研究目的',
-      durationHours: '研究時長',
+      durationHours: '每個人做多久',
       consentDocumentVersion: '同意書版本',
       consentSummary: '同意書摘要',
-      storageQuota: '本機儲存上限',
+      storageQuota: '最多能用多少空間',
       required: '必要',
       samplingPeriod: '取樣週期',
       reportLatency: '最長回報延遲',
@@ -118,20 +117,26 @@ export const zhTW: Messages = {
       exportKeyset: '匯出公鑰 keyset',
       fingerprint: '金鑰指紋'
     },
+    /**
+     * 這裡不能宣稱、也不能暗示耗電或耗能。專案沒有量過，提示文字也不是用來猜的地方。量得出來的
+     * 是位元組與時數，那些由儲存空間的量表來說。
+     */
     hint: {
       id: '小寫英數字與連字號，3 至 64 個字元。',
+      experimentIdOverride: '留空就會使用上面那組 ID。',
+      title: '要用兩種語言招募，就要簽兩份檔案。',
       contact: '參與者真的聯絡得上你的方式。',
-      duration: '自參與者第一次按下開始起算。',
-      consentSummary:
-        '需說明資料、目的、時長、風險、需要的權限、匯出、退出、刪除、你們會保留什麼，以及如何聯絡你。',
-      minimumAppVersion: 'App 的 versionCode，低於這個版本就無法匯入。',
-      required: '未取得這項權限就無法開始研究。',
-      samplingPeriod: '這是請求而非上限，裝置可能給得比要求的更快。',
+      expiresAt: '這天之後就不能再加入了。',
+      duration: '從他們開始那天算起。',
+      consentSummary: '資料、目的、時長、風險、權限、匯出、退出、刪除、聯絡方式。',
+      storageQuota: '滿了就停止收集，不會丟掉已經收到的資料。',
+      required: '沒有這項權限就無法開始。',
+      samplingPeriod: '這是請求，不是上限，裝置可能給得更快。',
       bandwidthEstimates: '平台的估計值，不是實測值。',
       pollInterval: '一分鐘是試跑用的設定，不是正式研究的設定。',
       fastestInterval: '不能長於定位間隔。',
-      batchDelay: '設得越大批次越多、越省電。',
-      priority: '兩種都需要精確位置，差別只在耗電與精準度的取捨。',
+      batchDelay: '設得越大，送出的次數越少、每次越多。',
+      priority: '兩者都需要精確位置；高精確度會用 GPS。',
       promptDelay: '自第一次開始起算。送達時間並不精確。',
       endpoint: '必須是 https，而且由你自己營運。',
       allowMetered: '關閉時只走 Wi-Fi。行動網路的費用不是參與者同意要付的。'
@@ -156,28 +161,28 @@ export const zhTW: Messages = {
     },
     'network_state.v1': {
       name: '連線類型',
-      records: '連線類型、是否驗證、是否計費、是否漫遊，以及選用的頻寬估計值',
+      records: '連線類型、是否計費、漫遊與驗證狀態',
       limit: '不含 SSID、位址、連線對象或內容'
     },
     'network_usage.v1': {
       name: '流量',
-      records: '以明確的時間區間，記錄各類連線的裝置總位元組與封包數',
-      limit: '無法分到個別 App，也看不出流量發生的確切時間'
+      records: '各類連線的裝置總位元組與封包數',
+      limit: '無法分到個別 App，也看不出確切時間'
     },
     'usage_events.v1': {
       name: 'App 與螢幕使用',
-      records: 'App 前景切換、螢幕、鎖定畫面與開關機事件，含套件名稱',
-      limit: '會延遲也會遺漏，不是完整的使用階段序列'
+      records: 'App 切換與螢幕事件，含套件名稱',
+      limit: '會延遲也會遺漏，不是完整的使用序列'
     },
     'location.v1': {
       name: '位置',
-      records: 'Fused Location 定位點，含精確度、速度、高度與方位',
-      limit: '是取樣的估計值且會有缺口，不是連續軌跡'
+      records: '定位點，含精確度、速度、高度與方位',
+      limit: '是取樣的估計值且有缺口，不是連續軌跡'
     },
     'keyboard_touch.v1': {
       name: '鍵盤觸控',
-      records: '僅在研究鍵盤內，記錄按鍵內的相對位置、時間、力道、觸控面積與按鍵類別',
-      limit: '不含文字、不含按了哪個鍵，力道也沒有實體單位'
+      records: '按鍵內的相對位置、時間、力道與觸控面積',
+      limit: '僅限研究鍵盤。不含文字，也不含按了哪個鍵。'
     }
   },
 
@@ -238,7 +243,7 @@ export const zhTW: Messages = {
   researcher: {
     title: '準備一份研究',
     beyond: '排在研究結束之後。準時完成的參與者永遠不會收到這則提示。',
-    lede: '金鑰、設定、簽章，都在這個分頁裡完成。不必安裝任何東西，也不會有資料離開瀏覽器。',
+    lede: '金鑰、設定、簽章都在這個分頁裡，不會外流。',
     how: {
       file: {
         title: '研究就是一個檔案',
@@ -246,11 +251,11 @@ export const zhTW: Messages = {
       },
       keys: {
         title: '兩把金鑰，兩種用途',
-        body: '一把用來簽署研究，讓手機能確認檔案未被竄改；另一把用來解密收回來的資料。兩把的公鑰都會寫進檔案裡，私鑰則留在你手上。簽章金鑰遺失，就無法再用同一組 key ID 發出新檔案；匯出金鑰遺失，用它加密的資料就永遠打不開。'
+        body: '一把用來簽署研究，另一把用來解密收回來的資料。'
       },
       local: {
         title: '資料不會離開這個分頁',
-        body: '金鑰在這裡產生，也只留在這裡，也就是說沒有任何備份。關掉分頁前先下載私鑰，再移到你真正掌控得住的地方。'
+        body: '這裡沒有任何備份，關掉分頁前先下載金鑰。'
       },
       fingerprint: {
         title: '公布金鑰指紋',
@@ -258,7 +263,7 @@ export const zhTW: Messages = {
       },
       disclosure: {
         title: '資料說明由 App 撰寫',
-        body: '在徵求同意之前，App 會列出你啟用的每一個收集器，用它自己的說法描述，並填入你設定的參數。同意書摘要要寫得與那個畫面一致——這是唯一你無法說得比較輕描淡寫的地方。'
+        body: '徵求同意前，App 會描述你啟用的每一個資料來源。'
       }
     },
     keys: {
@@ -266,66 +271,68 @@ export const zhTW: Messages = {
         title: '研究簽章金鑰',
         algorithm: 'Ed25519',
         role: '用來簽署設定檔。',
-        risk: '遺失：無法再用這組 key ID 發出新檔案。外洩：任何人都能冒用你的身分簽署，而且沒有撤銷機制。'
+        risk: '遺失：無法再簽新檔案。外洩：別人能冒充你。'
       },
       export: {
         title: '匯出加密金鑰',
         algorithm: 'X25519 · HPKE',
         role: '用來解密所有匯出與自動傳送的資料。',
-        risk: '遺失：所有資料都解不開。沒有代管、沒有復原途徑，裝置也無法重新加密。'
+        /** 這句也是下載磚上的警告，寬度只有 139px，是全站最窄的位置。 */
+        risk: '遺失就解不開資料。'
       },
-      handling:
-        '下載下來的私鑰就是一般檔案。請移到你受管控的環境保存，不要放進 Git、通訊軟體或設定檔裡。',
+      handling: '私鑰就是一般檔案，別放進 Git 或通訊軟體。',
       replace: '重新產生會捨棄目前這組金鑰，請先下載。'
     },
     study: {
       section: {
-        identity: {
-          title: '識別碼',
-          note: '一個實驗可以有多份設定檔。下面的內容只要有任何更動，設定檔 ID 就要跟著換。'
-        },
-        validity: {
-          title: '有效期間',
-          note: '驗證時必須落在這個區間內。區間不要開太長——發出去的檔案無法撤銷。'
-        },
         about: {
           title: '研究內容',
-          note: '這裡的每個字都會被簽進檔案，並以原文顯示，不會被翻譯。要跨語言招募，就需要兩份各自簽署的設定檔。'
+          note: '你在這裡寫什麼，參與者就讀到什麼。'
         },
-        consent: {
-          title: '知情同意',
-          note: '這裡改了，就需要新的設定檔 ID、重新簽署，並重新取得同意。'
+        validity: {
+          title: '這個研究會進行多久？',
+          note: '什麼時候開始、什麼時候結束，每個人要做多久？'
         },
         collectors: {
           title: '資料來源',
-          note: '來源越少、頻率取夠用就好、時間越短越好。這是別人自己手機上的空間與電力。'
+          note: '來源越少越好，頻率夠用就好。那是別人的手機。'
+        },
+        consent: {
+          title: '知情同意',
+          note: '這裡改了，就要重新簽署、重新徵求同意。'
         },
         prompts: {
           title: '提示通知',
-          note: '排程並不精確。不要設計成必須在某一分鐘準時送達的流程。'
-        },
-        storage: {
-          title: '儲存空間',
-          note: '8 MiB 到 8 GiB。空間用完時，研究會停止收集，而不是把事件丟掉。'
+          note: '送達時間不精確，不要指望準到分鐘。'
         },
         delivery: {
           title: '自動傳送',
-          note: '關閉時，資料在參與者自行匯出前不會離開手機。開啟時，參與者無法只拒絕傳送而繼續參與——這件事必須寫進同意書。'
+          note: '關閉時，資料要等參與者自己匯出才會離開手機。'
         }
+      },
+      /** 一句一行，放在它所說明的那個控制項下面。 */
+      note: {
+        irrevocable: '已經發出去的檔案，收不回來。',
+        disclosure: 'App 會用自己的說法列出資料，摘要要與它一致。',
+        delivery: '參與者無法只拒絕傳送而繼續參與，同意書要寫清楚。'
       }
     },
     sign: {
+      identity: {
+        title: '識別碼',
+        note: '這兩組 ID 會標記你的資料，分析時要用。'
+      },
       canonical: '正規化 JSON',
       size: ({ bytes, max }) => `${number.format(bytes)} / ${number.format(max)} 位元組`,
       blocked: (count) => `還有 ${number.format(count)} 個問題要處理`,
       publish: '請把這串字元公布在招募資料裡，參與者會拿它來核對。'
     },
     files: {
-      keep: '私鑰存放在你掌控得住的地方。',
-      archive:
-        'researcher-tools decrypt --config 需要這個檔案，而且沒有任何指令能從 .adccfg 取回它。少了它，研究結束時你將無法讀取自己的資料。',
+      keep: '把金鑰存好',
+      /** 218px。「沒有任何指令能從 .adccfg 取回它」放不下，留在研究者指南裡；這裡放會影響決定的後果。 */
+      archive: '解密自己的資料時需要它。',
       publish: '金鑰指紋放進招募資料。',
-      distribute: '把 .adccfg 交給參與者。',
+      distribute: '給參與者',
       pilot: '正式招募之前，先在研究要支援的 Android 版本與機型上實測一輪。'
     },
     cli: 'researcher-tools 在終端機裡能做同樣的事，而且還能解密收回來的資料。'

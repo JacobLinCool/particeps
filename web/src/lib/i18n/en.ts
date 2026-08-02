@@ -81,17 +81,16 @@ export const en: Messages = {
     label: {
       experimentId: 'Experiment ID',
       configurationId: 'Configuration ID',
-      issuedAt: 'Valid from',
-      expiresAt: 'Valid until',
-      minimumAppVersion: 'Minimum app version',
+      issuedAt: 'Starts',
+      expiresAt: 'Ends',
       title: 'Title',
       researcherName: 'Researcher',
       researcherContact: 'Contact',
       purpose: 'Purpose',
-      durationHours: 'Duration',
+      durationHours: 'Each person',
       consentDocumentVersion: 'Consent document version',
       consentSummary: 'Consent summary',
-      storageQuota: 'Local storage limit',
+      storageQuota: 'Space it may use',
       required: 'Required',
       samplingPeriod: 'Sampling period',
       reportLatency: 'Maximum report latency',
@@ -117,20 +116,28 @@ export const en: Messages = {
       exportKeyset: 'Export public keyset',
       fingerprint: 'Fingerprint'
     },
+    /**
+     * Nothing here may state or imply a power, battery, or energy cost. The project has not
+     * measured one, and a hint is not the place to guess. Bytes and hours are measured, and the
+     * quota meter says those.
+     */
     hint: {
-      id: 'Lowercase letters, digits, and hyphens. 3–64 characters.',
-      contact: 'Something a participant can actually reach you on.',
-      duration: 'Counted from the participant’s first start.',
+      id: 'a–z, 0–9, and hyphens. 3–64 characters.',
+      experimentIdOverride: 'Leave empty to use the ID above.',
+      title: 'Recruiting in two languages takes two signed files.',
+      contact: 'A way a participant can actually reach you.',
+      expiresAt: 'The last day anyone can join.',
+      duration: 'Counted from the day they start.',
       consentSummary:
-        'Data, purpose, duration, risks, access, export, withdrawal, deletion, what you retain, and how to reach you.',
-      minimumAppVersion: 'The app’s versionCode. Below it, the study will not import.',
-      required: 'The study cannot start until this access is granted.',
-      samplingPeriod: 'A request, not a limit — devices deliver faster than asked.',
+        'Data, purpose, duration, risks, access, export, withdrawal, deletion, contact.',
+      storageQuota: 'When it fills, collection stops. Nothing is dropped.',
+      required: 'The study cannot start without this access.',
+      samplingPeriod: 'A request, not a limit. Devices may go faster.',
       bandwidthEstimates: 'Platform estimates, not measurements.',
       pollInterval: 'A minute is a pilot setting, not a study setting.',
       fastestInterval: 'Never longer than the interval.',
-      batchDelay: 'Higher batches more fixes and costs less power.',
-      priority: 'Both need precise location. This trades power against accuracy.',
+      batchDelay: 'Higher means fewer, larger deliveries.',
+      priority: 'Both need precise location. High accuracy uses GPS.',
       promptDelay: 'From the first start. Delivery is inexact.',
       endpoint: 'https, and yours to run.',
       allowMetered: 'Off means Wi-Fi only. Mobile data is a cost nobody agreed to.'
@@ -150,34 +157,33 @@ export const en: Messages = {
     },
     'accelerometer.v1': {
       name: 'Motion',
-      records: 'Raw x/y/z acceleration in device axes, gravity included',
+      records: 'Raw x/y/z acceleration, gravity included',
       limit: 'No activity, posture, or gesture labels'
     },
     'network_state.v1': {
       name: 'Connection type',
-      records: 'Transport, validated, metered, roaming, and optional bandwidth estimates',
+      records: 'Transport, metered, roaming, and validation',
       limit: 'No SSID, address, destination, or content'
     },
     'network_usage.v1': {
       name: 'Data volume',
-      records: 'Device-total bytes and packets per transport, over an explicit window',
+      records: 'Device-total bytes and packets, per transport',
       limit: 'Not per app, and not when the traffic happened'
     },
     'usage_events.v1': {
       name: 'App and screen use',
-      records: 'Foreground changes, screen, keyguard, and boot events, with package names',
+      records: 'App switches and screen events, by package',
       limit: 'Delayed and incomplete; not a session stream'
     },
     'location.v1': {
       name: 'Location',
-      records: 'Fused fixes with accuracy, speed, altitude, and bearing',
-      limit: 'Sampled estimates with gaps, not a continuous track'
+      records: 'Fused fixes: accuracy, speed, altitude, bearing',
+      limit: 'Sampled estimates with gaps, not a track'
     },
     'keyboard_touch.v1': {
       name: 'Keyboard touch',
-      records:
-        'Within-key position, timing, pressure, size, and key category — research keyboard only',
-      limit: 'No text, no key identity, no calibrated force'
+      records: 'Within-key position, timing, pressure, and size',
+      limit: 'Research keyboard only. No text, no key identity.'
     }
   },
 
@@ -240,7 +246,7 @@ export const en: Messages = {
     title: 'Prepare a study',
     beyond:
       'After the study ends. This prompt will never reach a participant who finishes on time.',
-    lede: 'Keys, configuration, and signature, in this tab. Nothing to install; nothing leaves the browser.',
+    lede: 'Keys, study, and signature, in this tab. Nothing leaves it.',
     how: {
       file: {
         title: 'A study is a file',
@@ -248,11 +254,11 @@ export const en: Messages = {
       },
       keys: {
         title: 'Two keys, two jobs',
-        body: 'One signs the study, so a phone can tell the file is unaltered. One decrypts what comes back. Both public halves travel inside the file; both private halves stay with you. Lose the signing key and you cannot issue under that key ID again. Lose the export key and every bundle collected under it is unreadable, permanently.'
+        body: 'One key signs the study, one decrypts what comes back.'
       },
       local: {
         title: 'Nothing leaves this tab',
-        body: 'Keys are generated here and stay here, which also means nothing is backed up. Download the private keys before you close the tab, then move them somewhere you actually control.'
+        body: 'Nothing here is backed up. Download the keys before you close the tab.'
       },
       fingerprint: {
         title: 'Publish the fingerprint',
@@ -260,7 +266,7 @@ export const en: Messages = {
       },
       disclosure: {
         title: 'The app describes the data, not you',
-        body: 'Before consent, the app lists every collector you enabled and describes it in its own words, with your parameters filled in. Write your consent summary to agree with that screen — it is the one thing here you cannot phrase more mildly.'
+        body: 'Before consent, the app describes every source you switched on.'
       }
     },
     keys: {
@@ -268,55 +274,57 @@ export const en: Messages = {
         title: 'Study signing key',
         algorithm: 'Ed25519',
         role: 'Signs the configuration.',
-        risk: 'Lost: no new files under this key ID. Leaked: anyone can sign as you, and there is no revocation.'
+        risk: 'Lost: no new files. Leaked: anyone can sign as you.'
       },
       export: {
         title: 'Export encryption key',
         algorithm: 'X25519 · HPKE',
         role: 'Decrypts every export and every upload.',
-        risk: 'Lost: every bundle is unreadable. No escrow, no recovery, and devices cannot re-encrypt.'
+        /** Also the warning on a 139px download tile, which is the tightest slot on the site. */
+        risk: 'Lost: data unreadable.'
       },
-      handling:
-        'A downloaded private key is an ordinary file. Move it into your controlled environment, and keep it out of Git, chat, and the study configuration.',
+      handling: 'A private key is an ordinary file. Keep it out of Git and chat.',
       replace: 'Generating again discards the pair held here. Download first.'
     },
     study: {
       section: {
-        identity: {
-          title: 'Identity',
-          note: 'One experiment, many configurations. Change anything below and the configuration ID changes too.'
-        },
-        validity: {
-          title: 'Validity',
-          note: 'Verification needs the current time inside this window. Keep it short — an issued file cannot be revoked.'
-        },
         about: {
           title: 'The study',
-          note: 'Every word here is signed and shown untranslated, in whatever language you write it. A study recruiting in two languages needs two signed configurations.'
+          note: 'Whatever you write here is what a participant reads.'
         },
-        consent: {
-          title: 'Consent',
-          note: 'Change this and you need a new configuration ID, a new signature, and consent again.'
+        validity: {
+          title: 'How long does this run?',
+          note: 'When it starts, when it ends, how long each person takes.'
         },
         collectors: {
           title: 'Data',
-          note: 'Fewest sources, lowest usable rate, shortest duration. This is space and battery on someone’s own phone.'
+          note: 'Fewest sources, lowest usable rate. It is their phone.'
+        },
+        consent: {
+          title: 'Consent',
+          note: 'Change this and you sign again, and ask again.'
         },
         prompts: {
           title: 'Prompts',
-          note: 'Scheduling is inexact. Do not design a protocol that needs a prompt to land on a particular minute.'
-        },
-        storage: {
-          title: 'Storage',
-          note: '8 MiB to 8 GiB. When the quota fills, the study stops collecting rather than dropping events.'
+          note: 'Delivery is not exact. Do not count on the minute.'
         },
         delivery: {
           title: 'Delivery',
-          note: 'Off, and nothing leaves the phone until a participant exports it. On, and a participant cannot decline delivery while taking part — your consent text has to say so.'
+          note: 'With this off, data only leaves when they export it.'
         }
+      },
+      /** One line each, under the control the sentence is about. */
+      note: {
+        irrevocable: 'A file you have handed out cannot be called back.',
+        disclosure: 'The app lists the data in its own words. Agree with it.',
+        delivery: 'They cannot take part and decline this. Say so in consent.'
       }
     },
     sign: {
+      identity: {
+        title: 'Identity',
+        note: 'These two name your data. Analysis needs them.'
+      },
       canonical: 'Canonical JSON',
       size: ({ bytes, max }) => `${number.format(bytes)} / ${number.format(max)} bytes`,
       blocked: (count) =>
@@ -324,12 +332,13 @@ export const en: Messages = {
       publish: 'Publish this where you recruit. It is what a participant compares.'
     },
     files: {
-      keep: 'Private keys go somewhere you control.',
-      archive:
-        'researcher-tools decrypt --config reads this file, and no command extracts one from the .adccfg. Without it you cannot read your own data at the end of the study.',
+      keep: 'Save your keys',
+      /** 218px. The reason — no command extracts this from the .adccfg — did not fit and is in the
+       *  researcher guide; what fits is the consequence, which is the half that changes a decision. */
+      archive: 'Needed to decrypt your own data.',
       publish: 'The fingerprint goes into your recruitment material.',
-      distribute: 'The .adccfg goes to participants.',
-      pilot: 'Pilot on the Android versions and hardware your study targets before you recruit anyone.'
+      distribute: 'For participants',
+      pilot: 'Pilot on the phones your study targets before you recruit anyone.'
     },
     cli: 'researcher-tools does all of this from a terminal, and also decrypts the bundles you get back.'
   },
