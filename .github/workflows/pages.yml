@@ -1,22 +1,44 @@
 name: Pages
 
+# A denylist, not the allowlist this used to be, because `tests/compat.spec.ts` byte-compares this
+# site's encoder against `researcher-tools` in a JVM. That makes the Kotlin codec an input to the
+# web tests, and naming exactly which Kotlin would mean restating researcher-tools' dependency list
+# here and keeping it in step forever. Running on a core change that turns out to be irrelevant
+# costs two minutes; missing one publishes a site that signs configurations the app then rejects.
 on:
   push:
     branches:
       - main
-    paths:
-      - "web/**"
-      - ".github/workflows/pages.yml"
+    paths-ignore:
+      - "app/**"
+      - "collector/**"
+      - "docs/**"
+      - "**.md"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
+      - "CITATION.cff"
+      - "LICENSE"
+  pull_request:
+    paths-ignore:
+      - "app/**"
+      - "collector/**"
+      - "docs/**"
+      - "**.md"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
+      - "CITATION.cff"
+      - "LICENSE"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# One live site, so a queued run finishes rather than being cancelled: a cancelled deploy would
-# leave whatever the previous run published, which is not necessarily what main says.
+# One live site, so a queued run on main finishes rather than being cancelled: a cancelled deploy
+# would leave whatever the previous run published, which is not necessarily what main says. A
+# superseded pull-request run has no such stake, and its result is worthless once it is superseded.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -83,6 +105,9 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: build
+    # Everything above this line is a check and runs anywhere; publishing is main only. Without
+    # this a pull request would put its own build on the live site.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:

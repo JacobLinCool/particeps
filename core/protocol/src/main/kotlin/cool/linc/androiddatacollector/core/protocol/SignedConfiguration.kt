@@ -6,6 +6,7 @@ import java.nio.ByteBuffer
 import java.security.KeyFactory
 import java.security.PublicKey
 import java.security.Signature
+import java.security.SignatureException
 import java.security.spec.X509EncodedKeySpec
 import java.time.Instant
 import java.util.Base64
@@ -115,10 +116,19 @@ class ConfigurationVerifier(
             ) { "Configuration signer key does not match the pinned key" }
         }
 
-        val valid = Signature.getInstance("Ed25519").run {
-            initVerify(key)
-            update(envelope.configurationBytes)
-            verify(envelope.signature)
+        // Every rejection here is an IllegalArgumentException, and a bad signature has to be one
+        // too. `Signature.verify` does not report them uniformly: the JDK's Ed25519 returns false
+        // for a signature that simply does not match, but throws when the S component is out of
+        // range, which flipping one byte of a real signature produces about 6% of the time. Which
+        // byte a corrupt file happened to lose should not decide what the caller catches.
+        val valid = try {
+            Signature.getInstance("Ed25519").run {
+                initVerify(key)
+                update(envelope.configurationBytes)
+                verify(envelope.signature)
+            }
+        } catch (malformed: SignatureException) {
+            false
         }
         require(valid) { "Invalid configuration signature" }
         val instant = now()

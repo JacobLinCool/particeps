@@ -136,6 +136,22 @@ class ConfigurationProtocolTest {
         assertThrows(IllegalArgumentException::class.java) { verifier(emptyMap()).verify(relabelled) }
     }
 
+    @Test
+    fun aMalformedSignatureIsRejectedLikeAnyOtherBadOne() {
+        // The two tests above flip the last byte, which lands here about 6% of the time and used
+        // to fail them at that rate: an Ed25519 signature is (R, S) with S little-endian, so the
+        // last byte is its most significant, and the JDK throws SignatureException rather than
+        // returning false once S passes the group order. 0xFF is over it every time, so this
+        // holds the rejection type still instead of leaving it to which byte a corrupt file lost.
+        val keyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        val malformed = sign(keyPair).also { it[it.lastIndex] = 0xFF.toByte() }
+
+        assertThrows(IllegalArgumentException::class.java) { verifier(emptyMap()).verify(malformed) }
+        assertThrows(IllegalArgumentException::class.java) {
+            verifier(mapOf("test-signer" to encoded(keyPair))).verify(malformed)
+        }
+    }
+
     private fun encoded(keyPair: java.security.KeyPair) =
         Base64.getEncoder().encodeToString(keyPair.public.encoded)
 

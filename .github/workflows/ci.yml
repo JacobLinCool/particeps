@@ -1,10 +1,27 @@
 name: Android CI
 
+# The paths below cannot change what Gradle builds, so a commit touching only those skips a
+# seven-minute Android build. This is a denylist rather than an allowlist on purpose: a path
+# nobody anticipated still runs this workflow, which is the safe direction to be wrong in.
 on:
   push:
     branches:
       - main
+    paths-ignore:
+      - "web/**"
+      - "docs/**"
+      - "**.md"
+      - ".github/workflows/pages.yml"
+      - "CITATION.cff"
+      - "LICENSE"
   pull_request:
+    paths-ignore:
+      - "web/**"
+      - "docs/**"
+      - "**.md"
+      - ".github/workflows/pages.yml"
+      - "CITATION.cff"
+      - "LICENSE"
   workflow_dispatch:
 
 permissions:
