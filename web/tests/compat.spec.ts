@@ -16,7 +16,7 @@
  * @vitest-environment node
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -41,10 +41,17 @@ const CLI = join(REPOSITORY, 'researcher-tools/build/install/researcher-tools/bi
 let workspace = '';
 let sequence = 0;
 
-beforeAll(() => {
-  execFileSync(join(REPOSITORY, 'gradlew'), [':researcher-tools:installDist'], {
-    cwd: REPOSITORY,
-    stdio: 'inherit'
+beforeAll(async () => {
+  await new Promise<void>((resolve, reject) => {
+    execFile(
+      join(REPOSITORY, 'gradlew'),
+      [':researcher-tools:installDist'],
+      { cwd: REPOSITORY },
+      (error, stdout, stderr) => {
+        if (!error) resolve();
+        else reject(new Error(`researcher-tools build failed\n${stderr || stdout || error.message}`));
+      }
+    );
   });
   workspace = mkdtempSync(join(tmpdir(), 'adc-compat-'));
 }, 600_000);

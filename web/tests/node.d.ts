@@ -4,11 +4,17 @@
  * That test shells out to the `researcher-tools` CLI, which is the only way to compare this
  * encoder against the one the Android app runs. The project has no `@types/node` — nothing it
  * ships touches Node — and adding one for a single test would put a dependency in everyone's
- * install for a file that never reaches the browser. These are the five modules and eleven
+ * install for a file that never reaches the browser. These are the five modules and twelve
  * functions that test calls, and nothing else.
  */
 
 declare module 'node:child_process' {
+  export function execFile(
+    command: string,
+    args: readonly string[],
+    options: { cwd?: string },
+    callback: (error: Error | null, stdout: string, stderr: string) => void
+  ): void;
   export function execFileSync(
     file: string,
     args: readonly string[],
