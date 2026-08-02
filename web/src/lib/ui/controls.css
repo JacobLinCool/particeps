@@ -669,9 +669,11 @@ button.chip:hover {
   gap: var(--sp-3);
 }
 
+/* The tap floor is the rule this file opens with, so a preset row can only be shortened across:
+   narrower padding and a shorter list, never a shorter button. */
 .range__preset {
   min-block-size: var(--tap-min);
-  padding-inline: var(--sp-5);
+  padding-inline: var(--sp-4);
   border: var(--line-hair) solid var(--rule);
   border-radius: var(--r-chip);
   font-family: var(--font-mono);

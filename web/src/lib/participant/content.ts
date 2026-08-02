@@ -17,8 +17,6 @@ export type GlyphName = IconRef;
 export interface SourceEntry {
   id: CollectorId;
   glyph: GlyphName;
-  /** A heavier border and one extra line. Exactly one source earns it. */
-  caution?: boolean;
 }
 
 export type Effect = 'continues' | 'stops' | 'drains-then-stops' | 'already-stopped' | 'none';
@@ -43,7 +41,7 @@ export const SOURCES: readonly SourceEntry[] = [
   { id: 'network_usage.v1', glyph: 'dataVolume' },
   { id: 'usage_events.v1', glyph: 'screen' },
   { id: 'location.v1', glyph: 'location' },
-  { id: 'keyboard_touch.v1', glyph: 'keyboard', caution: true }
+  { id: 'keyboard_touch.v1', glyph: 'keyboard' }
 ];
 
 /** A collector ID carries a dot and a version; a message key cannot. */

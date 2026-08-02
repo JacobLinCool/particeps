@@ -196,6 +196,16 @@
   </Section>
 
   <Section id="collectors" path="collectors" title={section.collectors.title} icon="sources">
+    <!-- Said once for the section, because it was the same sentence on all seven cards. Every
+         必要 control points at this `id`, so the consequence is still one hop from the decision,
+         and it carries the mark an unpressed control carries. -->
+    <Note
+      id="collectors-required"
+      icon="participant"
+      tone="plain"
+      text={m.researcher.study.note.required}
+    />
+
     <div class="collectors">
       {#each COLLECTOR_ORDER as id (id)}
         <CollectorCard
@@ -336,12 +346,6 @@
 </div>
 
 <style>
-  /* A collector card is as tall as its own parameters. Stretching a two-line card to match the
-     accelerometer's six controls would put a hundred pixels of nothing under the short one. */
-  .collectors {
-    align-items: start;
-  }
-
   /* Rows, not columns. The two-column band had to choose between the pickers and the presets at a
      788px section column and chose the pickers' segments: at 212px Chrome finishes the seconds and
      drops the AM/PM, so the widest this site ever gets was the width at which 22:39 read as

@@ -317,9 +317,16 @@ export interface Messages {
          *  meaning and not advice about filling the section in. */
         delivery: Section;
       };
-      /** One line each, under the control the sentence is about, not in the section heading. */
+      /** One line each, beside the control the sentence is about, not in the section heading. */
       note: {
         irrevocable: string;
+        /**
+         * What marking a source Required costs a participant. Said once above the seven cards
+         * rather than seven times inside them: the pill on each card says *this one is marked*,
+         * and this says what being marked does. Every pill names it with `aria-describedby`, so
+         * one sentence is still the description of all seven controls that cause it.
+         */
+        required: string;
         disclosure: string;
         delivery: string;
       };

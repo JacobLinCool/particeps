@@ -150,6 +150,24 @@ await page.getByRole('switch', { name: /App activity/ }).first().click();
 await page.getByRole('switch', { name: /^Motion/ }).first().click();
 await page.waitForTimeout(300);
 
+// Whether a participant may decline a source. It is pressed on one of the two cards and left alone
+// on the other, so the file below has to disagree with itself in the right place: a control wired
+// to the wrong collector, or to nothing, writes the same value into both entries.
+//
+// Taken by role and name inside the card it belongs to, not by a class or an array index. The row
+// is a group named for the collector holding a switch and this button, and that is the whole of
+// what this script is entitled to know about how the card is built.
+const motionCard = page.locator('[data-testid="collector-accelerometer.v1"]');
+const motionRequired = motionCard.getByRole('button', { name: 'Required' });
+if ((await motionRequired.count()) !== 1) {
+  fail('the Motion card offers no Required control while the collector is on');
+}
+await motionRequired.click();
+await page.waitForTimeout(200);
+if ((await motionRequired.getAttribute('aria-pressed')) !== 'true') {
+  fail('pressing Required left the control unpressed');
+}
+
 // Sign. The identifiers are read off the page before the click, because the claim under test is
 // that the file is named what the researcher was shown it would be named.
 await page.getByRole('button', { name: 'Next', exact: true }).click();
@@ -255,6 +273,18 @@ claim(
   `expires_at is ${document.expires_at}, picker ${wall[1]}`
 );
 claim(document.collectors.length === 2, `${document.collectors.length} collectors, expected 2`);
+
+// The Required control, from the other end. Pressed on Motion and untouched on App activity, so a
+// control that writes nowhere and a control that writes into every collector both fail here.
+const requiredOf = Object.fromEntries(document.collectors.map((c) => [c.id, c.required]));
+claim(
+  requiredOf['accelerometer.v1'] === true,
+  `Required was pressed on Motion and the file says ${JSON.stringify(requiredOf['accelerometer.v1'])}`
+);
+claim(
+  requiredOf['app_lifecycle.v1'] === false,
+  'Required was pressed on Motion alone and App activity came out required too'
+);
 
 // Gson's escape table and nothing else: these appear as themselves, and these are escaped.
 for (const raw of ['—', '瀏覽器建立 🔬', '正體中文 & <ok> = fine.']) {

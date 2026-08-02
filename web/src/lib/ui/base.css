@@ -90,13 +90,25 @@ textarea {
 }
 
 /* Three controls sit flush against an `overflow: clip` enclosure whose clipping is load-bearing —
-   the collector's rounded header, the disclosure's, and the byte pane's own scroll — so a ring
+   the collector's enable target, the disclosure's head, and the byte pane's own scroll — so a ring
    drawn 2px outside them is a ring drawn outside the clip. Inset instead: same 2px, same colour,
-   on the control's own edge. */
-.collector__head:focus-visible,
+   on the control's own edge.
+
+   The collector one names `.collector__enable`, not the row around it: the row stopped being a
+   button when the Required control moved in beside the switch, and a rule naming a `<div>` that
+   cannot take focus is a rule that draws nothing. It left the switch on the default 2px offset,
+   which put the ring's top edge 2px above the card and the card clipped it away. */
+.collector__enable:focus-visible,
 .disclosure__head:focus-visible,
 .bytes .iconbtn--float:focus-visible {
   outline-offset: -2px;
+}
+
+/* The ring follows the control it is drawn on. `:focus-visible` sets `--r-chip` for everything,
+   which is right where the control has no radius of its own; the enable target has one, and its
+   hover wash is painted to it, so focusing while hovering would otherwise square the wash. */
+.collector__enable:focus-visible {
+  border-radius: var(--r-field);
 }
 
 ::selection {

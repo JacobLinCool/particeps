@@ -17,12 +17,11 @@
     glyph: GlyphName;
     nameKey: MessageKey;
     detailKey: MessageKey;
-    caution?: boolean;
     /** Position in the grid, which is the stagger. */
     index?: number;
   }
 
-  let { glyph, nameKey, detailKey, caution = false, index = 0 }: Props = $props();
+  let { glyph, nameKey, detailKey, index = 0 }: Props = $props();
 
   let seen = $state<boolean | undefined>(undefined);
 
@@ -32,7 +31,6 @@
 
 <div
   class="source"
-  class:source--caution={caution}
   data-in={seen}
   style={`--index: ${index}`}
   use:reveal={(visible) => (seen = visible)}
@@ -48,12 +46,6 @@
     </p>
   </div>
 
-  {#if caution}
-    <p class="source__caution">
-      <Mark kind="dot" tone="voice" size={14} />
-      <span>{m('sources.caution')}</span>
-    </p>
-  {/if}
 </div>
 
 <style>
@@ -104,20 +96,7 @@
 
   /* One source earns a heavier edge and one extra line. It is the seal hue rather than the error
      hue: this is a thing to understand before agreeing, not a thing that has gone wrong. */
-  .source--caution {
-    border-inline-start: 3px solid var(--voice);
-  }
 
-  .source__caution {
-    grid-column: 1 / -1;
-    display: flex;
-    gap: var(--sp-4);
-    align-items: start;
-    padding-block-start: var(--sp-5);
-    border-block-start: var(--line-hair) solid var(--rule);
-    font-size: var(--type-fine);
-    color: var(--ink);
-  }
 
   @media (prefers-reduced-motion: no-preference) {
     .source[data-in='false'] {

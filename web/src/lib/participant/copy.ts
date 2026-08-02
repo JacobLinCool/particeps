@@ -53,7 +53,6 @@ export interface ParticipantCopy {
     lead: string;
     /** What the `{n}` / `{t}` / `{d}` pills stand for. */
     tokens: string;
-    caution: string;
     more: string;
     moreLink: string;
     name: {
@@ -205,8 +204,6 @@ export const en: ParticipantCopy = {
     title: 'Seven sources exist. Your study uses some of them.',
     lead: 'Before you agree, the app lists the ones your study switched on — in the app’s own words, not the research team’s.',
     tokens: 'N, T and D come from your study: how often, how long between, how far.',
-    caution:
-      'No characters, no text, no clipboard — but how you type still says something about what you typed.',
     more: 'What a source cannot see is not on that screen.',
     moreLink: 'The guide has the full table.',
     name: {
@@ -319,7 +316,7 @@ export const en: ParticipantCopy = {
     password: 'anything asks for a password, or to turn off an Android security setting'
   },
 
-  coda: 'Declining is a complete answer. You do not have to give a reason.',
+  coda: 'Advancing research while keeping data safe.',
 
   footer: {
     guide: 'Participant guide',
@@ -369,7 +366,6 @@ export const zhTW: ParticipantCopy = {
     title: '總共有七種來源，你的研究只會用到其中幾種。',
     lead: '在請你同意之前，App 會列出這個研究開啟的來源。那些說明是 App 自己寫的，不是研究團隊寫的。',
     tokens: '你的研究會填入 N、T、D：多久一次、間隔多長、距離多遠。',
-    caution: '不含字元、不含文字、不含剪貼簿。但你打字的方式，多少還是會透露你打了什麼。',
     more: '那個畫面不會說某個來源看不到什麼。',
     moreLink: '完整的對照表在指南裡。',
     name: {
@@ -474,7 +470,7 @@ export const zhTW: ParticipantCopy = {
     password: '有任何地方要你輸入密碼，或要你關掉 Android 的安全設定'
   },
 
-  coda: '拒絕就是完整的答案，你不需要說明理由。',
+  coda: '推進研究，也守住資料。',
 
   footer: {
     guide: '參與者指南',

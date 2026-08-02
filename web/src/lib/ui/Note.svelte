@@ -15,11 +15,14 @@
     icon?: IconRef;
     tone?: 'neutral' | 'accent' | 'caution' | 'danger' | 'signal' | 'voice' | 'plain';
     text?: string;
+    /** So a control elsewhere can point at this sentence with `aria-describedby`. A consequence
+     *  said once for a section is still the description of every control that causes it. */
+    id?: string;
     class?: string;
     children?: Snippet;
   }
 
-  let { icon, tone = 'neutral', text, class: extra, children }: Props = $props();
+  let { icon, tone = 'neutral', text, id, class: extra, children }: Props = $props();
 
   const iconTone = $derived(
     tone === 'caution'
@@ -36,7 +39,7 @@
   );
 </script>
 
-<p class={cx('note', tone !== 'neutral' && `note--${tone}`, extra)}>
+<p {id} class={cx('note', tone !== 'neutral' && `note--${tone}`, extra)}>
   {#if icon}<Icon name={icon} size={16} tone={iconTone} />{/if}
   <span>{#if children}{@render children()}{:else}{text}{/if}</span>
 </p>

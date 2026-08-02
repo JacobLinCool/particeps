@@ -850,10 +850,34 @@ button.fingerprint--plaque:hover {
 
 /* ---- collector card ----------------------------------------------------------------------- */
 
+/* Seven cards whose heights differ by a factor of three and a half, in an order nobody may change.
+   A grid pairs card 1 with card 2 and makes the row as tall as the taller of the two, so at 1440
+   with everything on it spent 2613px drawing 3693px of cards — 766px of it floor. Multicol packs by
+   flow and the browser balances the columns itself, which is the one thing grid cannot do without
+   `masonry`, and `grid-template-rows: masonry` is unimplemented in the Chromium this project tests
+   against: it lays out as a plain grid, silently.
+
+   `columns` takes a width here, not a count. The breakpoints are then the ones
+   `auto-fill minmax(320px, 1fr)` already had — two columns down to a 724px section, one below it —
+   and the section column is not monotonic in viewport width, so a count would be wrong at 900. */
 .collectors {
-  display: grid;
-  gap: var(--sp-6);
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  columns: 320px;
+  column-gap: var(--sp-6);
+}
+
+/* `break-inside` is load-bearing, not tidiness: without it Chrome splits a card at the column break
+   and puts the header in one column and the sliders in the other.
+
+   Multicol has no row-gap, so the vertical rhythm is a margin. Chrome truncates it at a column
+   break so it never shows at the foot of a column; the last card's margin is at the foot of the
+   section and does count, which is why it is taken back. */
+.collectors > * {
+  break-inside: avoid;
+  margin-block-end: var(--sp-6);
+}
+
+.collectors > :last-child {
+  margin-block-end: 0;
 }
 
 .collector {
@@ -878,19 +902,70 @@ button.fingerprint--plaque:hover {
   box-shadow: var(--shadow-rest);
 }
 
+/* Two controls share this row, so the row itself is no longer a control: it holds them and wraps
+   when a narrow column cannot fit both. Wrapping is the safety valve — the name never shrinks. */
 .collector__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-4);
+  padding-inline: var(--sp-5);
+  min-block-size: 56px;
+}
+
+/* The enable target, and the only thing on this card that hovers as the card. */
+.collector__enable {
   display: flex;
   align-items: center;
   gap: var(--sp-5);
-  inline-size: 100%;
-  min-block-size: 56px;
-  padding-inline: var(--sp-6);
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  min-block-size: 54px;
+  padding-inline: var(--sp-2);
+  border-radius: var(--r-field);
   text-align: start;
   transition: background-color var(--motion-state);
 }
 
-.collector__head:hover {
+.collector__enable:hover {
   background: var(--accent-wash);
+}
+
+/* The chip vocabulary the page already has for a pressed choice. `--caution`, never `--accent`:
+   `--accent` is what the card wears for "in the study", and a source a participant cannot decline
+   is a different thing entirely. The two must never share a colour. */
+.collector__required {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex: none;
+  margin-inline-start: auto;
+  min-block-size: var(--tap-min);
+  padding-inline: var(--sp-4);
+  border: var(--line-hair) solid var(--rule);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  font-size: var(--type-micro);
+  color: var(--ink-soft);
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-state),
+    border-color var(--motion-state),
+    color var(--motion-state);
+}
+
+.collector__required:hover {
+  border-color: var(--caution-ink);
+  color: var(--ink);
+}
+
+/* Same reason as the chip and the preset: a 1.1:1 wash cannot be the only mark of state, so the set
+   one is also the only one carrying a tick and the page's own ink weight. */
+.collector__required[aria-pressed='true'] {
+  background: var(--caution-wash);
+  border-color: var(--caution-ink);
+  color: var(--ink);
+  font-weight: var(--w-medium);
 }
 
 .collector__name {
@@ -911,22 +986,32 @@ button.fingerprint--plaque:hover {
 .collector__body {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-6);
-  padding: var(--sp-6);
+  gap: var(--sp-5);
+  padding: var(--sp-5);
   border-block-start: var(--line-hair) solid var(--rule);
 }
 
-.collector__records {
-  padding: 0 var(--sp-6) var(--sp-5);
+/* What it records and what it cannot see, one block. Two `Note`s were 39px each plus the body's
+   gap between them; this is two lines and a 6px rhythm, and keeps both sentences and both marks. */
+.collector__disclosure {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  column-gap: var(--sp-4);
+  row-gap: var(--sp-3);
+  align-items: start;
   font-size: var(--type-fine);
   color: var(--ink-faint);
 }
 
-.collector__meta {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-5);
-  padding: 0 var(--sp-6) var(--sp-5);
+/* The mark sits on the text's cap height, not on its line box. */
+.collector__disclosure .icon {
+  margin-block-start: 3px;
+}
+
+.collector__records {
+  padding: 0 var(--sp-5) var(--sp-5);
+  font-size: var(--type-fine);
+  color: var(--ink-faint);
 }
 
 /* ---- rate --------------------------------------------------------------------------------- */

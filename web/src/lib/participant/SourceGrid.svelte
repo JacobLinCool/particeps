@@ -17,7 +17,6 @@
       glyph={entry.glyph}
       nameKey={sourceName(entry.id)}
       detailKey={sourceDetail(entry.id)}
-      caution={entry.caution}
       {index}
     />
   {/each}

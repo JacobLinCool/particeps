@@ -10,10 +10,12 @@
    * reordered: array order is participant-visible — it is what the data screen lists — so leaving
    * it free would make two otherwise-identical studies non-diffable for no benefit.
    *
-   * The whole header row is the enable target. A switch beside a name is two things to hit.
+   * The header row carries two decisions: whether the collector is in the study, and whether a
+   * participant may decline it. They are siblings rather than one inside the other — the enable
+   * target is a `<button>` and interactive content inside a button is invalid HTML, which is the
+   * hard answer to "a switch inside a switch". Everything else on the card is a parameter.
    */
   import Icon from '$lib/ui/Icon.svelte';
-  import Note from '$lib/ui/Note.svelte';
   import RangeField from '$lib/ui/RangeField.svelte';
   import DualRangeField from '$lib/ui/DualRangeField.svelte';
   import ToggleField from '$lib/ui/ToggleField.svelte';
@@ -38,6 +40,8 @@
   }
 
   let { id, config, path, m, scales: S, onenable, ondisable }: Props = $props();
+
+  const uid = $props.id();
 
   /** `CollectorGlyphs.kt`'s assignment, unchanged. */
   const GLYPHS: Record<CollectorId, IconRef> = {
@@ -76,18 +80,45 @@
      a screen-reader user the control they need is not usable. `aria-checked` on the switch already
      carries off and on, and the parameters simply are not rendered until it is on. -->
 <div class="collector" class:collector--on={on} data-testid={`collector-${id}`}>
-  <button
-    class="collector__head"
-    type="button"
-    role="switch"
-    aria-checked={on}
-    onclick={() => (on ? ondisable(id) : onenable(id))}
-    data-testid={`collector-enable-${id}`}
-  >
-    <Icon name={GLYPHS[id]} size={22} class="collector__glyph" />
-    <span class="collector__name">{copy.name}</span>
-    <RateBar {level} />
-  </button>
+  <!-- Two controls, one row, and they cannot be nested: the enable target is a <button>, and
+       interactive content inside a button is invalid. The group is named by the collector, so both
+       controls announce under the name they are about. -->
+  <div class="collector__head" role="group" aria-labelledby={`${uid}-name`}>
+    <button
+      class="collector__enable"
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onclick={() => (on ? ondisable(id) : onenable(id))}
+      data-testid={`collector-enable-${id}`}
+    >
+      <Icon name={GLYPHS[id]} size={22} class="collector__glyph" />
+      <span class="collector__name" id={`${uid}-name`}>{copy.name}</span>
+      <RateBar {level} />
+    </button>
+
+    {#if config}
+      {@const collector = config}
+      <!-- Not a second switch, and four things say so: `aria-pressed` rather than `aria-checked`
+           (the grammar `.chip` and `.range__preset` already use here), a tick only when it is set,
+           `--caution` where the card wears `--accent`, and its own hover surface beside the row's.
+           It only exists on a card that is already on, which is where a wrong guess costs least.
+           The sentence it used to carry is said once above the grid; `aria-describedby` and the
+           pointer title keep it one hop from the control. -->
+      <button
+        class="collector__required"
+        type="button"
+        aria-pressed={collector.required}
+        aria-describedby="collectors-required"
+        title={m.field.hint.required}
+        onclick={() => (collector.required = !collector.required)}
+        data-testid={`required-${path}.required`}
+      >
+        <Icon name={collector.required ? 'check' : 'participant'} size={14} />
+        <span>{m.field.label.required}</span>
+      </button>
+    {/if}
+  </div>
 
   <!-- What it records is what the choice is between, so it is readable before the choice is made.
        The limits and the parameters stay behind the switch: those are for a collector already on. -->
@@ -97,19 +128,15 @@
 
   {#if config}
     {@const collector = config}
-    <div class="collector__meta">
-      <ToggleField
-        label={m.field.label.required}
-        hint={m.field.hint.required}
-        path={`${path}.required`}
-        value={collector.required}
-        onchange={(value) => (collector.required = value)}
-      />
-    </div>
-
     <div class="collector__body">
-      <Note icon="info" tone="plain" text={copy.records} />
-      <Note icon="alert" tone="plain" text={copy.limit} />
+      <!-- Two disclosures, one block. Both sentences stay and both marks stay; what goes is the
+           second paragraph's own padding and the body gap that stood between them. -->
+      <div class="collector__disclosure">
+        <Icon name="info" size={16} tone="faint" />
+        <span>{copy.records}</span>
+        <Icon name="alert" size={16} tone="faint" />
+        <span>{copy.limit}</span>
+      </div>
 
       {#if collector.id === 'accelerometer.v1'}
         {@const cfg = collector.config}

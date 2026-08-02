@@ -311,9 +311,12 @@ export const en: Messages = {
           note: 'With this off, data only leaves when they export it.'
         }
       },
-      /** One line each, under the control the sentence is about. */
+      /** One line each, beside the control the sentence is about. */
       note: {
         irrevocable: 'A file you have handed out cannot be called back.',
+        /** Above the seven cards, once, because the pill on each card is the same decision seven
+         *  times over and the consequence of it does not change between them. */
+        required: 'Mark a source Required and a participant who declines it cannot start the study.',
         disclosure: 'The app lists the data in its own words. Agree with it.',
         delivery: 'They cannot take part and decline this. Say so in consent.'
       }
