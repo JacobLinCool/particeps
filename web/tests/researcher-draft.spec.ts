@@ -17,8 +17,6 @@ function ready() {
   c.purpose = 'P';
   c.consent.document_version = 'v1';
   c.consent.summary = 'S';
-  c.signer.key_id = 'demo-signer';
-  c.export.researcher_key_id = 'demo-export';
   draft.enableCollector('location.v1');
   draft.enableCollector('app_lifecycle.v1');
   return draft;
@@ -79,7 +77,10 @@ describe('draft', () => {
     const envelope = draft.envelope!;
     expect(envelope).not.toBeNull();
     const decoded = decodeEnvelope(envelope);
-    expect(decoded.signerKeyId).toBe('demo-signer');
+    // The envelope names the signer the document names, and the document derived that name from
+    // the key it was signed with. Nothing typed it.
+    expect(decoded.signerKeyId).toBe(draft.signerKeyId);
+    expect(decoded.signerKeyId).toMatch(/^signer-[0-9a-z]{13}$/);
     expect(verify(decoded.configurationBytes, decoded.signature, draft.configuration.signer.public_key)).toBe(true);
     expect(new TextDecoder().decode(decoded.configurationBytes)).toBe(draft.canonical);
     expect(draft.canonical).toBe(canonicalize(draft.document));
@@ -93,16 +94,127 @@ describe('draft', () => {
     expect(draft.artifactCount).toBe(2);
   });
 
-  it('holds keys as blocked until both private files are written down', () => {
+  /**
+   * Not `blocked`. The keys exist from the second second now, so a red dot on arrival would be the
+   * rail greeting a reader who has done nothing wrong — the exact failure the `pristine` guard
+   * exists to prevent. Held-and-unkept is progress, and it is non-blocking: before a signature
+   * exists an unsaved key costs one regenerate.
+   */
+  it('holds keys as partial until both private files are written down', () => {
     const draft = ready();
-    expect(draft.stateOf('keys')).toBe('blocked');
+    expect(draft.stateOf('keys')).toBe('partial');
     expect(draft.issuesByStep.keys).toEqual([]);
     draft.markKept('signing-private');
     flushSync();
-    expect(draft.stateOf('keys')).toBe('blocked');
+    expect(draft.stateOf('keys')).toBe('partial');
     draft.markKept('hpke-private');
     flushSync();
     expect(draft.stateOf('keys')).toBe('complete');
+  });
+
+  /**
+   * Both key names are properties of key material, so importing a private half reproduces its name
+   * exactly — which is what makes a second configuration under the same signer automatic.
+   */
+  it('names both keys from the key material, and never from the editable object', () => {
+    const draft = ready();
+    expect(draft.signerKeyId).toMatch(/^signer-[0-9a-z]{13}$/);
+    expect(draft.exportKeyId).toMatch(/^export-[0-9a-z]{13}$/);
+    expect(draft.document.signer.key_id).toBe(draft.signerKeyId);
+    expect(draft.document.export.researcher_key_id).toBe(draft.exportKeyId);
+    expect(draft.configuration.signer.key_id).toBe('');
+    expect(draft.configuration.export.researcher_key_id).toBe('');
+
+    const signerName = draft.signerKeyId;
+    const privateHalf = draft.signing.kind === 'held' ? draft.signing.material.privatePkcs8Base64 : '';
+    draft.generateSigning();
+    flushSync();
+    expect(draft.signerKeyId).not.toBe(signerName);
+    draft.importSigning(privateHalf);
+    flushSync();
+    expect(draft.signerKeyId).toBe(signerName);
+  });
+
+  /** The escape hatch, for a key that already carries a name from `sign --key-id`. */
+  it('takes an override for either key name, and derives again when it is emptied', () => {
+    const draft = ready();
+    const derived = draft.signerKeyId;
+    draft.pinSignerKeyId('lab-signer-2026');
+    draft.pinExportKeyId('lab-export-2026');
+    flushSync();
+    expect(draft.document.signer.key_id).toBe('lab-signer-2026');
+    expect(draft.document.export.researcher_key_id).toBe('lab-export-2026');
+    // No latching on `sign()`: a key ID follows the key and has nothing to drift from.
+    expect(draft.sign()).toBe('signed');
+    flushSync();
+    expect(draft.signerKeyIdPin).toBe('lab-signer-2026');
+    draft.pinSignerKeyId('');
+    flushSync();
+    expect(draft.signerKeyId).toBe(derived);
+  });
+
+  /**
+   * A file this page produced adopts nothing — its name is already the name this derivation gives
+   * it — so the pin stays empty and the invariant `key_id = H(public_key)` keeps holding. A file
+   * from the CLI keeps its hand-written name, which is the continuity case.
+   */
+  it('adopts a loaded key name only when the file could not have been named here', () => {
+    const mine = ready();
+    mine.sign();
+    const envelope = mine.envelope!;
+
+    const reader = createDraft();
+    reader.generateSigning();
+    reader.generateHpke();
+    reader.load(envelope);
+    flushSync();
+    expect(reader.signerKeyIdPin).toBe('');
+    expect(reader.exportKeyIdPin).toBe('');
+    // The loaded document carries the reader's own key, and is named after it.
+    expect(reader.document.signer.key_id).toBe(reader.signerKeyId);
+    expect(reader.signerKeyId).not.toBe(mine.signerKeyId);
+
+    const cli = ready();
+    cli.pinSignerKeyId('lab-signer-2026');
+    cli.pinExportKeyId('lab-export-2026');
+    flushSync();
+    cli.sign();
+    const inherited = createDraft();
+    inherited.load(cli.envelope!);
+    flushSync();
+    expect(inherited.signerKeyIdPin).toBe('lab-signer-2026');
+    expect(inherited.exportKeyIdPin).toBe('lab-export-2026');
+  });
+
+  /**
+   * Generating on arrival must not arm the unload guard against somebody who opened the page and
+   * closed it again: two keys nobody has committed to anything cost one regenerate, and a browser
+   * prompt over that teaches a reader to dismiss browser prompts.
+   */
+  it('puts keys at risk only once there is work to lose', () => {
+    const draft = createDraft();
+    draft.ensureKeys();
+    flushSync();
+    expect(draft.signing.kind).toBe('held');
+    expect(draft.hpke.kind).toBe('held');
+    expect(draft.keysAtRisk).toBe(false);
+
+    draft.configuration.title = 'Sleep and screen time';
+    flushSync();
+    expect(draft.keysAtRisk).toBe(true);
+  });
+
+  /** Idempotent: it never destroys a key that is already held, including one just imported. */
+  it('makes only the keys that do not exist yet', () => {
+    const draft = createDraft();
+    draft.ensureKeys();
+    flushSync();
+    const signer = draft.signerKeyId;
+    const exported = draft.exportKeyId;
+    draft.ensureKeys();
+    flushSync();
+    expect(draft.signerKeyId).toBe(signer);
+    expect(draft.exportKeyId).toBe(exported);
   });
 
   /**
@@ -118,7 +230,7 @@ describe('draft', () => {
     expect(draft.sent['signing-private']).toBe(true);
     expect(draft.saved['signing-private']).toBe(false);
     expect(draft.keysAtRisk).toBe(true);
-    expect(draft.stateOf('keys')).toBe('blocked');
+    expect(draft.stateOf('keys')).toBe('partial');
 
     draft.markKept('signing-private');
     draft.markKept('hpke-private');

@@ -149,9 +149,10 @@ export function emptyConfiguration(): StudyConfiguration {
   const now = Math.floor(Date.now() / 1_000);
   return {
     schema_version: SCHEMA_VERSION,
-    // Inert placeholders. The editor derives both — `lib/adc/ids.ts` — and the document it signs
-    // carries the derived values, never these. `validate` still checks them, because it also judges
-    // documents this editor did not build (`tests/hostile.spec.ts`).
+    // Inert placeholders, and so are the two key IDs below. The editor derives all four —
+    // `lib/adc/ids.ts` — and the document it signs carries the derived values, never these.
+    // `validate` still checks them, because it also judges documents this editor did not build
+    // (`tests/hostile.spec.ts`), and because `''` is what both key IDs are until a key exists.
     experiment_id: '',
     configuration_id: '',
     // Verification needs the current time inside this window, and an issued file cannot be

@@ -11,7 +11,7 @@
    * Four steps rather than the app's five, because `lib/i18n` names four and a step with no name in
    * the catalogue is a step with no name in one of the two languages.
    */
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { base } from '$app/paths';
   import { beforeNavigate, goto } from '$app/navigation';
   import Button from '$lib/ui/Button.svelte';
@@ -31,7 +31,13 @@
   import StepStudy from './StepStudy.svelte';
   import StepSign from './StepSign.svelte';
   import StepFiles from './StepFiles.svelte';
-  import { ARTIFACTS, artifactBytes, download, type ArtifactId } from './artifacts';
+  import {
+    ARTIFACTS,
+    artifactBytes,
+    download,
+    type ArtifactId,
+    type ArtifactNames
+  } from './artifacts';
   import { createDraft } from './draft.svelte';
   import { STEPS, stepForPath, type StepId } from './steps';
   import { units } from './units';
@@ -57,6 +63,18 @@
   let confirming = $state(false);
   /** Where a cancelled navigation was heading, held until the reader says the key is safe. */
   let departure = $state<string | null>(null);
+
+  /**
+   * The Keys step arrives done. A researcher has no basis for choosing between two key pairs they
+   * were always going to need, so both are made on arrival rather than on a click, and both names
+   * derive from the key material. Through `attempt`, so a browser without the primitives lands in
+   * the same `failure` slot it would have landed in on click — with the import path underneath as
+   * the working fallback.
+   *
+   * `untrack` because this is a one-shot: `ensureKeys` reads both key states, and without it the
+   * effect would re-run the moment it wrote them.
+   */
+  $effect(() => untrack(() => attempt(() => draft.ensureKeys(), false)));
 
   /**
    * Leaving is the same act as `Start over` — the keys are gone either way — so it asks the same
@@ -136,8 +154,12 @@
    * Counts are live from the first thing the researcher does, and silent before it. A page opened
    * a second ago has not got nine problems — it has nine fields nobody has reached yet, and a rail
    * that greets a reader with two red badges is a rail they learn to stop reading.
+   *
+   * The keys step no longer speaks for this: it holds two keys from the second second, so its state
+   * says nothing about whether the researcher has done anything. What does say so is an untouched
+   * study and no attempt to sign.
    */
-  const pristine = $derived(draft.stateOf('keys') === 'empty' && draft.stateOf('study') === 'empty');
+  const pristine = $derived(draft.stateOf('study') === 'empty' && !draft.attempted);
 
   const rail = $derived<StepDef[]>(
     STEPS.map((definition) => ({
@@ -149,9 +171,15 @@
     }))
   );
 
-  function stateLabel(state: string, count: number): string {
+  /**
+   * `id` is threaded through because one state means different things on different steps: `partial`
+   * on the keys step is two secrets that are not on disk yet, which is the same sentence `blocked`
+   * used to carry there, while `partial` anywhere else is ordinary progress.
+   */
+  function stateLabel(state: string, count: number, id: string): string {
     if (count > 0 && !pristine) return m.researcher.sign.blocked(count);
     if (state === 'blocked') return m.researcher.files.keep;
+    if (state === 'partial' && id === 'keys') return m.researcher.files.keep;
     if (state === 'complete') return m.status.clean;
     return m.control.progress;
   }
@@ -187,6 +215,16 @@
     if (outcome === 'signed') go('files');
   }
 
+  /**
+   * A private key file is named after the key inside it, so the file on disk *is* the string
+   * `researcher-tools sign --key-id` wants. The other two keep their catalogue names: they are one
+   * document, and the document is named inside itself.
+   */
+  const names = $derived<ArtifactNames>({
+    signerKeyId: draft.signerKeyId,
+    exportKeyId: draft.exportKeyId
+  });
+
   function save(id: ArtifactId) {
     const bytes = artifactBytes(id, {
       signingPrivate:
@@ -198,7 +236,7 @@
     if (!bytes) return;
     const definition = ARTIFACTS.find((artifact) => artifact.id === id);
     if (!definition) return;
-    download(bytes, definition.filename(i18n.m), definition.mime);
+    download(bytes, definition.filename(i18n.m, names), definition.mime);
     draft.markSent(id);
   }
 

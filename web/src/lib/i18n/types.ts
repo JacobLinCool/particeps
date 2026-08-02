@@ -196,9 +196,13 @@ export interface Messages {
      * those.
      */
     hint: {
-      id: string;
-      /** The one identifier a researcher may type. Both are otherwise derived. */
-      experimentIdOverride: string;
+      /**
+       * The one hint the three override fields share. Every identifier on the page is derived, so
+       * the only thing any of the three has to say is what an empty field means — and saying it
+       * once keeps the disclosure from repeating itself three times in three slightly different
+       * sentences.
+       */
+      override: string;
       title: string;
       contact: string;
       expiresAt: string;
@@ -268,11 +272,19 @@ export interface Messages {
       fingerprint: Passage;
       disclosure: Passage;
     };
+    /**
+     * No `role` on either key any more. The step generates both on arrival and shows them as two
+     * files, so what each key is for is carried by the pair of icons and by the one orientation
+     * line in `how.keys`; the only sentence left per key is the one that differs — what its loss
+     * costs. `reuse` and `reuseNote` label the disclosure that hides the import path, which is the
+     * rare case rather than the offered one.
+     */
     keys: {
-      signing: { title: string; algorithm: string; role: string; risk: string };
-      export: { title: string; algorithm: string; role: string; risk: string };
+      signing: { title: string; algorithm: string; risk: string };
+      export: { title: string; algorithm: string; risk: string };
       handling: string;
-      replace: string;
+      reuse: string;
+      reuseNote: string;
     };
     study: {
       /**

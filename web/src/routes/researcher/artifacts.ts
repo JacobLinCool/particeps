@@ -7,6 +7,14 @@
  *
  * Filenames come from the catalogue, which holds them as identifiers rather than prose — they are
  * typed into `researcher-tools sign --private …`, so they are the same in both languages.
+ *
+ * The two private keys are the exception, and only because their names are no longer a constant.
+ * `signer.key_id` and `export.researcher_key_id` are derived from the key material, so a key file
+ * can be named after the key inside it: `signer-07lsv3az679fg-private.key` names the kind, the key,
+ * and the secrecy, and it contains verbatim the string `researcher-tools sign --key-id` wants. The
+ * catalogue entries stay as the *kind* name, which is what the import targets and the disabled
+ * tiles show — a tile is disabled exactly when no key is held, and a key that is not held has no
+ * name.
  */
 
 import type { Messages } from '$lib/i18n/types';
@@ -15,12 +23,18 @@ import type { IconRef } from '$lib/ui/icons';
 
 export type ArtifactId = 'signing-private' | 'hpke-private' | 'canonical' | 'adccfg';
 
+/** The two derived key names, as the document carries them. `''` means no key is held. */
+export interface ArtifactNames {
+  signerKeyId: string;
+  exportKeyId: string;
+}
+
 export interface ArtifactDefinition {
   id: ArtifactId;
   destination: Destination;
   secrecy: Secrecy;
   icon: IconRef;
-  filename(m: Messages): string;
+  filename(m: Messages, names: ArtifactNames): string;
   mime: string;
 }
 
@@ -30,7 +44,8 @@ export const ARTIFACTS: readonly ArtifactDefinition[] = [
     destination: 'hold',
     secrecy: 'secret',
     icon: 'key-sign',
-    filename: (m) => m.file.signingPrivate,
+    filename: (m, names) =>
+      names.signerKeyId ? `${names.signerKeyId}-private.key` : m.file.signingPrivate,
     mime: 'text/plain'
   },
   {
@@ -38,7 +53,8 @@ export const ARTIFACTS: readonly ArtifactDefinition[] = [
     destination: 'hold',
     secrecy: 'secret',
     icon: 'key-open',
-    filename: (m) => m.file.exportPrivate,
+    filename: (m, names) =>
+      names.exportKeyId ? `${names.exportKeyId}-private.json` : m.file.exportPrivate,
     mime: 'application/json'
   },
   {
@@ -58,6 +74,13 @@ export const ARTIFACTS: readonly ArtifactDefinition[] = [
     mime: 'application/octet-stream'
   }
 ];
+
+/** The name this artefact lands on disk under. `''` for an id that has no definition, which none
+ *  has: the fallback exists so no caller needs a non-null assertion to ask a simple question. */
+export function artifactFilename(id: ArtifactId, m: Messages, names: ArtifactNames): string {
+  const definition = ARTIFACTS.find((artifact) => artifact.id === id);
+  return definition ? definition.filename(m, names) : '';
+}
 
 /**
  * A Blob and an object URL, revoked as soon as the click has been dispatched. Nothing is uploaded

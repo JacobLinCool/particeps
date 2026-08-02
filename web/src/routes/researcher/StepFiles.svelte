@@ -18,7 +18,13 @@
   import Fingerprint from '$lib/ui/Fingerprint.svelte';
   import IconButton from '$lib/ui/IconButton.svelte';
   import Note from '$lib/ui/Note.svelte';
-  import { ARTIFACTS, artifactBytes, type ArtifactId, type ArtifactSource } from './artifacts';
+  import {
+    ARTIFACTS,
+    artifactBytes,
+    artifactFilename,
+    type ArtifactId,
+    type ArtifactSource
+  } from './artifacts';
   import { keysetJson } from '$lib/adc/canonical';
   import type { Draft } from './draft.svelte';
   import type { Messages } from '$lib/i18n/types';
@@ -51,6 +57,10 @@
   );
   const signed = $derived(draft.envelope !== null);
 
+  const names = $derived({ signerKeyId: draft.signerKeyId, exportKeyId: draft.exportKeyId });
+  const signingName = $derived(artifactFilename('signing-private', m, names));
+  const hpkeName = $derived(artifactFilename('hpke-private', m, names));
+
   /** The block that actually gets pasted into an information sheet: the value, and why it matters. */
   const recruitment = $derived(
     `${draft.fingerprint ?? ''}\n\n${m.participant.how.fingerprint.body}`
@@ -59,45 +69,54 @@
 
 <div class="stack stack--loose" data-print="hide">
   <div class="handoff">
+    <!-- The pair the researcher met on step one, literally: same two tiles, same two mark lines,
+         same order. The hint is the site's only leak-side advice, and it belongs where files are
+         being filed rather than where they are being made. -->
     <ArtifactGroup
       destination="hold"
       icon="lock"
       title={m.researcher.files.keep}
+      hint={m.researcher.keys.handling}
       saved={holdSaved}
       total={2}
       empty={draft.signing.kind !== 'held' && draft.hpke.kind !== 'held'}
     >
       <DownloadTile
         icon="key-sign"
-        filename={m.file.signingPrivate}
+        filename={signingName}
         bytes={sizes['signing-private']}
         detail={m.researcher.keys.signing.algorithm}
+        warning={m.researcher.keys.signing.risk}
+        warningIcon="recover"
+        warningTone="soft"
         tone="danger"
         secret
         sent={draft.sent['signing-private']}
         saved={draft.saved['signing-private']}
         keptLabel={m.action.confirmSaved}
         disabled={draft.signing.kind !== 'held'}
-        label={`${m.action.download} ${m.file.signingPrivate}`}
-        savedLabel={m.file.signingPrivate}
+        label={`${m.action.download} ${signingName}`}
+        savedLabel={signingName}
         testid="download-signing-private"
         ondownload={() => onsave('signing-private')}
         onkept={() => draft.markKept('signing-private')}
       />
       <DownloadTile
         icon="key-open"
-        filename={m.file.exportPrivate}
+        filename={hpkeName}
         bytes={sizes['hpke-private']}
         detail={m.researcher.keys.export.algorithm}
+        warning={m.researcher.keys.export.risk}
+        warningIcon="no-recover"
+        warningTone="danger"
         tone="danger"
         secret
         sent={draft.sent['hpke-private']}
         saved={draft.saved['hpke-private']}
         keptLabel={m.action.confirmSaved}
         disabled={draft.hpke.kind !== 'held'}
-        label={`${m.action.download} ${m.file.exportPrivate}`}
-        savedLabel={m.file.exportPrivate}
-        warning={m.researcher.keys.export.risk}
+        label={`${m.action.download} ${hpkeName}`}
+        savedLabel={hpkeName}
         testid="download-hpke-private"
         ondownload={() => onsave('hpke-private')}
         onkept={() => draft.markKept('hpke-private')}
@@ -146,38 +165,46 @@
         testid="download-adccfg"
         ondownload={() => onsave('adccfg')}
       />
-
-      {#if draft.fingerprint}
-        <Fingerprint
-          value={draft.fingerprint}
-          size="plaque"
-          copyable
-          copyLabel={m.control.copyFingerprint}
-          copiedLabel={m.status.copied}
-        />
-        <Note icon="info" tone="plain" text={m.researcher.sign.publish} />
-        <Note icon="send" tone="plain" text={m.researcher.files.publish} />
-        <div class="row row--tight">
-          <CopyButton
-            text={() => recruitment}
-            label={m.action.copy}
-            copiedLabel={m.status.copied}
-            failedLabel={m.error.clipboard}
-            variant="text"
-            testid="copy-recruitment"
-          />
-          <!-- Printing is publishing, which is why the catalogue's one sentence about publishing
-               the fingerprint is also this control's name. -->
-          <IconButton
-            icon="print"
-            label={m.control.print}
-            onclick={() => window.print()}
-            testid="print"
-          />
-        </div>
-      {/if}
     </ArtifactGroup>
   </div>
+
+  <!-- The fingerprint is a band under the three columns rather than a fifth thing inside the send
+       one. Two reasons, and the second is why it moved: the plaque exists for eye-comparison
+       against something printed, and eight groups of four get one unbroken row here where a 262px
+       column broke them into two; and the two sentences beside it are the only prose on this step,
+       which in that column had 194px to sit in and needed three lines. `this` still points at the
+       plaque, because the plaque is directly above it. -->
+  {#if draft.fingerprint}
+    <div class="publish">
+      <Fingerprint
+        value={draft.fingerprint}
+        size="plaque"
+        copyable
+        copyLabel={m.control.copyFingerprint}
+        copiedLabel={m.status.copied}
+      />
+      <Note icon="info" tone="plain" text={m.researcher.sign.publish} />
+      <Note icon="send" tone="plain" text={m.researcher.files.publish} />
+      <div class="row row--tight">
+        <CopyButton
+          text={() => recruitment}
+          label={m.action.copy}
+          copiedLabel={m.status.copied}
+          failedLabel={m.error.clipboard}
+          variant="text"
+          testid="copy-recruitment"
+        />
+        <!-- Printing is publishing, which is why the catalogue's one sentence about publishing
+             the fingerprint is also this control's name. -->
+        <IconButton
+          icon="print"
+          label={m.control.print}
+          onclick={() => window.print()}
+          testid="print"
+        />
+      </div>
+    </div>
+  {/if}
 
   {#if !signed}
     <div class="row">
@@ -204,6 +231,13 @@
     display: grid;
     gap: var(--sp-6);
     align-items: start;
+  }
+
+  .publish {
+    display: flex;
+    flex-direction: column;
+    align-items: start;
+    gap: var(--sp-5);
   }
 
   @media (min-width: 900px) {

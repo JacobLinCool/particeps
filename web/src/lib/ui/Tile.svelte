@@ -23,6 +23,13 @@
     meta?: Snippet;
     /** Sentence for the strip under the meta line. The one place a sentence is unavoidable. */
     warning?: string;
+    /**
+     * The strip's mark and its temperature. Two tiles carrying the same sentence shape in the same
+     * slot, one `soft` and one `danger`, is a comparison a reader makes without reading: `soft`
+     * takes no wash at all, which is what keeps a filled red strip the only filled thing near it.
+     */
+    warningIcon?: IconRef;
+    warningTone?: Tone;
     secret?: boolean;
     /** Nothing to download yet. */
     empty?: boolean;
@@ -38,6 +45,8 @@
     tone = 'soft',
     meta,
     warning,
+    warningIcon = 'alert',
+    warningTone = 'caution',
     secret = false,
     empty = false,
     awaiting = false,
@@ -56,6 +65,19 @@
     binary: 'var(--binary-wash)',
     voice: 'var(--voice-wash)'
   };
+
+  /** The neutral half of a comparison is unfilled: `soft` and `faint` are the strip's ground. */
+  const warnWash = $derived(
+    warningTone === 'soft' || warningTone === 'faint' || warningTone === 'ink'
+      ? 'transparent'
+      : wash[warningTone]
+  );
+
+  const warnInk = $derived(
+    warningTone === 'soft' || warningTone === 'faint' || warningTone === 'ink'
+      ? 'var(--ink-soft)'
+      : `var(--${warningTone}-ink)`
+  );
 </script>
 
 <div
@@ -83,8 +105,8 @@
   {#if trailing}<div class="tile__actions">{@render trailing()}</div>{/if}
 
   {#if warning}
-    <p class="tile__warn">
-      <Icon name="alert" size={16} />
+    <p class="tile__warn" style="--warn-wash: {warnWash}; --warn-ink: {warnInk}">
+      <Icon name={warningIcon} size={16} />
       <span>{warning}</span>
     </p>
   {/if}

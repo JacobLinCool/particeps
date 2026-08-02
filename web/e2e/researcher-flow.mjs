@@ -10,10 +10,15 @@
  *
  * Two properties are checked at the seam where only a browser can check them:
  *
- *   1. What the page *showed* is what the file *says*. The identifiers are derived now rather than
- *      typed, so the sign step's readout is a claim the page makes, and the CLI printing the same
- *      two names back is the only thing that tests it. Same for the fingerprint on the files step:
- *      it is what goes into a recruitment sheet, and `check-config` recomputes it from the file.
+ *   1. What the page *showed* is what the file *says*, and both key names are functions of the keys
+ *      they name. All four identifiers are derived now rather than typed — the study's two names,
+ *      and the two key names — so the sign step's readout is a claim the page makes, and the CLI
+ *      printing the same names back is the only thing that tests it. Same for the fingerprint on
+ *      the files step: it is what goes into a recruitment sheet, and `check-config` recomputes it
+ *      from the file. Nothing in this script types an identifier, which is what makes the
+ *      comparison worth making — and because agreement alone would still hold for a page that
+ *      invented one string and printed it everywhere, both key names are also recomputed here from
+ *      the key material in the signed file, by an implementation that is not the site's.
  *   2. The bytes are Gson's bytes. The study text below is deliberately hostile — an em dash, CJK,
  *      an emoji, a quote, a backslash, a newline, and characters Gson leaves alone — and the
  *      canonical JSON the page hands over is fed back through `researcher-tools canonicalize`,
@@ -25,6 +30,7 @@
  */
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
+import { createHash, createPrivateKey, createPublicKey } from 'node:crypto';
 import { mkdtempSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -54,6 +60,11 @@ const EXPECTED_EXPERIMENT_ID = 'browser-authored-study';
 /** One of `PRESETS.duration_hours`, clicked rather than typed. */
 const DURATION_HOURS = 168;
 
+const fail = (message) => {
+  console.error('FAIL ' + message);
+  process.exit(1);
+};
+
 const out = mkdtempSync(join(tmpdir(), 'adc-e2e-'));
 const browser = await chromium.launch();
 // Pinned, and deliberately not UTC: the two instants share one zone selector now, and a zone with a
@@ -78,16 +89,20 @@ page.on('download', async (d) => {
 
 await page.goto(`${ORIGIN}/researcher/`, { waitUntil: 'networkidle' });
 
-// Keys. Both are generated in the tab, and both private halves are offered as downloads.
-await page.locator('[data-testid="field-signer.key_id"] input').fill('e2e-signer-2026');
-await page.locator('[data-testid="field-export.researcher_key_id"] input').fill('e2e-hpke-2026');
-const generate = page.getByRole('button', { name: 'Generate', exact: true });
-await generate.nth(0).click();
-await generate.nth(1).click();
+// Keys. Nothing is typed and no button is pressed to make them: the step generates both pairs on
+// arrival, and both names derive from the key material. The two tiles are taken by the names they
+// carry, which are those derived names with `-private.key` / `-private.json` after them.
 await page.waitForTimeout(600);
-const download = page.getByRole('button', { name: 'Download', exact: true });
-await download.nth(0).click();
-await download.nth(1).click();
+const signingTile = page.getByRole('button', { name: /signer-[0-9a-z]{13}-private\.key$/ });
+const hpkeTile = page.getByRole('button', { name: /export-[0-9a-z]{13}-private\.json$/ });
+if ((await signingTile.count()) !== 1) fail('the keys step did not make a signing key on arrival');
+if ((await hpkeTile.count()) !== 1) fail('the keys step did not make an export key on arrival');
+// The step offers nothing to type at all. A key-ID field here is the thing that was removed, and a
+// script that simply stops filling one would keep passing if it came back.
+const typeable = await page.locator('[data-testid="step-keys"]').getByRole('textbox').count();
+if (typeable !== 0) fail(`the keys step offers ${typeable} fields to type into, and should offer 0`);
+await signingTile.click();
+await hpkeTile.click();
 await page.waitForTimeout(600);
 
 // The study.
@@ -140,8 +155,10 @@ await page.waitForTimeout(300);
 await page.getByRole('button', { name: 'Next', exact: true }).click();
 await page.waitForSelector('[data-testid="identity-readout"]');
 await page.waitForTimeout(400);
-// `:first-child`, because `CopyButton` leaves its own live region as a sibling of the value.
-const [experimentId, configurationId] = await page
+// `:first-child`, because `CopyButton` leaves its own live region as a sibling of the value. Four
+// rows now: the two names of the document, and the two names of the keys — every one of them
+// derived, and every one of them a claim this page makes that the CLI has to agree with.
+const [experimentId, configurationId, signerKeyId, exportKeyId] = await page
   .locator('[data-testid="identity-readout"] dd > span:first-child')
   .evaluateAll((spans) => spans.map((span) => span.textContent.trim()));
 
@@ -164,15 +181,12 @@ await page.getByRole('button', { name: /study\.adccfg/ }).first().click();
 await page.waitForTimeout(600);
 await browser.close();
 
-const fail = (message) => {
-  console.error('FAIL ' + message);
-  process.exit(1);
-};
-
 if (problems.length) fail('the page logged errors:\n  ' + problems.join('\n  '));
+// A private key file is named after the key inside it, so the file on disk *is* the string
+// `researcher-tools sign --key-id` wants.
 for (const name of [
-  'study-signing-private.key',
-  'export-hpke-private.json',
+  `${signerKeyId}-private.key`,
+  `${exportKeyId}-private.json`,
   'study-canonical.json',
   'study.adccfg'
 ]) {
@@ -196,8 +210,23 @@ if (experimentId !== EXPECTED_EXPERIMENT_ID) {
 if (!new RegExp(`^${EXPECTED_EXPERIMENT_ID}-[0-9a-z]{6}$`).test(configurationId)) {
   fail(`the configuration id is not a digest under the experiment: ${configurationId}`);
 }
+// Both key names are 64 bits of a domain-separated digest of the public key, as thirteen base-36
+// characters behind a word stem. Nothing here was typed, so the shape is the whole claim.
+for (const [what, id, shape] of [
+  ['signer', signerKeyId, /^signer-[0-9a-z]{13}$/],
+  ['export', exportKeyId, /^export-[0-9a-z]{13}$/]
+]) {
+  if (!shape.test(id)) fail(`the page showed a ${what} key id in the wrong shape: ${id}`);
+  if (!ID_PATTERN.test(id)) fail(`the page showed an illegal ${what} key id: ${id}`);
+}
 if (!/^([0-9A-F]{4} ){7}[0-9A-F]{4}$/.test(fingerprint)) {
   fail(`the page drew a fingerprint in the wrong shape: ${JSON.stringify(fingerprint)}`);
+}
+// The key ID must not be a truncation or a re-encoding of the fingerprint: publishing a second
+// string that shares the fingerprint's leading characters teaches prefix comparison, which is what
+// the fingerprint has to resist.
+if (fingerprint.replace(/ /g, '').toLowerCase().includes(signerKeyId.slice(7))) {
+  fail('the signer key id is a substring of the fingerprint, which it must never be');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -211,6 +240,11 @@ const document = JSON.parse(text);
 const claim = (ok, message) => ok || fail(message);
 claim(document.experiment_id === experimentId, 'the file is not named what the page showed');
 claim(document.configuration_id === configurationId, 'the configuration id in the file differs');
+claim(document.signer.key_id === signerKeyId, 'the file names a signer the page did not show');
+claim(
+  document.export.researcher_key_id === exportKeyId,
+  'the file names an export key the page did not show'
+);
 claim(document.title === TITLE, 'the title did not survive the round trip');
 claim(document.researcher.name === RESEARCHER, 'the researcher name did not survive');
 claim(document.consent.summary === CONSENT, 'the consent summary did not survive');
@@ -230,6 +264,117 @@ for (const escaped of ['E2E Lab \\"Verification\\" \\\\ Group', 'app activity.\\
   claim(text.includes(escaped), `the encoder did not write ${JSON.stringify(escaped)}`);
 }
 
+// ---------------------------------------------------------------------------------------------
+// What the two key names are made of.
+//
+// Everything above would still pass on a page that invented one string per key and printed the
+// same invention in the readout, in the filename and in the file. The property the Keys step now
+// rests on is stronger than agreement: each name is a function of the key it names, so a reader
+// holding only the `.adccfg` can recompute it, and the same key gets the same name in the second
+// arm of a study whether it was generated here, imported, or read back out of a configuration.
+//
+// `lib/adc/ids.ts` is re-implemented below from its own specification rather than imported — a
+// derivation checked against itself proves nothing. Sixty-four bits of SHA-256 over a
+// domain-separated *raw* public key (not the DER, not the Tink JSON), as thirteen base-36
+// characters behind a word stem.
+// ---------------------------------------------------------------------------------------------
+
+const keyTag = (domain, raw) =>
+  BigInt(
+    '0x' +
+      createHash('sha256')
+        .update(Buffer.concat([Buffer.from(domain, 'ascii'), Buffer.from(raw)]))
+        .digest()
+        .subarray(0, 8)
+        .toString('hex')
+  )
+    .toString(36)
+    .padStart(13, '0');
+
+/** The one length-delimited field `number` at the top level of a protobuf message, or `null`. */
+function field(message, number) {
+  let at = 0;
+  const varint = () => {
+    let value = 0;
+    let shift = 0;
+    for (;;) {
+      const byte = message[at];
+      at += 1;
+      value += (byte & 0x7f) * 2 ** shift;
+      if ((byte & 0x80) === 0) return value;
+      shift += 7;
+    }
+  };
+  while (at < message.length) {
+    const key = varint();
+    const wire = key & 7;
+    if (wire === 2) {
+      const length = varint();
+      if (key >>> 3 === number) return message.subarray(at, at + length);
+      at += length;
+    } else if (wire === 0) varint();
+    else if (wire === 5) at += 4;
+    else if (wire === 1) at += 8;
+    else throw new Error(`unreadable protobuf wire type ${wire}`);
+  }
+  return null;
+}
+
+/** X.509 SubjectPublicKeyInfo for Ed25519: fixed length, so the last 32 bytes are the key. */
+const X509_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+
+const spki = Buffer.from(document.signer.public_key, 'base64');
+claim(
+  spki.length === 44 && spki.subarray(0, 12).equals(X509_PREFIX),
+  'signer.public_key is not an X.509 Ed25519 key'
+);
+const signerRaw = spki.subarray(12);
+
+const exportRaw = field(
+  Buffer.from(document.export.tink_hpke_public_keyset.key[0].keyData.value, 'base64'),
+  3
+);
+claim(exportRaw?.length === 32, 'the public keyset in the file carries no 32-byte X25519 point');
+
+claim(
+  document.signer.key_id === `signer-${keyTag('adc:signer-key-id:v1:', signerRaw)}`,
+  `signer.key_id is not the digest of the key it names: ${document.signer.key_id}`
+);
+claim(
+  document.export.researcher_key_id === `export-${keyTag('adc:export-key-id:v1:', exportRaw)}`,
+  `export.researcher_key_id is not the digest of the key it names: ${document.export.researcher_key_id}`
+);
+// Two different keys, so the two names must differ even where the stems are stripped off. A
+// derivation missing its domain separation would put one digest behind both words.
+claim(
+  document.signer.key_id.slice(7) !== document.export.researcher_key_id.slice(7),
+  'both key names carry the same digest, so the two roles are not separated'
+);
+
+// And the two files the researcher keeps hold those same keys, so a file named after a key is
+// named after the key that is actually inside it.
+const signingPrivate = readFileSync(join(out, `${signerKeyId}-private.key`), 'utf8');
+const derivedSpki = createPublicKey(
+  createPrivateKey({
+    key: Buffer.from(signingPrivate.trim(), 'base64'),
+    format: 'der',
+    type: 'pkcs8'
+  })
+).export({ format: 'der', type: 'spki' });
+claim(
+  Buffer.from(derivedSpki).equals(spki),
+  `${signerKeyId}-private.key is not the key the configuration is signed under`
+);
+
+const privateKeyset = JSON.parse(readFileSync(join(out, `${exportKeyId}-private.json`), 'utf8'));
+const privateValue = Buffer.from(privateKeyset.key[0].keyData.value, 'base64');
+const publicInPrivate = field(privateValue, 2);
+claim(publicInPrivate !== null, `${exportKeyId}-private.json carries no public half`);
+claim(
+  Buffer.from(field(publicInPrivate, 3) ?? []).equals(exportRaw),
+  `${exportKeyId}-private.json cannot decrypt what this study encrypts to`
+);
+
 // The envelope carries exactly the canonical bytes the page also handed over as a file. A
 // researcher who archives one and distributes the other is archiving the right thing.
 // `ADCCFG01`, uint16 key-id length, int32 configuration length, uint16 signature length.
@@ -243,8 +388,8 @@ claim(
   'the envelope lengths do not add up to its size'
 );
 claim(
-  envelope.subarray(16, 16 + keyIdLength).toString('utf8') === 'e2e-signer-2026',
-  'the envelope names a different signer'
+  envelope.subarray(16, 16 + keyIdLength).toString('utf8') === signerKeyId,
+  'the envelope names a signer other than the one the page showed'
 );
 claim(
   envelope
@@ -273,8 +418,8 @@ const [validLine, signerLine] = verdict.trim().split('\n');
 if (validLine !== `valid ${experimentId} ${configurationId}`) {
   fail(`the CLI refused the file the page produced, or renamed it:\n${verdict}`);
 }
-if (signerLine !== `signer e2e-signer-2026 ${fingerprint}`) {
-  fail(`the fingerprint the page published is not the one the verifier computes:\n${signerLine}`);
+if (signerLine !== `signer ${signerKeyId} ${fingerprint}`) {
+  fail(`the signer the CLI reads back is not the one the page showed:\n${signerLine}`);
 }
 
 console.log(verdict.trim());

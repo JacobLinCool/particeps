@@ -684,6 +684,10 @@ button.rail__step:hover {
   border-color: var(--danger-ink);
 }
 
+/* The strip is one slot, and its tone is the message. Two tiles carrying the same three opening
+   words in the same place — one unfilled, one washed in --danger — is a comparison the eye makes on
+   the second half of the sentence only. The padding is identical either way, so the two marks sit
+   at the same x and the lines are genuinely adjacent. */
 .tile__warn {
   grid-column: 1 / -1;
   display: flex;
@@ -691,14 +695,15 @@ button.rail__step:hover {
   align-items: start;
   padding: var(--sp-4) var(--sp-5);
   margin-block-start: var(--sp-4);
-  background: var(--caution-wash);
+  background: var(--warn-wash, var(--caution-wash));
   border-radius: var(--r-field);
   font-size: var(--type-fine);
   color: var(--ink);
 }
 
 .tile__warn .icon {
-  color: var(--caution-ink);
+  color: var(--warn-ink, var(--caution-ink));
+  flex: none;
 }
 
 .tile--empty {
@@ -763,86 +768,6 @@ button.rail__step:hover {
 
 .group--empty {
   opacity: 0.45;
-}
-
-/* ---- key card ----------------------------------------------------------------------------- */
-
-.keycard {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-5);
-  padding: var(--sp-6);
-  background: var(--surface);
-  border: var(--line-hair) solid var(--rule);
-  border-radius: var(--r-panel);
-  box-shadow: var(--shadow-rest);
-}
-
-.keycard--secret {
-  border: var(--line-solid) solid var(--danger-ink);
-  position: relative;
-  overflow: clip;
-}
-
-.keycard--secret::before {
-  content: '';
-  position: absolute;
-  inset-block: 0;
-  inset-inline-start: 0;
-  inline-size: 6px;
-  background: repeating-linear-gradient(
-    45deg,
-    color-mix(in oklab, var(--danger) 30%, transparent) 0 3px,
-    transparent 3px 6px
-  );
-}
-
-.keycard__head {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-}
-
-.keycard__title {
-  font-size: var(--type-body);
-  font-weight: var(--w-medium);
-  margin-inline-end: auto;
-}
-
-.keycard__algorithm {
-  font-family: var(--font-mono);
-  font-size: var(--type-micro);
-  color: var(--ink-faint);
-}
-
-.keycard__recovery {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  font-size: var(--type-fine);
-  color: var(--ink-soft);
-}
-
-.keycard__recovery--none {
-  color: var(--danger-ink);
-}
-
-.keycard__well {
-  padding: var(--sp-5);
-  background: var(--surface-sunk);
-  border-radius: var(--r-field);
-  font-family: var(--font-mono);
-  font-size: var(--type-micro);
-  overflow-wrap: anywhere;
-  max-block-size: 9rem;
-  overflow: auto;
-}
-
-.keycard__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  flex-wrap: wrap;
 }
 
 /* Held but never written to disk: the only copy is this tab, and the ring says so until it is

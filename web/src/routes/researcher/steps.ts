@@ -54,13 +54,25 @@ const OWNER = new Map<string, StepId>(
 );
 
 /**
+ * The two paths whose first segment lies about which step hosts them. Both key IDs are derived, and
+ * the one control that can override either is the disclosure on the sign step — so an issue on
+ * `signer.key_id` has to land there, while `signer.public_key` keeps landing on the Keys step where
+ * the file that carries it is. Without this table an issue jump would change to the Keys step and
+ * then find no `data-issue-host` to scroll to.
+ */
+const EXACT = new Map<string, StepId>([
+  ['signer.key_id', 'sign'],
+  ['export.researcher_key_id', 'sign']
+]);
+
+/**
  * Longest-prefix match on segment boundaries. `validate` emits `collectors.2.config.interval_millis`
  * and `prompts.0.id`, so the first segment decides. A path nothing claims — including the empty
  * path `validate` uses for the whole document — lands on `sign`, where the issue list is: an issue
  * with no home must still be visible somewhere.
  */
 export function stepForPath(path: string): StepId {
-  return OWNER.get(path.split('.')[0]) ?? 'sign';
+  return EXACT.get(path) ?? OWNER.get(path.split('.')[0]) ?? 'sign';
 }
 
 export type { StepState };

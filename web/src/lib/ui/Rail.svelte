@@ -22,8 +22,12 @@
     orientation?: 'vertical' | 'horizontal';
     /** Announced with the step name, e.g. `control.stepPosition`. */
     position?: (at: { index: number; total: number }) => string;
-    /** Appended to the accessible name so a red dot says why it is red. */
-    stateLabel?: (state: StepState, count: number) => string;
+    /**
+     * Appended to the accessible name so a red dot says why it is red. The step's id comes last
+     * because one state does not always mean one thing: on a step whose output is two files, a
+     * partial dot is "two secrets are not on disk", and elsewhere it is ordinary progress.
+     */
+    stateLabel?: (state: StepState, count: number, id: string) => string;
     /** `auto` drops the names on narrow viewports, as the app does. `always` keeps them, which is
      *  what the participant page wants: there the reader is learning the shape, not navigating. */
     labels?: 'auto' | 'always';
@@ -80,7 +84,7 @@
   function name(step: StepDef, index: number): string {
     const parts = [step.label];
     if (position) parts.push(position({ index: index + 1, total: steps.length }));
-    if (stateLabel && step.state) parts.push(stateLabel(step.state, step.count ?? 0));
+    if (stateLabel && step.state) parts.push(stateLabel(step.state, step.count ?? 0, step.id));
     return parts.join(', ');
   }
 </script>

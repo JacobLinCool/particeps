@@ -30,6 +30,9 @@
     /** `action.confirmSaved`. Required when `secret`, because only the reader can set `saved`. */
     keptLabel?: string;
     warning?: string;
+    /** The strip's mark and temperature. See `Tile`: `soft` takes no wash. */
+    warningIcon?: IconRef;
+    warningTone?: Tone;
     /** `a11y.download` plus the filename, from the caller. */
     label: string;
     /** Announced after the file is written. */
@@ -52,6 +55,8 @@
     saved = false,
     keptLabel,
     warning,
+    warningIcon,
+    warningTone,
     label,
     savedLabel,
     disabled = false,
@@ -84,6 +89,8 @@
   {tone}
   {secret}
   {warning}
+  {warningIcon}
+  {warningTone}
   empty={bytes === 0}
   {testid}
 >

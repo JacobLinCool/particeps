@@ -53,6 +53,9 @@
 
   const icons = new Map(STEPS.map((step) => [step.id, step.icon]));
 
+  /** The three paths whose only control is inside the disclosure, so an issue on one opens it. */
+  const OVERRIDDEN = new Set(['experiment_id', 'signer.key_id', 'export.researcher_key_id']);
+
   function groupOf(issue: UiIssue) {
     const owner = stepForPath(issue.path);
     return { id: owner, label: m.step[owner], icon: icons.get(owner) };
@@ -92,7 +95,7 @@
     title={m.researcher.sign.identity.title}
     lead={m.researcher.sign.identity.note}
     icon="document"
-    path="experiment_id configuration_id"
+    path="experiment_id configuration_id signer.key_id export.researcher_key_id"
   >
     <dl class="identity" data-testid="identity-readout">
       <dt>{m.field.label.experimentId}</dt>
@@ -117,12 +120,50 @@
           testid="copy-configuration-id"
         />
       </dd>
+      <!-- The two key names, which are also what `sign --key-id` wants and what the private key
+           files on disk are called. Rendered only when they exist, so the default page state does
+           not show two blank rows for keys that failed to generate. -->
+      {#if draft.signerKeyId}
+        <dt>{m.field.label.signerKeyId}</dt>
+        <dd class="mono">
+          <span>{draft.signerKeyId}</span>
+          <CopyButton
+            text={draft.signerKeyId}
+            label={m.action.copy}
+            copiedLabel={m.status.copied}
+            failedLabel={m.error.clipboard}
+            testid="copy-signer-key-id"
+          />
+        </dd>
+      {/if}
+      {#if draft.exportKeyId}
+        <dt>{m.field.label.exportKeyId}</dt>
+        <dd class="mono">
+          <span>{draft.exportKeyId}</span>
+          <CopyButton
+            text={draft.exportKeyId}
+            label={m.action.copy}
+            copiedLabel={m.status.copied}
+            failedLabel={m.error.clipboard}
+            testid="copy-export-key-id"
+          />
+        </dd>
+      {/if}
     </dl>
 
-    <!-- The escape hatch, and only for the experiment: nobody is asked to type an identifier, which
-         is not the same as nobody being allowed to. `configuration_id` has no override at all — it
-         is a digest of the document, and pinning it would let two different files claim one name.
-         Empty means derived; the suggestion button offers the derived value in one click.
+    <!-- The escape hatch, for the three identifiers that have one: nobody is asked to type an
+         identifier, which is not the same as nobody being allowed to. `configuration_id` has no
+         override at all — it is a digest of the document, and pinning it would let two different
+         files claim one name. Empty means derived; the suggestion button offers the derived value
+         in one click.
+
+         The two key names are here rather than on the Keys step for the same reason they are not
+         typed at all: a text field on a key card asking a researcher to name a key is the thing
+         being removed. What this is for is a key that already carries a name from
+         `sign --key-id lab-signer-2026`, or an export key from a CLI-era study, where being
+         silently renamed would put two names on one key across two arms of one study. Neither
+         takes a `suggestFrom`: the suggestion machinery derives from the title, which has nothing
+         to do with a key.
 
          `Disclosure` treats `open` as an initial value, which is exactly enough: `{#if step ===
          'sign'}` mounts this step fresh, so an issue jump lands here after a mount and the field is
@@ -131,16 +172,30 @@
     <Disclosure
       label={m.control.details}
       icon="document"
-      open={draft.issues.some((issue) => issue.path === 'experiment_id')}
+      open={draft.issues.some((issue) => OVERRIDDEN.has(issue.path))}
     >
       <IdField
         label={m.field.label.experimentId}
-        hint={m.field.hint.experimentIdOverride}
+        hint={m.field.hint.override}
         path="experiment_id"
         value={draft.experimentIdPin}
         suggestFrom={draft.configuration.title}
         suggestLabel={m.control.applySuggestion}
         onchange={(value) => draft.pinExperimentId(value)}
+      />
+      <IdField
+        label={m.field.label.signerKeyId}
+        hint={m.field.hint.override}
+        path="signer.key_id"
+        value={draft.signerKeyIdPin}
+        onchange={(value) => draft.pinSignerKeyId(value)}
+      />
+      <IdField
+        label={m.field.label.exportKeyId}
+        hint={m.field.hint.override}
+        path="export.researcher_key_id"
+        value={draft.exportKeyIdPin}
+        onchange={(value) => draft.pinExportKeyId(value)}
       />
     </Disclosure>
   </Section>

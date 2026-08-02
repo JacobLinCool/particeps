@@ -122,8 +122,7 @@ export const en: Messages = {
      * quota meter says those.
      */
     hint: {
-      id: 'a–z, 0–9, and hyphens. 3–64 characters.',
-      experimentIdOverride: 'Leave empty to use the ID above.',
+      override: 'Leave empty to use the ID above.',
       title: 'Recruiting in two languages takes two signed files.',
       contact: 'A way a participant can actually reach you.',
       expiresAt: 'The last day anyone can join.',
@@ -269,22 +268,32 @@ export const en: Messages = {
         body: 'Before consent, the app describes every source you switched on.'
       }
     },
+    /**
+     * The step makes both keys on arrival, so nothing here asks for a decision. What is left is two
+     * files and one line of red: the two `risk` lines open on the same word in the same slot on the
+     * same tile, so the eye compares the second half only, and only the export one is drawn in
+     * `--danger`. Neither is a warning about keys in general; between them they say which loss is
+     * an afternoon and which one is the data.
+     */
     keys: {
       signing: {
         title: 'Study signing key',
         algorithm: 'Ed25519',
-        role: 'Signs the configuration.',
-        risk: 'Lost: no new files. Leaked: anyone can sign as you.'
+        risk: 'Lost: make a new one.'
       },
       export: {
         title: 'Export encryption key',
         algorithm: 'X25519 · HPKE',
-        role: 'Decrypts every export and every upload.',
-        /** Also the warning on a 139px download tile, which is the tightest slot on the site. */
+        /** The tightest slot on the site: a 135px strip inside a download tile on the files step. */
         risk: 'Lost: data unreadable.'
       },
-      handling: 'A private key is an ordinary file. Keep it out of Git and chat.',
-      replace: 'Generating again discards the pair held here. Download first.'
+      /** The hold column's hint on the files step, in 218px. The only leak-side line on the site,
+       *  and it sits where the files are being filed rather than where they are being made. */
+      handling: 'Not in Git, not in chat.',
+      /** Behind a closed disclosure: nobody is asked to bring a key, which is not the same as
+       *  nobody being allowed to. `reuseNote` is the only reason anyone would. */
+      reuse: 'Use a key I already have',
+      reuseNote: 'The same key keeps the same fingerprint.'
     },
     study: {
       section: {
@@ -323,7 +332,8 @@ export const en: Messages = {
     sign: {
       identity: {
         title: 'Identity',
-        note: 'These two name your data. Analysis needs them.'
+        /** Four rows now, not two: the study, the file, and the two keys. Every one is derived. */
+        note: 'These names travel with your data. Analysis needs them.'
       },
       canonical: 'Canonical JSON',
       size: ({ bytes, max }) => `${number.format(bytes)} / ${number.format(max)} bytes`,
