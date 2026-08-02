@@ -60,6 +60,9 @@ export const en: Messages = {
   unit: {
     microseconds: 'µs',
     milliseconds: 'ms',
+    // Byte-identical to what `Intl.NumberFormat` short unit style emits, because the word beside
+    // the box and the word in the readout have to be the same word for the same unit.
+    seconds: 'sec',
     minutes: 'min',
     hours: 'h',
     hertz: 'Hz',
@@ -123,7 +126,6 @@ export const en: Messages = {
      */
     hint: {
       override: 'Leave empty to use the ID above.',
-      title: 'Recruiting in two languages takes two signed files.',
       contact: 'A way a participant can actually reach you.',
       expiresAt: 'The last day anyone can join.',
       duration: 'Counted from the day they start.',
@@ -296,27 +298,14 @@ export const en: Messages = {
       reuseNote: 'The same key keeps the same fingerprint.'
     },
     study: {
+      /** Five headings and one note. The controls under each heading say what the section is for,
+       *  and only `delivery` has something to add that no control on screen shows. */
       section: {
-        about: {
-          title: 'The study',
-          note: 'Whatever you write here is what a participant reads.'
-        },
-        validity: {
-          title: 'How long does this run?',
-          note: 'When it starts, when it ends, how long each person takes.'
-        },
-        collectors: {
-          title: 'Data',
-          note: 'Fewest sources, lowest usable rate. It is their phone.'
-        },
-        consent: {
-          title: 'Consent',
-          note: 'Change this and you sign again, and ask again.'
-        },
-        prompts: {
-          title: 'Prompts',
-          note: 'Delivery is not exact. Do not count on the minute.'
-        },
+        about: { title: 'The study' },
+        validity: { title: 'How long does this run?' },
+        collectors: { title: 'Data' },
+        consent: { title: 'Consent' },
+        prompts: { title: 'Prompts' },
         delivery: {
           title: 'Delivery',
           note: 'With this off, data only leaves when they export it.'

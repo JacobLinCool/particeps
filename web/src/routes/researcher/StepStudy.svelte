@@ -23,18 +23,13 @@
   import TextField from '$lib/ui/TextField.svelte';
   import ToggleField from '$lib/ui/ToggleField.svelte';
   import CollectorCard from './CollectorCard.svelte';
-  import DurationField from './DurationField.svelte';
   import PromptRow from './PromptRow.svelte';
   import PromptTimeline from './PromptTimeline.svelte';
   import QuotaMeter from './QuotaMeter.svelte';
   import WindowStrip from './WindowStrip.svelte';
   import { COLLECTOR_ORDER, type Draft } from './draft.svelte';
-  import { PRESETS } from './presets';
-  import {
-    BOUNDS,
-    UPLOAD_MAXIMUM_INTERVAL_MINUTES,
-    UPLOAD_MINIMUM_INTERVAL_MINUTES
-  } from '$lib/adc/types';
+  import { scales } from './scales';
+  import { BOUNDS } from '$lib/adc/types';
   import type { Messages } from '$lib/i18n/types';
   import type { Units } from './units';
 
@@ -48,6 +43,13 @@
 
   const configuration = $derived(draft.configuration);
   const section = $derived(m.researcher.study.section);
+
+  /**
+   * Every unit decision on this step, in one object. A control is handed the adapter for its own
+   * field and nothing else — no bounds, no step, no humaniser — so the unit a researcher edits in
+   * is decided in `scales.ts` and is not re-decided at eleven call sites.
+   */
+  const S = $derived(scales(m, units));
 
   /** Redrawn once a minute: a `now` tick that never moves is a tick nobody trusts. */
   let now = $state(Math.floor(Date.now() / 1_000));
@@ -64,6 +66,9 @@
   const zones = zoneOptions();
   let zone = $state(zones[0]);
 
+  const uid = $props.id();
+  const zoneId = `${uid}-zone`;
+
   /** The host the participant's consent screen will render, which is how a typo gets caught. */
   const endpointHost = $derived.by(() => {
     const endpoint = configuration.upload?.endpoint ?? '';
@@ -75,10 +80,9 @@
 </script>
 
 <div class="stack">
-  <Section id="about" title={section.about.title} lead={section.about.note} icon="person">
+  <Section id="about" title={section.about.title} icon="person">
     <TextField
       label={m.field.label.title}
-      hint={m.field.hint.title}
       path="title"
       value={configuration.title}
       max={BOUNDS.title[1]}
@@ -110,10 +114,76 @@
     />
   </Section>
 
-  <!-- How long does this run? Three controls describe the window the file is valid in, one
-       describes a stretch inside it, and `WindowStrip` draws that relationship at two bar heights —
-       which is the sentence that then does not have to be written. -->
-  <Section id="validity" title={section.validity.title} lead={section.validity.note} icon="clock">
+  <!-- How long does this run? One column, asked in the order the question is asked: in this zone,
+       from here, until here, for this long — then the picture of what that comes to. The two-column
+       band that used to sit here could not be made honest at the width this page actually has: at
+       788px it gave each `datetime-local` 212px, and Chrome draws the seconds and drops the AM/PM
+       there, so at the site's widest an en-US reader setting 22:39 read back `10:39:14`. -->
+  <Section id="validity" title={section.validity.title} icon="clock">
+    <div class="validity__window">
+      {#if zones.length > 1}
+        <!-- The frame, before the two things it frames. A wall time whose zone arrives after it has
+             already been read has already been read wrong once. Labelled rather than bare: with no
+             section note above it this is the first thing under the heading, and a lone select
+             would have to be understood from its own value. `control.timezone` was already its
+             accessible name, so promoting it to a visible label costs no string. -->
+        <div class="validity__zone">
+          <Icon name="globe" size={16} tone="faint" />
+          <label class="field__label" for={zoneId}>{m.control.timezone}</label>
+          <select
+            class="input validity__zone-select"
+            id={zoneId}
+            value={zone}
+            onchange={(event) => (zone = event.currentTarget.value)}
+          >
+            {#each zones as option (option)}
+              <option value={option}>{option}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
+
+      <div class="validity__instants">
+        <InstantField
+          label={m.field.label.issuedAt}
+          path="issued_at"
+          value={configuration.issued_at}
+          {zone}
+          echo={false}
+          onchange={(value) => (configuration.issued_at = value)}
+        />
+        <!-- The hint stays under this one picker: it is a fact about `expires_at` alone — the day
+             joining closes, which the label does not say — and under both it would be false. -->
+        <InstantField
+          label={m.field.label.expiresAt}
+          hint={m.field.hint.expiresAt}
+          path="expires_at"
+          value={configuration.expires_at}
+          {zone}
+          echo={false}
+          onchange={(value) => (configuration.expires_at = value)}
+        />
+      </div>
+    </div>
+
+    <div class="validity__each">
+      <!-- No box. One hour to one year crosses hours into days, so no single word names both ends,
+           and a box here was a bare `24` beside `1 day` with nothing saying the 24 was hours.
+           Ninety days off the ladder rather than `2160` typed into a field. -->
+      <RangeField
+        label={m.field.label.durationHours}
+        hint={m.field.hint.duration}
+        path="duration_hours"
+        value={configuration.duration_hours}
+        unit={S.duration_hours}
+        icon="person"
+        onchange={(value) => (configuration.duration_hours = value)}
+      />
+    </div>
+
+    <!-- Under the answers, because it summarises them. It says three things the numbers do not:
+         where `now` falls against the window, how one participant's stretch compares with the
+         enrolment window, and `issued >= expires` one beat before the field issue fires. -->
     <WindowStrip
       issuedAt={configuration.issued_at}
       expiresAt={configuration.expires_at}
@@ -122,70 +192,10 @@
       {units}
     />
 
-    <div class="timeband">
-      <div class="timeband__window">
-        <div class="timeband__instants">
-          <InstantField
-            label={m.field.label.issuedAt}
-            path="issued_at"
-            value={configuration.issued_at}
-            {zone}
-            echo={false}
-            onchange={(value) => (configuration.issued_at = value)}
-          />
-          <InstantField
-            label={m.field.label.expiresAt}
-            hint={m.field.hint.expiresAt}
-            path="expires_at"
-            value={configuration.expires_at}
-            {zone}
-            echo={false}
-            onchange={(value) => (configuration.expires_at = value)}
-          />
-        </div>
-
-        {#if zones.length > 1}
-          <!-- Named, not labelled: the value is the name of a zone and reads as one. It sits on its
-               own line under both pickers because it governs both, which a selector tucked beside
-               one of them would deny. -->
-          <select
-            class="input timeband__zone"
-            aria-label={m.control.timezone}
-            value={zone}
-            onchange={(event) => (zone = event.currentTarget.value)}
-          >
-            {#each zones as option (option)}
-              <option value={option}>{option}</option>
-            {/each}
-          </select>
-        {/if}
-      </div>
-
-      <div class="timeband__each">
-        <DurationField
-          label={m.field.label.durationHours}
-          hint={m.field.hint.duration}
-          path="duration_hours"
-          value={configuration.duration_hours}
-          min={BOUNDS.durationHours[0]}
-          max={BOUNDS.durationHours[1]}
-          format={units.hours}
-          presets={PRESETS.duration_hours}
-          onchange={(value) => (configuration.duration_hours = value)}
-        />
-      </div>
-    </div>
-
     <Note icon="info" tone="plain" text={m.researcher.study.note.irrevocable} />
   </Section>
 
-  <Section
-    id="collectors"
-    path="collectors"
-    title={section.collectors.title}
-    lead={section.collectors.note}
-    icon="sources"
-  >
+  <Section id="collectors" path="collectors" title={section.collectors.title} icon="sources">
     <div class="collectors">
       {#each COLLECTOR_ORDER as id (id)}
         <CollectorCard
@@ -193,7 +203,7 @@
           config={draft.collector(id)}
           path={draft.collectorPath(id)}
           {m}
-          {units}
+          scales={S}
           onenable={(which) => draft.enableCollector(which)}
           ondisable={(which) => draft.disableCollector(which)}
         />
@@ -207,11 +217,12 @@
       label={m.field.label.storageQuota}
       hint={m.field.hint.storageQuota}
       {units}
+      unit={S.maximum_local_bytes}
       onquota={(value) => (configuration.storage.maximum_local_bytes = value)}
     />
   </Section>
 
-  <Section id="consent" title={section.consent.title} lead={section.consent.note} icon="seal">
+  <Section id="consent" title={section.consent.title} icon="seal">
     <TextField
       label={m.field.label.consentDocumentVersion}
       path="consent.document_version"
@@ -234,7 +245,7 @@
     <Note icon="info" tone="plain" text={m.researcher.study.note.disclosure} />
   </Section>
 
-  <Section id="prompts" title={section.prompts.title} lead={section.prompts.note} icon="bell">
+  <Section id="prompts" title={section.prompts.title} icon="bell">
     {#if configuration.prompts.length === 0}
       <Note icon="info" tone="plain" text={m.empty.prompts} />
     {:else}
@@ -252,7 +263,7 @@
           {prompt}
           {index}
           {m}
-          {units}
+          unit={S.delay_minutes}
           onremove={() => draft.removePrompt(index)}
         />
       {/each}
@@ -305,12 +316,8 @@
         label={m.field.label.uploadInterval}
         path="upload.interval_minutes"
         value={upload.interval_minutes}
-        min={UPLOAD_MINIMUM_INTERVAL_MINUTES}
-        max={UPLOAD_MAXIMUM_INTERVAL_MINUTES}
-        scale="log"
+        unit={S.upload_interval_minutes}
         icon="clock"
-        format={units.minutes}
-        presets={PRESETS.upload_interval_minutes}
         onchange={(value) => (upload.interval_minutes = value)}
       />
       <ToggleField
@@ -335,59 +342,50 @@
     align-items: start;
   }
 
-  /* Three controls on one side describe when the file is valid; one on the other describes how long
-     a person runs inside it. The rule between them is the whole explanation, and it turns to a
-     horizontal one when the two stack. */
-  .timeband {
-    display: grid;
-    gap: var(--sp-6);
-  }
-
-  .timeband__window {
+  /* Rows, not columns. The two-column band had to choose between the pickers and the presets at a
+     788px section column and chose the pickers' segments: at 212px Chrome finishes the seconds and
+     drops the AM/PM, so the widest this site ever gets was the width at which 22:39 read as
+     10:39:14. A column each gives the pair 374px and the presets one row, and removes the
+     breakpoint rather than moving it — 1280, 1024, 900, 768 and 360 are now one layout. */
+  .validity__window {
     display: flex;
     flex-direction: column;
     gap: var(--sp-5);
   }
 
-  /* Flex rather than `auto-fit` columns: the two pickers share a line where both can be read whole
-     and take a line each where they cannot. A grid of `minmax(210px, 1fr)` tracks laid three of
-     them across a 668px column and left a `datetime-local` at 199px, which draws its own seconds
-     field clipped — the value is wrong on screen and nothing says so. */
-  .timeband__instants {
+  /* Named, beside its value, on the same left edge as the two labels below it. Stacked it would
+     look like a third answer; it is not an answer, it is what the other two are read inside. The
+     start padding matches the lead a `.field` head carries, so the three labels line up. */
+  .validity__zone {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-5);
+    padding-inline-start: calc(var(--sp-5) + var(--line-solid));
+  }
+
+  .validity__zone-select {
+    inline-size: auto;
+  }
+
+  /* Flex for the reason it was flex before: the pair shares a line where both can be read whole and
+     takes a line each where they cannot. 16.5rem is measured, not guessed — 14px of shell lead plus
+     the 244px at which Chrome finishes drawing the meridiem. */
+  .validity__instants {
     display: flex;
     flex-wrap: wrap;
     gap: var(--sp-5);
   }
 
-  .timeband__instants :global(.field) {
-    flex: 1 1 210px;
+  .validity__instants :global(.field) {
+    flex: 1 1 16.5rem;
     min-inline-size: 0;
   }
 
-  /* Its own line, at its own width, centred under the pair: aligned to either edge it would read as
-     belonging to the picker above it, and it governs both. Changing it moves both wall times at
-     once, which is the other half of saying so. */
-  .timeband__zone {
-    align-self: center;
-    inline-size: auto;
-  }
-
-  .timeband__each {
+  /* The file's clock above, one participant's clock below. One rule doing two jobs: it ends the
+     zone's reach, and it says these are not the same clock — which is what the old vertical rule
+     said at wide widths and this same horizontal one already said at narrow ones. */
+  .validity__each {
     border-block-start: var(--line-hair) solid var(--rule);
     padding-block-start: var(--sp-6);
-  }
-
-  @media (min-width: 720px) {
-    .timeband {
-      grid-template-columns: 3fr 2fr;
-      align-items: start;
-    }
-
-    .timeband__each {
-      border-block-start: 0;
-      padding-block-start: 0;
-      border-inline-start: var(--line-hair) solid var(--rule);
-      padding-inline-start: var(--sp-6);
-    }
   }
 </style>

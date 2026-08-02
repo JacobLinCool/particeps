@@ -131,8 +131,17 @@ found a collector card marked `aria-disabled` while switched off, which made the
 could switch it on unavailable to assistive technology, and nothing else in the project would have
 caught that.
 
+Two more browser runs share that server and gate on the researcher page alone. `pnpm e2e:one-line`
+measures every leaf run of interface text and fails if one needs a second line, because the length a
+string may be is a constraint and this is the thing that measures it. `pnpm e2e:units` switches on
+all seven collectors and fails if a control shows a number in the unit the *file* stores rather than
+the unit a person states — `100000` beside `Hz`, `1073741824` where `1 GiB` was meant. Both say in
+their own headers what they cannot catch; read that before reading a green run as a proof.
+
 ```
 pnpm build
 pnpm exec vite preview --port 4173 --strictPort   # or any static server over build/
 pnpm e2e
+pnpm e2e:one-line
+pnpm e2e:units
 ```

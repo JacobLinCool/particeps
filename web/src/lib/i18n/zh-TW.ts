@@ -61,6 +61,8 @@ export const zhTW: Messages = {
   unit: {
     microseconds: 'µs',
     milliseconds: 'ms',
+    // 跟 `Intl.NumberFormat` 短單位輸出的字一模一樣，數字框旁邊的字要跟讀數用的字一致。
+    seconds: '秒',
     minutes: '分鐘',
     hours: '小時',
     hertz: 'Hz',
@@ -123,7 +125,6 @@ export const zhTW: Messages = {
      */
     hint: {
       override: '留空就會使用上面那組 ID。',
-      title: '要用兩種語言招募，就要簽兩份檔案。',
       contact: '參與者真的聯絡得上你的方式。',
       expiresAt: '這天之後就不能再加入了。',
       duration: '從參與者開始的那天算起。',
@@ -291,27 +292,14 @@ export const zhTW: Messages = {
       reuseNote: '同一把金鑰，指紋也一樣。'
     },
     study: {
+      /** 五個標題，一句說明。標題底下的控制項已經說明白這一段在做什麼，
+       *  只有 delivery 要補一件畫面上看不到的事。 */
       section: {
-        about: {
-          title: '研究內容',
-          note: '你在這裡寫什麼，參與者就讀到什麼。'
-        },
-        validity: {
-          title: '這個研究會進行多久？',
-          note: '什麼時候開始、什麼時候結束，每個人要做多久？'
-        },
-        collectors: {
-          title: '資料來源',
-          note: '來源越少越好，頻率夠用就好。那是別人的手機。'
-        },
-        consent: {
-          title: '知情同意',
-          note: '這裡改了，就要重新簽署、重新徵求同意。'
-        },
-        prompts: {
-          title: '提示通知',
-          note: '送達時間不精確，不要指望準到分鐘。'
-        },
+        about: { title: '研究內容' },
+        validity: { title: '這個研究會進行多久？' },
+        collectors: { title: '資料來源' },
+        consent: { title: '知情同意' },
+        prompts: { title: '提示通知' },
         delivery: {
           title: '自動傳送',
           note: '關閉時，資料要等參與者自己匯出才會離開手機。'

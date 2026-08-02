@@ -13,8 +13,7 @@
   import RangeField from '$lib/ui/RangeField.svelte';
   import Icon from '$lib/ui/Icon.svelte';
   import { fraction } from '$lib/ui/format';
-  import { MAXIMUM_LOCAL_BYTES, MINIMUM_LOCAL_BYTES } from '$lib/adc/types';
-  import { PRESETS } from './presets';
+  import type { Scale } from './scales';
   import type { Units } from './units';
 
   interface Props {
@@ -24,10 +23,13 @@
     label: string;
     hint: string;
     units: Units;
+    /** `scales.maximum_local_bytes`, which carries `box: false`. */
+    unit: Scale;
     onquota: (value: number) => void;
   }
 
-  let { quotaBytes, bytesPerHour, durationHours, label, hint, units, onquota }: Props = $props();
+  let { quotaBytes, bytesPerHour, durationHours, label, hint, units, unit, onquota }: Props =
+    $props();
 
   const projected = $derived(bytesPerHour * durationHours);
   const over = $derived(projected > quotaBytes);
@@ -40,13 +42,8 @@
     {hint}
     path="storage.maximum_local_bytes"
     value={quotaBytes}
-    min={MINIMUM_LOCAL_BYTES}
-    max={MAXIMUM_LOCAL_BYTES}
-    scale="log"
+    {unit}
     icon="storage"
-    format={units.bytes}
-    numericInput={false}
-    presets={PRESETS.maximum_local_bytes}
     onchange={onquota}
   />
 
@@ -71,13 +68,8 @@
 </div>
 
 <style>
-  /* Ten digits. This is the one control whose value gets there — 1 073 741 824 is the default and
-     8 589 934 592 the ceiling — and at the shared width the last digit was cut off the end of the
-     box, which reads as a different number rather than as a clipped one. */
-  .quota :global(.input--num) {
-    inline-size: 8.5rem;
-  }
-
+  /* The ten-digit box override is gone with the box. It existed so `1 073 741 824` would not clip,
+     which was the wrong half of the problem: a researcher does not choose a quota in bytes. */
   .quota__read > span {
     display: inline-flex;
     align-items: center;

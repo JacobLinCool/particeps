@@ -67,9 +67,11 @@
     <div class="window__duration-fill" style="inline-size: {durationFill}%"></div>
   </div>
 
+  <!-- One entry, not two. The participant's stretch is printed by the duration readout and by its
+       pressed chip within a couple of hundred pixels of here; a third copy of the same number said
+       nothing. The window is derived from two instants and appears nowhere else, so it stays. -->
   <div class="window__legend">
     <span><Icon name="clock" size={14} />{units.hours(windowHours)}</span>
-    <span><Icon name="person" size={14} />{units.hours(durationHours)}</span>
   </div>
 </div>
 

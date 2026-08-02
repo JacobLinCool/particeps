@@ -29,9 +29,21 @@ export interface Passage {
   body: string;
 }
 
-/** A form section: its heading, and the one thing a reader has to know before filling it in. */
-export interface Section {
+/**
+ * A form section that needs nothing said about it. The heading and the controls under it carry the
+ * meaning, which is the ordinary case: a note repeating what the fields already show is one more
+ * line to read and one more line to wrap.
+ */
+export interface SectionTitle {
   title: string;
+}
+
+/**
+ * A section whose note states something the controls cannot: what happens in a state they are not
+ * currently in. Declared apart from `SectionTitle` rather than as an optional field, because an
+ * optional field is a thing that comes back.
+ */
+export interface Section extends SectionTitle {
   note: string;
 }
 
@@ -129,10 +141,15 @@ export interface Messages {
     files: string;
   };
 
-  /** Suffixes for numeric inputs. The label says what the number is; this says what it is in. */
+  /**
+   * The word beside a number. The label says what the number is; this says what it is in — and a
+   * researcher is never shown or asked for a number without it, so these are the units a person
+   * states a value in rather than the ones the file happens to store.
+   */
   unit: {
     microseconds: string;
     milliseconds: string;
+    seconds: string;
     minutes: string;
     hours: string;
     hertz: string;
@@ -203,7 +220,6 @@ export interface Messages {
        * sentences.
        */
       override: string;
-      title: string;
       contact: string;
       expiresAt: string;
       duration: string;
@@ -292,11 +308,13 @@ export interface Messages {
        * on the sign step — and the quota sits with the collectors that fill it.
        */
       section: {
-        about: Section;
-        validity: Section;
-        collectors: Section;
-        consent: Section;
-        prompts: Section;
+        about: SectionTitle;
+        validity: SectionTitle;
+        collectors: SectionTitle;
+        consent: SectionTitle;
+        prompts: SectionTitle;
+        /** The one note left: it says what happens with the toggle off, which is the toggle's
+         *  meaning and not advice about filling the section in. */
         delivery: Section;
       };
       /** One line each, under the control the sentence is about, not in the section heading. */

@@ -20,24 +20,24 @@
   import ChoiceField from '$lib/ui/ChoiceField.svelte';
   import ChipSet from '$lib/ui/ChipSet.svelte';
   import RateBar from './RateBar.svelte';
-  import { PRESETS } from './presets';
   import { collectorRate, volumeOf } from './estimate';
   import { BOUNDS, type CollectorConfig, type CollectorId, type LocationPriority, type NetworkTransport } from '$lib/adc/types';
   import type { IconRef } from '$lib/ui/icons';
   import type { Messages } from '$lib/i18n/types';
-  import type { Units } from './units';
+  import type { Scale, ScaleKey } from './scales';
 
   interface Props {
     id: CollectorId;
     config: CollectorConfig | null;
     path: string;
     m: Messages;
-    units: Units;
+    /** Unit, bounds and chips per field. Built once on the page and handed down. */
+    scales: Record<ScaleKey, Scale>;
     onenable: (id: CollectorId) => void;
     ondisable: (id: CollectorId) => void;
   }
 
-  let { id, config, path, m, units, onenable, ondisable }: Props = $props();
+  let { id, config, path, m, scales: S, onenable, ondisable }: Props = $props();
 
   /** `CollectorGlyphs.kt`'s assignment, unchanged. */
   const GLYPHS: Record<CollectorId, IconRef> = {
@@ -113,29 +113,22 @@
 
       {#if collector.id === 'accelerometer.v1'}
         {@const cfg = collector.config}
+        <!-- Hertz in the control, microseconds in the file. The box says `50` and `Hz`; the period
+             it stores is `scales.ts`'s business and appears nowhere on screen. -->
         <RangeField
           label={m.field.label.samplingPeriod}
           hint={m.field.hint.samplingPeriod}
           path={`${path}.config.sampling_period_us`}
           value={cfg.sampling_period_us}
-          min={BOUNDS.samplingPeriodUs[0]}
-          max={BOUNDS.samplingPeriodUs[1]}
-          scale="log"
-          invert
+          unit={S.sampling_period_us}
           icon="motion"
-          format={(value) => units.hertz(Math.max(1, Math.trunc(1_000_000 / Math.max(1, value))))}
-          presets={PRESETS.sampling_period_us}
           onchange={(value) => (cfg.sampling_period_us = value)}
         />
         <RangeField
           label={m.field.label.reportLatency}
           path={`${path}.config.maximum_report_latency_us`}
           value={cfg.maximum_report_latency_us}
-          min={BOUNDS.maximumReportLatencyUs[0]}
-          max={BOUNDS.maximumReportLatencyUs[1]}
-          scale="log"
-          format={units.micros}
-          presets={PRESETS.maximum_report_latency_us}
+          unit={S.maximum_report_latency_us}
           onchange={(value) => (cfg.maximum_report_latency_us = value)}
         />
       {:else if collector.id === 'network_state.v1'}
@@ -162,13 +155,9 @@
           hint={m.field.hint.pollInterval}
           path={`${path}.config.poll_interval_minutes`}
           value={cfg.poll_interval_minutes}
-          min={BOUNDS.pollIntervalMinutes[0]}
-          max={BOUNDS.pollIntervalMinutes[1]}
-          scale="log"
+          unit={S.poll_interval_minutes}
           icon="clock"
           caution={cfg.poll_interval_minutes === 1}
-          format={units.minutes}
-          presets={PRESETS.poll_interval_minutes}
           onchange={(value) => (cfg.poll_interval_minutes = value)}
         />
       {:else if collector.id === 'usage_events.v1'}
@@ -178,13 +167,9 @@
           hint={m.field.hint.pollInterval}
           path={`${path}.config.poll_interval_minutes`}
           value={cfg.poll_interval_minutes}
-          min={BOUNDS.pollIntervalMinutes[0]}
-          max={BOUNDS.pollIntervalMinutes[1]}
-          scale="log"
+          unit={S.poll_interval_minutes}
           icon="clock"
           caution={cfg.poll_interval_minutes === 1}
-          format={units.minutes}
-          presets={PRESETS.poll_interval_minutes}
           onchange={(value) => (cfg.poll_interval_minutes = value)}
         />
       {:else if collector.id === 'location.v1'}
@@ -200,12 +185,8 @@
           highPath={`${path}.config.interval_millis`}
           low={cfg.minimum_interval_millis}
           high={cfg.interval_millis}
-          min={BOUNDS.minimumIntervalMillis[0]}
-          max={BOUNDS.intervalMillis[1]}
+          unit={S.interval_millis}
           highMin={BOUNDS.intervalMillis[0]}
-          scale="log"
-          format={units.millis}
-          presets={PRESETS.interval_millis}
           onchange={(low, high) => {
             cfg.minimum_interval_millis = low;
             cfg.interval_millis = high;
@@ -216,27 +197,18 @@
           hint={m.field.hint.batchDelay}
           path={`${path}.config.maximum_batch_delay_millis`}
           value={cfg.maximum_batch_delay_millis}
-          min={BOUNDS.maximumBatchDelayMillis[0]}
-          max={BOUNDS.maximumBatchDelayMillis[1]}
-          scale="log"
+          unit={S.maximum_batch_delay_millis}
           icon="package"
-          format={units.millis}
-          presets={PRESETS.maximum_batch_delay_millis}
           onchange={(value) => (cfg.maximum_batch_delay_millis = value)}
         />
-        <!-- The readout is `formatFloat`, not the typed value: this field is a Kotlin Float, and
+        <!-- The box shows `formatFloat`, not the typed value: this field is a Kotlin Float, and
              `1234.5678` is written as `1234.5677`. Nobody should meet that at diff time. -->
         <RangeField
           label={m.field.label.displacement}
           path={`${path}.config.minimum_displacement_meters`}
           value={cfg.minimum_displacement_meters}
-          min={BOUNDS.minimumDisplacementMeters[0]}
-          max={BOUNDS.minimumDisplacementMeters[1]}
-          step={0.1}
-          scale="log"
+          unit={S.minimum_displacement_meters}
           icon="location"
-          format={units.metres}
-          presets={PRESETS.minimum_displacement_meters}
           onchange={(value) => (cfg.minimum_displacement_meters = value)}
         />
         <ChoiceField
@@ -253,11 +225,8 @@
           label={m.field.label.trajectoryRate}
           path={`${path}.config.trajectory_sampling_hz`}
           value={cfg.trajectory_sampling_hz}
-          min={BOUNDS.trajectorySamplingHz[0]}
-          max={BOUNDS.trajectorySamplingHz[1]}
+          unit={S.trajectory_sampling_hz}
           icon="keyboard"
-          format={units.hertz}
-          presets={PRESETS.trajectory_sampling_hz}
           onchange={(value) => (cfg.trajectory_sampling_hz = value)}
         />
       {/if}

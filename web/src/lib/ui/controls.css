@@ -647,6 +647,16 @@ button.chip:hover {
   color: var(--ink);
 }
 
+/* The unit the box is edited in, beside the box. Not inside it: an affix in the field needs the
+   input's chrome faked on a wrapper, fights `text-align: end` on `.input--num`, and collides with
+   the spinner. Not carried by the humanised readout either — that names a *different* unit by
+   design, which is how `24` came to sit beside `1 day` with nothing saying the 24 was hours. */
+.range__affix {
+  font-size: var(--type-fine);
+  color: var(--ink-soft);
+  flex: none;
+}
+
 .range__human {
   font-size: var(--type-fine);
   color: var(--ink-faint);

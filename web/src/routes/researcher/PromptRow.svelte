@@ -6,19 +6,19 @@
   import RangeField from '$lib/ui/RangeField.svelte';
   import IconButton from '$lib/ui/IconButton.svelte';
   import { BOUNDS, type PromptConfig } from '$lib/adc/types';
-  import { PRESETS } from './presets';
   import type { Messages } from '$lib/i18n/types';
-  import type { Units } from './units';
+  import type { Scale } from './scales';
 
   interface Props {
     prompt: PromptConfig;
     index: number;
     m: Messages;
-    units: Units;
+    /** `scales.delay_minutes`. 1 minute to a year crosses minutes into days, so there is no box. */
+    unit: Scale;
     onremove: () => void;
   }
 
-  let { prompt, index, m, units, onremove }: Props = $props();
+  let { prompt, index, m, unit, onremove }: Props = $props();
 
   const path = $derived(`prompts.${index}`);
 </script>
@@ -52,12 +52,8 @@
       hint={m.field.hint.promptDelay}
       path={`${path}.delay_minutes`}
       value={prompt.delay_minutes}
-      min={BOUNDS.promptDelayMinutes[0]}
-      max={BOUNDS.promptDelayMinutes[1]}
-      scale="log"
+      {unit}
       icon="clock"
-      format={units.minutes}
-      presets={PRESETS.delay_minutes}
       onchange={(value) => (prompt.delay_minutes = value)}
     />
   </div>

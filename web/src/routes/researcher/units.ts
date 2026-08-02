@@ -5,9 +5,14 @@
  * read on the consent screen, not the number they typed — the phone renders "1 day", so this does
  * too. Every rule here is the Kotlin one: coarsest unit that stays exact, never a rounded one.
  *
- * Seconds and days have no key in the catalogue, and inventing English inside a module is exactly
- * what the i18n rule forbids, so those two come from `Intl.NumberFormat`'s unit style — the
- * platform's own catalogue, in the locale the reader chose. Everything else uses `unit.*`.
+ * Days have no key in the catalogue, and inventing English inside a module is exactly what the i18n
+ * rule forbids, so they come from `Intl.NumberFormat`'s unit style — the platform's own catalogue,
+ * in the locale the reader chose. Everything else uses `unit.*`.
+ *
+ * Seconds used to come from there too and now come from `unit.seconds`, because the word beside a
+ * number box and the word in the readout beside it have to be the same word for the same unit, or
+ * the box's suffix and the humanised echo disagree about what they are naming. Both catalogue
+ * entries are byte-identical to what `Intl` emitted, so no rendered string moved.
  */
 
 import { formatFloat } from '$lib/adc/canonical';
@@ -17,7 +22,8 @@ import type { Locale, Messages } from '$lib/i18n/types';
 export interface Units {
   minutes(value: number): string;
   millis(value: number): string;
-  micros(value: number): string;
+  /** The humaniser for a control whose space is seconds: `60` reads `1 min`. */
+  seconds(value: number): string;
   hours(value: number): string;
   hertz(value: number): string;
   metres(value: number): string;
@@ -28,11 +34,13 @@ export interface Units {
   about(value: string): string;
 }
 
-function intlUnit(locale: Locale, value: number, unit: 'second' | 'day'): string {
+function intlDay(locale: Locale, value: number): string {
   try {
-    return new Intl.NumberFormat(locale, { style: 'unit', unit, unitDisplay: 'short' }).format(
-      value
-    );
+    return new Intl.NumberFormat(locale, {
+      style: 'unit',
+      unit: 'day',
+      unitDisplay: 'short'
+    }).format(value);
   } catch {
     return String(value);
   }
@@ -48,7 +56,7 @@ function coarse(value: number): number {
 
 export function units(m: Messages, locale: Locale): Units {
   const number = new Intl.NumberFormat(locale);
-  const day = (value: number) => intlUnit(locale, value, 'day');
+  const day = (value: number) => intlDay(locale, value);
 
   // Zero is its own answer everywhere it is legal — an unbatched sensor, an immediate delivery —
   // and "0 days" would be a unit attached to the absence of a quantity.
@@ -61,7 +69,9 @@ export function units(m: Messages, locale: Locale): Units {
 
   const millis = (value: number): string => {
     if (value === 0) return '0';
-    return value % 60_000 === 0 ? minutes(value / 60_000) : intlUnit(locale, value / 1_000, 'second');
+    return value % 60_000 === 0
+      ? minutes(value / 60_000)
+      : `${value / 1_000} ${m.unit.seconds}`;
   };
 
   const hours = (value: number): string => {
@@ -73,7 +83,9 @@ export function units(m: Messages, locale: Locale): Units {
   return {
     minutes,
     millis,
-    micros: (value) => (value === 0 ? '0' : millis(Math.round(value / 1_000))),
+    // Fractional seconds are legal here — sub-second batching is a real setting — so the round is
+    // to the millisecond the humaniser below already speaks, not to a whole second.
+    seconds: (value) => (value === 0 ? '0' : millis(Math.round(value * 1_000))),
     hours,
     // The app shows a whole number of hertz because Android delivers at least that rate, never
     // less; a fractional rate would suggest a precision the sensor does not offer.
@@ -85,9 +97,4 @@ export function units(m: Messages, locale: Locale): Units {
     count: (value) => number.format(coarse(value)),
     about: (value) => `≈ ${value}`
   };
-}
-
-/** `sampling_period_us` is a period and the researcher is choosing a rate. */
-export function hertzOf(samplingPeriodUs: number): number {
-  return Math.max(1, Math.trunc(1_000_000 / Math.max(1, samplingPeriodUs)));
 }

@@ -48,3 +48,36 @@ export type Density = 'inline' | 'plaque';
 
 /** Which page owns the header, which decides whether the switcher underline is accent or voice. */
 export type PageId = 'researcher' | 'participant';
+
+/**
+ * Everything a bounded control needs to say a number in the unit a person uses.
+ *
+ * The shape lives here and the instances live in `routes/researcher/scales.ts`, because the
+ * conversion between a schema's unit and a researcher's is a fact about the schema, while
+ * *needing* one is a fact about the control — and a component under `lib/ui` may not reach into a
+ * route to find out what its own props are.
+ *
+ * `box: false` is the shape a control takes when its legal range crosses a unit boundary, so no
+ * single word names both ends: 8 MiB to 8 GiB, 1 hour to 1 year. There is nothing honest to put in
+ * a number box, so there is none, and `ladder` is the reachable set the slider indexes instead.
+ */
+export interface Scale {
+  /** False is shape B: no box, no affix, and the humanised readout is the value. */
+  box: boolean;
+  /** The word beside the box, from `m.unit.*`. Unused when `box` is false. */
+  affix: string;
+  /** Stored → control space. Exact for every value the control can produce. */
+  toHuman(stored: number): number;
+  /** Control space → stored. An integer for every field but `minimum_displacement_meters`. */
+  toStored(human: number): number;
+  /** All in control space. */
+  min: number;
+  max: number;
+  step: number;
+  presets: readonly number[];
+  /** Shape B only: the reachable set, ascending. The slider indexes it, one rung per arrow press. */
+  ladder?: readonly number[];
+  scale: 'linear' | 'log';
+  /** Humaniser, in control space. Renders the readout and every chip. */
+  format(human: number): string;
+}
