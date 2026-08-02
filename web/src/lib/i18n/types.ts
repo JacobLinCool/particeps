@@ -1,0 +1,326 @@
+/**
+ * The locale identifiers and the shape both catalogues satisfy.
+ *
+ * Two rules decide what may live in a catalogue. The interface is meant to be operable without
+ * reading, so a string exists only where structure, state, or an icon cannot carry the meaning —
+ * form labels, accessible names for icon-only controls, the rules a value has to satisfy, and
+ * almost nothing else. And nothing a researcher writes is ever translated: `title`, `purpose`,
+ * `researcher`, and `consent.summary` are signed bytes that render exactly as they were signed, so
+ * no message here interpolates study text.
+ *
+ * `researcher.how` and `participant.how` are the one place prose is allowed. They are the same
+ * flow told to the two audiences who need different halves of it.
+ */
+
+import type { CollectorId } from '$lib/adc/types';
+
+export const LOCALES = ['en', 'zh-TW'] as const;
+
+export type Locale = (typeof LOCALES)[number];
+
+/** What a reader chose. `system` defers to the browser, and is the state nothing has been chosen. */
+export const LOCALE_PREFERENCES = ['system', ...LOCALES] as const;
+
+export type LocalePreference = (typeof LOCALE_PREFERENCES)[number];
+
+/** A titled paragraph. Used only by the two narratives. */
+export interface Passage {
+  title: string;
+  body: string;
+}
+
+/** A form section: its heading, and the one thing a reader has to know before filling it in. */
+export interface Section {
+  title: string;
+  note: string;
+}
+
+export interface CollectorCopy {
+  /** The app's own participant-facing name, kept identical so a researcher reads what a
+   *  participant will read. Changing one without the other makes the two disagree. */
+  name: string;
+  records: string;
+  limit: string;
+}
+
+/**
+ * Keyed by the `code` on `Issue`, so the UI can look a problem up directly. These are the wire
+ * identifiers rather than English, which is why they are the only snake_case keys in the file.
+ */
+export interface IssueMessages {
+  required: string;
+  id_format: string;
+  length_range: (bounds: { min: number; max: number }) => string;
+  number_range: (bounds: { min: number; max: number }) => string;
+  integer: string;
+  instant: string;
+  window_order: string;
+  collectors_empty: string;
+  duplicate_id: string;
+  transports_empty: string;
+  location_interval_order: string;
+  endpoint_scheme: string;
+  endpoint_host: string;
+  document_too_large: (bounds: { max: number }) => string;
+  signer_missing: string;
+  export_key_missing: string;
+  keyset_unusable: string;
+}
+
+export type IssueCode = keyof IssueMessages;
+
+export interface Messages {
+  app: {
+    /** A product name, not prose: the same in every locale. */
+    name: string;
+    tagline: string;
+    nav: { researcher: string; participant: string };
+  };
+
+  language: {
+    label: string;
+    system: string;
+    /** Endonyms, so a reader can find their language without reading the one on screen. */
+    en: string;
+    zhTW: string;
+  };
+
+  action: {
+    generate: string;
+    sign: string;
+    download: string;
+    copy: string;
+    importDraft: string;
+    addPrompt: string;
+    back: string;
+    next: string;
+    /** The reader asserting a downloaded private key reached their disk. */
+    confirmSaved: string;
+    /** The skip link. Visible only under the keyboard, which is who it is for. */
+    skip: string;
+    startOver: string;
+    confirm: string;
+    cancel: string;
+  };
+
+  /** Accessible names for controls that carry no text. Visible verbs live in `action`. */
+  control: {
+    language: string;
+    details: string;
+    remove: string;
+    reveal: string;
+    conceal: string;
+    progress: string;
+    /** The printer. `researcher.sign.publish` is why you would; this is what the button does. */
+    print: string;
+    /** The fingerprint plaque. The value is the button's content, so the name is the act. */
+    copyFingerprint: string;
+    /** The derived slug offered beside an ID field. */
+    applySuggestion: string;
+    /** The zone selector beside an instant. */
+    timezone: string;
+    stepPosition: (position: { index: number; total: number }) => string;
+  };
+
+  step: {
+    keys: string;
+    study: string;
+    sign: string;
+    files: string;
+  };
+
+  /** Suffixes for numeric inputs. The label says what the number is; this says what it is in. */
+  unit: {
+    microseconds: string;
+    milliseconds: string;
+    minutes: string;
+    hours: string;
+    hertz: string;
+    metres: string;
+    mebibytes: string;
+    bytes: string;
+  };
+
+  /** File names are identifiers, not prose, and are the same in both locales. */
+  file: {
+    signingPrivate: string;
+    signingPublic: string;
+    exportPrivate: string;
+    exportPublic: string;
+    canonical: string;
+    signed: string;
+  };
+
+  field: {
+    label: {
+      experimentId: string;
+      configurationId: string;
+      issuedAt: string;
+      expiresAt: string;
+      minimumAppVersion: string;
+      title: string;
+      researcherName: string;
+      researcherContact: string;
+      purpose: string;
+      durationHours: string;
+      consentDocumentVersion: string;
+      consentSummary: string;
+      storageQuota: string;
+      required: string;
+      samplingPeriod: string;
+      reportLatency: string;
+      bandwidthEstimates: string;
+      transports: string;
+      pollInterval: string;
+      interval: string;
+      fastestInterval: string;
+      batchDelay: string;
+      displacement: string;
+      priority: string;
+      trajectoryRate: string;
+      promptId: string;
+      promptDelay: string;
+      promptMessage: string;
+      upload: string;
+      endpoint: string;
+      uploadInterval: string;
+      allowMetered: string;
+      signerKeyId: string;
+      signerPublicKey: string;
+      exportKeyId: string;
+      exportKeyset: string;
+      fingerprint: string;
+    };
+    hint: {
+      id: string;
+      contact: string;
+      duration: string;
+      consentSummary: string;
+      minimumAppVersion: string;
+      required: string;
+      samplingPeriod: string;
+      bandwidthEstimates: string;
+      pollInterval: string;
+      fastestInterval: string;
+      batchDelay: string;
+      priority: string;
+      promptDelay: string;
+      endpoint: string;
+      allowMetered: string;
+    };
+  };
+
+  option: {
+    transport: { wifi: string; mobile: string };
+    priority: { balanced: string; highAccuracy: string };
+  };
+
+  collector: Record<CollectorId, CollectorCopy>;
+
+  issue: IssueMessages;
+
+  status: {
+    copied: string;
+    verified: string;
+    stale: string;
+    clean: string;
+  };
+
+  empty: {
+    prompts: string;
+    files: string;
+  };
+
+  error: {
+    insecureContext: string;
+    unsupportedBrowser: string;
+    signing: string;
+    draft: string;
+    keyFile: string;
+    clipboard: string;
+    /** The static build ships a 404 fallback, so the one route nobody designed still needs words. */
+    notFound: string;
+  };
+
+  confirm: {
+    startOver: { title: string; body: string };
+    leave: { title: string };
+    replaceKey: { title: string; body: string };
+  };
+
+  researcher: {
+    title: string;
+    lede: string;
+    /** A prompt scheduled past the study's own duration. Legal, and it will never fire. */
+    beyond: string;
+    how: {
+      file: Passage;
+      keys: Passage;
+      local: Passage;
+      fingerprint: Passage;
+      disclosure: Passage;
+    };
+    keys: {
+      signing: { title: string; algorithm: string; role: string; risk: string };
+      export: { title: string; algorithm: string; role: string; risk: string };
+      handling: string;
+      replace: string;
+    };
+    study: {
+      section: {
+        identity: Section;
+        validity: Section;
+        about: Section;
+        consent: Section;
+        collectors: Section;
+        prompts: Section;
+        storage: Section;
+        delivery: Section;
+      };
+    };
+    sign: {
+      canonical: string;
+      size: (extent: { bytes: number; max: number }) => string;
+      blocked: (count: number) => string;
+      publish: string;
+    };
+    files: {
+      keep: string;
+      /** Why the canonical JSON is not a nicety. Nothing else on the page states the dependency. */
+      archive: string;
+      publish: string;
+      distribute: string;
+      pilot: string;
+    };
+    cli: string;
+  };
+
+  participant: {
+    title: string;
+    lede: string;
+    how: {
+      start: Passage;
+      list: Passage;
+      storage: Passage;
+      fingerprint: Passage;
+      control: Passage;
+    };
+    /** The five setup screens, named as the app names them so the page and the phone agree. */
+    flow: {
+      study: Passage;
+      data: Passage;
+      consent: Passage;
+      access: Passage;
+      start: Passage;
+    };
+    note: string;
+    closing: string;
+  };
+
+  link: {
+    researcherGuide: string;
+    participantGuide: string;
+    threatModel: string;
+    source: string;
+  };
+}

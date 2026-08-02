@@ -1,0 +1,121 @@
+/*
+ * Typography. Two scripts, one scale.
+ *
+ * Latin gets its default tracking and a 1.55 leading. Traditional Chinese gets neither: CJK glyphs
+ * are full-width squares that already carry their own rhythm, so the Latin tracking closes the
+ * counters and the Latin leading crowds the stacked strokes. The `:lang(zh-Hant)` block below is
+ * why the locale control writes `zh-Hant-TW` rather than `zh-TW` onto <html> — CSS language
+ * matching is prefix-based, and `zh-TW` does not match `zh-Hant`.
+ */
+
+body {
+  font-family: var(--font-text);
+  font-size: var(--type-body);
+  line-height: var(--lh-body);
+  color: var(--ink);
+  font-synthesis-weight: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-weight: var(--w-bold);
+  line-height: var(--lh-tight);
+  letter-spacing: -0.011em;
+  text-wrap: balance;
+  color: var(--ink);
+}
+
+h1 {
+  font-size: var(--type-display);
+}
+h2 {
+  font-size: var(--type-title);
+}
+h3 {
+  font-size: var(--type-lede);
+}
+h4 {
+  font-size: var(--type-body);
+  font-weight: var(--w-medium);
+}
+
+p {
+  text-wrap: pretty;
+  max-inline-size: var(--measure);
+}
+
+small,
+.fine {
+  font-size: var(--type-fine);
+}
+
+.micro {
+  font-size: var(--type-micro);
+}
+
+.lede {
+  font-size: var(--type-lede);
+  color: var(--ink-soft);
+}
+
+.faint {
+  color: var(--ink-faint);
+}
+
+.soft {
+  color: var(--ink-soft);
+}
+
+/* Anything a researcher will type into a terminal, diff against a file, or compare with their
+   eyes. Tabular figures throughout, because these numbers get read in columns. */
+.mono,
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'ss01', 'zero';
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+a {
+  color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  transition: color var(--motion-state);
+}
+
+a:hover {
+  color: var(--accent-lift);
+}
+
+:lang(zh-Hant) {
+  --lh-body: 1.75;
+  --lh-tight: 1.4;
+  letter-spacing: 0.01em;
+  line-break: strict;
+}
+
+:lang(zh-Hant) h1,
+:lang(zh-Hant) h2,
+:lang(zh-Hant) h3 {
+  /* Synthesised CJK bold fills the counters. One step down carries the same hierarchy. */
+  font-weight: var(--w-medium);
+  letter-spacing: 0.01em;
+}
+
+/* Identifiers, byte counts, and fingerprints are not prose in any language. */
+:lang(zh-Hant) .mono,
+:lang(zh-Hant) code,
+:lang(zh-Hant) pre,
+:lang(zh-Hant) .num {
+  letter-spacing: 0;
+}

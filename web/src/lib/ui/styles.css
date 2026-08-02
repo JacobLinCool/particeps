@@ -1,0 +1,9 @@
+/* The one entry point. `src/app.css` pulls this in for the conventional path, and `index.ts`
+   imports it as well, so a route that imports a component gets the sheet whether or not a layout
+   remembered to. Vite deduplicates the module either way. */
+
+@import './tokens.css';
+@import './type.css';
+@import './base.css';
+@import './controls.css';
+@import './surfaces.css';

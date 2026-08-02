@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#eceff4" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#2e3440" />
+    <meta name="referrer" content="no-referrer" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235E81AC' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='9.5' r='6'/%3E%3Cpath d='m9.4 9.6 1.9 1.9 3.3-3.6'/%3E%3Cpath d='M8.6 14.6 7 22l5-2.4 5 2.4-1.6-7.4'/%3E%3C/svg%3E"
+    />
+    <script>
+      // The locale decides typography, not just words: `:lang(zh-Hant)` carries its own tracking
+      // and leading. Resolving it before first paint is the difference between correct type and a
+      // reflow one frame in. Note the tag is `zh-Hant-TW`, not `zh-TW` — CSS language matching is
+      // prefix-based and `zh-TW` does not match `zh-Hant`.
+      try {
+        var stored = localStorage.getItem('adc.locale');
+        var picked =
+          stored === 'en' || stored === 'zh-TW'
+            ? stored
+            : (navigator.languages || [navigator.language || 'en']).some(function (tag) {
+                  return /^zh\b/i.test(tag) && !/\b(Hans|CN|SG)\b/i.test(tag);
+                })
+              ? 'zh-TW'
+              : 'en';
+        document.documentElement.lang = picked === 'zh-TW' ? 'zh-Hant-TW' : 'en';
+      } catch (_) {
+        /* private mode, or no storage at all: English is the documented fallback */
+      }
+    </script>
+    %sveltekit.head%
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>

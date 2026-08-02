@@ -1,0 +1,101 @@
+name: Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "web/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One live site, so a queued run finishes rather than being cancelled: a cancelled deploy would
+# leave whatever the previous run published, which is not necessarily what main says.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the static site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # The compatibility suite shells out to researcher-tools and builds it if it is missing, so
+      # the byte-match this workflow claims to enforce needs a JVM to be enforceable at all.
+      - name: Set up JDK 17
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@0f4528296b4bc09e8ae0fc7be30185a4ab435545 # v6.0.0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: "10"
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      # The site signs study configurations, so it publishes only what type-checks and only what
+      # still byte-matches the Kotlin encoder these tests compare against.
+      - name: Type-check
+        working-directory: web
+        run: pnpm run check
+
+      - name: Test
+        working-directory: web
+        run: pnpm run test
+
+      # A project site is served from /<repo>/, and `svelte.config.js` bakes BASE_PATH into every
+      # URL the build emits. No trailing slash: SvelteKit rejects one.
+      - name: Build
+        working-directory: web
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}
+        run: pnpm run build
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: web/build
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # A job-level block replaces the workflow-level one, so the read this action still needs is
+    # restated rather than inherited.
+    permissions:
+      contents: read
+      id-token: write
+      pages: write
+
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

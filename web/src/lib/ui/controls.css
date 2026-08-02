@@ -1,0 +1,839 @@
+/* Controls. Every interactive target here is at least --tap-min in its smallest dimension, even
+   where the drawn mark is 12px, and every one keeps the shared focus ring. */
+
+/* ---- button ------------------------------------------------------------------------------ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+  min-block-size: var(--tap-min);
+  padding-inline: var(--sp-6);
+  border: var(--line-hair) solid transparent;
+  border-radius: var(--r-field);
+  font-size: var(--type-body);
+  font-weight: var(--w-medium);
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: var(--shadow-rest);
+  transition:
+    background-color var(--motion-state),
+    border-color var(--motion-state),
+    color var(--motion-state),
+    box-shadow var(--motion-state),
+    transform var(--motion-state);
+}
+
+.btn:hover:not(:disabled) {
+  box-shadow: var(--shadow-lift);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: var(--shadow-rest);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  box-shadow: none;
+}
+
+/* The label sits on the fill, so the fill is ink rather than hue: `--accent` under `--ground` is
+   3.5:1 in the light theme, and this is the control every step ends on. */
+.btn--primary {
+  background: var(--accent-ink);
+  color: var(--surface);
+  border-color: var(--accent-ink);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--accent-ink) 88%, var(--ink));
+  border-color: color-mix(in oklab, var(--accent-ink) 88%, var(--ink));
+}
+
+.btn--quiet {
+  background: var(--surface);
+  border-color: var(--rule);
+  box-shadow: none;
+}
+
+.btn--quiet:hover:not(:disabled) {
+  background: var(--accent-wash);
+  border-color: var(--accent-ink);
+  box-shadow: none;
+}
+
+.btn--ghost {
+  background: none;
+  box-shadow: none;
+  color: var(--ink-soft);
+  padding-inline: var(--sp-5);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--accent-wash);
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.btn--danger {
+  border-color: var(--danger-ink);
+  color: var(--danger-ink);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: var(--danger-wash);
+}
+
+.btn--wide {
+  inline-size: 100%;
+}
+
+.btn--settled {
+  color: var(--signal-ink);
+  border-color: var(--signal-ink);
+}
+
+.btn__count {
+  display: inline-grid;
+  place-items: center;
+  min-inline-size: 1.35rem;
+  block-size: 1.35rem;
+  padding-inline: var(--sp-2);
+  border-radius: var(--r-pill);
+  background: var(--danger-ink);
+  color: var(--surface);
+  font-size: var(--type-micro);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--w-medium);
+}
+
+/* An icon-only control. The hit area is square and full size; the glyph is whatever it is. */
+.iconbtn {
+  display: inline-grid;
+  place-items: center;
+  inline-size: var(--tap-min);
+  block-size: var(--tap-min);
+  border-radius: var(--r-field);
+  color: var(--ink-soft);
+  transition:
+    background-color var(--motion-state),
+    color var(--motion-state);
+}
+
+.iconbtn:hover:not(:disabled) {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.iconbtn:disabled {
+  opacity: 0.45;
+}
+
+.iconbtn--settled {
+  color: var(--signal-ink);
+}
+
+.iconbtn--danger:hover:not(:disabled) {
+  background: var(--danger-wash);
+  color: var(--danger-ink);
+}
+
+.iconbtn--float {
+  position: absolute;
+  inset-block-start: var(--sp-2);
+  inset-inline-end: var(--sp-2);
+  background: color-mix(in oklab, var(--surface) 82%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+/* ---- chip -------------------------------------------------------------------------------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-block-size: 30px;
+  padding-inline: var(--sp-5);
+  border: var(--line-hair) solid var(--rule);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  font-size: var(--type-fine);
+  color: var(--ink-soft);
+  transition:
+    background-color var(--motion-state),
+    border-color var(--motion-state),
+    color var(--motion-state);
+}
+
+button.chip {
+  min-block-size: var(--tap-min);
+  padding-inline: var(--sp-6);
+}
+
+button.chip:hover {
+  border-color: var(--accent-ink);
+  color: var(--ink);
+}
+
+/* The wash that marks a selected chip is barely over 1.1:1 against the surface behind it, so it
+   cannot be the only difference. `ChipSet` also swaps the chip's glyph for a tick; this is the
+   quieter half of the same signal. */
+.chip[aria-pressed='true'],
+.chip--selected {
+  background: var(--accent-wash);
+  border-color: var(--accent-ink);
+  color: var(--ink);
+  font-weight: var(--w-medium);
+}
+
+.chip--accent {
+  color: var(--accent-ink);
+  border-color: var(--accent-ink);
+  background: var(--accent-wash);
+}
+.chip--signal {
+  color: var(--ink);
+  border-color: var(--signal-ink);
+  background: var(--signal-wash);
+}
+.chip--caution {
+  color: var(--ink);
+  border-color: var(--caution-ink);
+  background: var(--caution-wash);
+}
+.chip--danger {
+  color: var(--danger-ink);
+  border-color: var(--danger-ink);
+  background: var(--danger-wash);
+}
+.chip--binary {
+  color: var(--binary-ink);
+  border-color: var(--binary-ink);
+  background: var(--binary-wash);
+}
+.chip--voice {
+  color: var(--ink);
+  border-color: var(--voice-ink);
+  background: var(--voice-wash);
+}
+.chip--code {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+}
+
+/* ---- field ------------------------------------------------------------------------------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding-inline-start: var(--sp-5);
+  border-inline-start: var(--line-solid) solid transparent;
+  transition: border-color var(--motion-state);
+}
+
+.field--invalid {
+  border-inline-start-color: var(--danger-ink);
+}
+
+.field--advisory {
+  border-inline-start-color: var(--caution-ink);
+}
+
+.field__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+.field__label {
+  font-size: var(--type-fine);
+  font-weight: var(--w-medium);
+  color: var(--ink);
+}
+
+.field__hint {
+  font-size: var(--type-fine);
+  color: var(--ink-faint);
+  max-inline-size: var(--measure);
+}
+
+.field__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.field__note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  font-size: var(--type-fine);
+}
+
+.field__note--issue {
+  color: var(--danger-ink);
+}
+
+.field__note--advisory {
+  color: var(--ink);
+}
+
+/* The counter is a line filling toward the bound. The number appears only past 75%, because
+   below that the line is the whole answer. */
+.field__counter {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-inline-start: auto;
+  font-size: var(--type-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+}
+
+.counterline {
+  inline-size: 100%;
+  block-size: var(--line-solid);
+  border-radius: var(--r-pill);
+  background: var(--rule);
+  overflow: clip;
+}
+
+.counterline__fill {
+  block-size: 100%;
+  background: var(--accent-ink);
+  transform-origin: left;
+  transition:
+    transform var(--motion-count),
+    background-color var(--motion-state);
+}
+
+.counterline__fill[data-level='near'] {
+  background: var(--caution-ink);
+}
+.counterline__fill[data-level='over'] {
+  background: var(--danger-ink);
+}
+
+/* ---- text entry -------------------------------------------------------------------------- */
+
+.input {
+  inline-size: 100%;
+  min-block-size: var(--tap-min);
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--surface);
+  border: var(--line-hair) solid var(--rule);
+  border-radius: var(--r-field);
+  color: var(--ink);
+  transition:
+    border-color var(--motion-state),
+    background-color var(--motion-state);
+}
+
+.input:hover {
+  border-color: var(--accent-ink);
+}
+
+.input[aria-invalid='true'] {
+  border-color: var(--danger-ink);
+}
+
+.input--mono {
+  font-family: var(--font-mono);
+  font-size: var(--type-fine);
+  font-variant-numeric: tabular-nums;
+}
+
+.input--area {
+  min-block-size: 6rem;
+  line-height: var(--lh-body);
+}
+
+.input--num {
+  inline-size: 7.5rem;
+  text-align: end;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.input--flush {
+  border-color: transparent;
+  background: var(--surface-sunk);
+}
+
+/* A slug offered beside the field, applied on click and never while typing. */
+.suggest {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-block-size: var(--tap-min);
+  padding-inline: var(--sp-4);
+  border-radius: var(--r-chip);
+  font-family: var(--font-mono);
+  font-size: var(--type-fine);
+  color: var(--ink-faint);
+  transition: color var(--motion-state);
+}
+
+.suggest:hover {
+  color: var(--accent-ink);
+}
+
+/* ---- toggle ------------------------------------------------------------------------------ */
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  min-block-size: var(--tap-min);
+  padding-inline: var(--sp-2);
+  border-radius: var(--r-field);
+  text-align: start;
+  transition: background-color var(--motion-state);
+}
+
+.toggle:hover {
+  background: var(--accent-wash);
+}
+
+.toggle__track {
+  position: relative;
+  flex: none;
+  inline-size: 40px;
+  block-size: 22px;
+  border-radius: var(--r-pill);
+  background: var(--rule);
+  transition: background-color var(--motion-state);
+}
+
+.toggle[aria-checked='true'] .toggle__track {
+  background: var(--accent-ink);
+}
+
+.toggle--caution[aria-checked='true'] .toggle__track {
+  background: var(--caution-ink);
+}
+
+.toggle__knob {
+  position: absolute;
+  inset-block-start: 3px;
+  inset-inline-start: 3px;
+  inline-size: 16px;
+  block-size: 16px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-rest);
+  transition: translate var(--motion-state);
+}
+
+.toggle[aria-checked='true'] .toggle__knob {
+  translate: 18px 0;
+}
+
+.toggle__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  font-size: var(--type-fine);
+}
+
+/* ---- choice ------------------------------------------------------------------------------ */
+
+.choice {
+  display: inline-flex;
+  padding: var(--sp-1);
+  gap: var(--sp-1);
+  background: var(--surface-sunk);
+  border-radius: var(--r-field);
+}
+
+.choice__opt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  min-block-size: 34px;
+  padding-inline: var(--sp-5);
+  border-radius: var(--r-chip);
+  font-size: var(--type-fine);
+  color: var(--ink-soft);
+  transition:
+    background-color var(--motion-state),
+    color var(--motion-state),
+    box-shadow var(--motion-state);
+}
+
+.choice__opt:hover {
+  color: var(--ink);
+}
+
+.choice__opt[aria-checked='true'] {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-rest);
+}
+
+/* ---- stepper ----------------------------------------------------------------------------- */
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1);
+  border: var(--line-hair) solid var(--rule);
+  border-radius: var(--r-field);
+  background: var(--surface);
+}
+
+.stepper__btn {
+  display: grid;
+  place-items: center;
+  inline-size: 38px;
+  block-size: 38px;
+  border-radius: var(--r-chip);
+  color: var(--ink-soft);
+  transition:
+    background-color var(--motion-state),
+    color var(--motion-state);
+}
+
+.stepper__btn:hover:not(:disabled) {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}
+
+.stepper__btn:disabled {
+  opacity: 0.35;
+}
+
+.stepper__value {
+  inline-size: 6rem;
+  min-block-size: 38px;
+  padding-inline: var(--sp-3);
+  border: 0;
+  background: none;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.stepper__unit {
+  padding-inline-end: var(--sp-4);
+  font-size: var(--type-micro);
+  color: var(--ink-faint);
+}
+
+/* ---- range ------------------------------------------------------------------------------- */
+
+.range {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.range__line {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+}
+
+.range__track {
+  position: relative;
+  flex: 1;
+  block-size: var(--tap-min);
+  display: flex;
+  align-items: center;
+  isolation: isolate;
+}
+
+.range__track::before {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  block-size: 4px;
+  border-radius: var(--r-pill);
+  background: var(--rule);
+}
+
+.range__fill {
+  position: absolute;
+  block-size: 4px;
+  border-radius: var(--r-pill);
+  background: var(--accent-ink);
+  transition:
+    inset-inline-start var(--motion-state),
+    inline-size var(--motion-state),
+    background-color var(--motion-state);
+}
+
+.range__fill[data-level='caution'] {
+  background: var(--caution-ink);
+}
+
+/* Ticks are decoration; the preset buttons below are the reachable affordance. */
+.range__ticks {
+  position: absolute;
+  inset-inline: 0;
+  block-size: 100%;
+  pointer-events: none;
+}
+
+.range__tick {
+  position: absolute;
+  inset-block-start: calc(50% + 6px);
+  inline-size: var(--line-hair);
+  block-size: 5px;
+  background: var(--rule);
+}
+
+.range__input {
+  position: absolute;
+  inset-inline: 0;
+  inline-size: 100%;
+  block-size: var(--tap-min);
+  margin: 0;
+  background: none;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.range__input::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  inline-size: 18px;
+  block-size: 18px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  border: var(--line-solid) solid var(--accent);
+  box-shadow: var(--shadow-rest);
+  cursor: grab;
+  transition: transform var(--motion-state);
+}
+
+.range__input::-moz-range-thumb {
+  inline-size: 18px;
+  block-size: 18px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  border: var(--line-solid) solid var(--accent);
+  box-shadow: var(--shadow-rest);
+  cursor: grab;
+}
+
+.range__input:active::-webkit-slider-thumb {
+  transform: scale(1.08);
+}
+
+.range__input::-webkit-slider-runnable-track,
+.range__input::-moz-range-track {
+  background: none;
+}
+
+.range__readout {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-4);
+  flex: none;
+}
+
+.range__human {
+  font-size: var(--type-fine);
+  color: var(--ink-faint);
+  min-inline-size: 5rem;
+}
+
+.range__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+.range__preset {
+  min-block-size: var(--tap-min);
+  padding-inline: var(--sp-5);
+  border: var(--line-hair) solid var(--rule);
+  border-radius: var(--r-chip);
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  color: var(--ink-soft);
+  transition:
+    background-color var(--motion-state),
+    border-color var(--motion-state),
+    color var(--motion-state);
+}
+
+.range__preset:hover {
+  border-color: var(--accent-ink);
+  color: var(--ink);
+}
+
+/* Same reason as the chip: a 1.1:1 wash cannot be the only mark of which preset is in force, so the
+   pressed one is also the only one drawn in the page's own ink weight. */
+.range__preset[aria-pressed='true'] {
+  background: var(--accent-wash);
+  border-color: var(--accent-ink);
+  color: var(--ink);
+  font-weight: var(--w-medium);
+}
+
+/* Two thumbs on one track. The low input sits above the high one only where it can still be
+   grabbed; the constraint itself is enforced in the component, not by pointer luck. */
+.range--dual .range__input {
+  pointer-events: none;
+}
+
+.range--dual .range__input::-webkit-slider-thumb {
+  pointer-events: auto;
+}
+
+.range--dual .range__input::-moz-range-thumb {
+  pointer-events: auto;
+}
+
+.range--dual .range__input--high::-webkit-slider-thumb {
+  border-color: var(--accent-ink);
+}
+
+/* ---- disclosure -------------------------------------------------------------------------- */
+
+.disclosure {
+  border: var(--line-hair) solid var(--rule);
+  border-radius: var(--r-panel);
+  background: var(--surface);
+  overflow: clip;
+}
+
+.disclosure__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  inline-size: 100%;
+  min-block-size: var(--tap-min);
+  padding-inline: var(--sp-5);
+  text-align: start;
+  font-size: var(--type-fine);
+  font-weight: var(--w-medium);
+  color: var(--ink);
+  transition: background-color var(--motion-state);
+}
+
+.disclosure__head:hover {
+  background: var(--accent-wash);
+}
+
+.disclosure__chevron {
+  margin-inline-start: auto;
+  color: var(--ink-faint);
+  transition: rotate var(--motion-state);
+}
+
+.disclosure__head[aria-expanded='true'] .disclosure__chevron {
+  rotate: 90deg;
+}
+
+.disclosure__body {
+  border-block-start: var(--line-hair) solid var(--rule);
+}
+
+/* ---- drop target ------------------------------------------------------------------------- */
+
+.drop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+  min-block-size: var(--tap-min);
+  padding: var(--sp-5);
+  border: var(--line-hair) dashed var(--rule);
+  border-radius: var(--r-field);
+  background: none;
+  font-size: var(--type-fine);
+  color: var(--ink-faint);
+  text-align: center;
+  transition:
+    border-color var(--motion-state),
+    background-color var(--motion-state),
+    color var(--motion-state);
+}
+
+.drop:hover,
+.drop[data-over='true'] {
+  border-color: var(--accent-ink);
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.drop__name {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+}
+
+/* ---- locale ------------------------------------------------------------------------------ */
+
+.locale-anchor {
+  position: relative;
+}
+
+.locale {
+  position: absolute;
+  inset-block-start: calc(100% + var(--sp-3));
+  inset-inline-end: 0;
+  z-index: 30;
+  min-inline-size: 12rem;
+  padding: var(--sp-2);
+  background: var(--surface);
+  border-radius: var(--r-field);
+  border: var(--line-hair) solid var(--rule);
+  box-shadow: var(--shadow-float);
+  transform-origin: top right;
+  animation: reveal var(--motion-reveal) both;
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    translate: 0 -4px;
+    scale: 0.98;
+  }
+}
+
+/* Bilingual on one line, for the same reason the rows are: someone who cannot read the language
+   on screen has to be able to find theirs. */
+.locale__head {
+  padding: var(--sp-4) var(--sp-5) var(--sp-3);
+  font-size: var(--type-micro);
+  color: var(--ink-faint);
+}
+
+.locale__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  inline-size: 100%;
+  min-block-size: var(--tap-min);
+  padding-inline: var(--sp-5);
+  border-radius: var(--r-chip);
+  font-size: var(--type-body);
+  text-align: start;
+  color: var(--ink);
+  transition: background-color var(--motion-state);
+}
+
+.locale__row:hover {
+  background: var(--accent-wash);
+}
+
+.locale__row .icon {
+  opacity: 0;
+  transition: opacity var(--motion-state);
+}
+
+.locale__row[aria-checked='true'] .icon {
+  color: var(--accent-ink);
+  opacity: 1;
+}

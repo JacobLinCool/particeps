@@ -1,0 +1,1276 @@
+/* Surfaces: the things a control sits on, and the four read-only displays (byte pane, tile,
+   fingerprint, receipt) that are the site's actual output. */
+
+/* ---- header and footer -------------------------------------------------------------------- */
+
+.site-header {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 10;
+  background: color-mix(in oklab, var(--ground) 86%, transparent);
+  backdrop-filter: blur(10px);
+  border-block-end: var(--line-hair) solid var(--rule);
+}
+
+.site-header__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  min-block-size: 56px;
+}
+
+.site-header__brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-4);
+  margin-inline-end: auto;
+  min-inline-size: 0;
+}
+
+.site-header__name {
+  font-size: var(--type-body);
+  font-weight: var(--w-medium);
+  color: var(--ink);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.site-header__tagline {
+  font-size: var(--type-micro);
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .site-header__tagline {
+    display: none;
+  }
+}
+
+/* The only place --accent and --voice appear together, which is what makes the pairing read as
+   a system rather than as two unrelated pages. */
+.switcher {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.switcher__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-block-size: var(--tap-min);
+  padding-inline: var(--sp-5);
+  border-radius: var(--r-chip);
+  font-size: var(--type-fine);
+  color: var(--ink-soft);
+  text-decoration: none;
+  border-block-end: var(--line-solid) solid transparent;
+  transition:
+    color var(--motion-state),
+    background-color var(--motion-state),
+    border-color var(--motion-state);
+}
+
+.switcher__item:hover {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.switcher__item[aria-current='page'] {
+  color: var(--accent-ink);
+  border-block-end-color: var(--accent-ink);
+}
+
+.switcher__item--voice[aria-current='page'] {
+  color: var(--voice-ink);
+  border-block-end-color: var(--voice-ink);
+}
+
+/* Narrow: the name leaves the screen, not the accessibility tree. `display: none` here would
+   strip the only accessible name these two links have. */
+@media (max-width: 520px) {
+  .switcher__label {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+.site-footer {
+  margin-block-start: auto;
+  padding-block: var(--sp-8);
+  border-block-start: var(--line-hair) solid var(--rule);
+  font-size: var(--type-fine);
+  color: var(--ink-faint);
+}
+
+.site-footer__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4) var(--sp-6);
+}
+
+.site-footer__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-block-size: var(--tap-min);
+  text-decoration: none;
+  color: var(--ink-soft);
+}
+
+.site-footer__link:hover {
+  color: var(--accent-ink);
+}
+
+/* ---- panel and section -------------------------------------------------------------------- */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  padding: var(--sp-7);
+  background: var(--surface);
+  border: var(--line-hair) solid var(--rule);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-rest);
+}
+
+.panel--flat {
+  box-shadow: none;
+}
+
+.panel--sunk {
+  background: var(--surface-sunk);
+  box-shadow: none;
+}
+
+.panel__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+}
+
+.panel__title {
+  font-size: var(--type-lede);
+  font-weight: var(--w-medium);
+  margin-inline-end: auto;
+}
+
+.panel__note {
+  font-size: var(--type-fine);
+  color: var(--ink-faint);
+  max-inline-size: var(--measure);
+}
+
+.panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  padding-block: var(--sp-9);
+  scroll-margin-block-start: var(--sp-10);
+}
+
+.section__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+}
+
+.section__lead {
+  font-size: var(--type-lede);
+  color: var(--ink-soft);
+  max-inline-size: var(--measure);
+}
+
+.section--raised {
+  padding: var(--sp-8);
+  background: var(--surface-sunk);
+  border-radius: var(--r-panel);
+  border-inline-start: 3px solid var(--accent-ink);
+}
+
+/* ---- step panel --------------------------------------------------------------------------- */
+
+.steppanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-7);
+  max-inline-size: 64rem;
+  animation: steppanel-in var(--motion-panel) both;
+}
+
+.steppanel[data-direction='-1'] {
+  animation-name: steppanel-in-back;
+}
+
+@keyframes steppanel-in {
+  from {
+    opacity: 0;
+    translate: 8px 0;
+  }
+}
+
+@keyframes steppanel-in-back {
+  from {
+    opacity: 0;
+    translate: -8px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .steppanel {
+    animation: steppanel-fade 90ms linear both;
+  }
+  @keyframes steppanel-fade {
+    from {
+      opacity: 0;
+    }
+  }
+}
+
+.steppanel__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+}
+
+.steppanel__title {
+  font-size: var(--type-title);
+}
+
+.steppanel__title:focus-visible {
+  outline-offset: 4px;
+}
+
+/* ---- rail --------------------------------------------------------------------------------- */
+
+.rail {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.rail--vertical {
+  flex-direction: column;
+  inline-size: 220px;
+  position: sticky;
+  inset-block-start: var(--sp-9);
+}
+
+.rail--horizontal {
+  align-items: center;
+  justify-content: space-between;
+  inline-size: 100%;
+}
+
+/* The researcher page's rail is a sticky column above 900px and the app's dot row below it. That is
+   a layout decision, so CSS makes it: a component that learned its own width from `matchMedia`
+   could only learn it after hydration, and every narrow first paint showed a 220px column snapping
+   sideways. The `orientation` prop now decides only which arrow key moves along the rail. */
+@media (max-width: 899px) {
+  .rail--vertical {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    inline-size: 100%;
+    position: static;
+  }
+
+  .rail--vertical .rail__step {
+    flex-direction: column;
+    gap: var(--sp-3);
+    flex: 1;
+    min-inline-size: var(--tap-min);
+  }
+
+  .rail--vertical .rail__link {
+    inline-size: auto;
+    block-size: var(--line-solid);
+    flex: 1;
+    min-inline-size: var(--sp-5);
+    margin-inline-start: 0;
+  }
+
+  .rail--vertical .rail__link::after {
+    scale: 0 1;
+  }
+
+  .rail--vertical .rail__link[data-filled='true']::after {
+    scale: 1 1;
+  }
+}
+
+.rail__step {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  min-block-size: var(--tap-min);
+  padding-inline: var(--sp-4);
+  border-radius: var(--r-field);
+  color: var(--ink-soft);
+  text-align: start;
+  transition:
+    background-color var(--motion-state),
+    color var(--motion-state);
+}
+
+.rail--horizontal .rail__step {
+  flex-direction: column;
+  gap: var(--sp-3);
+  flex: 1;
+  min-inline-size: var(--tap-min);
+}
+
+button.rail__step:hover {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+
+.rail__step[aria-current='step'] {
+  color: var(--ink);
+  font-weight: var(--w-medium);
+}
+
+.rail__mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  inline-size: 24px;
+  block-size: 24px;
+  flex: none;
+}
+
+.rail__label {
+  font-size: var(--type-fine);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The app drops these names on a phone because its rail is a position in a sequence the reader has
+   already been walked through. Here they are the only thing that says what a step is: `seal` and
+   `send` are guessable by someone who already knows the tool and by nobody else. They stay, and
+   wrap under the mark instead. */
+@media (max-width: 899px) {
+  .rail--horizontal .rail__label {
+    white-space: normal;
+    text-align: center;
+    font-size: var(--type-micro);
+  }
+}
+
+.rail__count {
+  margin-inline-start: auto;
+  min-inline-size: 1.25rem;
+  block-size: 1.25rem;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-pill);
+  background: var(--danger-ink);
+  color: var(--surface);
+  font-size: var(--type-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The connector fills when the step behind it is complete. Same geometry as the app's rail. */
+.rail__link {
+  flex: none;
+  background: var(--rule);
+  overflow: clip;
+}
+
+.rail--vertical .rail__link {
+  inline-size: var(--line-solid);
+  block-size: var(--sp-5);
+  margin-inline-start: calc(var(--sp-4) + 11px);
+}
+
+.rail--horizontal .rail__link {
+  block-size: var(--line-solid);
+  flex: 1;
+  min-inline-size: var(--sp-5);
+}
+
+.rail__link::after {
+  content: '';
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  background: var(--signal-ink);
+  transform-origin: top left;
+  scale: 0 1;
+  transition: scale var(--motion-panel);
+}
+
+.rail--vertical .rail__link::after {
+  scale: 1 0;
+}
+
+.rail__link[data-filled='true']::after {
+  scale: 1 1;
+}
+
+/* ---- mark --------------------------------------------------------------------------------- */
+
+.mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+/* ---- note --------------------------------------------------------------------------------- */
+
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-5);
+  border-radius: var(--r-field);
+  font-size: var(--type-fine);
+  color: var(--ink);
+  background: var(--neutral-wash);
+}
+
+.note--accent {
+  background: var(--accent-wash);
+}
+.note--caution {
+  background: var(--caution-wash);
+}
+.note--danger {
+  background: var(--danger-wash);
+}
+.note--signal {
+  background: var(--signal-wash);
+}
+.note--voice {
+  background: var(--voice-wash);
+}
+.note--plain {
+  background: none;
+  padding-inline: 0;
+  color: var(--ink-faint);
+}
+
+/* ---- issue list --------------------------------------------------------------------------- */
+
+.issues {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.issues__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.issues__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-5) var(--sp-2);
+  font-size: var(--type-micro);
+  color: var(--ink-faint);
+}
+
+.issues__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  flex-wrap: wrap;
+  inline-size: 100%;
+  min-block-size: var(--tap-min);
+  padding-block: var(--sp-3);
+  padding-inline: var(--sp-5);
+  border-radius: var(--r-field);
+  border-inline-start: var(--line-solid) solid var(--danger-ink);
+  background: var(--surface);
+  text-align: start;
+  font-size: var(--type-fine);
+  transition: background-color var(--motion-state);
+}
+
+.issues__row:hover {
+  background: var(--danger-wash);
+}
+
+/* `collectors.5.config.trajectory_sampling_hz` is 41 monospace characters, and a span with the
+   default `min-width: auto` cannot shrink below its content. In a 316px column that made the row
+   wider than the document and gave the whole page a horizontal scrollbar. */
+.issues__path {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  color: var(--ink-faint);
+  margin-inline-start: auto;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.issues__clear {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-6);
+  color: var(--ink-faint);
+  font-size: var(--type-fine);
+}
+
+/* ---- byte pane ---------------------------------------------------------------------------- */
+
+.bytes {
+  position: relative;
+  background: var(--surface-sunk);
+  border: var(--line-hair) solid var(--rule);
+  border-radius: var(--r-flat);
+  overflow: clip;
+}
+
+.bytes__body {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-fine);
+  line-height: var(--lh-mono);
+  tab-size: 2;
+  overflow: auto;
+  max-block-size: 60vh;
+  padding: var(--sp-5);
+  white-space: pre;
+  overscroll-behavior: contain;
+}
+
+.bytes__foot {
+  position: sticky;
+  inset-block-end: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--surface);
+  border-block-start: var(--line-hair) solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+}
+
+.bytes__gauge {
+  display: block;
+  flex: 1;
+  block-size: 4px;
+  border-radius: var(--r-pill);
+  background: var(--rule);
+  overflow: clip;
+}
+
+.bytes__fill {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  transition:
+    transform var(--motion-count),
+    background-color var(--motion-state);
+}
+
+.bytes__fill[data-level='near'] {
+  background: var(--caution-ink);
+}
+.bytes__fill[data-level='over'] {
+  background: var(--danger-ink);
+}
+
+.bytes__count[data-level='over'] {
+  color: var(--danger-ink);
+}
+
+/* Three roles only, so the pane stays a byte view rather than becoming an editor. */
+.tok-key {
+  color: var(--ink-soft);
+}
+.tok-str {
+  color: var(--ink);
+}
+.tok-num {
+  color: var(--accent-ink);
+}
+.tok-blob {
+  color: var(--binary-ink);
+}
+
+/* ---- tile --------------------------------------------------------------------------------- */
+
+.tiles {
+  display: grid;
+  gap: var(--sp-5);
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+}
+
+.tile {
+  display: grid;
+  grid-template-columns: 48px 1fr auto;
+  gap: var(--sp-5);
+  align-items: center;
+  padding: var(--sp-6);
+  background: var(--surface);
+  border-radius: var(--r-panel);
+  border: var(--line-hair) solid var(--rule);
+  box-shadow: var(--shadow-rest);
+  transition:
+    border-color var(--motion-state),
+    box-shadow var(--motion-state);
+}
+
+.tile__mark {
+  display: grid;
+  place-items: center;
+  inline-size: 48px;
+  block-size: 48px;
+  border-radius: var(--r-field);
+  background: var(--tile-wash, var(--neutral-wash));
+}
+
+.tile__mark .icon {
+  inline-size: 24px;
+  block-size: 24px;
+  color: var(--tile-ink, var(--ink-soft));
+}
+
+.tile__text {
+  min-inline-size: 0;
+}
+
+.tile__name {
+  font-family: var(--font-mono);
+  font-size: var(--type-fine);
+  font-weight: var(--w-medium);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.tile__meta {
+  font-size: var(--type-micro);
+  color: var(--ink-faint);
+}
+
+.tile__meta b {
+  font-family: var(--font-mono);
+  font-weight: var(--w-regular);
+}
+
+/* A private key is a different kind of object, and the border says so before the words do. */
+.tile--secret {
+  border-color: var(--danger-ink);
+}
+
+.tile__warn {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: var(--sp-4);
+  align-items: start;
+  padding: var(--sp-4) var(--sp-5);
+  margin-block-start: var(--sp-4);
+  background: var(--caution-wash);
+  border-radius: var(--r-field);
+  font-size: var(--type-fine);
+  color: var(--ink);
+}
+
+.tile__warn .icon {
+  color: var(--caution-ink);
+}
+
+.tile--empty {
+  opacity: 0.45;
+  box-shadow: none;
+}
+
+.tile--awaiting .tile__mark {
+  animation: await var(--motion-loop) infinite;
+}
+
+@keyframes await {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* ---- artifact group ----------------------------------------------------------------------- */
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding: var(--sp-6);
+  border: var(--line-hair) solid var(--rule);
+  border-radius: var(--r-panel);
+}
+
+.group__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  font-size: var(--type-fine);
+  color: var(--ink-soft);
+}
+
+.group__tally {
+  margin-inline-start: auto;
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+}
+
+/* Hold: the two files whose loss is worst. Hatched edge, red border, and no bulk download. */
+.group--hold {
+  border-color: var(--danger);
+  border-inline-start-width: 6px;
+  border-inline-start-style: solid;
+  border-image: repeating-linear-gradient(
+      45deg,
+      color-mix(in oklab, var(--danger) 34%, transparent) 0 3px,
+      transparent 3px 6px
+    )
+    1;
+  border-image-outset: 0;
+}
+
+.group--send {
+  border-color: var(--accent-ink);
+}
+
+.group--empty {
+  opacity: 0.45;
+}
+
+/* ---- key card ----------------------------------------------------------------------------- */
+
+.keycard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding: var(--sp-6);
+  background: var(--surface);
+  border: var(--line-hair) solid var(--rule);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-rest);
+}
+
+.keycard--secret {
+  border: var(--line-solid) solid var(--danger-ink);
+  position: relative;
+  overflow: clip;
+}
+
+.keycard--secret::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: 6px;
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in oklab, var(--danger) 30%, transparent) 0 3px,
+    transparent 3px 6px
+  );
+}
+
+.keycard__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.keycard__title {
+  font-size: var(--type-body);
+  font-weight: var(--w-medium);
+  margin-inline-end: auto;
+}
+
+.keycard__algorithm {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  color: var(--ink-faint);
+}
+
+.keycard__recovery {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  font-size: var(--type-fine);
+  color: var(--ink-soft);
+}
+
+.keycard__recovery--none {
+  color: var(--danger-ink);
+}
+
+.keycard__well {
+  padding: var(--sp-5);
+  background: var(--surface-sunk);
+  border-radius: var(--r-field);
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  overflow-wrap: anywhere;
+  max-block-size: 9rem;
+  overflow: auto;
+}
+
+.keycard__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+/* Held but never written to disk: the only copy is this tab, and the ring says so until it is
+   downloaded. Under reduced motion base.css freezes it into a static ring. */
+.pulse {
+  border-radius: var(--r-field);
+  animation: pulse var(--motion-loop) infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 var(--line-solid) var(--caution-ink);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in oklab, var(--caution-ink) 25%, transparent);
+  }
+}
+
+/* ---- fingerprint -------------------------------------------------------------------------- */
+
+.fingerprint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--ink);
+}
+
+.fingerprint__group {
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-state),
+    color var(--motion-state);
+}
+
+.fingerprint--inline {
+  font-size: var(--type-fine);
+  gap: 0.4em;
+}
+
+.fingerprint--plaque {
+  font-size: 1.15rem;
+  gap: 0.5em;
+  padding: var(--sp-6);
+  border-radius: var(--r-field);
+  background: var(--surface-sunk);
+  inline-size: 100%;
+  justify-content: center;
+  transition: background-color var(--motion-settle);
+}
+
+button.fingerprint--plaque:hover {
+  background: var(--accent-wash);
+}
+
+.fingerprint--copied {
+  background: var(--signal-wash);
+}
+
+.fingerprint__group[data-state='match'] {
+  color: var(--signal-ink);
+}
+
+/* A transposition is what this comparison exists to catch, and hue alone does not carry it: the
+   mismatching group is also struck through, so a reader who cannot separate the two colours still
+   sees which four characters to look at again. */
+.fingerprint__group[data-state='mismatch'] {
+  color: var(--danger-ink);
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+  background: var(--danger-wash);
+  border-radius: var(--r-chip);
+}
+
+.fingerprint__group[data-state='pending'] {
+  color: var(--ink-faint);
+}
+
+/* ---- collector card ----------------------------------------------------------------------- */
+
+.collectors {
+  display: grid;
+  gap: var(--sp-6);
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+
+.collector {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: var(--line-hair) solid var(--rule);
+  border-radius: var(--r-panel);
+  overflow: clip;
+  transition:
+    border-color var(--motion-state),
+    opacity var(--motion-expand),
+    box-shadow var(--motion-state);
+}
+
+.collector[aria-disabled='true'] {
+  opacity: 0.55;
+}
+
+.collector--on {
+  border-color: var(--accent-ink);
+  box-shadow: var(--shadow-rest);
+}
+
+.collector__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  inline-size: 100%;
+  min-block-size: 56px;
+  padding-inline: var(--sp-6);
+  text-align: start;
+  transition: background-color var(--motion-state);
+}
+
+.collector__head:hover {
+  background: var(--accent-wash);
+}
+
+.collector__name {
+  font-size: var(--type-body);
+  font-weight: var(--w-medium);
+  margin-inline-end: auto;
+}
+
+.collector--on .collector__glyph {
+  color: var(--accent-ink);
+}
+
+.collector__glyph {
+  color: var(--ink-faint);
+  transition: color var(--motion-state);
+}
+
+.collector__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  padding: var(--sp-6);
+  border-block-start: var(--line-hair) solid var(--rule);
+}
+
+.collector__records {
+  padding: 0 var(--sp-6) var(--sp-5);
+  font-size: var(--type-fine);
+  color: var(--ink-faint);
+}
+
+.collector__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: 0 var(--sp-6) var(--sp-5);
+}
+
+/* ---- intensity ---------------------------------------------------------------------------- */
+
+.intensity {
+  display: flex;
+  gap: 3px;
+  flex: none;
+}
+
+.intensity__seg {
+  inline-size: 6px;
+  block-size: 14px;
+  border-radius: 1px;
+  background: var(--rule);
+  transition: background-color var(--motion-state);
+}
+
+.intensity__seg[data-on='true'][data-level='1'] {
+  background: var(--intensity-1);
+}
+.intensity__seg[data-on='true'][data-level='2'] {
+  background: var(--intensity-2);
+}
+.intensity__seg[data-on='true'][data-level='3'] {
+  background: var(--intensity-3);
+}
+.intensity__seg[data-on='true'][data-level='4'] {
+  background: var(--intensity-4);
+}
+
+/* ---- quota -------------------------------------------------------------------------------- */
+
+.quota {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding: var(--sp-6);
+  background: var(--surface-sunk);
+  border-radius: var(--r-panel);
+}
+
+.quota__bar {
+  position: relative;
+  block-size: 10px;
+  border-radius: var(--r-pill);
+  background: var(--rule);
+  overflow: clip;
+}
+
+.quota__fill {
+  block-size: 100%;
+  background: var(--accent-ink);
+  transform-origin: left;
+  transition:
+    transform var(--motion-count),
+    background-color var(--motion-state);
+}
+
+.quota__fill[data-level='over'] {
+  background: var(--caution-ink);
+}
+
+.quota__read {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-5);
+  font-size: var(--type-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+}
+
+/* ---- window strip ------------------------------------------------------------------------- */
+
+.window {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding-block: var(--sp-5);
+}
+
+.window__bar {
+  position: relative;
+  block-size: 10px;
+  border-radius: var(--r-pill);
+  background: var(--surface-sunk);
+  overflow: clip;
+}
+
+.window__span {
+  position: absolute;
+  inset-block: 0;
+  background: var(--accent-wash);
+  border-inline: var(--line-solid) solid var(--accent-ink);
+}
+
+.window--invalid .window__span {
+  border-color: var(--danger-ink);
+  background: var(--danger-wash);
+}
+
+.window__now {
+  position: absolute;
+  inset-block: -3px;
+  inline-size: var(--line-solid);
+  background: var(--ink);
+}
+
+/* The duration is a different quantity from the window and is drawn at a different height, so
+   the two cannot be read as one bar. */
+.window__duration {
+  position: relative;
+  block-size: 6px;
+  margin-inline-start: 0;
+  border-radius: var(--r-pill);
+  background: var(--surface-sunk);
+}
+
+.window__duration-fill {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  border-radius: var(--r-pill);
+  background: var(--voice-ink);
+}
+
+.window__legend {
+  display: flex;
+  gap: var(--sp-6);
+  font-size: var(--type-micro);
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- prompts ------------------------------------------------------------------------------ */
+
+.prompt {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--sp-5);
+  padding: var(--sp-6);
+  background: var(--surface);
+  border: var(--line-hair) solid var(--rule);
+  border-radius: var(--r-panel);
+}
+
+@media (min-width: 720px) {
+  .prompt {
+    grid-template-columns: 14rem 1fr auto;
+    align-items: start;
+  }
+}
+
+.prompt__timeline {
+  position: relative;
+  block-size: 44px;
+  margin-block-end: var(--sp-5);
+}
+
+.prompt__axis {
+  position: absolute;
+  inset-block-start: 21px;
+  inset-inline: 0;
+  block-size: var(--line-solid);
+  background: var(--rule);
+}
+
+.prompt__tick {
+  position: absolute;
+  inset-block-start: 14px;
+  inline-size: 16px;
+  block-size: 16px;
+  margin-inline-start: -8px;
+  border-radius: var(--r-pill);
+  background: var(--accent-ink);
+  border: var(--line-solid) solid var(--surface);
+  transition: inset-inline-start var(--motion-panel);
+}
+
+/* Past the end of the axis. The ring is a second channel, because a tick that is only a different
+   colour says nothing to a reader who cannot separate the two — and this one means a prompt that
+   will never fire. */
+.prompt__tick[data-beyond='true'] {
+  background: var(--caution-ink);
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--caution-ink);
+}
+
+.addtile {
+  display: grid;
+  place-items: center;
+  min-block-size: 88px;
+  border: var(--line-hair) dashed var(--rule);
+  border-radius: var(--r-panel);
+  color: var(--ink-faint);
+  transition:
+    border-color var(--motion-state),
+    color var(--motion-state),
+    background-color var(--motion-state);
+}
+
+.addtile:hover {
+  border-color: var(--accent-ink);
+  color: var(--accent-ink);
+  background: var(--accent-wash);
+}
+
+/* ---- signature receipt -------------------------------------------------------------------- */
+
+.receipt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-6);
+  background: var(--surface-sunk);
+  border-radius: var(--r-panel);
+  font-family: var(--font-mono);
+  font-size: var(--type-fine);
+}
+
+.receipt__row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sp-3) var(--sp-5);
+}
+
+/* A floor rather than a width. At 5rem the English `Signature verified here` wrapped to three lines
+   and the Chinese to two, in the block whose whole job is to confirm the signing worked. */
+.receipt__label {
+  flex: 0 0 auto;
+  min-inline-size: 5rem;
+  color: var(--ink-faint);
+}
+
+.receipt__value {
+  overflow-wrap: anywhere;
+}
+
+/* ---- dialog ------------------------------------------------------------------------------- */
+
+.dialog {
+  margin: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  max-inline-size: 26rem;
+  inline-size: calc(100% - 2 * var(--sp-6));
+}
+
+.dialog::backdrop {
+  background: rgb(46 52 64 / 0.4);
+  backdrop-filter: blur(2px);
+}
+
+.dialog__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  padding: var(--sp-7);
+  background: var(--surface);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-float);
+  animation: reveal var(--motion-reveal) both;
+}
+
+.dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-4);
+}
+
+/* ---- live region -------------------------------------------------------------------------- */
+
+.live {
+  font-size: var(--type-fine);
+  color: var(--ink-faint);
+  min-block-size: 1.4em;
+}
