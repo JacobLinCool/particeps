@@ -23,6 +23,7 @@
   import TextField from '$lib/ui/TextField.svelte';
   import ToggleField from '$lib/ui/ToggleField.svelte';
   import CollectorCard from './CollectorCard.svelte';
+  import IdentityField from './IdentityField.svelte';
   import InterventionEditor from './InterventionEditor.svelte';
   import QuotaMeter from './QuotaMeter.svelte';
   import WindowStrip from './WindowStrip.svelte';
@@ -192,6 +193,18 @@
     />
 
     <Note icon="info" tone="plain" text={m.researcher.study.note.irrevocable} />
+  </Section>
+
+  <!-- A root key, so a section of its own rather than a control inside another section's. It sits
+       after the window because both are questions about the study itself, and before the data
+       because what is collected does not depend on who the file goes to. -->
+  <Section
+    id="identity"
+    path="assigned_participant_id"
+    title={section.identity.title}
+    icon="participant"
+  >
+    <IdentityField {draft} {m} />
   </Section>
 
   <Section id="collectors" path="collectors" title={section.collectors.title} icon="sources">

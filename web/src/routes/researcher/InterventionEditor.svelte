@@ -271,22 +271,6 @@
           : { type, offset_minutes: offset, clock };
   }
 
-  /**
-   * The code survives a trip through anonymous. The placeholder that used to be written in its
-   * place passed `ASSIGNED_PARTICIPANT_ID_PATTERN`, so a study whose participant was literally
-   * named `participant-code` signed clean; an empty box raises `id_format` where it can be read.
-   */
-  let assigned = $state('');
-  const personalized = $derived(configuration.assigned_participant_id !== null);
-  $effect(() => {
-    if (configuration.assigned_participant_id) assigned = configuration.assigned_participant_id;
-  });
-
-  const IDENTITY = $derived([
-    { value: false, label: copy.anonymous },
-    { value: true, label: copy.personalized }
-  ]);
-
   const CLOCKS = $derived([
     { value: 'CALENDAR_TIME' as RelativeClock, label: copy.clocks.calendar },
     { value: 'ACTIVE_RUNNING_TIME' as RelativeClock, label: copy.clocks.active }
@@ -447,27 +431,6 @@
 {/snippet}
 
 <div class="stack" data-issue-host="interventions">
-  <!-- The two alternatives are shown at once rather than hidden behind a select: which of them a
-       study is decides what travels with every event it records. The group's name is the field it
-       switches on, so the decision is not announced as a menu of its own option names. -->
-  <ChoiceField
-    value={personalized}
-    options={IDENTITY}
-    groupLabel={copy.assignedId}
-    onchange={(value) => (configuration.assigned_participant_id = value ? assigned : null)}
-  />
-  {#if personalized}
-    <IdField
-      label={copy.assignedId}
-      path="assigned_participant_id"
-      value={configuration.assigned_participant_id ?? ''}
-      onchange={(value) => {
-        assigned = value;
-        configuration.assigned_participant_id = value;
-      }}
-    />
-  {/if}
-
   {#if configuration.interventions.length > 0}
     <Note icon="clock" tone="plain" text={copy.notificationTiming} />
   {/if}

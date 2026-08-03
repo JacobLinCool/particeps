@@ -339,12 +339,15 @@ export interface Messages {
     };
     study: {
       /**
-       * Six, not eight. Neither identifier is typed here any more — both are derived and read out
+       * Seven, not eight. Neither identifier is typed here any more — both are derived and read out
        * on the sign step — and the quota sits with the collectors that fill it.
        */
       section: {
         about: SectionTitle;
         validity: SectionTitle;
+        /** `assigned_participant_id`, which is a root key about the whole study: it decides whether
+         *  one signed file goes to everyone or each participant gets their own. */
+        identity: SectionTitle;
         collectors: SectionTitle;
         consent: SectionTitle;
         interventions: SectionTitle;

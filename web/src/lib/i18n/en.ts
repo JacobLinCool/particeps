@@ -337,6 +337,7 @@ export const en: Messages = {
       section: {
         about: { title: 'The study' },
         validity: { title: 'How long does this run?' },
+        identity: { title: 'Who is this file for?' },
         collectors: { title: 'Data' },
         consent: { title: 'Consent' },
         interventions: { title: 'Interventions' },

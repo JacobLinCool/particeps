@@ -334,6 +334,7 @@ export const zhTW: Messages = {
       section: {
         about: { title: '研究內容' },
         validity: { title: '這個研究會進行多久？' },
+        identity: { title: '這份檔案要發給誰？' },
         collectors: { title: '資料來源' },
         consent: { title: '知情同意' },
         interventions: { title: '研究活動' },
