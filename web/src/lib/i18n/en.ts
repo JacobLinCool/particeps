@@ -26,6 +26,7 @@ export const en: Messages = {
     download: 'Download',
     copy: 'Copy',
     importDraft: 'Import JSON',
+    open: 'Open',
     back: 'Back',
     next: 'Next',
     confirmSaved: 'I have the file',
@@ -91,7 +92,8 @@ export const en: Messages = {
     keys: 'Keys',
     study: 'Study',
     sign: 'Sign',
-    files: 'Files'
+    files: 'Files',
+    read: 'Read'
   },
 
   unit: {
@@ -264,7 +266,16 @@ export const en: Messages = {
     draft: 'That file is not a study configuration this page can read.',
     keyFile: 'That file is not a private key this page can read.',
     clipboard: 'Copy failed. Select the text and copy it yourself.',
-    notFound: 'No page at this address.'
+    notFound: 'No page at this address.',
+    bundle: {
+      not_a_bundle: 'That file is not an export bundle this page can read.',
+      too_large: 'That file is larger than this tab can open.',
+      wrong_study: 'This bundle is from another study. Use that study\u2019s configuration.',
+      wrong_key: 'This private key does not open this study.',
+      unwrap_failed: 'This is not the configuration this bundle was sealed under.',
+      tag_failed: 'This bundle changed after the phone wrote it.',
+      unreadable: 'It decrypted, but the contents are not a shape this page reads.'
+    }
   },
 
   confirm: {
@@ -376,6 +387,22 @@ export const en: Messages = {
       publish: 'The fingerprint goes into your recruitment material.',
       distribute: 'For participants',
       pilot: 'Pilot on the phones your study targets before you recruit anyone.'
+    },
+    read: {
+      lede: 'Open an export a participant sent back. Nothing leaves this tab.',
+      bundle: 'Encrypted export',
+      session: 'From this tab',
+      opened: 'Open in this tab',
+      events: 'Events',
+      window: 'Sequence numbers',
+      span: 'First to last event',
+      transitions: 'State changes',
+      exported: 'Exported',
+      instance: 'Participant instance',
+      state: 'State',
+      json: 'Decrypted JSON',
+      large: 'Too large to show here. Download it instead.',
+      none: 'No events in this export.'
     },
     cli: 'researcher-tools does all of this from a terminal, and also decrypts the bundles you get back.'
   },

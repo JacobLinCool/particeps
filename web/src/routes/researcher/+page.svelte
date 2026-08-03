@@ -1,15 +1,16 @@
 <script lang="ts">
   /**
    * Prepare a study: two key pairs, a configuration, a signature, and four files — in this tab,
-   * with nothing installed and nothing sent anywhere.
+   * with nothing installed and nothing sent anywhere. Then, weeks later, open what comes back.
    *
    * The rail is the app's, redrawn. On the phone a dot means *where you are in a sequence*, because
    * the participant's five steps are a disclosure gate and are forward-only. Here a dot means
    * *whether that step's output exists and is valid*: authoring is iterative, every step is
    * reachable at any time, and nothing on this page is a disclosure anyone must be made to read.
    *
-   * Four steps rather than the app's five, because `lib/i18n` names four and a step with no name in
-   * the catalogue is a step with no name in one of the two languages.
+   * The fifth step is the exception that proves the rule, and `stateLabel` is where it says so: it
+   * owns no part of the document and produces no file, so its dot cannot mean what the other four
+   * mean. What it means is that a participant's export is decrypted and on screen, in this tab.
    */
   import { tick, untrack } from 'svelte';
   import { base } from '$app/paths';
@@ -31,6 +32,7 @@
   import StepStudy from './StepStudy.svelte';
   import StepSign from './StepSign.svelte';
   import StepFiles from './StepFiles.svelte';
+  import StepRead from './StepRead.svelte';
   import {
     ARTIFACTS,
     artifactBytes,
@@ -55,7 +57,7 @@
   const m = $derived(i18n.m);
   const u = $derived(units(i18n.m, i18n.locale));
 
-  let step = $state<StepId>('keys');
+  let step = $state<StepId>('study');
   let direction = $state<1 | -1>(1);
   let failure = $state('');
   let keyFailure = $state('');
@@ -157,6 +159,9 @@
    */
   function stateLabel(state: string, count: number, id: string): string {
     if (count > 0 && !pristine) return m.researcher.sign.blocked(count);
+    // The read step can never be blocked and has nothing to fix, so `Nothing to fix` on its dot
+    // would be an answer to a question it does not host. What its `complete` means is one fact.
+    if (id === 'read') return state === 'complete' ? m.researcher.read.opened : m.control.progress;
     if (state === 'blocked') return m.researcher.files.keep;
     if (state === 'partial' && id === 'keys') return m.researcher.files.keep;
     if (state === 'complete') return m.status.clean;
@@ -310,9 +315,13 @@
         <StepPanel id="sign" title={m.step.sign} icon="seal" {direction}>
           <StepSign {draft} {m} {failure} onjump={jump} onsign={sign} />
         </StepPanel>
-      {:else}
+      {:else if step === 'files'}
         <StepPanel id="files" title={m.step.files} icon="send" {direction}>
           <StepFiles {draft} {m} onsave={save} onsign={() => go('sign')} />
+        </StepPanel>
+      {:else}
+        <StepPanel id="read" title={m.step.read} icon="unlock" {direction}>
+          <StepRead {draft} {m} />
         </StepPanel>
       {/if}
 
@@ -375,7 +384,7 @@
     confirming = false;
     loaded = '';
     failure = '';
-    go('keys');
+    go(STEPS[0].id);
   }}
   oncancel={() => (confirming = false)}
 />

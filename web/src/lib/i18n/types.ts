@@ -107,6 +107,8 @@ export interface Messages {
     download: string;
     copy: string;
     importDraft: string;
+    /** Decrypting a returned export. The one act on the site that reads rather than writes. */
+    open: string;
     back: string;
     next: string;
     /** The reader asserting a downloaded private key reached their disk. */
@@ -181,6 +183,7 @@ export interface Messages {
     study: string;
     sign: string;
     files: string;
+    read: string;
   };
 
   /**
@@ -305,6 +308,25 @@ export interface Messages {
     clipboard: string;
     /** The static build ships a 404 fallback, so the one route nobody designed still needs words. */
     notFound: string;
+    /**
+     * Keyed by `BundleFailure`, so the reader's own answer resolves straight to a sentence with no
+     * translation table in between — the same reason `IssueMessages` is keyed by wire code, and the
+     * only other snake_case in this file.
+     *
+     * Three files go into a decryption and each of these names which one to change. The last two
+     * differ by where the mismatch was found: the context binds the wrapped key and the body, and
+     * the wrapped key opens first, so `unwrap_failed` is the wrong configuration and `tag_failed`
+     * can only mean the bytes moved after the phone wrote them.
+     */
+    bundle: {
+      not_a_bundle: string;
+      too_large: string;
+      wrong_study: string;
+      wrong_key: string;
+      unwrap_failed: string;
+      tag_failed: string;
+      unreadable: string;
+    };
   };
 
   confirm: {
@@ -384,6 +406,34 @@ export interface Messages {
       publish: string;
       distribute: string;
       pilot: string;
+    };
+    /**
+     * The last step, and the only one that consumes rather than produces. Everything after `session`
+     * is a term in the readout, so each is the name of a number the bundle carries rather than a
+     * sentence about it — the figures say what they are, and nothing here narrates them.
+     *
+     * The three inputs borrow their labels from the steps that made those files: a study
+     * configuration is still `sign.canonical`, an export key is still `keys.export.title`. Only the
+     * bundle is new, because nothing else on this site has ever named the thing that comes back.
+     */
+    read: {
+      lede: string;
+      bundle: string;
+      /** Offering the configuration and the key this tab already holds, rather than asking twice. */
+      session: string;
+      /** What `complete` means on a step that owns no schema path: a bundle is open, here. */
+      opened: string;
+      events: string;
+      window: string;
+      span: string;
+      transitions: string;
+      exported: string;
+      instance: string;
+      state: string;
+      json: string;
+      /** Past what the byte pane will render. The file is still open and still downloadable. */
+      large: string;
+      none: string;
     };
     cli: string;
   };

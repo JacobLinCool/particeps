@@ -27,6 +27,7 @@ export const zhTW: Messages = {
     download: '下載',
     copy: '複製',
     importDraft: '匯入 JSON',
+    open: '開啟',
     back: '上一步',
     next: '下一步',
     confirmSaved: '檔案已存好',
@@ -94,7 +95,8 @@ export const zhTW: Messages = {
     keys: '金鑰',
     study: '研究',
     sign: '簽署',
-    files: '檔案'
+    files: '檔案',
+    read: '讀取'
   },
 
   unit: {
@@ -263,7 +265,16 @@ export const zhTW: Messages = {
     draft: '這不是有效的研究設定檔，無法匯入。',
     keyFile: '這不是有效的私鑰檔案，無法匯入。',
     clipboard: '複製失敗，請自己選取文字複製。',
-    notFound: '找不到這個頁面。'
+    notFound: '找不到這個頁面。',
+    bundle: {
+      not_a_bundle: '這不是有效的匯出檔，無法讀取。',
+      too_large: '這個檔案太大，這個分頁開不起來。',
+      wrong_study: '這個匯出檔屬於別的研究，請改用那個研究的設定檔。',
+      wrong_key: '這把私鑰打不開這個研究的資料。',
+      unwrap_failed: '封裝這個匯出檔時用的不是這份設定檔。',
+      tag_failed: '這個匯出檔在手機寫出後被改過。',
+      unreadable: '解密成功，但內容不是這個頁面讀得懂的格式。'
+    }
   },
 
   confirm: {
@@ -371,6 +382,22 @@ export const zhTW: Messages = {
       publish: '請將金鑰指紋放入招募資料。',
       distribute: '給參與者',
       pilot: '正式招募前，請先在研究預計支援的 Android 版本與機型上完成測試。'
+    },
+    read: {
+      lede: '開啟參與者回傳的匯出檔。所有內容都只保留在這個分頁。',
+      bundle: '加密的匯出檔',
+      session: '用這個分頁裡的',
+      opened: '已在這個分頁開啟',
+      events: '事件筆數',
+      window: '序號範圍',
+      span: '首末事件時間',
+      transitions: '狀態變更',
+      exported: '匯出時間',
+      instance: '參與者安裝識別碼',
+      state: '目前狀態',
+      json: '解密後的 JSON',
+      large: '內容太長，這裡不顯示，請下載檔案閱讀。',
+      none: '這個匯出檔沒有任何事件。'
     },
     cli: 'researcher-tools 可在終端機完成相同流程，也能解密收到的資料。'
   },

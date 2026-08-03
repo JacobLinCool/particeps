@@ -71,6 +71,7 @@ const VIEWS = [
   { id: '/researcher/ · study (all sources on)', route: '/researcher/', step: 'study', expand: true },
   { id: '/researcher/ · sign', route: '/researcher/', step: 'sign' },
   { id: '/researcher/ · files', route: '/researcher/', step: 'files' },
+  { id: '/researcher/ · read', route: '/researcher/', step: 'read' },
   { id: '/participant/', route: '/participant/' }
 ];
 

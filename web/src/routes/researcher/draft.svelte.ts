@@ -26,6 +26,7 @@
  * public half had just been swapped out.
  */
 
+import type { ResearchBundle } from '$lib/adc/bundle';
 import { canonicalBytes, canonicalize } from '$lib/adc/canonical';
 import {
   fingerprint as fingerprintOf,
@@ -104,6 +105,18 @@ export function createDraft() {
   let signature = $state.raw<Uint8Array | null>(null);
   let envelope = $state.raw<Uint8Array | null>(null);
   let signedCanonical = $state.raw<string | null>(null);
+
+  /**
+   * A returned export, decrypted. It lives here rather than in the step that opened it for two
+   * reasons, and only one of them is the rail: `stateOf` is the rail's only source, so a bundle
+   * held in a component draws a permanently empty dot. The other is `reset()`. `Start over` says it
+   * discards everything in this tab, and a participant's data still on screen after it would make
+   * that sentence false — which on this page is the one sentence that cannot be false.
+   *
+   * `$state.raw` because nothing mutates it. A bundle is replaced whole or dropped whole, and a
+   * deep proxy over 900 events would be paid for on every read.
+   */
+  let bundle = $state.raw<ResearchBundle | null>(null);
 
   let attempted = $state(false);
   /**
@@ -186,7 +199,7 @@ export function createDraft() {
   const stale = $derived(signedCanonical !== null && signedCanonical !== canonical);
 
   const issuesByStep = $derived.by(() => {
-    const byStep: Record<StepId, Issue[]> = { keys: [], study: [], sign: [], files: [] };
+    const byStep: Record<StepId, Issue[]> = { keys: [], study: [], sign: [], files: [], read: [] };
     for (const issue of issues) byStep[stepForPath(issue.path)].push(issue);
     return byStep;
   });
@@ -270,6 +283,13 @@ export function createDraft() {
       case 'files':
         if (savedCount === 0) return 'empty';
         return savedCount === artifactCount ? 'complete' : 'partial';
+      case 'read':
+        // Two states, because there is no third honest one. This step owns no schema path, so it
+        // has nothing that can be `blocked`, and it produces no artefact that can be half saved —
+        // a decryption either verified its tag or produced nothing at all. `complete` here does not
+        // mean the study is done; it means a bundle is open in this tab, which is what
+        // `researcher.read.opened` says on the dot rather than borrowing `Nothing to fix`.
+        return bundle ? 'complete' : 'empty';
     }
   }
 
@@ -405,6 +425,10 @@ export function createDraft() {
         !keysSaved &&
         (studyStarted(configuration) || signedCanonical !== null)
       );
+    },
+    /** The one thing on this page that came *from* a participant. Null until a tag verifies. */
+    get bundle() {
+      return bundle;
     },
     get artifactCount() {
       return artifactCount;
@@ -543,6 +567,15 @@ export function createDraft() {
     },
 
     /**
+     * The whole result of a decryption, or `null` to drop it. Assigned in one move because that is
+     * the CLI's guarantee reproduced: `researcher-tools decrypt` stages its output and writes
+     * nothing until the tag verifies, and nothing partial ever reaches this field either.
+     */
+    holdBundle(value: ResearchBundle | null) {
+      bundle = value;
+    },
+
+    /**
      * A download was started. For the two derivable artefacts that is the whole story; for a
      * private key it is not, so the tile keeps its ring until {@link markKept}.
      */
@@ -604,6 +637,7 @@ export function createDraft() {
       attempted = false;
       sent = { ...NO_ARTIFACTS };
       kept = { ...NO_ARTIFACTS };
+      bundle = null;
       touched.clear();
     }
   };

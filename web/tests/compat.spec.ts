@@ -22,11 +22,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { canonicalBytes, canonicalize } from '../src/lib/adc/canonical';
+import { canonicalBytes, canonicalize, keysetJson } from '../src/lib/adc/canonical';
 import { encodeEnvelope } from '../src/lib/adc/envelope';
 import { fingerprint, generateSigningKeyPair, sign, verify } from '../src/lib/adc/crypto';
 import { generateHpkeKeyset } from '../src/lib/adc/tink';
+import { openBundle } from '../src/lib/adc/bundle';
 import { decodeEnvelope } from '../src/routes/researcher/parse';
+import { bundleJson, seal } from './seal';
 import type {
   CollectorConfig,
   InterventionConfig,
@@ -778,5 +780,71 @@ describe('a browser-made .adccfg is one the app accepts', () => {
       expect(difference(canonicalBytes(DEMO), readFileSync(output))).toBe('identical');
     },
     60_000
+  );
+
+  /**
+   * The export half, and the one direction available: `researcher-tools` has no `encrypt`, because
+   * the only thing that writes a bundle is a phone. So the bundle is sealed here and the JVM opens
+   * it — which tests the same wire format the site's reader is written against, from the other side.
+   *
+   * Without this, `tests/bundle.spec.ts` would be a writer and a reader agreeing with each other,
+   * and two halves wrong the same way agree perfectly. `decrypt` succeeding says the container
+   * layout, the big-endian lengths, the TINK prefix, the RFC 9180 schedule, the context in both of
+   * its roles, and the single-tag body are all what Kotlin believes them to be. The key exists only
+   * inside `scratch()` and only for this test.
+   */
+  it(
+    'seals a bundle the CLI decrypts, and opens one the site reads',
+    async () => {
+      const keyset = generateHpkeKeyset();
+      const configuration = study({
+        experiment_id: 'bundle-compat',
+        configuration_id: 'bundle-compat-001',
+        export: { researcher_key_id: 'bundle-hpke', tink_hpke_public_keyset: keyset.publicKeyset }
+      });
+      const plaintext = bundleJson(configuration, {
+        events: 4,
+        assignedParticipantId: 'Assigned_A-017'
+      });
+      const bundle = await seal(configuration, plaintext);
+
+      const directory = scratch();
+      const bundlePath = join(directory, 'export.adcexp');
+      const configPath = join(directory, 'canonical.json');
+      const privatePath = join(directory, 'hpke-private.json');
+      const output = join(directory, 'decrypted.json');
+      writeFileSync(bundlePath, bundle);
+      writeFileSync(configPath, canonicalBytes(configuration));
+      writeFileSync(privatePath, keysetJson(keyset.privateKeyset), 'utf8');
+
+      runCli(
+        'decrypt',
+        '--bundle', bundlePath,
+        '--config', configPath,
+        '--private', privatePath,
+        '--output', output
+      );
+      expect(difference(new TextEncoder().encode(plaintext), readFileSync(output))).toBe('identical');
+
+      // And back the other way, so the two implementations are stated to agree rather than assumed.
+      const opened = await openBundle(bundle, configuration, keyset.privateKeyset);
+      if (!opened.ok) throw new Error(`the site refused its own bundle: ${opened.failure}`);
+      expect(opened.bundle.text).toBe(plaintext);
+
+      // The CLI's own refusal, for the mistake the site names `wrong_study`.
+      const other = join(directory, 'other.json');
+      writeFileSync(other, canonicalBytes(study({ export: configuration.export, configuration_id: 'bundle-compat-002' })));
+      expect(() =>
+        runCli(
+          'decrypt',
+          '--bundle', bundlePath,
+          '--config', other,
+          '--private', privatePath,
+          '--output', join(directory, 'never.json')
+        )
+      ).toThrow();
+      expect(existsSync(join(directory, 'never.json'))).toBe(false);
+    },
+    120_000
   );
 });

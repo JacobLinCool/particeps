@@ -89,9 +89,12 @@ page.on('download', async (d) => {
 
 await page.goto(`${ORIGIN}/researcher/`, { waitUntil: 'networkidle' });
 
-// Keys. Nothing is typed and no button is pressed to make them: the step generates both pairs on
-// arrival, and both names derive from the key material. The two tiles are taken by the names they
-// carry, which are those derived names with `-private.key` / `-private.json` after them.
+// Keys, which is the second step now: the page opens on the study, so the rail has to be used to
+// get here. Nothing is typed and no button is pressed to make the keys — the step generates both
+// pairs on arrival, and both names derive from the key material. The two tiles are taken by the
+// names they carry, which are those derived names with `-private.key` / `-private.json` after them.
+await page.locator('[data-testid="rail-keys"]').click();
+await page.waitForSelector('[data-testid="step-keys"]');
 await page.waitForTimeout(600);
 const signingTile = page.getByRole('button', { name: /signer-[0-9a-z]{13}-private\.key$/ });
 const hpkeTile = page.getByRole('button', { name: /export-[0-9a-z]{13}-private\.json$/ });
@@ -105,8 +108,9 @@ await signingTile.click();
 await hpkeTile.click();
 await page.waitForTimeout(600);
 
-// The study.
-await page.getByRole('button', { name: 'Next', exact: true }).click();
+// The study. Reached by name off the rail rather than by pressing Next, so the script says which
+// step it wants and does not quietly encode where that step sits in the order.
+await page.locator('[data-testid="rail-study"]').click();
 await page.waitForSelector('[data-testid="step-study"]');
 await page.waitForTimeout(400);
 const fill = async (label, value) => {
@@ -170,7 +174,7 @@ if ((await motionRequired.getAttribute('aria-pressed')) !== 'true') {
 
 // Sign. The identifiers are read off the page before the click, because the claim under test is
 // that the file is named what the researcher was shown it would be named.
-await page.getByRole('button', { name: 'Next', exact: true }).click();
+await page.locator('[data-testid="rail-sign"]').click();
 await page.waitForSelector('[data-testid="identity-readout"]');
 await page.waitForTimeout(400);
 // `:first-child`, because `CopyButton` leaves its own live region as a sibling of the value. Four
@@ -197,6 +201,39 @@ const fingerprint = (
 await page.getByRole('button', { name: /study-canonical\.json/ }).first().click();
 await page.getByRole('button', { name: /study\.adccfg/ }).first().click();
 await page.waitForTimeout(600);
+
+// ---------------------------------------------------------------------------------------------
+// The read step's offer of what this tab already holds.
+//
+// `researcher-tools decrypt` takes three files, and two of them are files this tab has just made.
+// The step offers them rather than asking a researcher to go and find what they downloaded a
+// minute ago — but only once a signature exists, because an export key's public half reaches a
+// phone only inside a signed configuration, and a key with nothing signed can have sealed nothing.
+// So this is the assertion that the offer appears exactly when it is true, and fills the two
+// inputs with the two files whose names are on the disk beside this script.
+//
+// The decryption itself is proved elsewhere and against the other implementation: `tests/
+// compat.spec.ts` has the JVM open a bundle this codebase sealed, and open the site's reader on it.
+// ---------------------------------------------------------------------------------------------
+await page.locator('[data-testid="rail-read"]').click();
+await page.waitForSelector('[data-testid="step-read"]');
+for (const id of ['read-configuration-session', 'read-key-session']) {
+  if ((await page.locator(`[data-testid="${id}"]`).count()) !== 1) {
+    fail(`the read step did not offer ${id} after signing`);
+  }
+  await page.locator(`[data-testid="${id}"]`).click();
+}
+const staged = await page.locator('[data-testid="step-read"] .note').allTextContents();
+for (const name of ['study-canonical.json', 'export-hpke-private.json']) {
+  if (!staged.some((line) => line.includes(name))) {
+    fail(`the read step did not name ${name} after taking it from this tab`);
+  }
+}
+// Two of three. Nothing decrypts until a bundle arrives, and the control says so by being dead.
+if (await page.locator('[data-testid="read-open"]').isEnabled()) {
+  fail('the read step offered to open a bundle it has not been given');
+}
+
 await browser.close();
 
 if (problems.length) fail('the page logged errors:\n  ' + problems.join('\n  '));

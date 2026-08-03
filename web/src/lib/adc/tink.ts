@@ -136,32 +136,102 @@ function concat(...parts: number[][]): Uint8Array {
  * rather than guessed at.
  */
 export function isUsableHpkePublicKeyset(keyset: TinkKeyset): boolean {
-  if (!keyset || typeof keyset !== 'object') return false;
-  if (!Array.isArray(keyset.key) || keyset.key.length !== 1) return false;
-  const [entry] = keyset.key;
-  if (!entry || typeof entry !== 'object') return false;
-  if (entry.status !== 'ENABLED' || entry.outputPrefixType !== 'TINK') return false;
-  if (!Number.isInteger(entry.keyId) || entry.keyId < 1 || entry.keyId > MAXIMUM_KEY_ID) {
-    return false;
-  }
-  if (entry.keyId !== keyset.primaryKeyId) return false;
-  const data = entry.keyData;
-  if (!data || typeof data !== 'object') return false;
-  if (data.typeUrl !== PUBLIC_TYPE_URL || data.keyMaterialType !== 'ASYMMETRIC_PUBLIC') return false;
-  if (typeof data.value !== 'string') return false;
+  return hpkePublicKey(keyset) !== null;
+}
+
+/**
+ * The 32-byte X25519 key a study seals to, or `null` for a keyset Tink would refuse. Same checks as
+ * {@link isUsableHpkePublicKeyset}, which is now this function asked as a yes-or-no question: an
+ * HPKE open needs `pkRm` for its `kem_context`, and deriving it a second way would be a second
+ * opinion about which key a bundle was sealed to.
+ */
+export function hpkePublicKey(keyset: TinkKeyset): Uint8Array | null {
+  const value = keyMaterial(keyset, PUBLIC_TYPE_URL, 'ASYMMETRIC_PUBLIC');
+  if (!value) return null;
+  // A truncated protobuf throws out of `readMessage`, and every way a keyset can fail to be one
+  // gives the same answer here: it is not a keyset this can use.
   try {
-    return isHpkePublicKey(decodeBase64(data.value));
+    const fields = readMessage(value);
+    const publicKey = delimited(fields, 3);
+    return publicKey && publicKey.length === PRIVATE_KEY_BYTES && isSuite(delimited(fields, 2))
+      ? publicKey
+      : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
-/** `HpkePublicKey { params: HpkeParams, public_key: bytes }` with this module's one suite. */
-function isHpkePublicKey(message: Uint8Array): boolean {
-  const fields = readMessage(message);
-  const params = delimited(fields, 2);
-  const publicKey = delimited(fields, 3);
-  if (!params || !publicKey || publicKey.length !== PRIVATE_KEY_BYTES) return false;
+/** What an HPKE open needs from the file `hpke-keygen` wrote. */
+export interface HpkeRecipient {
+  keyId: number;
+  /**
+   * Stored unclamped, which is how Tink stores it; `@noble`'s x25519 clamps on use exactly as Tink
+   * does, so these are the bytes as read.
+   */
+  scalar: Uint8Array;
+  publicKey: Uint8Array;
+}
+
+/**
+ * The private twin of {@link hpkePublicKey}, and the CLI has one too: `HpkeCrypto` validates the
+ * private handle and its parameters before it will decrypt anything. The whole browser recipe is
+ * written to one suite and one prefix shape, so a keyset naming another suite has to be refused
+ * with a sentence rather than left to fail later as an opaque tag error, which is the one failure
+ * nobody can act on.
+ *
+ * `HpkePrivateKey { 2: HpkePublicKey, 3: bytes private_key }`, field 1 being `version = 0` that
+ * proto3 omits.
+ */
+export function readHpkePrivateKeyset(keyset: TinkKeyset): HpkeRecipient | null {
+  const value = keyMaterial(keyset, PRIVATE_TYPE_URL, 'ASYMMETRIC_PRIVATE');
+  if (!value) return null;
+  try {
+    const fields = readMessage(value);
+    const scalarBytes = delimited(fields, 3);
+    const publicMessage = delimited(fields, 2);
+    if (!scalarBytes || !publicMessage || scalarBytes.length !== PRIVATE_KEY_BYTES) return null;
+    const publicFields = readMessage(publicMessage);
+    const publicKey = delimited(publicFields, 3);
+    if (!publicKey || publicKey.length !== PRIVATE_KEY_BYTES) return null;
+    if (!isSuite(delimited(publicFields, 2))) return null;
+    return { keyId: keyset.primaryKeyId, scalar: scalarBytes, publicKey };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Tink's own validation of the wrapper, run before anything reads the key inside it. Both producers
+ * of these files — this page and `researcher-tools hpke-keygen` — write exactly one enabled `TINK`
+ * key, so a keyset shaped any other way did not come from either and is refused rather than guessed
+ * at.
+ */
+function keyMaterial(
+  keyset: TinkKeyset,
+  typeUrl: string,
+  keyMaterialType: string
+): Uint8Array | null {
+  if (!keyset || typeof keyset !== 'object') return null;
+  if (!Array.isArray(keyset.key) || keyset.key.length !== 1) return null;
+  const [entry] = keyset.key;
+  if (!entry || typeof entry !== 'object') return null;
+  if (entry.status !== 'ENABLED' || entry.outputPrefixType !== 'TINK') return null;
+  if (!Number.isInteger(entry.keyId) || entry.keyId < 1 || entry.keyId > MAXIMUM_KEY_ID) return null;
+  if (entry.keyId !== keyset.primaryKeyId) return null;
+  const data = entry.keyData;
+  if (!data || typeof data !== 'object') return null;
+  if (data.typeUrl !== typeUrl || data.keyMaterialType !== keyMaterialType) return null;
+  if (typeof data.value !== 'string') return null;
+  try {
+    return decodeBase64(data.value);
+  } catch {
+    return null;
+  }
+}
+
+/** `HpkeParams`, this module's one suite. */
+function isSuite(params: Uint8Array | null): boolean {
+  if (!params) return false;
   const suite = readMessage(params);
   // DHKEM_X25519_HKDF_SHA256 / HKDF_SHA256 / AES_256_GCM. Read field by field rather than compared
   // as bytes, so a producer that orders the three differently is still recognised.
