@@ -120,6 +120,8 @@ export interface Messages {
 
   intervention: {
     title: string;
+    /** One of them. `title` and the section heading are both plural and cannot name a single card. */
+    one: string;
     empty: string;
     notificationTiming: string;
     anonymous: string;

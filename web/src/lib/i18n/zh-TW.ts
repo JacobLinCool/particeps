@@ -37,7 +37,10 @@ export const zhTW: Messages = {
   },
 
   intervention: {
-    title: '介入活動與問卷',
+    // 「研究活動」是 App 通知頻道用的字（intervention_channel），也就是參與者在系統設定裡看得到的
+    // 那個字。網站沿用同一個詞，而不是另外造一個只有研究者看得到的說法。
+    title: '研究活動與問卷',
+    one: '研究活動',
     empty: '沒有排定的活動。',
     notificationTiming: 'Android 會盡量按照排程發出通知，但時間可能略有誤差。',
     anonymous: '未指定參與者代碼',
@@ -333,7 +336,7 @@ export const zhTW: Messages = {
         validity: { title: '這個研究會進行多久？' },
         collectors: { title: '資料來源' },
         consent: { title: '知情同意' },
-        interventions: { title: '介入活動' },
+        interventions: { title: '研究活動' },
         delivery: {
           title: '自動傳送',
           note: '未啟用自動傳送時，資料只會在參與者自行匯出後離開手機。'

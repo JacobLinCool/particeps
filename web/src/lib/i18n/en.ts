@@ -37,6 +37,7 @@ export const en: Messages = {
 
   intervention: {
     title: 'Interventions and surveys',
+    one: 'Intervention',
     empty: 'No scheduled activities.',
     notificationTiming: 'Android notification timing is best effort, not an exact wall-clock instant.',
     anonymous: 'Anonymous / pseudonymous',

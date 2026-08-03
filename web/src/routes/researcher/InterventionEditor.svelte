@@ -755,11 +755,10 @@
         />
       {/snippet}
 
-      <!-- The section's own heading is directly above this box; on its own it named the box after
-           the whole section rather than after what the box holds. The catalogue has no singular
-           word for one intervention, so the identifier is said the way `Question ID` is. -->
+      <!-- `intervention.one`, not the section heading directly above: this box holds the id of one
+           of them, and a plural naming a single field read as though it named the whole section. -->
       <IdField
-        label={`${m.researcher.study.section.interventions.title} ID`}
+        label={`${copy.one} ID`}
         path={`${path}.id`}
         value={intervention.id}
         onchange={(value) => (intervention.id = value)}
@@ -955,7 +954,7 @@
 <ConfirmDialog
   open={cascading !== null}
   title={doomed ? `${m.control.remove} · ${copy.survey} · ${doomed}` : m.control.remove}
-  body={`${m.researcher.study.section.interventions.title} · ${cascade.join(' · ')}`}
+  body={`${cascade.length === 1 ? copy.one : m.researcher.study.section.interventions.title} · ${cascade.join(' · ')}`}
   confirmLabel={m.action.confirm}
   cancelLabel={m.action.cancel}
   onconfirm={() => {
