@@ -169,7 +169,7 @@ export const zhTW: Messages = {
       consentSummary: '資料、目的、時長、風險、權限、匯出、退出、刪除、聯絡方式。',
       storageQuota: '空間用完後會停止收集，但不會刪除已收集的資料。',
       required: '沒有這項權限就無法開始。',
-      samplingPeriod: '這是要求的取樣週期，並非頻率上限，裝置實際提供資料的頻率可能更高。',
+      samplingPeriod: '這是取樣週期要求，不是頻率上限；裝置可能更快。',
       bandwidthEstimates: '平台的估計值，不是實測值。',
       pollInterval: '一分鐘是試跑用的設定，不是正式研究的設定。',
       fastestInterval: '不能比定位間隔長。',
@@ -329,7 +329,7 @@ export const zhTW: Messages = {
         title: '匯出資料的加密金鑰',
         algorithm: 'X25519 · HPKE',
         /** 全站最窄的位置：檔案步驟的下載磚裡，那一條只有 135px。 */
-        risk: '遺失後將無法解密資料。'
+        risk: '遺失即無法解密。'
       },
       /** 檔案步驟裡「妥善保存金鑰」那一欄的提示，寬度 218px。全站唯一一句講外洩的話，
        *  放在歸檔的地方，而不是產生金鑰的地方。 */

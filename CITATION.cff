@@ -29,5 +29,5 @@ keywords:
   - android
 license: MIT
 # TODO: update version and date-released at each tagged release.
-version: 0.1.0
-date-released: "2026-08-01"
+version: 1.0.0-rc.2
+date-released: "2026-08-03"

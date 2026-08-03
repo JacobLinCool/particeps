@@ -162,7 +162,7 @@ What a real deployment owes participants is its own key pairs and a published si
 
 The dependency set is small: Tink for cryptography, Gson for parsing, AndroidX Compose, Lifecycle and WorkManager, Google Play Services Location for the fused location provider, and OkHttp 5.3.0 for the upload request. There is no analytics, crash reporter, or telemetry library. OkHttp is used from one class, `OkHttpStudyUploader`, which builds a single POST to the endpoint the signed configuration names; Play Services Location is the only other dependency with a plausible network surface.
 
-The release runtime classpath resolves to 136 Maven components. The most recent audit scanned the 132 present before OkHttp was added — `com.squareup.okhttp3:okhttp`, `com.squareup.okhttp3:okhttp-android`, `com.squareup.okio:okio`, and `com.squareup.okio:okio-jvm` are the four new ones — offline with Trivy 0.70.0 against a vulnerability database dated 2026-07-19, and found no known vulnerabilities; a source secret scan reported nothing. That is a point-in-time result from a local database rather than a live query, and it now predates part of the classpath — re-run it before any deployment.
+The release runtime classpath resolves to 136 Maven components. On 2026-08-03, the exact Gradle-resolved graph was exported as a CycloneDX SBOM and scanned with Trivy 0.70.0 against vulnerability and Java databases downloaded that day; no known vulnerability at any severity was found. A separate source and `pnpm-lock.yaml` scan found no secret or known vulnerability. These are point-in-time results rather than a continuing guarantee, so re-run both scans before any deployment.
 
 ## Verifying this yourself
 
