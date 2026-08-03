@@ -251,6 +251,14 @@ button.chip:hover {
   flex-wrap: wrap;
 }
 
+/* The head is the one row in the shared mark rule that carries no type of its own — the label
+   sets one size and the counter another, and what the row inherits is the panel's body size, a
+   line taller than either of them. `1lh` is read off the mark itself, and a mark has no text to
+   set in any case, so this says only which of the two lines it is a mark on: the label's. */
+.field__head > .icon {
+  font-size: var(--type-fine);
+}
+
 .field__label {
   font-size: var(--type-fine);
   font-weight: var(--w-medium);

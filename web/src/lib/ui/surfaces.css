@@ -429,6 +429,36 @@ button.rail__step:hover {
   flex: none;
 }
 
+/* Every row listed here sets a mark beside one line of text, and every one of them was placing
+   that mark against the line *box* rather than against the words inside it: `flex-start` puts it
+   at the top of the box, and `baseline` hangs it from the text's baseline — a mark has no
+   baseline of its own, so its bottom edge is used instead. Both leave it high by half the
+   leading, so the miss grows with line-height, which is why it is worse in Chinese than in
+   English and worst of all where the type is smallest.
+
+   A mark as tall as the line is centred on the words by the row's own alignment, at any mark size
+   and in either locale, and the drawing is letterboxed inside the taller viewport rather than
+   stretched, so nothing is resized. `min-` rather than a plain `block-size` so the rule can only
+   ever grow a mark: no row on the site is currently in the opposite position — the largest mark
+   here is the section head's 22px against a 23.25px line, and 26.25px in Chinese — but a mark
+   taller than its line wants leaving alone, and this way adding one cannot silently shrink it.
+
+   `.flags__row` and `.verdict` are drawn in component-scoped CSS. They are listed here anyway
+   because the mechanism is this one and not theirs, and a copy in each component would be the
+   same sentence said three times. */
+.note > .icon,
+.field__head > .icon,
+.field__note > .icon,
+.tile__warn > .icon,
+.quota__read > .icon,
+.collector__disclosure > .icon,
+.receipt__row > .mark,
+.flags__row > .mark,
+.verdict > .mark {
+  align-self: start;
+  min-block-size: 1lh;
+}
+
 /* ---- note --------------------------------------------------------------------------------- */
 
 .note {
@@ -1003,11 +1033,6 @@ button.fingerprint--plaque:hover {
   color: var(--ink-faint);
 }
 
-/* The mark sits on the text's cap height, not on its line box. */
-.collector__disclosure .icon {
-  margin-block-start: 3px;
-}
-
 .collector__records {
   padding: 0 var(--sp-5) var(--sp-5);
   font-size: var(--type-fine);
@@ -1069,9 +1094,13 @@ button.fingerprint--plaque:hover {
   background: var(--caution-ink);
 }
 
+/* Everything on this row is the same mono micro type, so aligning the tops aligns the words —
+   and unlike `baseline` it does not hand the row's baseline to the time-to-quota chip, whose own
+   first child is a mark rather than a word and which therefore sat the whole chip, and the mark
+   beside it, a few pixels above the size it is reading out. */
 .quota__read {
   display: flex;
-  align-items: baseline;
+  align-items: start;
   gap: var(--sp-5);
   font-size: var(--type-micro);
   font-variant-numeric: tabular-nums;
