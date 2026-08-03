@@ -31,15 +31,18 @@
   }
 </script>
 
-<Field {label} {path} {hint}>
-  {#snippet children({ id, describedby })}
-    <div class="row row--tight" role="group" aria-label={label} aria-describedby={describedby}>
-      {#each options as option, index (option.value)}
+<!-- `group`, for the same reason `ChoiceField` needs it: a `role="group"` row is not labelable, so
+     `for` used to be parked on the first chip — and a `<label for>` beats a button's own contents in
+     the naming algorithm, which left Wi-Fi announced as "Transports" and reachable under no name of
+     its own. The row is named by the label's id; each chip keeps the name it draws. -->
+<Field {label} {path} {hint} group>
+  {#snippet children({ labelId, describedby })}
+    <div class="row row--tight" role="group" aria-labelledby={labelId} aria-describedby={describedby}>
+      {#each options as option (option.value)}
         {@const on = value.includes(option.value)}
         <button
           class={cx('chip', on && 'chip--selected', short && 'chip--danger')}
           type="button"
-          id={index === 0 ? id : undefined}
           aria-pressed={on}
           onclick={() => toggle(option.value)}
           data-testid={path ? `chip-${path}-${option.value}` : undefined}

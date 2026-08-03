@@ -6,6 +6,10 @@
    * Generic over the value, so `priority` and `required` share one control without either being
    * stringly typed at the call site.
    *
+   * The group takes the field's label by id. Carrying `Field`'s `for` target on the first option
+   * instead made that label the first option's accessible name — "Priority" where "Balanced" was
+   * written — so the option could not be named, asked for, or told apart from the field it sits in.
+   *
    * The roving tabindex is the whole radio-group contract, not half of it: `tabindex="-1"` on the
    * unselected option is what stops Tab landing on every segment, and it is only survivable because
    * the arrow keys move between them. Without the handler the unselected option is unreachable and
@@ -50,12 +54,13 @@
   }
 </script>
 
-{#snippet group(id: string | undefined, describedby: string | undefined)}
+{#snippet segments(labelledby: string | undefined, describedby: string | undefined)}
   <div
     bind:this={host}
     class="choice"
     role="radiogroup"
-    aria-label={label ?? groupLabel}
+    aria-labelledby={labelledby}
+    aria-label={labelledby ? undefined : groupLabel}
     aria-describedby={describedby}
     tabindex={-1}
     onkeydown={keydown}
@@ -65,7 +70,6 @@
         class="choice__opt"
         type="button"
         role="radio"
-        id={index === 0 ? id : undefined}
         aria-checked={option.value === value}
         tabindex={index === selected ? 0 : -1}
         onclick={() => onchange(option.value)}
@@ -79,11 +83,11 @@
 {/snippet}
 
 {#if label}
-  <Field {label} {path} {hint}>
-    {#snippet children({ id, describedby })}
-      {@render group(id, describedby)}
+  <Field {label} {path} {hint} group>
+    {#snippet children({ labelId, describedby })}
+      {@render segments(labelId, describedby)}
     {/snippet}
   </Field>
 {:else}
-  {@render group(undefined, undefined)}
+  {@render segments(undefined, undefined)}
 {/if}

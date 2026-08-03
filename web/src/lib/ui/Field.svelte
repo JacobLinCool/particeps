@@ -16,6 +16,8 @@
 
   export interface FieldParts {
     id: string;
+    /** For a body that is not one labelable element: name it with `aria-labelledby`. */
+    labelId: string;
     describedby: string | undefined;
     invalid: boolean;
   }
@@ -34,6 +36,13 @@
     advisory?: string | null;
     /** Extra schema paths this shell answers for, so an issue row has somewhere to land. */
     issueHost?: readonly (string | undefined)[];
+    /**
+     * The body is a group of controls rather than one control. `for` has nothing to point at then:
+     * a `role="radiogroup"` div is not labelable, and putting the id on the first control inside it
+     * makes the field's label that control's accessible name instead of its own. Such a body takes
+     * `labelId` and names itself, and the label is drawn without a `for` that would dangle.
+     */
+    group?: boolean;
     class?: string;
     children: Snippet<[FieldParts]>;
   }
@@ -47,6 +56,7 @@
     issues,
     advisory,
     issueHost,
+    group = false,
     class: extra,
     children
   }: Props = $props();
@@ -59,6 +69,7 @@
   const invalid = $derived(shown.length > 0);
 
   const id = $derived(`${uid}-control`);
+  const labelId = $derived(`${uid}-label`);
   const hintId = $derived(`${uid}-hint`);
   const issueId = $derived(`${uid}-issue`);
 
@@ -77,7 +88,11 @@
 >
   <div class="field__head">
     {#if icon}<Icon name={icon} size={16} tone="faint" />{/if}
-    <label class="field__label" for={id}>{label}</label>
+    {#if group}
+      <span class="field__label" id={labelId}>{label}</span>
+    {:else}
+      <label class="field__label" id={labelId} for={id}>{label}</label>
+    {/if}
     {#if counter}
       <span class="field__counter">
         {#if ratio > 0.75}
@@ -87,7 +102,7 @@
     {/if}
   </div>
 
-  {@render children({ id, describedby, invalid })}
+  {@render children({ id, labelId, describedby, invalid })}
 
   {#if counter}
     <div class="counterline" aria-hidden="true">
