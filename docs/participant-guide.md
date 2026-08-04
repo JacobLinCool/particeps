@@ -46,7 +46,7 @@ Every word of the interface lives in [`app/src/main/res/values/strings.xml`](../
 
 Use only the official installation source your research team gives you, and check that the app name and study description match what they told you. Do not install an APK from an unknown source, one that asks you to turn off Android security features, or one that asks for account passwords. This app does not ask for your passwords.
 
-A study configuration file usually ends in `.adccfg`. When you import one, the app checks the signature on the file, the validity period, the minimum app version, and the full structure of the file. If any check fails, the app stops. It does not fall back to a permissive mode and it does not collect anything. If that happens, ask your research team for a correct file rather than trying to work around it.
+A study configuration file usually ends in `.adccfg`. When you import one, the app checks the signature on the file, its Android platform target, the validity period, the minimum client build, and the full structure of the file. If any check fails, the app stops. It does not fall back to a permissive mode and it does not collect anything. If that happens, ask your research team for a correct file rather than trying to work around it.
 
 That signature check tells you the file has not been altered since it was signed. It does not, on its own, tell you who wrote it — the next section explains what the app shows you instead, and what you can do about it.
 
@@ -112,7 +112,7 @@ Nothing in the researcher name, contact details, or study description proves who
 
 The consent step also says whether the study is **Anonymous or pseudonymous** (匿名或假名研究) or **Personalized** (個人化研究). An anonymous configuration contains no code assigned by the research team. A personalized configuration shows the exact opaque code embedded in your signed file; compare it with the code the team gave you. The app never asks you to enter a name, email address, or phone number.
 
-Every import also creates a fresh random installation code. Importing the same configuration twice therefore produces two different installation codes. A personalized export contains both codes inside its encrypted body; an upload exposes only the random installation code in its headers, never the researcher-assigned code. Treat either code as linkable study data even though neither is required to be a name.
+Every import also creates a fresh random installation code. Importing the same configuration twice therefore produces two different installation codes. A personalized export contains both codes inside its encrypted body. Automatic upload headers contain neither code, nor the study or configuration identifier; they contain only bundle-level routing claims. Treat either code as linkable study data after decryption even though neither is required to be a name.
 
 ### Whether the study sends data automatically
 
@@ -147,12 +147,17 @@ The **Data** step, step 2 of the setup, lists every one of them before you are a
 
 That sentence comes from the app, not from the research team. It is a template with that study's own settings filled into it, so a study that samples your location every ten seconds and one that samples it every ten minutes do not read the same. No field in a configuration can change the wording.
 
-What a source cannot see is not printed on this screen. For that, use the table in section 3 of this guide and the [data dictionary](data-dictionary.md), which are written against the same source the app runs.
+The screen also names selected limits the implementation can guarantee, such as omitted battery identity or inference labels. Those short statements are not an exhaustive threat model; use the table below and the [data dictionary](data-dictionary.md) for the complete field definitions and interpretation limits, which are written against the same source the app runs.
 
 | Row | The sentence it shows |
 | --- | --- |
 | **App activity** (App 使用狀況) — a rounded square with a dot in the middle | When this app itself is opened and closed (這個 App 本身何時被開啟與關閉) |
 | **Motion** (動作) — a wave, two crests around a centre line | Movement of the phone, about **N** times per second or more (手機的移動，每秒約 **N** 次或更多) |
+| **Battery context** (電池情境) — opposing data arrows | Whole percentage, charging state/source, and power-save mode; not health, temperature, or hardware identity (整數電量、充電狀態與來源、省電模式；不含健康、溫度或硬體識別碼) |
+| **Time context** (時間情境) — a clock | Time-zone setting, UTC offset, daylight-saving state, and clock changes; not a location or travel claim (時區、UTC 偏移、日光節約與時鐘變更；不代表位置或旅行) |
+| **Phone rotation** (手機旋轉) — the motion wave | Raw three-axis rotation, about **N** times per second or more; no orientation or activity labels (三軸旋轉，每秒約 **N** 次以上；不含方向或活動標記) |
+| **Ambient light** (環境光線) — the app-shaped sensor mark | Raw light level within the configured interval and threshold; no environmental content (依設定間隔與門檻記錄原始照度；不含環境內容) |
+| **Proximity sensor** (接近感測器) — the connection arcs | Raw near/distance state within the configured interval and threshold; near/far transitions are recorded even below the distance threshold, and many phones report only near/far (依設定間隔與門檻記錄遠近／距離；遠近狀態切換不受距離門檻限制，且許多手機只能回報近或遠) |
 | **Connection type** (連線類型) — three rising arcs over a dot | Whether you are on Wi-Fi or mobile data, and whether it is metered (你目前是 Wi-Fi 還是行動網路，以及是否計費) |
 | **Data volume** (流量) — two arrows side by side, one up and one down | Total bytes your phone sent and received, every **T** (手機每 **T** 傳送與接收的總位元組數) |
 | **App and screen use** (App 與螢幕使用) — a phone outline with a short bar near its foot | Which apps open and close, and when the screen turns on, every **T** (每 **T** 記錄哪些 App 被開啟關閉、螢幕何時亮起) |
@@ -173,6 +178,11 @@ The sentences are short because they are the summary. This is what each source a
 | --- | --- | --- |
 | App activity | Lifecycle timings of this app's own screens | Not your use of any other app |
 | Motion | Raw x/y/z acceleration from your phone, with timing and an accuracy status | Can be used to study movement or posture, but the app does not label it for you |
+| Battery state | Whole percentage, charging state/source, and power-save mode | No health, temperature, capacity, serial, or hardware ID |
+| Time context | Time-zone ID, UTC offset, DST state, and clock-change reason | A time-zone setting is not physical location or travel evidence |
+| Rotation | Raw x/y/z angular velocity, timing, and accuracy status | No derived orientation, posture, activity, or gesture labels |
+| Ambient light | Raw illuminance, timing, and accuracy status | No image or environmental content; values vary by hardware |
+| Proximity | Raw distance/range and the phone's near/far interpretation | Many devices are binary; it does not prove presence or comparable distance |
 | Connection type | Wi-Fi/mobile/ethernet/VPN, whether the connection is validated/metered/roaming, bandwidth estimates | No Wi-Fi network names, IP addresses, web addresses, packets, or content |
 | Data volume | Total bytes and packets your device sent and received over Wi-Fi and mobile data during a time window | Coarse and possibly delayed; not per-app and not per-website usage |
 | App and screen use | Package names, app resumed/paused/stopped, screen, keyguard (lock screen), and boot/shutdown events | Android's own record of these can be delayed or incomplete |
@@ -199,9 +209,12 @@ Tap anywhere on a row that is not granted yet and the app sends you straight to 
 
 Used for scheduled study activities and for the notification that stays visible while collection is running. Activities use Android's background work system, which is not an exact alarm: battery saving, Doze, or system scheduling can delay them.
 
-### Motion sensor (加速度感測器) and basic network state
+### Sensor hardware (感測器硬體) and basic network state
 
-These usually do not produce an extra Android permission dialog. The motion sensor item is a hardware check — whether your phone has the sensor at all — so its row does nothing when you tap it. Connection type uses only Android's ordinary network-state permission and has no row of its own.
+Accelerometer, gyroscope, ambient-light, and proximity items are hardware checks, not permission
+dialogs, so their rows do nothing when tapped. A required source blocks enrollment when its sensor
+is absent; an optional source remains off. Connection type uses only Android's ordinary
+network-state permission and has no row of its own.
 
 ### Usage access (使用情況存取權)
 
@@ -252,6 +265,10 @@ After you restart your phone, only a study that was Collecting (收集中) tries
 
 Each scheduled activity has a durable occurrence identity. Restarting the phone, reopening the app, changing time zone, pausing, or recovering WorkManager reschedules that same occurrence instead of creating another one. Android can deliver a notification late, but the app records separately when it was scheduled, posted, opened, submitted, or expired; a notification being posted is not evidence that you saw it.
 
+Some studies use signed random local-time windows. The phone chooses an instant locally and stores
+it before scheduling; a retry or reboot does not draw a new time, and the research team cannot send
+a remote trigger. The configuration fixes the windows, limits, and minimum spacing.
+
 Tapping a survey notification opens exactly that occurrence. Surveys are native app screens with screen-reader labels, progress, required/optional indicators, and four answer types: short text, numeric scale, one choice, or multiple choices. Closing before submission stores no research answer or draft. Reopening returns to the same unanswered survey. Submission requires confirmation and is atomic: after one successful submission, the answer is read-only and cannot be edited or submitted again, even after restart or competing taps. An expired occurrence cannot be submitted.
 
 ### The status line
@@ -289,7 +306,13 @@ When a send attempt fails, a code in red replaces the sent figure:
 | `UPLOAD_HTTP_<status>` | The receiving server answered with an error, for example `UPLOAD_HTTP_503` |
 | `UPLOAD_FAILED` | Anything else |
 
-**A send failure does not stop collection.** The study keeps collecting, your phone keeps the data, and the app tries again on its own schedule. Most of these codes describe an ordinary interruption — no Wi-Fi, a low battery, or the research team's server being briefly unavailable — and clear by themselves. Each attempt sends only what has not already been confirmed as received, so nothing is sent twice.
+**A send failure does not stop collection.** The study keeps collecting and your phone keeps the
+staged encrypted package. Connection failures and server-busy responses are retried using exactly
+the same bytes, so the receiver can recognize a replay even when its success response was lost.
+A redirect, an incomplete-success response, most other client-error responses, or a mismatched
+receipt is recorded as a terminal delivery error instead of being retried forever. The app does
+not mark those events sent or silently discard them; the research team must correct its study or
+receiver setup.
 
 You do not need to interpret the code. If one is still on screen after several days, quote it to your research team as it appears; it tells them where the attempt failed and contains none of your collected data.
 
@@ -334,9 +357,9 @@ Finishing or withdrawing does not strand data the research team was already owed
 
 ### Pause and resume
 
-When you press Pause (暫停), the app writes a pause boundary, stops the sources, and flushes events that were already queued before that boundary. Once the status line shows Paused (已暫停), no new study events are accepted for the period you are paused. Data already collected stays on your phone, encrypted. The ongoing notification goes away.
+When you press Pause (暫停), the app writes a pause boundary, stops the sources, and flushes events that were already queued before that boundary. Once the status line shows Paused (已暫停), no new study events are accepted for the period you are paused. Data already collected stays on your phone, encrypted. The ongoing notification and any visible scheduled-activity notification go away. A survey cannot be opened or submitted while paused.
 
-Pressing Resume (繼續收集) starts a new collection interval. Data volume and app and screen use are not backfilled: the app does not go back and collect what happened while you were paused.
+Pressing Resume (繼續收集) starts a new collection interval. Data volume and app and screen use are not backfilled: the app does not go back and collect what happened while you were paused. Calendar time and scheduled-activity availability still pass during a pause, so the app expires missed activities and reconciles any remaining ones when you resume.
 
 ### Finish early
 
@@ -381,7 +404,7 @@ Confirming deletes:
 
 - The encrypted study configuration and state.
 - All local event segments.
-- The study's key in the Android Keystore — the hardware-backed key store your phone uses to hold encryption keys. Once that key is gone, any leftover encrypted bytes cannot be read back.
+- The study's non-exportable key in Android Keystore. Some phones may protect it in hardware, but this app does not require or verify hardware backing. Once the key is gone, any leftover encrypted bytes cannot be read back.
 - The export receipt information currently held in the app.
 
 **This cannot be undone.** There is no recovery, no undo, and no backup inside the app. After deleting, you cannot export that study's data again, because the data no longer exists on your phone. If you want the research team to have your data, export and send it before you delete.
@@ -395,19 +418,20 @@ Uninstalling the app or clearing its app data also destroys the local keys and d
 | Screen or situation | What to do |
 | --- | --- |
 | The interface is in a language you cannot read | Tap the globe at the top right of the header and pick a language; it is the same setting as Android Settings → Apps → Android Data Collector → Language |
-| The configuration file will not import | Check the file, the app version, and the study's validity period; do not modify the `.adccfg`, and contact the research team |
+| The configuration file will not import | Check the file, the client build/platform, and the study's validity period; do not modify the `.adccfg`, and contact the research team |
 | Check this against the fingerprint your research team published (請與研究團隊公佈的金鑰指紋核對) | Ordinary for most studies; compare the fingerprint on the Configuration signature (設定檔簽章) block with the one your research team published, and if you do not have one, ask before consenting |
 | The fingerprint does not match the one you were given | Do not consent. Contact your research team through details you already had, not details taken from the study screen |
 | A required item in the access list is not granted | Tap that row, finish on the Android screen it opens, and return to the app; if you do not want to grant it, do not start |
 | A source shows `ACCESS_UNAVAILABLE` | The access it needs is not granted. The other sources keep working; grant it only if you want to |
 | Motion sensor unavailable | The device has no compatible accelerometer; the app does not fabricate substitute data, so a study that requires it cannot start |
+| Gyroscope, ambient-light, or proximity sensor unavailable | The phone lacks that hardware; required collection cannot start and optional collection stays off. There is no substitute or inferred fallback. |
 | A source shows a red dot and any other code | Pause first, check that permission or special access, then try to resume; if it still fails, contact the research team and quote the code |
 | Data volume does not change in real time | Android's accounting is coarse and delayed, and the study sets how often the app polls; this is a normal limit |
 | There are gaps in location | Check location access, your phone's location services, and the research foreground service; indoors it can still be inaccurate |
 | A scheduled activity does not arrive on time | Check the notification permission and battery-saving settings; interventions use inexact background scheduling |
 | A survey says it expired or is unavailable | It cannot be submitted after its signed response window; contact the research team if the timing was unexpected |
 | Export fails | Check that the destination is writable and has enough space, and retry in another location; the study status does not change because of a failed export |
-| An `UPLOAD_…` code appears where the sent figure usually is | Nothing to do. Collection carries on and the app retries by itself; connect to Wi-Fi and charge the phone if it persists for days, then contact the research team and quote the code |
+| An `UPLOAD_…` code appears where the sent figure usually is | Collection carries on. Network, timeout, busy-server, and temporary-server errors retry automatically; other protocol/receipt errors can be terminal. Connect to Wi-Fi and charge the phone, then contact the research team and quote a persistent code |
 | Storage failure / paused | The app fails closed and stops accepting events; do not clear the app's data, contact the research team first, or export if you need to |
 
 When the app has something to tell you, it shows a short code in capital letters in a red band directly under the header, beside a solid dot — `STORAGE_WRITE_FAILED`, `CONFIGURATION_IMPORT_FAILED`, `EXPORT_FAILED` and the like. Passing the code to your research team helps them diagnose the problem, and it contains none of your collected data. Two codes in that band are confirmations rather than problems: `EXPORT_COMPLETE` after an export finishes, and `LOCAL_DATA_DELETED` after a deletion.
@@ -419,7 +443,7 @@ A study moves through nine states internally, but the screen names only four of 
 | Internal name | What you see | What it means for you |
 | --- | --- | --- |
 | `IMPORTED` | Dot 1 of 5, the Study panel | The configuration file has been read in; nothing is being collected |
-| `CONFIG_VERIFIED` | Dot 1 of 5, the Study panel | Signature, validity period, app version, source list, and export key all checked, which confirms the file is unaltered rather than who wrote it; nothing is being collected |
+| `CONFIG_VERIFIED` | Dot 1 of 5, the Study panel | Signature, validity period, platform, client build, source list, and export key all checked, which confirms the file is unaltered rather than who wrote it; nothing is being collected |
 | `CONSENT_PENDING` | Dot 2 then dot 3 of 5, the Data panel then the Consent panel | You are reading what would be collected and deciding whether to take part |
 | `ACCESS_SETUP` | Dot 4 of 5, the Access panel | You are completing the required Android access |
 | `READY` | Dot 5 of 5, the Start panel | Waiting for you to press Start study (開始研究); nothing is being collected |

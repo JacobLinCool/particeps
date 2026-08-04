@@ -6,10 +6,13 @@ of the system depends on.
 
 Read [System design](system-design.md) first for the module map, and
 [Component boundaries](component-boundaries.md) for the responsibility split. This document
-covers only the collector side of that boundary.
-
-Everything below is current source. Where a field or a rule exists but nothing enforces it,
-this guide says so — see [Known gaps](#13-known-gaps).
+covers only the collector side of that boundary. The [normative Protocol v1 contract](../protocol/v1/README.md)
+defines the enclosing configuration and bundle. Its machine-readable schema source is the
+[Protocol v1 collector catalog](../protocol/v1/collector-catalog.json); the generated Kotlin
+projection is
+[`ProtocolEventContracts.kt`](../core/collector-api/src/main/kotlin/cool/linc/androiddatacollector/core/collector/ProtocolEventContracts.kt).
+Read the [Collector capability policy](../assurance/README.md) before adding a module; CI enforces
+its source, bytecode, and dependency boundaries.
 
 ## 1. What a collector is
 
@@ -66,16 +69,16 @@ and must narrow it themselves. Every existing plugin rejects a mismatch with
 ```kotlin
 data class CollectorDescriptor(
     val id: String,
-    val payloadSchemaVersion: Int,
     val displayName: String,
     val privacyClass: PrivacyClass,
-    val maximumEncodedEventBytes: Int,
+    val eventContract: CollectorEventContract,
 ) {
+    val payloadSchemaVersion get() = eventContract.payloadSchemaVersion
+    val maximumEncodedEventBytes get() = eventContract.maximumEncodedEventBytes
+
     init {
         require(ID_PATTERN.matches(id)) { "Invalid collector ID" }
-        require(payloadSchemaVersion > 0) { "Payload schema version must be positive" }
         require(displayName.isNotBlank()) { "Collector display name must not be blank" }
-        require(maximumEncodedEventBytes in 128..65_536) { "Invalid maximum event size" }
     }
 
     private companion object {
@@ -88,6 +91,10 @@ enum class PrivacyClass {
     RESTRICTED,
 }
 ```
+
+`CollectorEventContract` supplies the closed payload-type/field set, field types and bounds,
+payload schema version, and maximum encoded size. Plugins obtain it from
+`ProtocolEventContracts[ID]`; editing the generated file directly is forbidden.
 
 ### Context and clocks
 
@@ -105,7 +112,7 @@ interface ResearchClocks {
 
 Three handles. A coroutine scope, an event sink, and a clock. There is no store, no state
 machine, no scheduler, no exporter, and no `Activity`. That narrowness is the boundary —
-see [section 3](#3-invariants-you-must-not-break).
+see [section 3](#3-invariants-a-collector-must-hold).
 
 `ResearchTime` carries three readings taken together
 ([`core/model/.../ExperimentModels.kt`](../core/model/src/main/kotlin/cool/linc/androiddatacollector/core/model/ExperimentModels.kt)):
@@ -203,27 +210,27 @@ change one of these, raise it as a design discussion first.
 
 | A collector does not | Why | Boundary that enforces it |
 | --- | --- | --- |
-| Write files, databases, or preferences | Every research byte must go through the encrypted store so that sequence numbers stay contiguous and export, upload, and reclaiming can all reason about one window. A side file is invisible to export, to the storage quota, and to deletion. | The only project dependencies in a `:collector:*` build file are `:core:collector-api` and `:core:study-definition`. `:core:storage` is not on the classpath, and `CollectorContext` carries no `StudyStore`. |
+| Write files, databases, or preferences | Every research byte must go through the encrypted store so that sequence numbers stay contiguous and export, upload, and reclaiming can all reason about one window. A side file is invisible to export, to the storage quota, and to deletion. | Feature modules depend on `:core:collector-api`, `:core:study-definition`, and optionally `:collector:sensor-common`; `:core:storage` is not on the classpath, and `CollectorContext` carries no `StudyStore`. |
 | Change study state | `IMPORTED` → … → `WITHDRAWN` is the participant's control surface. A collector that could move it could un-pause a study the participant paused. | `ExperimentStateMachine.transition` is called only from `ExperimentRuntime` in `:core:experiment-runtime`, which no collector module depends on. |
 | Start an `Activity` or drive UI | The app must never interrupt the participant on a collector's schedule. | Collector modules do not depend on `:app`. Plugins are constructed with `context.applicationContext`. |
 | Schedule interventions or notifications | Intervention timing and occurrence identity come from the signed configuration and are reconciled by the session manager. | The `StudyWorkScheduler` port is declared in `:core:study-application`; the WorkManager adapter is in `:app`. Neither is on a collector's classpath. |
 | Export, encrypt, or package data | Export is a participant-initiated act over a bounded sequence window, encrypted to a researcher HPKE key. | `:core:export` and `:core:crypto` are not on any collector's classpath. |
-| Open a socket or upload | Network transport lives in the study application layer, where the `StudyUploader` port sends only the encrypted bundle, only to the endpoint the signed configuration names, and only after the consent screen has disclosed it. A collector reaching the network would bypass all three, and the participant guide and deployed consent texts describe a study's transmission as coming from that one place. | The app declares `android.permission.INTERNET` for the upload worker, so the permission is present in the process and no manifest check will catch a collector using it. `:core:export`, `:core:crypto`, and the uploader are off a collector's classpath, and `CollectorContext` exposes no network client. Review is what enforces the rest. |
+| Open a socket or upload | Network transport lives in the study application layer, where the `StudyUploader` sends only a staged encrypted bundle to the signed endpoint. A collector reaching the network would bypass signed scope and consent. | `CollectorContext` exposes no network client, and forbidden network classes, imports, and dependencies fail the Collector capability check. |
 | Record text, characters, or content typed on the research keyboard | The consent text tells participants the keyboard never sees what they write. Touch dynamics research does not need the characters, so the characters are never carried across the boundary. | `ResearchKeyboardView.onTouchEvent` passes `key.category.name` to `ImeObservationBridge.publish`, never `key.text`. `ImeTouchObservation` has no field that could hold a character. The committed text goes to `InputConnection` and stops there. |
 | Log payload values, paths, package names, or exception messages | A logcat line is readable by anyone with adb access and is not covered by the encrypted store. | `CollectorHealth.reasonCode` is constrained to `[A-Z][A-Z0-9_]{2,63}`, which cannot hold free text. There is no other diagnostic channel in the API. |
 
-### What is not enforced
+### Static policy is not a sandbox
 
-None of the above is a sandbox. A collector module is Kotlin compiled into the same process
-with the app's permissions; `java.io.File` and `Context.startActivity` are reachable from
-any of them. The Gradle dependency graph is the real enforcement point for most of these
-rules, and there is currently **no automated architecture test** asserting it. A collector
-that broke these rules would compile and pass CI. Review is the backstop.
+Collectors still run in the app process with its permissions, so these checks are not operating
+system isolation. The repository nevertheless fails CI when a collector crosses its declared
+capability boundary. `tools/collector_assurance.py` inspects source imports, direct Gradle
+dependencies, and compiled class constant pools against `assurance/collector-policy.json`.
 
-Verify the graph yourself:
+Run the same capability check locally after compiling collectors:
 
 ```bash
 ./gradlew :collector:accelerometer:dependencies --configuration debugCompileClasspath
+python3 tools/collector_assurance.py
 ```
 
 Verify the permission set of a built APK, which is stronger than reading a single manifest:
@@ -244,8 +251,8 @@ POST_NOTIFICATIONS           RECEIVE_BOOT_COMPLETED   WAKE_LOCK
 
 plus the signature-level `cool.linc.androiddatacollector.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`
 that AndroidX contributes. `INTERNET` belongs to the study application layer's upload worker;
-its presence no longer tells you whether any given study transmits, and it means a collector's
-own network call would not show up here either.
+its presence no longer tells you whether any given study transmits, which is why bytecode and
+dependency policy are required in addition to a permission diff.
 
 ## 4. Module layout and dependency direction
 
@@ -280,15 +287,15 @@ fun pluginFor(configuration: CollectorConfiguration): CollectorPlugin =
 ### Identity and versioning
 
 - The ID must match `[a-z][a-z0-9_.-]{2,63}`. Every existing collector uses `<name>.v<major>`.
-- The ID is immutable once a study has shipped. Changing what an existing payload type
-  means, changing units, or removing a field is a new major ID and a new configuration type.
+- The ID is immutable once a study has shipped. Changing a field's meaning, type, unit, precision,
+  or clock basis requires a new collector/payload schema identity in the catalog.
 - `payloadSchemaVersion` versions the payload independently of the configuration schema and
   independently of the ID. It is stamped on every `EventDraft` and travels into the export.
-- `maximumEncodedEventBytes` must be in `128..65_536`. Declare a bound you can actually
-  justify from the field list. Note that **nothing reads this field today** — see
-  [Known gaps](#13-known-gaps). The limits the code does enforce are `EventDraft`'s: at most
-  32 fields, each value at most 1,024 characters.
-- `privacyClass` is `RESTRICTED` for `keyboard_touch.v1` and `SENSITIVE` for the other six.
+- `maximumEncodedEventBytes` is generated from the catalog and must be in `128..65_536`. The
+  runtime validates the complete payload contract and encodes with a worst-case sequence number
+  before append; an oversized or schema-invalid event is rejected. `EventDraft` independently
+  limits an event to 32 fields and each value to 60 Ki UTF-16 code units.
+- `privacyClass` is `RESTRICTED` for `keyboard_touch.v1` and `SENSITIVE` for the other current collectors.
   Nothing reads it today either; it documents the author's own classification.
 
 ### Strict configuration decoding
@@ -299,11 +306,9 @@ It is strict in a specific, checkable way:
 
 - `requireExactKeys` demands the exact key set. Unknown keys, missing keys, and renamed keys
   are all rejected. There are no optional fields with defaults.
-- Integers must match `-?(0|[1-9][0-9]*)` as a literal, so `1.0`, `1e3`, and `"1"` are all
-  rejected for an integer field.
-- `decode` re-encodes what it parsed and requires the bytes to be identical
-  (`require(encode(decoded).contentEquals(bytes))`). Whitespace, key order, and number
-  formatting are therefore all fixed. Signatures are taken over these canonical bytes.
+- Configuration JSON is RFC 8785 JCS. Schema numeric fields are bounded integral JSON numbers;
+  sequence/time/client-build fields use decimal strings. `decode` re-encodes and requires exact
+  byte equality, so noncanonical whitespace, ordering, escaping, and number spelling fail.
 - An unknown collector ID throws. There is no fallback reader and no legacy path.
 
 Range checks live in the configuration type's `init` block, not in the codec, so they apply
@@ -415,11 +420,12 @@ From [`core/model/.../ExperimentModels.kt`](../core/model/src/main/kotlin/cool/l
 | `payloadType` | `[A-Z][A-Z0-9_]{1,63}` |
 | field key | `[a-z][a-z0-9_]{0,63}` |
 | field count | at most 32 |
-| field value length | at most 1,024 characters |
+| field value length | at most 60 Ki UTF-16 code units |
 | field value type | `String` only — encode numbers with `toString()` |
 
-The runtime sorts fields with `toSortedMap()` when it builds the `RecordedEvent`, so field
-order in your map does not affect the stored bytes.
+Before append, the runtime requires the draft's payload schema, payload type, exact field set,
+field values, and worst-case protocol-encoded size to satisfy the catalog-derived event contract.
+It then sorts fields with `toSortedMap()`, so map insertion order does not affect stored bytes.
 
 ### Source time versus write time
 
@@ -462,6 +468,11 @@ encoding only.
 | `network_state.v1` | `SerializedCallbackCollector` | 256 |
 | `location.v1` | `SerializedCallbackCollector` | 512 |
 | `accelerometer.v1` | `SerializedCallbackCollector` | 2,048 |
+| `battery_state.v1` | `SerializedCallbackCollector` | 64 |
+| `temporal_context.v1` | `SerializedCallbackCollector` | 64 |
+| `gyroscope.v1` | `AndroidSensorCollector` | 2,048 |
+| `ambient_light.v1` | `AndroidSensorCollector` | 256 |
+| `proximity.v1` | `AndroidSensorCollector` | 256 |
 | `keyboard_touch.v1` | `SerializedCallbackCollector` | 2,048 |
 | `network_usage.v1` | `Collector` directly (polling) | none |
 | `usage_events.v1` | `Collector` directly (polling) | none |
@@ -521,7 +532,7 @@ whichever wrote last. Runtime-level incidents (`COMMAND_REJECTED`, `RUNTIME_FAIL
 `STORAGE_WRITE_FAILED`, `PAUSE_PERSISTENCE_FAILED`) are a separate field,
 `RuntimeSnapshot.incidentCode`, and are not collector health.
 
-## 10. The seven built-in collectors
+## 10. The twelve built-in collectors
 
 Each entry states what the collector records and, as importantly, what its data cannot be
 used to claim.
@@ -577,6 +588,43 @@ The listener runs on a dedicated `HandlerThread` named `adc-accelerometer`. Axes
 are Android's, unmodified. The collector performs no filtering, no gravity removal, and no
 inference. It does not produce step counts, postures, or activity labels; those are the
 analyst's claims to make and defend.
+
+### `battery_state.v1`
+
+Empty exact config, no access, 64-event callback queue. A runtime-registered, non-exported
+receiver snapshots whole percentage, charging state/source, and power-save mode. It deliberately
+does not request serial, health, temperature, current, voltage, or capacity. Exact duplicates are
+suppressed and rapid changes retain the newest state under a one-minute bound through the tested
+`core:collector-api/LatestValueRateGate`.
+
+### `temporal_context.v1`
+
+Empty exact config, no access, 64-event callback queue. A runtime-registered, non-exported
+receiver records study start/reconciliation and Android time/time-zone changes as time-zone ID,
+UTC offset, DST state, and a bounded reason code. It uses the same tested latest-value rate gate;
+a zone setting is never labelled as location or travel.
+
+### `gyroscope.v1`
+
+The configuration and Android listener/batching semantics mirror `accelerometer.v1`.
+`GYROSCOPE_SAMPLE` carries source elapsed-realtime nanoseconds, raw x/y/z rad/s, and accuracy.
+`AndroidSensorCollector` owns its `adc-gyroscope` handler thread and pause/stop cleanup. No
+orientation or activity inference is present.
+
+### `ambient_light.v1`
+
+`sampling_period_us` is 200,000–10,000,000 and `change_threshold_millilux` is
+0–100,000,000. `AndroidSensorCollector` owns a 256-event queue and the `adc-ambient-light`
+thread. Non-finite/negative readings are refused; the collector emits raw lux and accuracy only
+after both monotonic period and change gates.
+
+### `proximity.v1`
+
+`minimum_event_interval_ms` is 100–60,000 and `change_threshold_millimeters` is 0–10,000.
+`AndroidSensorCollector` owns a 256-event queue and the `adc-proximity` thread. A tested
+latest-value gate retains the newest meaningful sample inside the interval. Payload is raw distance,
+declared maximum range, and `distance < maximumRange`; many devices expose binary behavior, so no
+cross-device precision or presence claim is made.
 
 ### `network_state.v1`
 
@@ -707,7 +755,7 @@ Configuration fields, all required and exact:
 | `interval_millis` | 1,000–3,600,000 |
 | `minimum_interval_millis` | 500 to `interval_millis` |
 | `maximum_batch_delay_millis` | 0–86,400,000 |
-| `minimum_displacement_meters` | 0–10,000 |
+| `minimum_displacement_millimeters` | 0–10,000,000 |
 | `priority` | `BALANCED` or `HIGH_ACCURACY` |
 
 Uses Google Play services `FusedLocationProviderClient`. There is no platform
@@ -778,117 +826,47 @@ call site.
 `pressure` and `size` are device-specific normalized values. They are not calibrated
 newtons or square millimetres and are not comparable across device models.
 
-## 11. Worked example: adding `ambient_light.v1`
+## 11. Current example: tracing `ambient_light.v1`
 
-This collector is **not in the repository**. It is written out in full so every file you must
-touch appears exactly once. It follows the `accelerometer.v1` pattern, which is the shortest
-correct path for a callback source.
+`ambient_light.v1` is implemented. This section is a production-code index, not a copied second
+implementation. A new engineer should be able to follow the complete feature without searching
+for an undocumented registry or convention.
 
-### Step 1 — module
+### Step 1 — module and dependency boundary
 
-`settings.gradle.kts`, keeping the include list sorted:
+- [`settings.gradle.kts`](../settings.gradle.kts) includes `:collector:ambient-light`.
+- [`collector/ambient-light/build.gradle.kts`](../collector/ambient-light/build.gradle.kts) lists
+  the complete module dependencies: the runtime-facing collector API, typed study definition,
+  shared sensor lifecycle owner, coroutines, and test-only JUnit.
+- [`collector/sensor-common`](../collector/sensor-common) is the sole permitted
+  collector-to-collector dependency. It owns listener registration, callback serialization, and
+  teardown, not ambient-light semantics.
+- The module needs no permission or Android component, so it has no manifest surface of its own.
 
-```kotlin
-include(
-    ":app",
-    ":collector:accelerometer",
-    ":collector:ambient-light",
-    ":collector:app-lifecycle",
-    // …
-)
-```
-
-`collector/ambient-light/build.gradle.kts`:
-
-```kotlin
-plugins {
-    alias(libs.plugins.android.library)
-}
-
-android {
-    namespace = "cool.linc.androiddatacollector.collector.ambientlight"
-    compileSdk = 37
-    defaultConfig { minSdk = 34 }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-}
-
-kotlin {
-    compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
-        allWarningsAsErrors = true
-    }
-}
-
-dependencies {
-    implementation(project(":core:collector-api"))
-    implementation(project(":core:study-definition"))
-    implementation(libs.coroutines.android)
-}
-```
-
-Do not add a dependency that is not on this list without understanding which invariant in
-[section 3](#3-invariants-you-must-not-break) it weakens. Add a module
-`src/main/AndroidManifest.xml` only if you need a permission or an Android component; remember
-that anything you declare there is merged into the app manifest.
+Any new dependency must remain inside `assurance/collector-policy.json`. Review a new manifest
+directly; the Collector capability policy does not inspect app manifests.
 
 ### Step 2 — typed configuration
 
-In `core/study-definition/src/main/kotlin/.../StudyConfiguration.kt`, add a member of the
-sealed `CollectorConfiguration` interface. Range checks belong here, not in the codec:
-
-```kotlin
-data class AmbientLightConfiguration(
-    override val required: Boolean,
-    val samplingPeriodUs: Int,
-) : CollectorConfiguration {
-    override val id: String = ID
-
-    init {
-        require(samplingPeriodUs in 200_000..10_000_000) { "Invalid ambient-light sampling period" }
-    }
-
-    companion object { const val ID = "ambient_light.v1" }
-}
-```
+[`StudyConfiguration.kt`](../core/study-definition/src/main/kotlin/cool/linc/androiddatacollector/core/definition/StudyConfiguration.kt)
+owns `AmbientLightConfiguration`: `sampling_period_us` is bounded to 200,000–10,000,000 and
+`change_threshold_millilux` to 0–100,000,000. Constructor validation is the one range authority;
+the catalog and Web editor must match it exactly.
 
 ### Step 3 — strict codec
 
-Two edits in `StudyConfigurationCodec.kt`. Decode:
-
-```kotlin
-AmbientLightConfiguration.ID -> {
-    config.requireExactKeys(setOf("sampling_period_us"))
-    AmbientLightConfiguration(required, config.requireInt("sampling_period_us"))
-}
-```
-
-Encode — the `when` in `encodeCollector` is exhaustive over the sealed interface, so the
-compiler will not let you forget this half:
-
-```kotlin
-is AmbientLightConfiguration -> writer.name("sampling_period_us").value(collector.samplingPeriodUs)
-```
-
-Both halves must agree exactly, because `decode` re-encodes and compares bytes.
+[`StudyConfigurationCodec.kt`](../core/study-definition/src/main/kotlin/cool/linc/androiddatacollector/core/definition/StudyConfigurationCodec.kt)
+requires exactly both integer keys and encodes them through the exhaustive sealed-interface
+branch. Decode then re-encodes and byte-compares canonical JSON. The compact
+[`P2ConfigurationTest`](../core/study-definition/src/test/kotlin/cool/linc/androiddatacollector/core/definition/P2ConfigurationTest.kt)
+covers both boundaries, values just outside them, missing/unknown keys, wrong JSON types, and
+canonical round-trip.
 
 ### Step 4 — access kind
 
-In `CollectorContracts.kt`:
-
-```kotlin
-enum class AccessKind {
-    // …
-    ACCELEROMETER_HARDWARE,
-    AMBIENT_LIGHT_HARDWARE,
-}
-```
-
-Every `when` over `AccessKind` is exhaustive and every module builds with
-`allWarningsAsErrors = true`, so adding a value breaks the build in exactly four places until
-you handle it:
+`AMBIENT_LIGHT_HARDWARE` is a closed [`AccessKind`](../core/collector-api/src/main/kotlin/cool/linc/androiddatacollector/core/collector/CollectorContracts.kt).
+Every exhaustive `when` and the app build fail until the following participant-facing surfaces
+agree:
 
 | File | What to add |
 | --- | --- |
@@ -897,170 +875,57 @@ you handle it:
 | `app/.../MainActivity.kt` → `requestAccess` | `Unit` — hardware cannot be requested |
 | `app/.../CollectorDashboard.kt` → `AccessKind.displayName` | a participant-readable label |
 
-This is the one part of collector registration the compiler enforces for you. Use it.
+Required missing hardware blocks enrollment. Optional missing hardware reports blocked access and
+starts only if hardware becomes available; it never substitutes another source.
 
-### Step 5 — the collector
+### Step 5 — catalog and generated contract
 
-`collector/ambient-light/src/main/kotlin/cool/linc/androiddatacollector/collector/ambientlight/AmbientLightCollector.kt`:
+Add the configuration schema, payload contracts, units, clock bases, access/privacy, platform
+availability, rate bound, and maximum encoded size to
+[`protocol/v1/collector-catalog.json`](../protocol/v1/collector-catalog.json). With the module from
+step 1 now present, mark the Android implementation `implemented`, then run:
 
-```kotlin
-package cool.linc.androiddatacollector.collector.ambientlight
-
-import android.content.Context
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
-import android.os.Handler
-import android.os.HandlerThread
-import cool.linc.androiddatacollector.core.collector.AccessKind
-import cool.linc.androiddatacollector.core.collector.AccessRequirement
-import cool.linc.androiddatacollector.core.collector.Collector
-import cool.linc.androiddatacollector.core.collector.CollectorContext
-import cool.linc.androiddatacollector.core.collector.CollectorDescriptor
-import cool.linc.androiddatacollector.core.collector.CollectorPlugin
-import cool.linc.androiddatacollector.core.collector.PrivacyClass
-import cool.linc.androiddatacollector.core.collector.SerializedCallbackCollector
-import cool.linc.androiddatacollector.core.definition.AmbientLightConfiguration
-import cool.linc.androiddatacollector.core.definition.CollectorConfiguration
-import cool.linc.androiddatacollector.core.model.EventDraft
-
-class AmbientLightCollectorPlugin(
-    context: Context,
-) : CollectorPlugin {
-    private val applicationContext = context.applicationContext
-
-    override val descriptor = CollectorDescriptor(
-        id = AmbientLightConfiguration.ID,
-        payloadSchemaVersion = 1,
-        displayName = "Ambient light",
-        privacyClass = PrivacyClass.SENSITIVE,
-        maximumEncodedEventBytes = 1_024,
-    )
-
-    override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
-        val typed = configuration as? AmbientLightConfiguration
-            ?: throw IllegalArgumentException("Invalid ambient-light configuration")
-        return setOf(AccessRequirement(AccessKind.AMBIENT_LIGHT_HARDWARE, typed.required))
-    }
-
-    override fun create(
-        configuration: CollectorConfiguration,
-        context: CollectorContext,
-    ): Collector = AmbientLightCollector(
-        applicationContext,
-        configuration as? AmbientLightConfiguration
-            ?: throw IllegalArgumentException("Invalid ambient-light configuration"),
-        context,
-    )
-}
-
-private class AmbientLightCollector(
-    androidContext: Context,
-    private val configuration: AmbientLightConfiguration,
-    collectorContext: CollectorContext,
-) : SerializedCallbackCollector(collectorContext, CHANNEL_CAPACITY),
-    SensorEventListener {
-    private val sensorManager = androidContext.getSystemService(SensorManager::class.java)
-    private val sensor by lazy {
-        sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT)
-            ?: throw IllegalStateException("Ambient light hardware is unavailable")
-    }
-    private var handlerThread: HandlerThread? = null
-
-    override fun onSensorChanged(event: SensorEvent) {
-        if (event.sensor.type != Sensor.TYPE_LIGHT || event.values.isEmpty()) return
-        capture {
-            EventDraft(
-                collectorId = AmbientLightConfiguration.ID,
-                payloadSchemaVersion = 1,
-                observedTime = context.clocks.now(),
-                payloadType = "AMBIENT_LIGHT_SAMPLE",
-                fields = mapOf(
-                    "source_elapsed_realtime_nanos" to event.timestamp.toString(),
-                    "illuminance_lux" to event.values[0].toString(),
-                    "accuracy" to event.accuracy.toString(),
-                ),
-            )
-        }
-    }
-
-    override fun onAccuracyChanged(
-        sensor: Sensor?,
-        accuracy: Int,
-    ) = Unit
-
-    override suspend fun registerSource() {
-        val thread = HandlerThread("adc-ambient-light").also { it.start() }
-        try {
-            check(
-                sensorManager.registerListener(
-                    this,
-                    sensor,
-                    configuration.samplingPeriodUs,
-                    Handler(thread.looper),
-                ),
-            ) { "Android rejected the ambient light listener" }
-            handlerThread = thread
-        } catch (failure: Throwable) {
-            thread.quitSafely()
-            throw failure
-        }
-    }
-
-    override suspend fun unregisterSource() {
-        sensorManager.unregisterListener(this, sensor)
-        handlerThread?.quitSafely()
-        handlerThread = null
-    }
-
-    private companion object {
-        const val CHANNEL_CAPACITY = 256
-    }
-}
+```bash
+python3 tools/catalog.py generate-kotlin
+python3 tools/catalog.py check
 ```
 
-Points worth copying, in order of how often they are got wrong:
+Never hand-edit the generated Kotlin projection. CI proves that it and the catalog agree.
 
-- The `HandlerThread` is started before registration and quit on the failure path, so a
-  rejected registration does not leak a thread.
-- `registerSource()` throws instead of setting health; the base class turns that into
-  `SOURCE_REGISTRATION_FAILED` and the runtime into `COLLECTOR_START_FAILED`.
-- Units are in the field name (`illuminance_lux`). An analyst reading the export should not
-  have to consult this document to know what a number means.
-- Android's own timestamp is preserved alongside `observedTime`.
-- No filtering, no smoothing, no derived "is the participant indoors" field.
+### Step 6 — the collector
 
-### Step 6 — register in the app
+Use the production [ambient-light collector](../collector/ambient-light/src/main/kotlin/cool/linc/androiddatacollector/collector/ambientlight/AmbientLightCollector.kt)
+as the compact reference and the shared [sensor lifecycle owner](../collector/sensor-common/src/main/kotlin/cool/linc/androiddatacollector/collector/sensorcommon/AndroidSensorCollector.kt)
+for listener-thread ownership. Keeping the example as links instead of a copied implementation
+prevents this guide from becoming a second, stale collector.
 
-`app/build.gradle.kts`:
+The boundaries worth preserving are:
 
-```kotlin
-implementation(project(":collector:ambient-light"))
-```
+- `AndroidSensorCollector` owns registration rollback, handler callback removal, and thread release;
+  collector-specific teardown only clears its pending data.
+- A changed on-change reading inside the minimum interval replaces the pending reading rather than
+  disappearing. When emitted, it keeps the original `observedTime` and hardware timestamp.
+- The lux threshold alone decides equivalence; accuracy describes an emitted sample and does not
+  independently trigger one.
+- Units remain in field names and the catalog. There is no smoothing or derived indoor/presence
+  inference.
+- The focused [collector test](../collector/ambient-light/src/test/kotlin/cool/linc/androiddatacollector/collector/ambientlight/AmbientLightCollectorTest.kt)
+  proves coalescing and capture-time behavior; the shared [lifecycle test](../collector/sensor-common/src/test/kotlin/cool/linc/androiddatacollector/collector/sensorcommon/SensorSourceLifecycleTest.kt)
+  proves failure cleanup.
 
-`app/src/main/kotlin/cool/linc/androiddatacollector/CollectorApplication.kt`:
+### Step 7 — register in the app
 
-```kotlin
-val registry = CollectorRegistry(
-    listOf(
-        AppLifecycleCollectorPlugin(this),
-        AccelerometerCollectorPlugin(this),
-        AmbientLightCollectorPlugin(this),
-        // …
-    ),
-)
-```
+[`app/build.gradle.kts`](../app/build.gradle.kts) takes the module, and
+[`CollectorApplication.kt`](../app/src/main/kotlin/cool/linc/androiddatacollector/CollectorApplication.kt)
+constructs `AmbientLightCollectorPlugin` in the compiled allowlist. `CollectorRegistry` rejects an
+unknown configured ID; the catalog is not runtime plugin loading. The Web control, codec, app
+allowlist, and catalog parity checks must all land together.
 
-This list is the whole allowlist. A study configuration can name only IDs that appear here,
-and `CollectorRegistry` throws for anything else. Adding a collector to the codec without
-adding it here produces a configuration that verifies and then fails to run — which is the
-correct failure direction, but check both.
-
-### Step 7 — tests, example, and disclosure
+### Step 8 — tests, target-device exercise, and disclosure
 
 - Configuration tests in `core/study-definition/src/test/...` covering nominal values, both
-  range boundaries, an unknown key, a wrong JSON type, and canonical round-trip. Follow
+  range boundaries, values outside both bounds, unknown/missing keys, a wrong JSON type, and
+  canonical round-trip. Follow
   [`NetworkUsageConfigurationTest`](../core/study-definition/src/test/kotlin/cool/linc/androiddatacollector/core/definition/NetworkUsageConfigurationTest.kt).
 - Collector tests using the fake sink pattern in
   [`SerializedCallbackCollectorTest`](../core/collector-api/src/test/kotlin/cool/linc/androiddatacollector/core/collector/SerializedCallbackCollectorTest.kt):
@@ -1072,6 +937,9 @@ correct failure direction, but check both.
   release variant ships no demonstration study.
 - Update the participant guide, the researcher guide's capability table, and this document.
   A collector whose data is not described to participants must not ship.
+- Add lifecycle/access-revocation and rate/size-bound tests, document power and storage estimates,
+  and exercise the collector on the target device classes. Run
+  `python3 tools/collector_assurance.py` after compiling.
 
 ## 12. Definition of done
 
@@ -1087,30 +955,21 @@ correct failure direction, but check both.
       reaches logcat.
 - [ ] Every payload field's unit, clock, precision, platform limitation, and sensitivity is
       documented.
-- [ ] The release manifest gained no permission and no component beyond what the collector
-      genuinely needs. Check the merged manifest, not only your module's.
+- [ ] The catalog validates, generated Kotlin is current, schema-invalid and over-size events are
+      rejected before append, and deterministic decoder fixtures exist.
+- [ ] Collector capability checks pass for source, compiled bytecode, and dependencies.
 - [ ] `./gradlew test testDebugUnitTest lintDebug assembleDebug assembleRelease` passes —
       the same command CI runs.
-- [ ] The collector has been run on a physical device, not only an emulator. Sensor
-      batching, doze, and IME selection behave differently there.
+- [ ] Disclosure plus power/storage estimates are complete, and relevant target-device behavior
+      has been exercised before deployment.
 
 ## 13. Known gaps
 
 Stated here rather than discovered later.
 
-- **No architecture test enforces the module boundary.** The rules in
-  [section 3](#3-invariants-you-must-not-break) are enforced by the Gradle dependency graph
-  and by review. A collector that wrote a file or started an `Activity` would compile and
-  pass CI.
-- **`maximumEncodedEventBytes` is declared but unread.** No code compares an encoded event
-  against it. The enforced limits are `EventDraft`'s 32 fields and 1,024 characters per value.
+- **Static policy is not process isolation.** Source, bytecode, and dependency checks catch the
+  prohibited capabilities they name, but collectors still execute in the app process. Policy
+  review remains a security decision whenever Android APIs or build tooling change.
 - **`privacyClass` is declared but unread.** It documents the author's classification and
   drives no behaviour.
 - **`displayName` is not shown to participants.** The dashboard lists collectors by ID.
-- **A collector module can widen the app's permissions.** Manifest merging means a
-  `<uses-permission>` in a collector module lands in the app manifest, and nothing in the
-  build fails when it does. Reviewing the merged manifest is the only check. Note that
-  `INTERNET` is now declared by the app itself for the upload worker, so a collector that
-  used the network would leave no trace in the permission set at all.
-- **No collector module has its own tests.** Coverage for collector behaviour currently comes
-  from `SerializedCallbackCollectorTest` and `ExperimentRuntimeTest` in the core modules.

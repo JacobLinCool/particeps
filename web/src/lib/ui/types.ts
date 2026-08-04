@@ -68,7 +68,7 @@ export interface Scale {
   affix: string;
   /** Stored → control space. Exact for every value the control can produce. */
   toHuman(stored: number): number;
-  /** Control space → stored. An integer for every field but `minimum_displacement_meters`. */
+  /** Control space → the integer unit stored in the signed configuration. */
   toStored(human: number): number;
   /** All in control space. */
   min: number;

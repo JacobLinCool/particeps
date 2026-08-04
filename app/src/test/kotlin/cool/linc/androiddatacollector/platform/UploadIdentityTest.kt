@@ -5,8 +5,11 @@ import cool.linc.androiddatacollector.core.definition.ExportConfiguration
 import cool.linc.androiddatacollector.core.definition.SignerIdentity
 import cool.linc.androiddatacollector.core.definition.StudyConfiguration
 import cool.linc.androiddatacollector.core.definition.UploadConfiguration
+import cool.linc.androiddatacollector.core.export.ExportReceipt
 import cool.linc.androiddatacollector.core.model.StudyMetadata
+import cool.linc.androiddatacollector.core.protocol.VerifiedConfiguration
 import java.time.Instant
+import java.util.UUID
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -14,15 +17,36 @@ import org.junit.Test
 
 class UploadIdentityTest {
     @Test
-    fun importsAlwaysMintDistinctInstancesAndHeadersNeverExposeAssignedCode() {
+    fun importsMintDistinctInstancesAndUploadHeadersExposeNoParticipantIdentity() {
         val first = StudyMetadata.initial("identity-test", "identity-config", "assigned-secret")
         val second = StudyMetadata.initial("identity-test", "identity-config", "assigned-secret")
         assertNotEquals(first.participantInstanceId, second.participantInstanceId)
         assertEquals("assigned-secret", first.assignedParticipantId)
 
-        val headers = uploadHeaders(configuration(), first, 1, 9)
-        assertEquals(first.participantInstanceId, headers["X-ADC-Participant-Instance"])
+        val configuration = configuration()
+        val verified = VerifiedConfiguration(
+            configuration,
+            byteArrayOf(1),
+            configuration.signer.keyId,
+            ByteArray(64),
+            "0".repeat(64),
+            false,
+        )
+        val headers = uploadHeaders(
+            verified,
+            ExportReceipt(
+                UUID.fromString("00000000-0000-4000-8000-000000000001"),
+                verified.configurationSha256,
+                1,
+                9,
+                9,
+                "1".repeat(64),
+                10,
+            ),
+        )
+        assertTrue(headers.keys.none { it.contains("Participant", ignoreCase = true) })
         assertTrue(headers.keys.none { it.contains("Assigned", ignoreCase = true) })
+        assertTrue(headers.values.none { it == first.participantInstanceId })
         assertTrue(headers.values.none { it == "assigned-secret" })
     }
 
@@ -32,7 +56,8 @@ class UploadIdentityTest {
         configurationId = "identity-config",
         issuedAt = Instant.parse("2026-01-01T00:00:00Z"),
         expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
-        minimumAppVersion = 1,
+        platform = StudyConfiguration.ANDROID_PLATFORM,
+        minimumClientVersion = 1,
         title = "Identity test",
         researcherName = "Researcher",
         researcherContact = "research@example.invalid",
@@ -45,8 +70,12 @@ class UploadIdentityTest {
         surveys = emptyList(),
         interventions = emptyList(),
         maximumLocalBytes = 16_777_216,
-        signer = SignerIdentity("test-signer", "x".repeat(32)),
-        export = ExportConfiguration("export-key", "x".repeat(32)),
+        signer = SignerIdentity("test-signer", RAW_PUBLIC_KEY),
+        export = ExportConfiguration("export-key", RAW_PUBLIC_KEY),
         upload = UploadConfiguration("https://example.invalid/v1", 60, false),
     )
+
+    private companion object {
+        const val RAW_PUBLIC_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    }
 }

@@ -6,6 +6,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.stream.JsonWriter
 import java.io.StringWriter
+import java.math.BigDecimal
 import java.time.Instant
 
 object StudyConfigurationCodec {
@@ -16,7 +17,8 @@ object StudyConfigurationCodec {
         "assigned_participant_id",
         "issued_at",
         "expires_at",
-        "minimum_app_version",
+        "platform",
+        "minimum_client_version",
         "title",
         "researcher",
         "purpose",
@@ -44,7 +46,7 @@ object StudyConfigurationCodec {
 
     private fun decodeStructure(bytes: ByteArray): StudyConfiguration {
         require(bytes.size in 2..MAX_CONFIGURATION_BYTES) { "Invalid configuration size" }
-        val root = JsonParser.parseString(bytes.toString(Charsets.UTF_8)).requireObject("root")
+        val root = ProtocolCanonicalJson.parse(bytes, MAX_CONFIGURATION_BYTES).requireObject("root")
         root.requireExactKeys(ROOT_KEYS)
         return StudyConfiguration(
             schemaVersion = root.requireInt("schema_version"),
@@ -53,7 +55,8 @@ object StudyConfigurationCodec {
             assignedParticipantId = root.requireNullableString("assigned_participant_id"),
             issuedAt = Instant.parse(root.requireString("issued_at")),
             expiresAt = Instant.parse(root.requireString("expires_at")),
-            minimumAppVersion = root.requireInt("minimum_app_version"),
+            platform = root.requireString("platform"),
+            minimumClientVersion = root.requireDecimalLongString("minimum_client_version"),
             title = root.requireString("title"),
             researcherName = root.requireObject("researcher").also {
                 it.requireExactKeys(setOf("name", "contact"))
@@ -90,7 +93,8 @@ object StudyConfigurationCodec {
             writer.name("assigned_participant_id").value(configuration.assignedParticipantId)
             writer.name("issued_at").value(configuration.issuedAt.toString())
             writer.name("expires_at").value(configuration.expiresAt.toString())
-            writer.name("minimum_app_version").value(configuration.minimumAppVersion)
+            writer.name("platform").value(configuration.platform)
+            writer.name("minimum_client_version").value(configuration.minimumClientVersion.toString())
             writer.name("title").value(configuration.title)
             writer.name("researcher").beginObject()
             writer.name("name").value(configuration.researcherName)
@@ -120,7 +124,7 @@ object StudyConfigurationCodec {
             writer.endObject()
             writer.name("export").beginObject()
             writer.name("researcher_key_id").value(configuration.export.researcherKeyId)
-            writer.name("tink_hpke_public_keyset").jsonValue(configuration.export.tinkHpkePublicKeysetJson)
+            writer.name("hpke_public_key").value(configuration.export.hpkePublicKey)
             writer.endObject()
             writer.name("upload").beginObject()
             configuration.upload?.let { upload ->
@@ -131,7 +135,7 @@ object StudyConfigurationCodec {
             writer.endObject()
             writer.endObject()
         }
-        return output.toString().toByteArray(Charsets.UTF_8)
+        return ProtocolCanonicalJson.encode(JsonParser.parseString(output.toString()))
     }
 
     private fun decodeCollector(element: JsonElement): CollectorConfiguration {
@@ -150,6 +154,38 @@ object StudyConfigurationCodec {
                     required,
                     config.requireInt("sampling_period_us"),
                     config.requireInt("maximum_report_latency_us"),
+                )
+            }
+            BatteryStateConfiguration.ID -> {
+                config.requireExactKeys(emptySet())
+                BatteryStateConfiguration(required)
+            }
+            TemporalContextConfiguration.ID -> {
+                config.requireExactKeys(emptySet())
+                TemporalContextConfiguration(required)
+            }
+            GyroscopeConfiguration.ID -> {
+                config.requireExactKeys(setOf("sampling_period_us", "maximum_report_latency_us"))
+                GyroscopeConfiguration(
+                    required,
+                    config.requireInt("sampling_period_us"),
+                    config.requireInt("maximum_report_latency_us"),
+                )
+            }
+            AmbientLightConfiguration.ID -> {
+                config.requireExactKeys(setOf("sampling_period_us", "change_threshold_millilux"))
+                AmbientLightConfiguration(
+                    required,
+                    config.requireInt("sampling_period_us"),
+                    config.requireInt("change_threshold_millilux"),
+                )
+            }
+            ProximityConfiguration.ID -> {
+                config.requireExactKeys(setOf("minimum_event_interval_ms", "change_threshold_millimeters"))
+                ProximityConfiguration(
+                    required,
+                    config.requireInt("minimum_event_interval_ms"),
+                    config.requireInt("change_threshold_millimeters"),
                 )
             }
             NetworkStateConfiguration.ID -> {
@@ -173,7 +209,7 @@ object StudyConfigurationCodec {
                         "interval_millis",
                         "minimum_interval_millis",
                         "maximum_batch_delay_millis",
-                        "minimum_displacement_meters",
+                        "minimum_displacement_millimeters",
                         "priority",
                     ),
                 )
@@ -182,7 +218,7 @@ object StudyConfigurationCodec {
                     config.requireLong("interval_millis"),
                     config.requireLong("minimum_interval_millis"),
                     config.requireLong("maximum_batch_delay_millis"),
-                    config.requireFloat("minimum_displacement_meters"),
+                    config.requireInt("minimum_displacement_millimeters"),
                     LocationPriority.valueOf(config.requireString("priority")),
                 )
             }
@@ -205,6 +241,19 @@ object StudyConfigurationCodec {
                 writer.name("sampling_period_us").value(collector.samplingPeriodUs)
                 writer.name("maximum_report_latency_us").value(collector.maximumReportLatencyUs)
             }
+            is BatteryStateConfiguration, is TemporalContextConfiguration -> Unit
+            is GyroscopeConfiguration -> {
+                writer.name("sampling_period_us").value(collector.samplingPeriodUs)
+                writer.name("maximum_report_latency_us").value(collector.maximumReportLatencyUs)
+            }
+            is AmbientLightConfiguration -> {
+                writer.name("sampling_period_us").value(collector.samplingPeriodUs)
+                writer.name("change_threshold_millilux").value(collector.changeThresholdMillilux)
+            }
+            is ProximityConfiguration -> {
+                writer.name("minimum_event_interval_ms").value(collector.minimumEventIntervalMs)
+                writer.name("change_threshold_millimeters").value(collector.changeThresholdMillimeters)
+            }
             is NetworkStateConfiguration ->
                 writer.name("include_bandwidth_estimates").value(collector.includeBandwidthEstimates)
             is NetworkUsageConfiguration -> {
@@ -218,7 +267,7 @@ object StudyConfigurationCodec {
                 writer.name("interval_millis").value(collector.intervalMillis)
                 writer.name("minimum_interval_millis").value(collector.minimumIntervalMillis)
                 writer.name("maximum_batch_delay_millis").value(collector.maximumBatchDelayMillis)
-                writer.name("minimum_displacement_meters").value(collector.minimumDisplacementMeters)
+                writer.name("minimum_displacement_millimeters").value(collector.minimumDisplacementMillimeters)
                 writer.name("priority").value(collector.priority.name)
             }
             is KeyboardTouchConfiguration ->
@@ -276,6 +325,32 @@ object StudyConfigurationCodec {
                 "daily_local" -> {
                     schedule.requireExactKeys(setOf("type", "local_time"))
                     DailyLocalSchedule(schedule.requireString("local_time"))
+                }
+                "random_window" -> {
+                    schedule.requireExactKeys(
+                        setOf(
+                            "type",
+                            "local_windows",
+                            "occurrences_per_window",
+                            "maximum_occurrences_per_day",
+                            "maximum_occurrences_total",
+                            "minimum_separation_minutes",
+                        ),
+                    )
+                    RandomWindowSchedule(
+                        localWindows = schedule.requireArray("local_windows").mapElements { item ->
+                            val window = item.requireObject("random local window")
+                            window.requireExactKeys(setOf("start_local_time", "end_local_time"))
+                            RandomLocalWindow(
+                                window.requireString("start_local_time"),
+                                window.requireString("end_local_time"),
+                            )
+                        },
+                        occurrencesPerWindow = schedule.requireInt("occurrences_per_window"),
+                        maximumOccurrencesPerDay = schedule.requireInt("maximum_occurrences_per_day"),
+                        maximumOccurrencesTotal = schedule.requireInt("maximum_occurrences_total"),
+                        minimumSeparationMinutes = schedule.requireInt("minimum_separation_minutes"),
+                    )
                 }
                 else -> throw IllegalArgumentException("Unknown intervention schedule")
             },
@@ -387,6 +462,21 @@ object StudyConfigurationCodec {
                     writer.name("type").value("daily_local")
                     writer.name("local_time").value(schedule.localTime)
                 }
+                is RandomWindowSchedule -> {
+                    writer.name("type").value("random_window")
+                    writer.name("local_windows").beginArray()
+                    schedule.localWindows.forEach { window ->
+                        writer.beginObject()
+                        writer.name("start_local_time").value(window.startLocalTime)
+                        writer.name("end_local_time").value(window.endLocalTime)
+                        writer.endObject()
+                    }
+                    writer.endArray()
+                    writer.name("occurrences_per_window").value(schedule.occurrencesPerWindow)
+                    writer.name("maximum_occurrences_per_day").value(schedule.maximumOccurrencesPerDay)
+                    writer.name("maximum_occurrences_total").value(schedule.maximumOccurrencesTotal)
+                    writer.name("minimum_separation_minutes").value(schedule.minimumSeparationMinutes)
+                }
             }
             writer.endObject()
             writer.name("availability_minutes").value(trigger.availabilityMinutes)
@@ -459,10 +549,8 @@ object StudyConfigurationCodec {
     }
 
     private fun decodeExport(root: JsonObject): ExportConfiguration {
-        root.requireExactKeys(setOf("researcher_key_id", "tink_hpke_public_keyset"))
-        val keyset = root.get("tink_hpke_public_keyset")
-        require(keyset != null && keyset.isJsonObject) { "Public keyset must be an object" }
-        return ExportConfiguration(root.requireString("researcher_key_id"), keyset.toString())
+        root.requireExactKeys(setOf("researcher_key_id", "hpke_public_key"))
+        return ExportConfiguration(root.requireString("researcher_key_id"), root.requireString("hpke_public_key"))
     }
 
     /**
@@ -511,20 +599,25 @@ object StudyConfigurationCodec {
         return raw.toLongOrNull() ?: throw IllegalArgumentException("$name is outside Long range")
     }
 
-    private fun JsonObject.requireFloat(name: String): Float {
-        val value = requireNotNull(get(name))
-        require(value.isJsonPrimitive && value.asJsonPrimitive.isNumber) { "$name must be numeric" }
-        val parsed = value.asString.toFloatOrNull()
-        require(parsed != null && parsed.isFinite()) { "$name must be finite" }
-        return parsed
-    }
-
     private fun JsonObject.requireIntegerLiteral(name: String): String {
         val value = requireNotNull(get(name))
         require(value.isJsonPrimitive && value.asJsonPrimitive.isNumber) { "$name must be an integer" }
         val raw = value.asString
-        require(INTEGER.matches(raw)) { "$name must be an integer literal" }
-        return raw
+        require(raw.length <= MAXIMUM_NUMBER_CHARACTERS) { "$name is outside the supported numeric range" }
+        raw.substringAfterAny('e', 'E')?.let { exponent ->
+            require(exponent.toLongOrNull()?.let { kotlin.math.abs(it) <= MAXIMUM_DECIMAL_EXPONENT } == true) {
+                "$name is outside the supported numeric range"
+            }
+        }
+        val integer = runCatching { BigDecimal(raw).toBigIntegerExact() }.getOrNull()
+        require(integer != null) { "$name must be an integer" }
+        return integer.toString()
+    }
+
+    private fun JsonObject.requireDecimalLongString(name: String): Long {
+        val raw = requireString(name)
+        require(UNSIGNED_DECIMAL.matches(raw)) { "$name must be a canonical unsigned decimal string" }
+        return raw.toLongOrNull() ?: throw IllegalArgumentException("$name is outside Long range")
     }
 
     private fun JsonObject.requireObject(name: String): JsonObject =
@@ -544,6 +637,13 @@ object StudyConfigurationCodec {
     private fun <T> JsonArray.mapElements(transform: (JsonElement) -> T): List<T> =
         map(transform)
 
+    private fun String.substringAfterAny(first: Char, second: Char): String? {
+        val index = indexOfAny(charArrayOf(first, second))
+        return if (index < 0) null else substring(index + 1)
+    }
+
     private const val MAX_CONFIGURATION_BYTES = 1_048_576
-    private val INTEGER = Regex("-?(0|[1-9][0-9]*)")
+    private const val MAXIMUM_NUMBER_CHARACTERS = 64
+    private const val MAXIMUM_DECIMAL_EXPONENT = 64L
+    private val UNSIGNED_DECIMAL = Regex("0|[1-9][0-9]*")
 }

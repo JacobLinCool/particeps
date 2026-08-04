@@ -48,6 +48,7 @@ export const en: Messages = {
     addSurvey: 'Add survey',
     addQuestion: 'Add question',
     addTrigger: 'Add schedule',
+    addWindow: 'Add time window',
     survey: 'Survey',
     surveyTitle: 'Survey title',
     surveyDescription: 'Survey description',
@@ -68,9 +69,22 @@ export const en: Messages = {
     offset: 'Offset in minutes',
     interval: 'Interval in minutes',
     localTime: 'Local time',
+    windowStart: 'Window starts',
+    windowEnd: 'Window ends',
+    occurrencesPerWindow: 'Prompts per window',
+    dailyMaximum: 'Maximum prompts per day',
+    totalMaximum: 'Maximum prompts in study',
+    minimumSeparation: 'Minimum separation in minutes',
+    randomWindowSummary: ({ minimum, maximum }) =>
+      `${number.format(minimum)}–${number.format(maximum)} possible prompts; exact times are chosen and stored on the phone.`,
     availability: 'Available for minutes',
     types: { shortText: 'Short text', scale: 'Numeric scale', singleChoice: 'Single choice', multipleChoice: 'Multiple choice' },
-    schedules: { oneTime: 'One time', interval: 'Recurring interval', dailyLocal: 'Daily local time' },
+    schedules: {
+      oneTime: 'One time',
+      interval: 'Recurring interval',
+      dailyLocal: 'Daily local time',
+      randomWindow: 'Random local windows'
+    },
     clocks: { calendar: 'Calendar time (pauses included)', active: 'Running time (pauses excluded)' }
   },
 
@@ -106,6 +120,8 @@ export const en: Messages = {
     hours: 'h',
     hertz: 'Hz',
     metres: 'm',
+    millimetres: 'mm',
+    lux: 'lux',
     mebibytes: 'MiB',
     bytes: 'bytes'
   },
@@ -113,7 +129,7 @@ export const en: Messages = {
   file: {
     signingPrivate: 'study-signing-private.key',
     signingPublic: 'study-signing-public.key',
-    exportPrivate: 'export-hpke-private.json',
+    exportPrivate: 'export-hpke-private.key',
     exportPublic: 'export-hpke-public.json',
     canonical: 'study-canonical.json',
     signed: 'study.adccfg'
@@ -145,6 +161,8 @@ export const en: Messages = {
       displacement: 'Minimum displacement',
       priority: 'Priority',
       trajectoryRate: 'Trajectory sampling',
+      changeThreshold: 'Change threshold',
+      minimumEventInterval: 'Minimum event interval',
       upload: 'Scheduled upload',
       endpoint: 'Endpoint',
       uploadInterval: 'Interval',
@@ -152,7 +170,7 @@ export const en: Messages = {
       signerKeyId: 'Signing key ID',
       signerPublicKey: 'Signing public key',
       exportKeyId: 'Export key ID',
-      exportKeyset: 'Export public keyset',
+      exportPublicKey: 'Export public key',
       fingerprint: 'Fingerprint'
     },
     /**
@@ -170,6 +188,8 @@ export const en: Messages = {
       storageQuota: 'When it fills, collection stops. Nothing is dropped.',
       required: 'The study cannot start without this access.',
       samplingPeriod: 'A request, not a limit. Devices may go faster.',
+      ambientLightSamplingPeriod:
+        'A hard minimum between emitted events. The latest meaningful change is retained for the next eligible emission.',
       bandwidthEstimates: 'Platform estimates, not measurements.',
       pollInterval: 'A minute is a pilot setting, not a study setting.',
       fastestInterval: 'Never longer than the interval.',
@@ -195,6 +215,31 @@ export const en: Messages = {
       name: 'Motion',
       records: 'Raw x/y/z acceleration, gravity included',
       limit: 'No activity, posture, or gesture labels'
+    },
+    'battery_state.v1': {
+      name: 'Battery state',
+      records: 'Percentage, charging state and source, and power-save state',
+      limit: 'No serial, hardware ID, health, or temperature'
+    },
+    'temporal_context.v1': {
+      name: 'Time context',
+      records: 'Time-zone ID, UTC offset, DST state, and clock-change reason',
+      limit: 'A time zone is not treated as a location or travel record'
+    },
+    'gyroscope.v1': {
+      name: 'Rotation',
+      records: 'Raw x/y/z angular velocity and sensor accuracy',
+      limit: 'No orientation, activity, posture, or gesture inference'
+    },
+    'ambient_light.v1': {
+      name: 'Ambient light',
+      records: 'Raw illuminance, sensor time, and accuracy',
+      limit: 'No image, environmental content, or presence inference'
+    },
+    'proximity.v1': {
+      name: 'Proximity',
+      records: 'Raw distance, maximum range, and near/far interpretation',
+      limit: 'Many phones report only near/far; values are not comparable across devices'
     },
     'network_state.v1': {
       name: 'Connection type',
@@ -241,7 +286,7 @@ export const en: Messages = {
       `The whole configuration must stay under ${number.format(max)} bytes`,
     signer_missing: 'Generate the signing key first',
     export_key_missing: 'Generate the export key first',
-    keyset_unusable: 'Not a keyset the app can encrypt to. Generate or import the export key again',
+    key_invalid: 'Not a canonical 32-byte Protocol v1 public key. Generate or import the key again',
     language_tag: 'Use a valid BCP 47 language tag',
     unknown_reference: 'Choose a survey defined in this configuration',
     selection_bounds: 'Selection limits do not match this question',
@@ -360,8 +405,7 @@ export const en: Messages = {
       /** One line each, beside the control the sentence is about. */
       note: {
         irrevocable: 'A file you have handed out cannot be called back.',
-        /** Above the seven cards, once, because the pill on each card is the same decision seven
-         *  times over and the consequence of it does not change between them. */
+        /** Above the twelve cards once, because the consequence is identical on every card. */
         required: 'Mark a source Required and a participant who declines it cannot start the study.',
         disclosure: 'The app lists the data in its own words. Agree with it.',
         delivery: 'They cannot take part and decline this. Say so in consent.'
@@ -386,7 +430,17 @@ export const en: Messages = {
       archive: 'Needed to decrypt your own data.',
       publish: 'The fingerprint goes into your recruitment material.',
       distribute: 'For participants',
-      pilot: 'Pilot on the phones your study targets before you recruit anyone.'
+      pilot: 'Pilot on the phones your study targets before you recruit anyone.',
+      join: {
+        title: 'Optional join link and QR',
+        artifactUrl: 'HTTPS address of the signed .adccfg',
+        artifactHint: 'Host the exact signed file first, then enter its final address. Redirects are refused.',
+        personalizedHint: 'Use a long opaque final path segment. Do not put the assigned participant ID in the address.',
+        copy: 'Copy join link',
+        invalid: 'Enter a valid final HTTPS address. Personalized files require a long opaque path that does not reveal the assigned participant ID.',
+        immutable: 'The QR is made locally and binds this file’s complete SHA-256 and signing fingerprint. The app downloads it once; it does not poll for changes.',
+        qrAlt: 'QR code for the immutable study join link'
+      }
     },
     read: {
       lede: 'Open an export a participant sent back. Nothing leaves this tab.',

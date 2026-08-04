@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "adc-ciphertext-receiver",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-30",
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "receiver.example.invalid",
+      "custom_domain": true
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUNDLES",
+      "bucket_name": "adc-ciphertext-replace-me"
+    }
+  ],
+  "vars": {
+    "UPLOAD_PATH": "/REPLACE_WITH_UPLOAD_PATH",
+    "ALLOWED_CONFIGURATION_SHA256": "REPLACE_WITH_64_LOWERCASE_HEX",
+    "ALLOWED_RESEARCHER_KEY_ID": "REPLACE_WITH_RESEARCHER_KEY_ID"
+  }
+}

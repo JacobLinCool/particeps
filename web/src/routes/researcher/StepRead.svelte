@@ -31,9 +31,9 @@
   import type { IconRef } from '$lib/ui/icons';
   import { openBundle } from '$lib/adc/bundle';
   import { MAXIMUM_CONFIGURATION_BYTES, isCollectorId, COLLECTOR_ORDER } from '$lib/adc/types';
-  import type { CollectorId, StudyConfiguration, TinkKeyset } from '$lib/adc/types';
+  import type { CollectorId, StudyConfiguration } from '$lib/adc/types';
   import { download } from './artifacts';
-  import { hpkeKeysetFromPrivate } from './keys';
+  import { hpkeKeyPairFromPrivate } from './keys';
   import { parseConfiguration } from './parse';
   import type { Draft } from './draft.svelte';
   import type { Messages } from '$lib/i18n/types';
@@ -54,8 +54,8 @@
   let bundleName = $state('');
   let configuration = $state.raw<StudyConfiguration | null>(null);
   let configurationName = $state('');
-  let keyset = $state.raw<TinkKeyset | null>(null);
-  let keysetName = $state('');
+  let privateKey = $state.raw<string | null>(null);
+  let privateKeyName = $state('');
 
   let failure = $state('');
   let working = $state(false);
@@ -69,7 +69,7 @@
    */
   const session = $derived(draft.envelope !== null && draft.hpke.kind === 'held');
 
-  const ready = $derived(bundleBytes !== null && configuration !== null && keyset !== null);
+  const ready = $derived(bundleBytes !== null && configuration !== null && privateKey !== null);
 
   const opened = $derived(draft.bundle);
   const experiment = $derived(opened?.document.experiment ?? null);
@@ -105,18 +105,17 @@
   }
 
   /**
-   * The same import the Keys step runs, so a file that is not a keyset says so as a keyset problem
-   * rather than surfacing later as a study that will not open. It rebuilds the keyset from the
-   * scalar, which also means the key id comes from the file rather than being minted again.
+   * The same strict raw-key import the Keys step runs, so malformed or padded base64 fails before
+   * any bundle decryption is attempted.
    */
-  async function takeKeyset(file: File) {
+  async function takePrivateKey(file: File) {
     try {
-      keyset = hpkeKeysetFromPrivate(await file.text()).privateKeyset;
-      keysetName = file.name;
+      privateKey = hpkeKeyPairFromPrivate(await file.text()).privateKey;
+      privateKeyName = file.name;
       failure = '';
     } catch {
-      keyset = null;
-      keysetName = '';
+      privateKey = null;
+      privateKeyName = '';
       failure = m.error.keyFile;
     }
   }
@@ -127,10 +126,10 @@
     failure = '';
   }
 
-  function useSessionKeyset() {
+  function useSessionKey() {
     if (draft.hpke.kind !== 'held') return;
-    keyset = draft.hpke.material.privateKeyset;
-    keysetName = m.file.exportPrivate;
+    privateKey = draft.hpke.material.privateKey;
+    privateKeyName = m.file.exportPrivate;
     failure = '';
   }
 
@@ -140,12 +139,12 @@
    * the summary is somebody's data — the wrong one on screen is worse than none.
    */
   async function open() {
-    if (!bundleBytes || !configuration || !keyset || working) return;
+    if (!bundleBytes || !configuration || !privateKey || working) return;
     working = true;
     draft.holdBundle(null);
     failure = '';
     try {
-      const result = await openBundle(bundleBytes, configuration, keyset);
+      const result = await openBundle(bundleBytes, configuration, privateKey);
       if (result.ok) draft.holdBundle(result.bundle);
       else failure = m.error.bundle[result.failure];
     } finally {
@@ -167,6 +166,11 @@
   const GLYPHS: Record<CollectorId, IconRef> = {
     'app_lifecycle.v1': 'app',
     'accelerometer.v1': 'motion',
+    'battery_state.v1': 'data-volume',
+    'temporal_context.v1': 'clock',
+    'gyroscope.v1': 'motion',
+    'ambient_light.v1': 'app',
+    'proximity.v1': 'connection',
     'network_state.v1': 'connection',
     'network_usage.v1': 'data-volume',
     'usage_events.v1': 'screen',
@@ -205,14 +209,14 @@
    */
   const span = $derived.by(() => {
     if (!experiment || experiment.events.length === 0) return null;
-    let low = Number.POSITIVE_INFINITY;
-    let high = Number.NEGATIVE_INFINITY;
+    let low: bigint | null = null;
+    let high: bigint | null = null;
     for (const event of experiment.events) {
-      const at = event.observed_time.wall_time_utc_millis;
-      if (at < low) low = at;
-      if (at > high) high = at;
+      const at = BigInt(event.observed_time.wall_time_utc_millis);
+      if (low === null || at < low) low = at;
+      if (high === null || at > high) high = at;
     }
-    return { from: instant(low), to: instant(high) };
+    return { from: instant(String(low)), to: instant(String(high)) };
   });
 
   /**
@@ -220,8 +224,9 @@
    * than prose: a locale-formatted date would read differently in the two languages for a value
    * that is the same instant in both, and this one gets compared against a log.
    */
-  function instant(millis: number): string {
-    const at = new Date(millis);
+  function instant(millis: string): string {
+    const numeric = Number(millis);
+    const at = new Date(numeric);
     return Number.isNaN(at.getTime()) ? String(millis) : `${at.toISOString().slice(0, 19)}Z`;
   }
 
@@ -231,8 +236,10 @@
    * `n / total` already means "part of" everywhere else on this page and a denominator equal to the
    * numerator says nothing.
    */
-  const lifetime = $derived(experiment ? experiment.next_sequence_number - 1 : 0);
-  const partial = $derived(experiment !== null && lifetime > experiment.last_sequence_number);
+  const lifetime = $derived(experiment ? BigInt(experiment.next_sequence_number) - 1n : 0n);
+  const partial = $derived(
+    experiment !== null && lifetime > BigInt(experiment.last_sequence_number)
+  );
 </script>
 
 <div class="stack stack--loose">
@@ -284,9 +291,9 @@
         <DropTarget
           label={m.researcher.keys.export.title}
           filename={m.file.exportPrivate}
-          accept=".json,application/json"
+          accept=".key,text/plain"
           icon="key-open"
-          onfile={takeKeyset}
+          onfile={takePrivateKey}
           testid="read-key"
         />
         {#if session}
@@ -294,12 +301,12 @@
             variant="ghost"
             icon="key"
             label={m.researcher.read.session}
-            onclick={useSessionKeyset}
+            onclick={useSessionKey}
             testid="read-key-session"
           />
         {/if}
       </div>
-      {#if keysetName}<Note icon="import" tone="plain" text={keysetName} />{/if}
+      {#if privateKeyName}<Note icon="import" tone="plain" text={privateKeyName} />{/if}
     </div>
   </div>
 

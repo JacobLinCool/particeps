@@ -30,8 +30,8 @@ export function fieldLabel(m: Messages, path: string): string {
       return label.signerPublicKey;
     case 'export.researcher_key_id':
       return label.exportKeyId;
-    case 'export.tink_hpke_public_keyset':
-      return label.exportKeyset;
+    case 'export.hpke_public_key':
+      return label.exportPublicKey;
     case 'upload.endpoint':
       return label.endpoint;
     case 'upload.interval_minutes':
@@ -51,7 +51,7 @@ export function fieldLabel(m: Messages, path: string): string {
       return label.issuedAt;
     case 'expires_at':
       return label.expiresAt;
-    // No `minimum_app_version`: it is pinned, `parse.ts` clamps it, and the path is unreachable. If
+    // No `minimum_client_version`: it is pinned and the path is unreachable. If
     // a future rule resurrects it, the fallback at the end renders the path itself, which is what
     // that fallback is for.
     case 'title':
@@ -66,6 +66,11 @@ export function fieldLabel(m: Messages, path: string): string {
       return label.samplingPeriod;
     case 'maximum_report_latency_us':
       return label.reportLatency;
+    case 'change_threshold_millilux':
+    case 'change_threshold_millimeters':
+      return label.changeThreshold;
+    case 'minimum_event_interval_ms':
+      return label.minimumEventInterval;
     case 'include_bandwidth_estimates':
       return label.bandwidthEstimates;
     case 'transports':
@@ -78,7 +83,7 @@ export function fieldLabel(m: Messages, path: string): string {
       return label.fastestInterval;
     case 'maximum_batch_delay_millis':
       return label.batchDelay;
-    case 'minimum_displacement_meters':
+    case 'minimum_displacement_millimeters':
       return label.displacement;
     case 'priority':
       return label.priority;

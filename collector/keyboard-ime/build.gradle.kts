@@ -23,4 +23,5 @@ dependencies {
     implementation(project(":core:collector-api"))
     implementation(project(":core:study-definition"))
     implementation(libs.coroutines.android)
+    testImplementation(libs.junit4)
 }

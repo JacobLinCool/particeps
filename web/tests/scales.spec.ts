@@ -6,16 +6,13 @@
  *    it is the defect `Math.round` on the sampling period would have introduced on 94 of 200 rates.
  *
  * 2. Encodable. Whatever the control can produce has to be something the canonical encoder can
- *    write. Every stored value is an integer inside the schema's bound, because `integer()` emits
- *    `-?(0|[1-9][0-9]*)` and anything else is a file the app refuses. The one exception is
- *    `minimum_displacement_meters`, a Kotlin `Float` written by `formatFloat`, where the stored
- *    value is a float32 and `formatFloat` must round-trip back to the number the box showed.
+ *    write. Every stored value is an integer inside the schema's bound, including location's
+ *    millimetre value.
  *
  * The lattice is `min, min+step, …, max` for a control with a box, and the ladder for one without.
  */
 
 import { describe, expect, it } from 'vitest';
-import { formatFloat } from '../src/lib/adc/canonical';
 import { en } from '../src/lib/i18n/en';
 import { zhTW } from '../src/lib/i18n/zh-TW';
 import { SCALE_BOUNDS, scales, type Scale, type ScaleKey } from '../src/routes/researcher/scales';
@@ -30,11 +27,15 @@ const CATALOGUES = [
 function lattice(scale: Scale): number[] {
   if (scale.ladder) return [...scale.ladder];
   const digits = String(scale.step).split('.')[1]?.length ?? 0;
+  const count = Math.round((scale.max - scale.min) / scale.step);
+  const stride = Math.max(1, Math.ceil(count / 10_000));
   const points: number[] = [];
-  for (let h = scale.min; h <= scale.max + scale.step / 2; h += scale.step) {
+  for (let index = 0; index <= count; index += stride) {
+    const h = scale.min + index * scale.step;
     points.push(digits > 0 ? Number(h.toFixed(digits)) : h);
   }
-  return points;
+  points.push(scale.max, ...scale.presets);
+  return [...new Set(points)];
 }
 
 for (const [name, catalogue, locale] of CATALOGUES) {
@@ -43,13 +44,17 @@ for (const [name, catalogue, locale] of CATALOGUES) {
 
   describe(`scales (${name})`, () => {
     it('offers a box only where one human unit names both ends', () => {
-      // The rule is not a judgement per control: it follows from the bounds. These four are hertz
-      // at both ends, seconds at both ends, metres at both ends, hertz at both ends.
+      // The rule is not a judgement per control: it follows from whether one displayed unit names
+      // both ends of the legal range.
       const boxed = keys.filter((key) => S[key].box);
       expect(boxed.sort()).toEqual(
         [
+          'ambient_sampling_period_us',
+          'change_threshold_millilux',
+          'change_threshold_millimeters',
           'maximum_report_latency_us',
-          'minimum_displacement_meters',
+          'minimum_displacement_millimeters',
+          'minimum_event_interval_ms',
           'sampling_period_us',
           'trajectory_sampling_hz'
         ].sort()
@@ -102,12 +107,6 @@ for (const [name, catalogue, locale] of CATALOGUES) {
           const stored = scale.toStored(human);
           if (stored < low || stored > high) {
             broken.push(`${human} stores ${stored}, outside ${low}..${high}`);
-          } else if (key === 'minimum_displacement_meters') {
-            // A Float, and the shortest decimal that round-trips to it is what the file carries.
-            if (Math.fround(stored) !== stored) broken.push(`${human} stores a non-float32`);
-            else if (Number(formatFloat(stored)) !== human) {
-              broken.push(`${human} writes as ${formatFloat(stored)}`);
-            }
           } else if (!Number.isInteger(stored)) {
             broken.push(`${human} stores ${stored}, which is not an integer`);
           }
@@ -118,8 +117,16 @@ for (const [name, catalogue, locale] of CATALOGUES) {
       });
 
       it(`${key} can reach every value on its chip row`, () => {
-        const reachable = new Set(lattice(scale));
-        for (const preset of scale.presets) expect(reachable.has(preset), `${key} ${preset}`).toBe(true);
+        for (const preset of scale.presets) {
+          const reachable = scale.ladder
+            ? scale.ladder.includes(preset)
+            : preset >= scale.min && preset <= scale.max &&
+              Math.abs(
+                (preset - scale.min) / scale.step -
+                  Math.round((preset - scale.min) / scale.step)
+              ) < 1e-9;
+          expect(reachable, `${key} ${preset}`).toBe(true);
+        }
       });
     }
 

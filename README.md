@@ -10,23 +10,28 @@ Standing up a mobile sensing study normally means writing an Android app, gettin
 
 ## How a study works
 
-1. **Generate your keys.** One Ed25519 pair to sign study configurations, one HPKE pair to decrypt exports. `researcher-tools` does both.
-2. **Write the study.** A strict v1 JSON file naming collectors, reusable surveys, scheduled interventions, anonymous or assigned-code identity mode, duration, storage quota, consent text, and signing/export public keys.
+1. **Generate your keys.** One Ed25519 pair to sign study configurations, one X25519 HPKE pair to decrypt bundles. `researcher-tools` writes raw 32-byte keys as unpadded base64url.
+2. **Write the study.** A strict Protocol v1 RFC 8785 JSON file naming collectors, reusable surveys, scheduled interventions, anonymous or assigned-code identity mode, duration, storage quota, consent text, and signing/export public keys.
 3. **Sign it.** `researcher-tools sign` produces a `.adccfg` file. Because the signing public key travels inside the signed bytes, any build of the app can verify it.
 4. **Distribute.** Participants install the app and import your `.adccfg`. Setup is five steps, one screen each — the study details, what each enabled collector records and does not record, the consent text with the signer's key fingerprint, the Android access your collectors need, and the start button — and collection begins only when they press it.
 5. **Collect.** Events are written to encrypted on-device storage. Participants can pause, resume, finish early, or withdraw.
-6. **Export and analyse.** The participant exports an encrypted bundle and sends it to you. If the study declares an upload endpoint, the app also delivers the same encrypted bundles to it on a schedule. `researcher-tools decrypt` turns either one into JSON.
+6. **Export and analyse.** The participant exports an encrypted bundle and sends it to you. If the study declares an upload endpoint, the app also delivers immutable ciphertext bundles to an R2 receiver on a schedule. `adc-analysis` inventories, verifies, decrypts, reassembles, and writes typed Parquet offline.
 
 The full procedure, including key handling and study design guidance, is in the [researcher guide](docs/researcher-guide.md).
 
 ## What you can collect
 
-Seven collectors ship in v1. A study enables the ones it names and configures each one's parameters within validated ranges.
+Twelve selectable collectors ship in v1. A study enables the ones it names and configures each one's parameters within validated ranges.
 
 | Collector | Records | Cannot establish |
 | --- | --- | --- |
 | `app_lifecycle.v1` | Lifecycle of this app's own activities | Use of any other app |
 | `accelerometer.v1` | Raw x/y/z acceleration, sensor time, accuracy | Recognised motion, posture, or activity |
+| `battery_state.v1` | Battery percentage, charging state/source, power-save state | Battery health, temperature, or hardware identity |
+| `temporal_context.v1` | Time-zone ID, UTC offset, DST state, clock-change reason | Location or travel |
+| `gyroscope.v1` | Raw x/y/z angular velocity, sensor time, accuracy | Orientation, posture, or activity |
+| `ambient_light.v1` | Raw illuminance, sensor time, accuracy | Environmental content or presence |
+| `proximity.v1` | Raw distance, sensor range, near/far interpretation | Comparable physical distance across devices or presence |
 | `network_state.v1` | Default network transport, validated/metered/roaming/VPN flags, bandwidth estimates | Addresses, destinations, or content |
 | `network_usage.v1` | Device-total Wi-Fi and mobile rx/tx bytes and packets per interval | Instantaneous throughput, per-app attribution, exact timing |
 | `usage_events.v1` | Raw app, screen, keyguard, and boot events | A complete or real-time session stream |
@@ -41,18 +46,21 @@ Some practical notes: package names, location, fine-grained timing, acceleration
 
 The collector set is meant to grow. A collector is a Gradle module implementing three things: a typed configuration that appears in the signed study file, a plugin descriptor declaring what access it needs, and a runtime instance that observes its source and emits events.
 
-Collector modules depend only on `core:collector-api` and `core:study-definition`, so a new data source does not touch storage, the runtime, or the protocol layer. The [implementation guide](docs/data-collector-implementation-guide.md) walks through the contract and every registration step, with a complete worked example.
+Collector modules depend only on `core:collector-api`, `core:study-definition`, and, for Android
+hardware listeners, the narrow `collector:sensor-common` lifecycle helper. A new data
+source does not touch storage, the runtime, or protocol/export code. The
+[implementation guide](docs/data-collector-implementation-guide.md) walks through the contract and every registration step.
 
 ## Participant data protection
 
 Studies collect from people's personal phones, so the platform is built to support a defensible ethics submission and honest commitments to participants.
 
 - **Encrypted on the device.** Each study's events and metadata are encrypted with a per-study AES-256-GCM key from the Android Keystore, marked non-exportable, in 4 MiB event segments under the app's no-backup storage, up to the quota the configuration set. An event is appended once and never rewritten; the only thing that removes a segment is confirmed delivery to the study's endpoint, and then only under storage pressure.
-- **Signed, tamper-evident studies.** A configuration is Ed25519-signed and strictly validated: canonical encoding, exact schema, known collectors, validity window, minimum app version. Verification failures are fail-closed — an unverifiable configuration collects nothing. A signature proves the configuration is unchanged since it was signed; it does not prove who wrote it unless the build pins that signer, and the consent screen states which of the two applies.
-- **Durable interventions and native surveys.** Notification actions can use one-time, recurring, or daily-local triggers. Their occurrences survive retries and reboot without duplication. Native surveys support short text, integer scales, single choice, and multiple choice; only a confirmed, complete submission enters the encrypted event stream.
-- **Separated participant identities.** Every import gets a fresh random instance UUID. A configuration may additionally carry an opaque researcher-assigned code; both appear inside encrypted exports, while upload headers expose only the instance UUID used for routing and de-duplication.
+- **Signed, tamper-evident studies.** A configuration is Ed25519-signed and strictly validated: RFC 8785 bytes, exact schema, known collectors, Android platform, validity window, and minimum client build. Verification failures are fail-closed — an unverifiable configuration collects nothing. A signature proves the configuration is unchanged since it was signed; it does not prove who wrote it unless the build pins that signer, and the consent screen states which of the two applies.
+- **Durable interventions and native surveys.** Notification actions can use one-time, recurring, daily-local, or signed random-local-window triggers. Random instants are selected with a CSPRNG and persisted before scheduling, so retries and reboot do not redraw them; clock/time-zone changes do not rewrite already materialized occurrences. Native surveys support short text, integer scales, single choice, and multiple choice; only a confirmed, complete submission enters the encrypted event stream.
+- **Separated participant identities.** Every import gets a fresh random instance UUID. A configuration may additionally carry an opaque researcher-assigned code; both appear in the encrypted document. Upload URLs and headers contain no participant, assigned, experiment, or configuration ID. Their bundle UUID, configuration digest, researcher key ID, exact range/count, size, and digest are untrusted routing claims, not participant authentication.
 - **Encrypted, participant-directed export.** Getting data to the research team is an export the participant performs and directs, encrypted with a fresh key per export and wrapped to your HPKE public key. The app never holds your private key.
-- **Scheduled upload, when the study asks for it.** A configuration may name an HTTPS endpoint, interval, and metered-network policy. The endpoint host, cadence, and network condition are shown before consent. Each run sends outstanding events up to a 16 MiB plaintext budget and records its exact boundary. Finishing or withdrawing cancels future interventions and the deadline, while delivery continues until the undelivered tail arrives. Undelivered events are never reclaimed to make room.
+- **Scheduled upload, when the study asks for it.** A configuration may name an HTTPS endpoint, interval, and metered-network policy. The endpoint host, cadence, and network condition are shown before consent. Before HTTP starts, the app durably stages one immutable ciphertext bundle in no-backup storage: about 16 MiB of plaintext and at most 32 MiB on the wire. Retries send those exact bytes with fixed length and digest. Only a matching seven-field receipt on `201 Created` or exact-replay `200 OK` advances the watermark; redirects, `202`, malformed receipts, and other terminal responses do not. Finishing or withdrawing leaves delivery running until the tail arrives. Undelivered events are never reclaimed to make room.
 - **Participant control over the lifecycle.** Collection starts only on an explicit action and can be paused, finished, or withdrawn. Pausing takes a monotonic boundary, so delayed callbacks cannot leak post-pause data into the dataset.
 - **Storage failures stop collection.** Quota exhaustion or a write failure fail-closes the study to `PAUSED` rather than silently dropping events, so a dataset is complete over the window it declares or absent.
 
@@ -82,6 +90,27 @@ With an emulator or device attached:
 ./gradlew :core:storage:connectedDebugAndroidTest :app:connectedDebugAndroidTest
 ```
 
+The app suite separates the Android signed-configuration regression
+([`AndroidConfigurationImportTest`](app/src/androidTest/kotlin/cool/linc/androiddatacollector/AndroidConfigurationImportTest.kt)),
+the full participant UI flow ([`CoreFlowTest`](app/src/androidTest/kotlin/cool/linc/androiddatacollector/CoreFlowTest.kt)),
+and the five-collector Android integration
+([`P2CollectorEmulatorTest`](app/src/androidTest/kotlin/cool/linc/androiddatacollector/P2CollectorEmulatorTest.kt)).
+The last test skips when gyro, light, or proximity hardware is absent. Its optional exact-value mode
+expects a sensor-capable emulator that the host has already configured; the test does not fake
+Android's sensor APIs:
+
+```bash
+adb -s emulator-5554 emu power ac on
+adb -s emulator-5554 emu power status charging
+adb -s emulator-5554 emu power capacity 73
+adb -s emulator-5554 emu sensor set gyroscope 1.25:-2.5:0.5
+adb -s emulator-5554 emu sensor set light 123
+adb -s emulator-5554 emu sensor set proximity 1
+./gradlew :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=cool.linc.androiddatacollector.P2CollectorEmulatorTest \
+  -Pandroid.testInstrumentationRunnerArguments.p2SyntheticInputs=true
+```
+
 The debug APK lands at `app/build/outputs/apk/debug/app-debug.apk`. A clean checkout has no signing material, so `assembleRelease` produces an unsigned release APK.
 
 ### Try it without a real study
@@ -94,10 +123,10 @@ For that reason a **release build ships no demonstration study** — the signed 
 
 ```text
 signing-keygen   generate an Ed25519 signing pair
-hpke-keygen      generate a Tink HPKE keyset pair
+hpke-keygen      generate a raw X25519 HPKE key pair
 canonicalize     strictly parse and emit a canonical configuration
 sign             sign a canonical configuration into .adccfg
-check-config     verify envelope, signature, validity window, app version; optionally pin the signer
+check-config     verify envelope, signature, platform, validity window, and client build; optionally pin the signer
 decrypt          decrypt an .adcexp into research-bundle-v1 JSON
 ```
 
@@ -115,6 +144,8 @@ flowchart LR
     Session --> Export[":core:export"]
     Export --> Crypto[":core:crypto"]
     Android[":app Android adapters"] --> Session
+    Android --> Receiver["receiver/ Cloudflare Worker"]
+    Receiver --> R2["private R2 ciphertext"]
     Access[":core:access"] --> Session
     Protocol[":core:protocol"] --> Definition[":core:study-definition"]
     Tools[":researcher-tools"] --> Definition
@@ -127,9 +158,9 @@ flowchart LR
 | `:app` | Compose UI, finite UI state, SAF, and Android foreground/work/recovery/upload adapters |
 | `:core:model` | Bounded study metadata, state and event models, `StudyStore` port and its retained window |
 | `:core:study-definition` | Strict canonical JSON, closed-world typed study and collector configuration |
-| `:core:protocol` | Signed envelope, signature verification, optional signer pinning, validity and version checks |
+| `:core:protocol` | Signed envelope, immutable join URI, signature verification, optional signer pinning, validity and version checks |
 | `:core:collector-api` | Collector lifecycle, health, registry, access contract, shared callback dispatcher |
-| `:core:crypto` | Tink HPKE key generation, wrapping, and unwrapping |
+| `:core:crypto` | Protocol v1 raw-key Ed25519 verification and fixed-suite RFC 9180 HPKE over raw X25519 keys; Tink is internal only, never a wire keyset |
 | `:core:access` | Runtime permission, Usage Access, input method, and hardware preflight |
 | `:core:experiment-runtime` | Command serialisation, state machine, collector supervision, event admission gate |
 | `:core:study-application` | The single active-study session, recovery, port coordination, and the upload watermark |
@@ -137,8 +168,23 @@ flowchart LR
 | `:core:export` | Streaming JSON to AES-GCM over a sequence window under an optional size budget, HPKE key wrapping, receipts |
 | `:collector:*` | One isolated module per data source |
 | `:researcher-tools` | Ed25519 and HPKE keys, canonicalise, sign, verify, decrypt CLI |
+| `receiver/` | One bounded Protocol v1 upload POST, immutable ciphertext writes, and canonical receipts |
 
 Platform-independent modules contain no `android.*` imports, which keeps the domain logic testable on the JVM. [Component boundaries](docs/component-boundaries.md) documents the contracts.
+
+New contributors should treat [`protocol/v1`](protocol/v1/README.md) as the normative wire contract, the [collector catalog](protocol/v1/collector-catalog.json) as the schema source, and [`docs/p0-p2-implementation-contract.md`](docs/p0-p2-implementation-contract.md) as the implementation decision record. Trace one path through the [configuration codec](core/study-definition/src/main/kotlin/cool/linc/androiddatacollector/core/definition/StudyConfigurationCodec.kt), [signed envelope](core/protocol/src/main/kotlin/cool/linc/androiddatacollector/core/protocol/SignedConfiguration.kt), [bundle exporter](core/export/src/main/kotlin/cool/linc/androiddatacollector/core/export/ResearchExport.kt), [bundle verifier](core/export/src/main/kotlin/cool/linc/androiddatacollector/core/export/ResearchBundleVerifier.kt), [single-entry outbox](app/src/main/kotlin/cool/linc/androiddatacollector/platform/FileUploadOutbox.kt), [HTTP adapter](app/src/main/kotlin/cool/linc/androiddatacollector/platform/OkHttpStudyUploader.kt), [receiver handler](receiver/src/index.ts), and the offline [`adc-analysis`](adc-analysis/README.md) pipeline. The join path is similarly short: [Web authoring](web/src/lib/adc/join.ts), [shared parser](core/protocol/src/main/kotlin/cool/linc/androiddatacollector/core/protocol/JoinLink.kt), [Android staging](app/src/main/kotlin/cool/linc/androiddatacollector/platform/JoinArtifactDownloader.kt), [intent entry](app/src/main/kotlin/cool/linc/androiddatacollector/MainActivity.kt), then the existing [session import](core/study-application/src/main/kotlin/cool/linc/androiddatacollector/core/application/StudyApplication.kt). The [outbox](app/src/test/kotlin/cool/linc/androiddatacollector/platform/FileUploadOutboxTest.kt), [uploader](app/src/test/kotlin/cool/linc/androiddatacollector/platform/OkHttpStudyUploaderTest.kt), and [receiver](receiver/tests/receiver.test.ts) tests make crash/replay and receipt semantics executable. Receiver deployment and R2 operations start at [`receiver/README.md`](receiver/README.md), and the Collector capability policy lives under [`assurance`](assurance/README.md).
+
+For `random_window`, trace the signed model and bounds in
+[`StudyConfiguration.kt`](core/study-definition/src/main/kotlin/cool/linc/androiddatacollector/core/definition/StudyConfiguration.kt),
+its codec and [Web editor](web/src/routes/researcher/InterventionEditor.svelte), then the CSPRNG
+materialization in
+[`InterventionSchedulePlanner.kt`](core/study-application/src/main/kotlin/cool/linc/androiddatacollector/core/application/InterventionSchedulePlanner.kt).
+The [session](core/study-application/src/main/kotlin/cool/linc/androiddatacollector/core/application/StudyApplication.kt)
+persists the occurrence before scheduling; the Android delivery/expiry workers in
+[`AndroidStudyPlatform.kt`](app/src/main/kotlin/cool/linc/androiddatacollector/platform/AndroidStudyPlatform.kt)
+and [`BootRecoveryReceiver`](app/src/main/kotlin/cool/linc/androiddatacollector/BootRecoveryReceiver.kt)
+reconcile the same ID after retries, reboot, clock, or time-zone changes. The adjacent planner,
+runtime, session, and app policy tests make each boundary executable.
 
 ## Documentation
 
@@ -151,6 +197,11 @@ Platform-independent modules contain no `android.*` imports, which keeps the dom
 | [System design](docs/system-design.md) | The implemented v1 architecture in full |
 | [Component boundaries](docs/component-boundaries.md) | Module contracts and invariants |
 | [Threat model](docs/threat-model.md) | Trust assumptions and limitations, for ethics review |
+| [Normative Protocol v1](protocol/v1/README.md) | JCS, keys, join URI, binary framing, bundle document, upload, receipt, and conformance corpora |
+| [P0–P2 implementation contract](docs/p0-p2-implementation-contract.md) | Locked architectural decisions and scope |
+| [Collector capability policy](assurance/README.md) | Static source, bytecode, and dependency boundaries for collectors |
+| [Ciphertext receiver](receiver/README.md) | R2-only Worker contract, verification commands, deployment, and operations |
+| [Offline analysis](adc-analysis/README.md) | Ciphertext inventory, verification, reassembly, and typed Parquet materialization |
 | [Release process](docs/maintainers/release.md) | Maintainers |
 
 ## Contributing

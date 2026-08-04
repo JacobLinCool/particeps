@@ -15,7 +15,9 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":core:collector-api"))
     api(project(":core:model"))
+    api(project(":core:protocol"))
     api(project(":core:study-definition"))
     implementation(project(":core:crypto"))
     implementation(libs.gson)

@@ -31,6 +31,11 @@ export interface Estimate {
 const EVENT_BYTES = {
   'app_lifecycle.v1': 180,
   'accelerometer.v1': 120,
+  'battery_state.v1': 140,
+  'temporal_context.v1': 180,
+  'gyroscope.v1': 120,
+  'ambient_light.v1': 120,
+  'proximity.v1': 140,
   'network_state.v1': 180,
   'network_usage.v1': 180,
   'usage_events.v1': 180,
@@ -48,6 +53,16 @@ export function collectorRate(collector: CollectorConfig): Rate {
       return { events: 20, bytes };
     case 'accelerometer.v1':
       return { events: 3.6e9 / Math.max(1, collector.config.sampling_period_us), bytes };
+    case 'battery_state.v1':
+      return { events: 4, bytes };
+    case 'temporal_context.v1':
+      return { events: 1, bytes };
+    case 'gyroscope.v1':
+      return { events: 3.6e9 / Math.max(1, collector.config.sampling_period_us), bytes };
+    case 'ambient_light.v1':
+      return { events: 3.6e9 / Math.max(1, collector.config.sampling_period_us), bytes };
+    case 'proximity.v1':
+      return { events: 3.6e6 / Math.max(1, collector.config.minimum_event_interval_ms), bytes };
     case 'network_state.v1':
       return { events: 30, bytes };
     case 'network_usage.v1':
@@ -90,7 +105,7 @@ export type Volume = 0 | 1 | 2 | 3 | 4;
 /**
  * Which decade of events per hour this collector is in. Four steps rather than a continuous
  * position, because the constants above are order-of-magnitude and a smooth bar would claim a
- * precision they do not have. Seven cards side by side then say which one writes the most.
+ * precision they do not have. Twelve cards side by side then say which one writes the most.
  */
 export function volumeOf(eventsPerHour: number): Volume {
   if (!(eventsPerHour > 0)) return 0;

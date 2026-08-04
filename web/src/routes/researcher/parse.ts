@@ -22,7 +22,6 @@ import {
   isCollectorId,
   isLocationPriority,
   isNetworkTransport,
-  MAXIMUM_CONFIGURATION_BYTES,
   type CollectorConfig,
   type InterventionConfig,
   type InterventionSchedule,
@@ -32,67 +31,22 @@ import {
   type SurveyQuestion,
   type StudyConfiguration
 } from '$lib/adc/types';
+import { canonicalConfigurationBytes, parseCanonicalJson } from '$lib/adc/canonical';
+import { decodeEnvelope, isEnvelope } from '$lib/adc/envelope';
+import { verify } from '$lib/adc/crypto';
+import { validate } from '$lib/adc/schema';
+import { PLATFORM } from '$lib/adc/types';
 
-const MAGIC = 'ADCCFG01';
-const HEADER_BYTES = MAGIC.length + 2 + 4 + 2;
-
-export interface Envelope {
-  signerKeyId: string;
-  configurationBytes: Uint8Array;
-  signature: Uint8Array;
-}
-
-/** The inverse of `encodeEnvelope`, with the same bounds: a length that lies is a refused file. */
-export function decodeEnvelope(bytes: Uint8Array): Envelope {
-  if (bytes.length < HEADER_BYTES) throw new Error('envelope_short');
-  for (let index = 0; index < MAGIC.length; index += 1) {
-    if (bytes[index] !== MAGIC.charCodeAt(index)) throw new Error('envelope_magic');
-  }
-  const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const keyIdLength = header.getUint16(8);
-  const configurationLength = header.getInt32(10);
-  const signatureLength = header.getUint16(14);
-  if (keyIdLength < 3 || keyIdLength > 64) throw new Error('envelope_key_id');
-  if (configurationLength < 2 || configurationLength > MAXIMUM_CONFIGURATION_BYTES) {
-    throw new Error('envelope_configuration');
-  }
-  if (signatureLength < 32 || signatureLength > 128) throw new Error('envelope_signature');
-  if (bytes.length !== HEADER_BYTES + keyIdLength + configurationLength + signatureLength) {
-    throw new Error('envelope_length');
-  }
-  const keyIdEnd = HEADER_BYTES + keyIdLength;
-  const configurationEnd = keyIdEnd + configurationLength;
-  return {
-    signerKeyId: new TextDecoder().decode(bytes.subarray(HEADER_BYTES, keyIdEnd)),
-    configurationBytes: bytes.slice(keyIdEnd, configurationEnd),
-    signature: bytes.slice(configurationEnd)
-  };
-}
-
-export function isEnvelope(bytes: Uint8Array): boolean {
-  if (bytes.length < MAGIC.length) return false;
-  for (let index = 0; index < MAGIC.length; index += 1) {
-    if (bytes[index] !== MAGIC.charCodeAt(index)) return false;
-  }
-  return true;
-}
+export { decodeEnvelope, isEnvelope } from '$lib/adc/envelope';
 
 /**
  * A closed-world structural read, field by field. Unknown, absent, or mistyped fields are refused
  * exactly as the Android codec refuses them. The editor never invents replacement study content.
- *
- * `tink_hpke_public_keyset` is the exception and is kept exactly as parsed, property order
- * included — the canonicaliser re-emits it in the order it was built, so re-ordering it here would
- * change the bytes that get signed.
  */
 export function parseConfiguration(bytes: Uint8Array): StudyConfiguration {
-  const source = isEnvelope(bytes) ? decodeEnvelope(bytes).configurationBytes : bytes;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(new TextDecoder().decode(source));
-  } catch {
-    throw new Error('parse_json');
-  }
+  const envelope = isEnvelope(bytes) ? decodeEnvelope(bytes) : null;
+  const source = envelope?.configurationBytes ?? bytes;
+  const parsed = parseCanonicalJson(source);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('parse_shape');
   const raw = parsed as Record<string, unknown>;
   if (!('experiment_id' in raw) && !('collectors' in raw)) throw new Error('parse_shape');
@@ -109,17 +63,19 @@ export function parseConfiguration(bytes: Uint8Array): StudyConfiguration {
   requireExactKeys(consent, ['document_version', 'summary']);
   requireExactKeys(storage, ['maximum_local_bytes']);
   requireExactKeys(signer, ['key_id', 'public_key']);
-  requireExactKeys(exported, ['researcher_key_id', 'tink_hpke_public_keyset']);
+  requireExactKeys(exported, ['researcher_key_id', 'hpke_public_key']);
   if (Object.keys(upload).length > 0) requireExactKeys(upload, ['endpoint', 'interval_minutes', 'allow_metered']);
 
-  return {
+  if (raw.platform !== PLATFORM) throw new Error('parse_platform');
+  const configuration: StudyConfiguration = {
     schema_version: numeric(raw.schema_version),
+    platform: PLATFORM,
     experiment_id: string(raw.experiment_id),
     configuration_id: string(raw.configuration_id),
     assigned_participant_id: nullableString(raw.assigned_participant_id),
     issued_at: string(raw.issued_at),
     expires_at: string(raw.expires_at),
-    minimum_app_version: appVersion(raw.minimum_app_version),
+    minimum_client_version: string(raw.minimum_client_version),
     title: string(raw.title),
     researcher: {
       name: string(researcher.name),
@@ -143,9 +99,7 @@ export function parseConfiguration(bytes: Uint8Array): StudyConfiguration {
     },
     export: {
       researcher_key_id: string(exported.researcher_key_id),
-      tink_hpke_public_keyset: isKeysetShaped(exported.tink_hpke_public_keyset)
-        ? (exported.tink_hpke_public_keyset as StudyConfiguration['export']['tink_hpke_public_keyset'])
-        : fail('parse_keyset')
+      hpke_public_key: string(exported.hpke_public_key)
     },
     // `{}` is how an absent upload block is written, so an empty object is "no", not "malformed".
     upload:
@@ -157,11 +111,22 @@ export function parseConfiguration(bytes: Uint8Array): StudyConfiguration {
           }
         : null
   };
+  if (!sameBytes(canonicalConfigurationBytes(configuration), source)) {
+    throw new Error('parse_canonical');
+  }
+  if (validate(configuration).length > 0) throw new Error('parse_invalid');
+  if (envelope) {
+    if (envelope.signerKeyId !== configuration.signer.key_id) throw new Error('envelope_signer');
+    if (!verify(source, envelope.signature, configuration.signer.public_key)) {
+      throw new Error('envelope_signature');
+    }
+  }
+  return configuration;
 }
 
 const ROOT_KEYS = [
-  'schema_version', 'experiment_id', 'configuration_id', 'assigned_participant_id', 'issued_at',
-  'expires_at', 'minimum_app_version', 'title', 'researcher', 'purpose', 'duration_hours', 'consent',
+  'schema_version', 'platform', 'experiment_id', 'configuration_id', 'assigned_participant_id', 'issued_at',
+  'expires_at', 'minimum_client_version', 'title', 'researcher', 'purpose', 'duration_hours', 'consent',
   'collectors', 'surveys', 'interventions', 'storage', 'signer', 'export', 'upload'
 ] as const;
 
@@ -184,23 +149,12 @@ const boolean = (value: unknown): boolean => typeof value === 'boolean' ? value 
 const array = (value: unknown): unknown[] => Array.isArray(value) ? value : fail('parse_array');
 
 const numeric = (value: unknown): number =>
-  typeof value === 'number' && Number.isFinite(value) ? value : fail('parse_number');
+  typeof value === 'number' && Number.isSafeInteger(value) ? value : fail('parse_number');
 
 function fail(message: string): never { throw new Error(message); }
 
-/**
- * Kept as a named seam because this field has no editor control. Its value is never clamped:
- * `validate` reports an illegal floor, and a legal value round-trips byte for byte.
- */
-const appVersion = (value: unknown): number => numeric(value);
-
-/**
- * Whatever it turns out to be, it is kept property-for-property: the canonicaliser re-emits this
- * object in the order it was parsed in, so re-ordering it here would change the bytes that get
- * signed. Only "is it an object at all" is decided; `validate` decides whether Tink can use it.
- */
-function isKeysetShaped(value: unknown): boolean {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  return left.length === right.length && left.every((byte, index) => byte === right[index]);
 }
 
 /**
@@ -227,6 +181,42 @@ function collector(raw: unknown): CollectorConfig {
         config: {
           sampling_period_us: numeric(config.sampling_period_us),
           maximum_report_latency_us: numeric(config.maximum_report_latency_us)
+        }
+      };
+    case 'battery_state.v1':
+      requireExactKeys(config, []);
+      return { id: source.id, required, config: {} };
+    case 'temporal_context.v1':
+      requireExactKeys(config, []);
+      return { id: source.id, required, config: {} };
+    case 'gyroscope.v1':
+      requireExactKeys(config, ['sampling_period_us', 'maximum_report_latency_us']);
+      return {
+        id: source.id,
+        required,
+        config: {
+          sampling_period_us: numeric(config.sampling_period_us),
+          maximum_report_latency_us: numeric(config.maximum_report_latency_us)
+        }
+      };
+    case 'ambient_light.v1':
+      requireExactKeys(config, ['sampling_period_us', 'change_threshold_millilux']);
+      return {
+        id: source.id,
+        required,
+        config: {
+          sampling_period_us: numeric(config.sampling_period_us),
+          change_threshold_millilux: numeric(config.change_threshold_millilux)
+        }
+      };
+    case 'proximity.v1':
+      requireExactKeys(config, ['minimum_event_interval_ms', 'change_threshold_millimeters']);
+      return {
+        id: source.id,
+        required,
+        config: {
+          minimum_event_interval_ms: numeric(config.minimum_event_interval_ms),
+          change_threshold_millimeters: numeric(config.change_threshold_millimeters)
         }
       };
     case 'network_state.v1':
@@ -256,7 +246,7 @@ function collector(raw: unknown): CollectorConfig {
     case 'location.v1': {
       requireExactKeys(config, [
         'interval_millis', 'minimum_interval_millis', 'maximum_batch_delay_millis',
-        'minimum_displacement_meters', 'priority'
+        'minimum_displacement_millimeters', 'priority'
       ]);
       const priority = config.priority;
       if (!isLocationPriority(priority)) throw new Error('parse_collector');
@@ -267,7 +257,7 @@ function collector(raw: unknown): CollectorConfig {
           interval_millis: numeric(config.interval_millis),
           minimum_interval_millis: numeric(config.minimum_interval_millis),
           maximum_batch_delay_millis: numeric(config.maximum_batch_delay_millis),
-          minimum_displacement_meters: numeric(config.minimum_displacement_meters),
+          minimum_displacement_millimeters: numeric(config.minimum_displacement_millimeters),
           priority
         }
       };
@@ -396,11 +386,32 @@ function intervention(raw: unknown): InterventionConfig {
       requireExactKeys(trigger, ['id', 'schedule', 'availability_minutes']);
       const schedule = object(trigger.schedule);
       const type = schedule.type;
-      if (type !== 'one_time' && type !== 'interval' && type !== 'daily_local') throw new Error('parse_schedule');
+      if (type !== 'one_time' && type !== 'interval' && type !== 'daily_local' &&
+          type !== 'random_window') throw new Error('parse_schedule');
       let parsedSchedule: InterventionSchedule;
       if (type === 'daily_local') {
         requireExactKeys(schedule, ['type', 'local_time']);
         parsedSchedule = { type, local_time: string(schedule.local_time) };
+      } else if (type === 'random_window') {
+        requireExactKeys(schedule, [
+          'type', 'local_windows', 'occurrences_per_window', 'maximum_occurrences_per_day',
+          'maximum_occurrences_total', 'minimum_separation_minutes'
+        ]);
+        parsedSchedule = {
+          type,
+          local_windows: array(schedule.local_windows).map((rawWindow) => {
+            const window = object(rawWindow);
+            requireExactKeys(window, ['start_local_time', 'end_local_time']);
+            return {
+              start_local_time: string(window.start_local_time),
+              end_local_time: string(window.end_local_time)
+            };
+          }),
+          occurrences_per_window: numeric(schedule.occurrences_per_window),
+          maximum_occurrences_per_day: numeric(schedule.maximum_occurrences_per_day),
+          maximum_occurrences_total: numeric(schedule.maximum_occurrences_total),
+          minimum_separation_minutes: numeric(schedule.minimum_separation_minutes)
+        };
       } else {
         const clock = schedule.clock;
         if (clock !== 'CALENDAR_TIME' && clock !== 'ACTIVE_RUNNING_TIME') throw new Error('parse_schedule');

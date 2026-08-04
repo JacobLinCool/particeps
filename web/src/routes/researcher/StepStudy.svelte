@@ -5,7 +5,7 @@
    *
    * What is asked here is what only a person can answer. Nothing on this step names the study:
    * `experiment_id` and `configuration_id` are derived from the title and from the document's own
-   * bytes (`lib/adc/ids.ts`, shown on the sign step), and `minimum_app_version` is pinned, so three
+   * bytes (`lib/adc/ids.ts`, shown on the sign step), and `minimum_client_version` is pinned, so three
    * controls that were arithmetic dressed as questions are gone.
    *
    * Two placements are deliberate. `storage.maximum_local_bytes` sits under the collectors even
@@ -208,7 +208,7 @@
   </Section>
 
   <Section id="collectors" path="collectors" title={section.collectors.title} icon="sources">
-    <!-- Said once for the section, because it was the same sentence on all seven cards. Every
+    <!-- Said once for the section, because it is the same sentence on all twelve cards. Every
          必要 control points at this `id`, so the consequence is still one hop from the decision,
          and it carries the mark an unpressed control carries. -->
     <Note

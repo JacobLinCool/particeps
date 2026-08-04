@@ -1,4 +1,5 @@
 import java.util.Properties
+import org.gradle.api.tasks.testing.Test
 
 plugins {
     alias(libs.plugins.android.application)
@@ -74,13 +75,22 @@ kotlin {
     }
 }
 
+tasks.withType<Test>().configureEach {
+    systemProperty("adc.appProjectDir", projectDir.absolutePath)
+}
+
 dependencies {
     implementation(project(":collector:accelerometer"))
     implementation(project(":collector:app-lifecycle"))
+    implementation(project(":collector:ambient-light"))
+    implementation(project(":collector:battery-state"))
+    implementation(project(":collector:gyroscope"))
     implementation(project(":collector:keyboard-ime"))
     implementation(project(":collector:location"))
     implementation(project(":collector:network-state"))
     implementation(project(":collector:network-usage"))
+    implementation(project(":collector:proximity"))
+    implementation(project(":collector:temporal-context"))
     implementation(project(":collector:usage-events"))
     implementation(project(":core:access"))
     implementation(project(":core:collector-api"))

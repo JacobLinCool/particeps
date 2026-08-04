@@ -6,7 +6,9 @@ For maintainers of this repository. Participants and researchers do not need thi
 
 Both workflows live in [`.github/workflows`](../../.github/workflows).
 
-**`Android CI`** (`ci.yml`) runs on pushes to `main`, on pull requests, and on manual dispatch. It runs unit tests, Android lint, and debug and release builds, and retains the debug APK for 14 days.
+**`Android CI`** (`ci.yml`) runs on pushes to `main`, on pull requests, and on manual dispatch. It
+runs unit tests, Android lint, Protocol/catalog conformance, Collector capability checks, and debug
+and release builds. Successful runs retain the debug APK as an artifact for 14 days.
 
 **`Android Release`** (`release.yml`) accepts only `v<SemVer>` tags that are reachable from `main` — for example `v0.1.0`. A tag with a prerelease suffix produces a GitHub prerelease.
 

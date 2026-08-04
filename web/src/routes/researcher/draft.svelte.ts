@@ -27,12 +27,17 @@
  */
 
 import type { ResearchBundle } from '$lib/adc/bundle';
-import { canonicalBytes, canonicalize } from '$lib/adc/canonical';
+import {
+  canonicalConfigurationBytes,
+  canonicalizeConfiguration
+} from '$lib/adc/canonical';
 import {
   fingerprint as fingerprintOf,
+  generateHpkeKeyPair,
   generateSigningKeyPair,
   sign as signBytes,
   verify,
+  type HpkeKeyPair,
   type SigningKeyPair
 } from '$lib/adc/crypto';
 import { encodeEnvelope } from '$lib/adc/envelope';
@@ -43,7 +48,6 @@ import {
   deriveSignerKeyId
 } from '$lib/adc/ids';
 import { defaultCollector, emptyConfiguration, validate, type Issue } from '$lib/adc/schema';
-import { generateHpkeKeyset, type HpkeKeyset } from '$lib/adc/tink';
 import {
   COLLECTOR_ORDER,
   ID_PATTERN,
@@ -57,7 +61,7 @@ import type { StepState } from '$lib/ui/types';
 import { SvelteSet } from 'svelte/reactivity';
 import type { ArtifactId } from './artifacts';
 import { estimate } from './estimate';
-import { hpkeKeysetFromPrivate, signingKeyPairFromPrivate } from './keys';
+import { hpkeKeyPairFromPrivate, signingKeyPairFromPrivate } from './keys';
 import { parseConfiguration } from './parse';
 import { stepForPath, type StepId } from './steps';
 
@@ -100,7 +104,7 @@ function studyStarted(configuration: StudyConfiguration): boolean {
 export function createDraft() {
   let configuration = $state<StudyConfiguration>(emptyConfiguration());
   let signing = $state<KeyState<SigningKeyPair>>({ kind: 'empty' });
-  let hpke = $state<KeyState<HpkeKeyset>>({ kind: 'empty' });
+  let hpke = $state<KeyState<HpkeKeyPair>>({ kind: 'empty' });
 
   let signature = $state.raw<Uint8Array | null>(null);
   let envelope = $state.raw<Uint8Array | null>(null);
@@ -165,7 +169,7 @@ export function createDraft() {
   // not on every keystroke in the study text.
   const derivedSignerKeyId = $derived(deriveSignerKeyId(configuration.signer.public_key));
   const derivedExportKeyId = $derived(
-    deriveExportKeyId(configuration.export.tink_hpke_public_keyset)
+    deriveExportKeyId(configuration.export.hpke_public_key)
   );
   const signerKeyId = $derived(signerKeyIdPin !== '' ? signerKeyIdPin : derivedSignerKeyId);
   const exportKeyId = $derived(exportKeyIdPin !== '' ? exportKeyIdPin : derivedExportKeyId);
@@ -178,7 +182,9 @@ export function createDraft() {
     signer: { ...configuration.signer, key_id: signerKeyId },
     export: { ...configuration.export, researcher_key_id: exportKeyId }
   });
-  const configurationId = $derived(deriveConfigurationId(experimentId, canonicalize(unnamed)));
+  const configurationId = $derived(
+    deriveConfigurationId(experimentId, canonicalizeConfiguration(unnamed))
+  );
 
   /**
    * What is validated, canonicalised, signed, and downloaded. Never the editable object: the spread
@@ -192,8 +198,8 @@ export function createDraft() {
    */
   const document = $derived({ ...unnamed, configuration_id: configurationId });
 
-  const canonical = $derived(canonicalize(document));
-  const bytes = $derived(canonicalBytes(document));
+  const canonical = $derived(canonicalizeConfiguration(document));
+  const bytes = $derived(canonicalConfigurationBytes(document));
   const issues = $derived(validate(document));
   const cost = $derived(estimate(document));
   const stale = $derived(signedCanonical !== null && signedCanonical !== canonical);
@@ -306,15 +312,15 @@ export function createDraft() {
   function generateSigning() {
     const pair = generateSigningKeyPair();
     signing = { kind: 'held', material: pair };
-    configuration.signer.public_key = pair.publicX509Base64;
+    configuration.signer.public_key = pair.publicKey;
     sent['signing-private'] = false;
     kept['signing-private'] = false;
   }
 
   function generateHpke() {
-    const keyset = generateHpkeKeyset();
-    hpke = { kind: 'held', material: keyset };
-    configuration.export.tink_hpke_public_keyset = keyset.publicKeyset;
+    const pair = generateHpkeKeyPair();
+    hpke = { kind: 'held', material: pair };
+    configuration.export.hpke_public_key = pair.publicKey;
     sent['hpke-private'] = false;
     kept['hpke-private'] = false;
   }
@@ -426,7 +432,7 @@ export function createDraft() {
         (studyStarted(configuration) || signedCanonical !== null)
       );
     },
-    /** The one thing on this page that came *from* a participant. Null until a tag verifies. */
+    /** Participant-supplied content; null until AEAD and the complete Protocol document verify. */
     get bundle() {
       return bundle;
     },
@@ -521,15 +527,15 @@ export function createDraft() {
     importSigning(text: string) {
       const pair = signingKeyPairFromPrivate(text);
       signing = { kind: 'held', material: pair };
-      configuration.signer.public_key = pair.publicX509Base64;
+      configuration.signer.public_key = pair.publicKey;
       sent['signing-private'] = false;
       kept['signing-private'] = false;
     },
 
     importHpke(text: string) {
-      const keyset = hpkeKeysetFromPrivate(text);
-      hpke = { kind: 'held', material: keyset };
-      configuration.export.tink_hpke_public_keyset = keyset.publicKeyset;
+      const pair = hpkeKeyPairFromPrivate(text);
+      hpke = { kind: 'held', material: pair };
+      configuration.export.hpke_public_key = pair.publicKey;
       sent['hpke-private'] = false;
       kept['hpke-private'] = false;
     },
@@ -549,10 +555,10 @@ export function createDraft() {
       );
       exportKeyIdPin = adoptedName(
         loaded.export.researcher_key_id,
-        deriveExportKeyId(loaded.export.tink_hpke_public_keyset)
+        deriveExportKeyId(loaded.export.hpke_public_key)
       );
-      if (signing.kind === 'held') loaded.signer.public_key = signing.material.publicX509Base64;
-      if (hpke.kind === 'held') loaded.export.tink_hpke_public_keyset = hpke.material.publicKeyset;
+      if (signing.kind === 'held') loaded.signer.public_key = signing.material.publicKey;
+      if (hpke.kind === 'held') loaded.export.hpke_public_key = hpke.material.publicKey;
       configuration = loaded;
       // The file's own name, adopted. A file whose name this editor could not have written is not
       // inherited: the title derives one instead, and the researcher can still override it.
@@ -568,8 +574,9 @@ export function createDraft() {
 
     /**
      * The whole result of a decryption, or `null` to drop it. Assigned in one move because that is
-     * the CLI's guarantee reproduced: `researcher-tools decrypt` stages its output and writes
-     * nothing until the tag verifies, and nothing partial ever reaches this field either.
+     * the CLI's guarantee reproduced: `researcher-tools decrypt` stages its output and publishes
+     * nothing until AEAD and the complete closed-world document verify. Nothing partial reaches
+     * this field either.
      */
     holdBundle(value: ResearchBundle | null) {
       bundle = value;
@@ -601,13 +608,13 @@ export function createDraft() {
       // One snapshot for the whole act, so the bytes that are signed, the bytes that go in the
       // envelope, and the string staleness is measured against cannot be three different documents.
       const target = document;
-      if (target.signer.public_key !== material.publicX509Base64) return 'mismatch';
-      const text = canonicalize(target);
-      const payload = canonicalBytes(target);
+      if (target.signer.public_key !== material.publicKey) return 'mismatch';
+      const text = canonicalizeConfiguration(target);
+      const payload = canonicalConfigurationBytes(target);
       let produced: Uint8Array;
       let container: Uint8Array;
       try {
-        produced = signBytes(payload, material.privatePkcs8Base64);
+        produced = signBytes(payload, material.privateKey);
         if (!verify(payload, produced, target.signer.public_key)) return 'mismatch';
         container = encodeEnvelope(target.signer.key_id, payload, produced);
       } catch {

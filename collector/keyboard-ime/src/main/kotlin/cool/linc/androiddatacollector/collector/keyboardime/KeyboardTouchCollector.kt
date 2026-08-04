@@ -6,19 +6,21 @@ import cool.linc.androiddatacollector.core.collector.AccessRequirement
 import cool.linc.androiddatacollector.core.definition.CollectorConfiguration
 import cool.linc.androiddatacollector.core.definition.KeyboardTouchConfiguration
 import cool.linc.androiddatacollector.core.collector.PrivacyClass
+import cool.linc.androiddatacollector.core.collector.ProtocolEventContracts
 import cool.linc.androiddatacollector.core.collector.Collector
 import cool.linc.androiddatacollector.core.collector.CollectorContext
 import cool.linc.androiddatacollector.core.collector.CollectorDescriptor
 import cool.linc.androiddatacollector.core.collector.CollectorPlugin
 import cool.linc.androiddatacollector.core.collector.SerializedCallbackCollector
+import cool.linc.androiddatacollector.core.collector.SourceRegistrationResult
+import cool.linc.androiddatacollector.core.collector.SourceTeardownResult
 
 class KeyboardTouchCollectorPlugin : CollectorPlugin {
     override val descriptor = CollectorDescriptor(
         id = KeyboardTouchConfiguration.ID,
-        payloadSchemaVersion = 1,
         displayName = "Research keyboard touch",
         privacyClass = PrivacyClass.RESTRICTED,
-        maximumEncodedEventBytes = 4_096,
+        eventContract = requireNotNull(ProtocolEventContracts[KeyboardTouchConfiguration.ID]),
     )
 
     override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
@@ -44,12 +46,14 @@ private class KeyboardTouchCollector(
     private val configuration: KeyboardTouchConfiguration,
     collectorContext: CollectorContext,
 ) : SerializedCallbackCollector(collectorContext, CHANNEL_CAPACITY) {
-    override suspend fun registerSource() {
+    override suspend fun registerSource(): SourceRegistrationResult {
         ImeObservationBridge.install(configuration.trajectorySamplingHz, ::capture)
+        return SourceRegistrationResult.Registered
     }
 
-    override suspend fun unregisterSource() {
+    override suspend fun unregisterSource(): SourceTeardownResult {
         ImeObservationBridge.uninstall()
+        return SourceTeardownResult.Released
     }
 
     private fun capture(observation: ImeTouchObservation) {

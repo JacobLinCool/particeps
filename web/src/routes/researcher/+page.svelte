@@ -43,7 +43,6 @@
   import { createDraft } from './draft.svelte';
   import { STEPS, stepForPath, type StepId } from './steps';
   import { units } from './units';
-  import { keysetJson } from '$lib/adc/canonical';
 
   const REPOSITORY = 'https://github.com/JacobLinCool/android-data-collector';
   const GUIDES = `${REPOSITORY}/blob/main/docs`;
@@ -181,7 +180,7 @@
     go(stepForPath(path));
     await tick();
     // Four of the paths `validate` emits belong to no single control — `collectors`,
-    // `signer.public_key`, `export.tink_hpke_public_keyset`, and the low thumb of the location
+    // `signer.public_key`, `export.hpke_public_key`, and the low thumb of the location
     // dual range. `data-issue-host` is what a section or a card puts up in a field's place, so an
     // issue row never changes the step and then scrolls to nothing.
     const host = document.querySelector<HTMLElement>(
@@ -212,8 +211,8 @@
   function save(id: ArtifactId) {
     const bytes = artifactBytes(id, {
       signingPrivate:
-        draft.signing.kind === 'held' ? draft.signing.material.privatePkcs8Base64 : null,
-      hpkePrivate: draft.hpke.kind === 'held' ? keysetJson(draft.hpke.material.privateKeyset) : null,
+        draft.signing.kind === 'held' ? draft.signing.material.privateKey : null,
+      hpkePrivate: draft.hpke.kind === 'held' ? draft.hpke.material.privateKey : null,
       canonical: draft.canonicalBytes,
       envelope: draft.envelope
     });

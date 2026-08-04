@@ -16,5 +16,6 @@ kotlin {
 
 dependencies {
     api(project(":core:study-definition"))
+    implementation(project(":core:crypto"))
     testImplementation(libs.junit4)
 }

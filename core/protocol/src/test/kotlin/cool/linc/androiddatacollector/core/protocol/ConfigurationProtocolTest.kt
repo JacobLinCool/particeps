@@ -1,265 +1,199 @@
 package cool.linc.androiddatacollector.core.protocol
 
-import cool.linc.androiddatacollector.core.definition.*
+import cool.linc.androiddatacollector.core.definition.AppLifecycleConfiguration
+import cool.linc.androiddatacollector.core.definition.ExportConfiguration
+import cool.linc.androiddatacollector.core.definition.LocationConfiguration
+import cool.linc.androiddatacollector.core.definition.LocationPriority
+import cool.linc.androiddatacollector.core.definition.ProtocolBase64Url
+import cool.linc.androiddatacollector.core.definition.SignerIdentity
+import cool.linc.androiddatacollector.core.definition.StudyConfiguration
+import cool.linc.androiddatacollector.core.definition.StudyConfigurationCodec
+import cool.linc.androiddatacollector.core.definition.UploadConfiguration
+import java.nio.ByteBuffer
+import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.Signature
 import java.time.Instant
-import java.util.Base64
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ConfigurationProtocolTest {
     @Test
-    fun canonicalCodecRoundTripsEveryCollector() {
+    fun canonicalCodecUsesClosedWorldJcsAndIntegerPhysicalUnits() {
         val configuration = configuration()
         val canonical = StudyConfigurationCodec.encode(configuration)
+        val text = canonical.toString(Charsets.UTF_8)
 
         assertEquals(configuration, StudyConfigurationCodec.decode(canonical))
-        assertArrayEquals(canonical, StudyConfigurationCodec.canonicalize(pretty(configuration)))
+        assertArrayEquals(canonical, StudyConfigurationCodec.canonicalize(pretty(canonical)))
+        assertTrue(text.startsWith("{\"assigned_participant_id\":"))
+        assertTrue(text.contains("\"minimum_client_version\":\"7\""))
+        assertTrue(text.contains("\"minimum_displacement_millimeters\":5000"))
+        assertFalse(text.contains("minimum_app_version"))
+        assertFalse(text.contains("tink"))
     }
 
     @Test
-    fun strictCodecRejectsNonCanonicalAndUnknownFields() {
+    fun canonicalizerNormalizesIntegralSpellingsButDecoderRequiresCanonicalBytes() {
         val canonical = StudyConfigurationCodec.encode(configuration())
-        val withWhitespace = canonical.toString(Charsets.UTF_8).replaceFirst("{", "{\n")
-        val withUnknown = canonical.toString(Charsets.UTF_8).replaceFirst("{", "{\"unknown\":true,")
+        val exponent = canonical.toString(Charsets.UTF_8)
+            .replace("\"duration_hours\":24", "\"duration_hours\":2.4e1")
+            .toByteArray()
 
+        assertThrows(IllegalArgumentException::class.java) { StudyConfigurationCodec.decode(exponent) }
+        assertArrayEquals(canonical, StudyConfigurationCodec.canonicalize(exponent))
         assertThrows(IllegalArgumentException::class.java) {
-            StudyConfigurationCodec.decode(withWhitespace.toByteArray())
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            StudyConfigurationCodec.decode(withUnknown.toByteArray())
-        }
-    }
-
-    @Test
-    fun uploadBlockRoundTripsWhenPresentAndAbsent() {
-        val enabled = configuration(UploadConfiguration("https://intake.example.invalid/v1", 360, false))
-        val canonical = StudyConfigurationCodec.encode(enabled)
-
-        assertEquals(enabled, StudyConfigurationCodec.decode(canonical))
-        assertArrayEquals(canonical, StudyConfigurationCodec.canonicalize(pretty(enabled)))
-
-        // An absent upload block is encoded as an empty object, so the root key set stays fixed.
-        val disabled = StudyConfigurationCodec.encode(configuration())
-        assertEquals(null, StudyConfigurationCodec.decode(disabled).upload)
-        assertEquals(true, disabled.toString(Charsets.UTF_8).contains("\"upload\":{}"))
-    }
-
-    @Test
-    fun uploadBlockRejectsPartialAndInsecureEndpoints() {
-        val canonical = StudyConfigurationCodec.encode(
-            configuration(UploadConfiguration("https://intake.example.invalid/v1", 360, false)),
-        ).toString(Charsets.UTF_8)
-
-        // Cleartext must be refused in the schema, not left to the platform to block later.
-        assertThrows(IllegalArgumentException::class.java) {
-            StudyConfigurationCodec.decode(
-                canonical.replace("https://intake", "http://intake").toByteArray(),
-            )
-        }
-        // A half-declared block must not silently inherit a default cadence.
-        assertThrows(IllegalArgumentException::class.java) {
-            StudyConfigurationCodec.decode(
-                canonical.replace(",\"interval_minutes\":360", "").toByteArray(),
-            )
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            StudyConfigurationCodec.decode(
-                canonical.replace("\"interval_minutes\":360", "\"interval_minutes\":0").toByteArray(),
+            StudyConfigurationCodec.canonicalize(
+                exponent.toString(Charsets.UTF_8).replace("2.4e1", "24.5").toByteArray(),
             )
         }
     }
 
     @Test
-    fun v1IdentityLocalizationAndOccurrenceBoundsAreStrict() {
-        assertEquals("每日確認", LocalizedText("Default", mapOf("zh-TW" to "每日確認")).resolve("zh-Hant-TW"))
-        assertThrows(IllegalArgumentException::class.java) {
-            configuration().copy(assignedParticipantId = "contains space")
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            configuration().copy(
-                interventions = listOf(
-                    InterventionConfiguration(
-                        "too-frequent",
-                        NotificationAction("Check-in", "Check in now."),
-                        listOf(InterventionTrigger("every-minute", IntervalSchedule(0, 1, RelativeClock.CALENDAR_TIME), 5)),
-                    ),
-                ),
-            )
-        }
-    }
+    fun hostileJsonAndLegacyV1AreRejected() {
+        val canonical = StudyConfigurationCodec.encode(configuration())
+        val text = canonical.toString(Charsets.UTF_8)
+        val duplicate = text.replaceFirst("{", "{\"assigned_participant_id\":null,").toByteArray()
+        val unknown = text.replaceFirst("{", "{\"unknown\":true,").toByteArray()
+        val legacy = text
+            .replace("\"minimum_client_version\":\"7\",", "\"minimum_app_version\":7,")
+            .replace("\"platform\":\"android\",", "")
+            .toByteArray()
+        val leadingZero = text.replace("\"minimum_client_version\":\"7\"", "\"minimum_client_version\":\"07\"")
+            .toByteArray()
+        val loneSurrogate = text.replace("Protocol test", "\\ud800").toByteArray()
+        val malformedUtf8 = canonical.copyOf().also { it[text.indexOf("Protocol test")] = 0x80.toByte() }
+        val extremeExponent = text.replace("\"duration_hours\":24", "\"duration_hours\":1e999999999")
+            .toByteArray()
 
-    @Test
-    fun verifierAuthenticatesSignerAndValidityWindow() {
-        val keyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
-        val envelope = sign(keyPair)
-        val verifier = verifier(mapOf("test-signer" to encoded(keyPair)))
-
-        val verified = verifier.verify(envelope)
-        assertEquals("protocol-test", verified.configuration.experimentId)
-        assertEquals(true, verified.signerAnchored)
-        val tampered = envelope.copyOf().also { it[it.lastIndex] = (it.last() + 1).toByte() }
-        assertThrows(IllegalArgumentException::class.java) { verifier.verify(tampered) }
-    }
-
-    @Test
-    fun aConfigurationCertifiesItselfWhenNoSignerIsPinned() {
-        // What lets one published app run any researcher's study: the signing key travels inside
-        // the signed bytes, so verification needs nothing but the file.
-        val keyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
-        val envelope = sign(keyPair)
-
-        val verified = verifier(emptyMap()).verify(envelope)
-
-        assertEquals("protocol-test", verified.configuration.experimentId)
-        // The signature proves the file is unchanged, not who wrote it, and the app must say so.
-        assertEquals(false, verified.signerAnchored)
-        val tampered = envelope.copyOf().also { it[it.lastIndex] = (it.last() + 1).toByte() }
-        assertThrows(IllegalArgumentException::class.java) { verifier(emptyMap()).verify(tampered) }
-    }
-
-    @Test
-    fun pinningRefusesAnyOtherSignerAndAnySubstitutedKey() {
-        val keyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
-        val other = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
-
-        // A build that pins signers accepts only those, whatever the configuration declares.
-        assertThrows(IllegalArgumentException::class.java) {
-            verifier(mapOf("someone-else" to encoded(other))).verify(sign(keyPair))
-        }
-
-        // And a configuration cannot claim a pinned key ID while carrying a different key: the
-        // pinned key wins, so the signature made with the impostor's key fails.
-        assertThrows(IllegalArgumentException::class.java) {
-            verifier(mapOf("test-signer" to encoded(other))).verify(sign(keyPair))
+        listOf(duplicate, unknown, legacy, leadingZero, loneSurrogate, malformedUtf8, extremeExponent).forEach { hostile ->
+            assertThrows(IllegalArgumentException::class.java) { StudyConfigurationCodec.canonicalize(hostile) }
         }
     }
 
     @Test
-    fun envelopeSignerMustMatchTheConfiguration() {
-        val keyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
-        val configurationBytes = StudyConfigurationCodec.encode(configuration(signerPublicKey = encoded(keyPair)))
-        val signature = Signature.getInstance("Ed25519").run {
-            initSign(keyPair.private)
-            update(configurationBytes)
-            sign()
-        }
-        // The envelope label sits outside the signature, so a mismatch has to be caught explicitly.
-        val relabelled = SignedConfigurationCodec.encode(
-            SignedConfigurationEnvelope("other-label", configurationBytes, signature),
-        )
-
-        assertThrows(IllegalArgumentException::class.java) { verifier(emptyMap()).verify(relabelled) }
-    }
-
-    @Test
-    fun aMalformedSignatureIsRejectedLikeAnyOtherBadOne() {
-        // The two tests above flip the last byte, which lands here about 6% of the time and used
-        // to fail them at that rate: an Ed25519 signature is (R, S) with S little-endian, so the
-        // last byte is its most significant, and the JDK throws SignatureException rather than
-        // returning false once S passes the group order. 0xFF is over it every time, so this
-        // holds the rejection type still instead of leaving it to which byte a corrupt file lost.
-        val keyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
-        val malformed = sign(keyPair).also { it[it.lastIndex] = 0xFF.toByte() }
-
-        assertThrows(IllegalArgumentException::class.java) { verifier(emptyMap()).verify(malformed) }
-        assertThrows(IllegalArgumentException::class.java) {
-            verifier(mapOf("test-signer" to encoded(keyPair))).verify(malformed)
-        }
-    }
-
-    private fun encoded(keyPair: java.security.KeyPair) =
-        Base64.getEncoder().encodeToString(keyPair.public.encoded)
-
-    private fun sign(keyPair: java.security.KeyPair): ByteArray {
-        val configurationBytes = StudyConfigurationCodec.encode(
-            configuration(signerPublicKey = encoded(keyPair)),
-        )
-        val signature = Signature.getInstance("Ed25519").run {
-            initSign(keyPair.private)
-            update(configurationBytes)
-            sign()
-        }
-        return SignedConfigurationCodec.encode(
+    fun adccfg01HasFixedEd25519TailAndRejectsOldSignatureLengthFraming() {
+        val pair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        val configurationBytes = StudyConfigurationCodec.encode(configuration(publicKey(pair)))
+        val signature = sign(pair, configurationBytes)
+        val envelope = SignedConfigurationCodec.encode(
             SignedConfigurationEnvelope("test-signer", configurationBytes, signature),
         )
+        val decoded = SignedConfigurationCodec.decode(envelope)
+
+        assertEquals("ADCCFG01", envelope.copyOfRange(0, 8).toString(Charsets.US_ASCII))
+        assertEquals("test-signer".length, ByteBuffer.wrap(envelope, 8, 2).short.toInt())
+        assertEquals(configurationBytes.size, ByteBuffer.wrap(envelope, 10, 4).int)
+        assertArrayEquals(signature, envelope.copyOfRange(envelope.size - 64, envelope.size))
+        assertArrayEquals(configurationBytes, decoded.configurationBytes)
+
+        val legacy = ByteBuffer.allocate(envelope.size + 2)
+            .put(envelope, 0, 14)
+            .putShort(64)
+            .put(envelope, 14, envelope.size - 14)
+            .array()
+        assertThrows(IllegalArgumentException::class.java) { SignedConfigurationCodec.decode(legacy) }
+    }
+
+    @Test
+    fun verifierReturnsAuthenticatedConfigurationProvenance() {
+        val pair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        val configurationBytes = StudyConfigurationCodec.encode(configuration(publicKey(pair)))
+        val signature = sign(pair, configurationBytes)
+        val envelope = SignedConfigurationCodec.encode(
+            SignedConfigurationEnvelope("test-signer", configurationBytes, signature),
+        )
+        val verified = verifier(mapOf("test-signer" to publicKey(pair))).verify(envelope)
+
+        assertTrue(verified.signerAnchored)
+        assertEquals("test-signer", verified.signerKeyId)
+        assertArrayEquals(configurationBytes, verified.canonicalConfigurationBytes)
+        assertArrayEquals(signature, verified.signature)
+        assertTrue(Regex("[0-9a-f]{64}").matches(verified.configurationSha256))
+
+        val tampered = envelope.copyOf().also { it[it.lastIndex] = (it.last() + 1).toByte() }
+        assertThrows(IllegalArgumentException::class.java) { verifier(emptyMap()).verify(tampered) }
+        assertThrows(IllegalArgumentException::class.java) {
+            verifier(mapOf("other-signer" to publicKey(pair))).verify(envelope)
+        }
+    }
+
+    @Test
+    fun rawKeyEncodingRejectsPaddingAndDerWireKeys() {
+        val pair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        assertThrows(IllegalArgumentException::class.java) {
+            configuration(publicKey(pair) + "=")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            configuration(java.util.Base64.getEncoder().encodeToString(pair.public.encoded))
+        }
+    }
+
+    @Test
+    fun verifierEnforcesActivationAndDecimalClientVersion() {
+        val pair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        val bytes = StudyConfigurationCodec.encode(configuration(publicKey(pair)))
+        val envelope = SignedConfigurationCodec.encode(
+            SignedConfigurationEnvelope("test-signer", bytes, sign(pair, bytes)),
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            ConfigurationVerifier(emptyMap(), 6, now = { Instant.parse("2027-01-01T00:00:00Z") }).verify(envelope)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ConfigurationVerifier(emptyMap(), 7, now = { Instant.parse("2031-01-01T00:00:00Z") }).verify(envelope)
+        }
     }
 
     private fun verifier(pinned: Map<String, String>) = ConfigurationVerifier(
         pinned,
-        appVersionCode = 1,
-        now = { Instant.parse("2026-07-31T00:00:00Z") },
+        clientVersion = 7,
+        now = { Instant.parse("2027-01-01T00:00:00Z") },
     )
 
-    private fun configuration(
-        upload: UploadConfiguration? = null,
-        signerPublicKey: String = TEST_SIGNER_PUBLIC_KEY,
-    ) = StudyConfiguration(
-        schemaVersion = StudyConfiguration.CURRENT_SCHEMA_VERSION,
-        experimentId = "protocol-test",
-        configurationId = "protocol-config",
-        assignedParticipantId = "arm-a-017",
-        issuedAt = Instant.parse("2026-01-01T00:00:00Z"),
-        expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
-        minimumAppVersion = 1,
-        title = "Protocol test",
-        researcherName = "Protocol researcher",
-        researcherContact = "protocol@example.invalid",
-        purpose = "Exercise strict signed configuration encoding.",
-        durationHours = 24,
-        consentDocumentVersion = "v1",
-        consentSummary = "Protocol test consent summary.",
-        collectors = listOf(
-            AppLifecycleConfiguration(true),
-            AccelerometerConfiguration(true, 100_000, 1_000_000),
-            NetworkStateConfiguration(true, true),
-            NetworkUsageConfiguration(false, setOf(NetworkTransport.WIFI, NetworkTransport.MOBILE), 5),
-            UsageEventsConfiguration(false, 30),
-            LocationConfiguration(false, 10_000, 5_000, 30_000, 5f, LocationPriority.BALANCED),
-            KeyboardTouchConfiguration(false, 60),
-        ),
-        surveys = listOf(
-            SurveyDefinition(
-                id = "daily-survey",
-                title = LocalizedText("Daily check-in", mapOf("zh-TW" to "每日確認")),
-                description = LocalizedText("Tell us how today went."),
-                questions = listOf(
-                    ShortTextQuestion("daily-note", LocalizedText("Anything to share?"), false, 500),
-                ),
-            ),
-        ),
-        interventions = listOf(
-            InterventionConfiguration(
-                id = "daily-check",
-                action = SurveyAction("Daily check-in", "A short survey is ready.", "daily-survey"),
-                triggers = listOf(
-                    InterventionTrigger(
-                        "after-hour",
-                        OneTimeSchedule(60, RelativeClock.ACTIVE_RUNNING_TIME),
-                        1_440,
-                    ),
-                ),
-            ),
-        ),
-        maximumLocalBytes = 16_777_216,
-        signer = SignerIdentity("test-signer", signerPublicKey),
-        export = ExportConfiguration(
-            "test-hpke",
-            "{\"primaryKeyId\":123456,\"key\":[]}",
-        ),
-        upload = upload,
-    )
+    private fun sign(pair: KeyPair, bytes: ByteArray): ByteArray = Signature.getInstance("Ed25519").run {
+        initSign(pair.private)
+        update(bytes)
+        sign()
+    }
 
-    private fun pretty(configuration: StudyConfiguration): ByteArray =
-        StudyConfigurationCodec.encode(configuration)
-            .toString(Charsets.UTF_8)
-            .replace("{", "{\n")
-            .replace(",", ",\n")
-            .toByteArray()
+    private fun publicKey(pair: KeyPair): String = ProtocolBase64Url.encode(pair.public.encoded.copyOfRange(12, 44))
+
+    private fun configuration(signerPublicKey: String = ProtocolBase64Url.encode(ByteArray(32) { 1 })) =
+        StudyConfiguration(
+            schemaVersion = 1,
+            experimentId = "protocol-test",
+            configurationId = "protocol-config",
+            assignedParticipantId = null,
+            issuedAt = Instant.parse("2026-01-01T00:00:00Z"),
+            expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
+            platform = "android",
+            minimumClientVersion = 7,
+            title = "Protocol test",
+            researcherName = "Protocol researcher",
+            researcherContact = "protocol@example.invalid",
+            purpose = "Exercise the destructive Protocol v1 contract.",
+            durationHours = 24,
+            consentDocumentVersion = "v1",
+            consentSummary = "Protocol test consent summary.",
+            collectors = listOf(
+                AppLifecycleConfiguration(true),
+                LocationConfiguration(false, 10_000, 5_000, 30_000, 5_000, LocationPriority.BALANCED),
+            ),
+            surveys = emptyList(),
+            interventions = emptyList(),
+            maximumLocalBytes = 16_777_216,
+            signer = SignerIdentity("test-signer", signerPublicKey),
+            export = ExportConfiguration("test-hpke", ProtocolBase64Url.encode(ByteArray(32) { 2 })),
+            upload = UploadConfiguration("https://intake.example.invalid/v1", 60, false),
+        )
+
+    private fun pretty(canonical: ByteArray): ByteArray = canonical.toString(Charsets.UTF_8)
+        .replace("{", "{\n")
+        .replace(",", ",\n")
+        .toByteArray()
 }
-
-private const val TEST_SIGNER_PUBLIC_KEY =
-    "MCowBQYDK2VwAyEAsRSaTpZmTSBL7eN6nS/HBsNmLM8n1hdRmIt1vtLZsC0="

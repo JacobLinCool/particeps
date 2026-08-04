@@ -76,7 +76,7 @@ export interface IssueMessages {
   document_too_large: (bounds: { max: number }) => string;
   signer_missing: string;
   export_key_missing: string;
-  keyset_unusable: string;
+  key_invalid: string;
   language_tag: string;
   unknown_reference: string;
   selection_bounds: string;
@@ -133,6 +133,7 @@ export interface Messages {
     addSurvey: string;
     addQuestion: string;
     addTrigger: string;
+    addWindow: string;
     survey: string;
     surveyTitle: string;
     surveyDescription: string;
@@ -153,9 +154,16 @@ export interface Messages {
     offset: string;
     interval: string;
     localTime: string;
+    windowStart: string;
+    windowEnd: string;
+    occurrencesPerWindow: string;
+    dailyMaximum: string;
+    totalMaximum: string;
+    minimumSeparation: string;
+    randomWindowSummary: (bounds: { minimum: number; maximum: number }) => string;
     availability: string;
     types: { shortText: string; scale: string; singleChoice: string; multipleChoice: string };
-    schedules: { oneTime: string; interval: string; dailyLocal: string };
+    schedules: { oneTime: string; interval: string; dailyLocal: string; randomWindow: string };
     clocks: { calendar: string; active: string };
   };
 
@@ -199,6 +207,8 @@ export interface Messages {
     hours: string;
     hertz: string;
     metres: string;
+    millimetres: string;
+    lux: string;
     mebibytes: string;
     bytes: string;
   };
@@ -239,6 +249,8 @@ export interface Messages {
       displacement: string;
       priority: string;
       trajectoryRate: string;
+      changeThreshold: string;
+      minimumEventInterval: string;
       upload: string;
       endpoint: string;
       uploadInterval: string;
@@ -246,7 +258,7 @@ export interface Messages {
       signerKeyId: string;
       signerPublicKey: string;
       exportKeyId: string;
-      exportKeyset: string;
+      exportPublicKey: string;
       fingerprint: string;
     };
     /**
@@ -269,6 +281,7 @@ export interface Messages {
       storageQuota: string;
       required: string;
       samplingPeriod: string;
+      ambientLightSamplingPeriod: string;
       bandwidthEstimates: string;
       pollInterval: string;
       fastestInterval: string;
@@ -381,10 +394,10 @@ export interface Messages {
       note: {
         irrevocable: string;
         /**
-         * What marking a source Required costs a participant. Said once above the seven cards
-         * rather than seven times inside them: the pill on each card says *this one is marked*,
+         * What marking a source Required costs a participant. Said once above the twelve cards
+         * rather than twelve times inside them: the pill on each card says *this one is marked*,
          * and this says what being marked does. Every pill names it with `aria-describedby`, so
-         * one sentence is still the description of all seven controls that cause it.
+         * one sentence is still the description of all twelve controls that cause it.
          */
         required: string;
         disclosure: string;
@@ -406,6 +419,16 @@ export interface Messages {
       publish: string;
       distribute: string;
       pilot: string;
+      join: {
+        title: string;
+        artifactUrl: string;
+        artifactHint: string;
+        personalizedHint: string;
+        copy: string;
+        invalid: string;
+        immutable: string;
+        qrAlt: string;
+      };
     };
     /**
      * The last step, and the only one that consumes rather than produces. Everything after `session`

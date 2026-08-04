@@ -51,6 +51,7 @@ export const zhTW: Messages = {
     addSurvey: '新增問卷',
     addQuestion: '新增題目',
     addTrigger: '新增排程',
+    addWindow: '新增時段',
     survey: '問卷',
     surveyTitle: '問卷標題',
     surveyDescription: '問卷說明',
@@ -71,9 +72,22 @@ export const zhTW: Messages = {
     offset: '延後時間（分鐘）',
     interval: '間隔時間（分鐘）',
     localTime: '當地時間',
+    windowStart: '時段開始',
+    windowEnd: '時段結束',
+    occurrencesPerWindow: '每個時段提示次數',
+    dailyMaximum: '每日提示上限',
+    totalMaximum: '整項研究提示上限',
+    minimumSeparation: '最短間隔（分鐘）',
+    randomWindowSummary: ({ minimum, maximum }) =>
+      `可能提示 ${number.format(minimum)}–${number.format(maximum)} 次；確切時間由手機抽選並保存。`,
     availability: '可填寫時間（分鐘）',
     types: { shortText: '簡短文字', scale: '數字量尺', singleChoice: '單選', multipleChoice: '複選' },
-    schedules: { oneTime: '單次', interval: '固定間隔', dailyLocal: '每天的當地時間' },
+    schedules: {
+      oneTime: '單次',
+      interval: '固定間隔',
+      dailyLocal: '每天的當地時間',
+      randomWindow: '隨機當地時段'
+    },
     clocks: { calendar: '日曆時間（暫停期間仍計時）', active: '實際收集時間（暫停期間不計時）' }
   },
 
@@ -108,6 +122,8 @@ export const zhTW: Messages = {
     hours: '小時',
     hertz: 'Hz',
     metres: '公尺',
+    millimetres: '公釐',
+    lux: 'lux',
     mebibytes: 'MiB',
     bytes: '位元組'
   },
@@ -115,7 +131,7 @@ export const zhTW: Messages = {
   file: {
     signingPrivate: 'study-signing-private.key',
     signingPublic: 'study-signing-public.key',
-    exportPrivate: 'export-hpke-private.json',
+    exportPrivate: 'export-hpke-private.key',
     exportPublic: 'export-hpke-public.json',
     canonical: 'study-canonical.json',
     signed: 'study.adccfg'
@@ -147,6 +163,8 @@ export const zhTW: Messages = {
       displacement: '最小位移',
       priority: '定位模式',
       trajectoryRate: '軌跡取樣率',
+      changeThreshold: '變化門檻',
+      minimumEventInterval: '最短事件間隔',
       upload: '自動傳送',
       endpoint: '接收端點',
       uploadInterval: '傳送間隔',
@@ -154,7 +172,7 @@ export const zhTW: Messages = {
       signerKeyId: '簽章金鑰 ID',
       signerPublicKey: '簽章公鑰',
       exportKeyId: '匯出資料的金鑰 ID',
-      exportKeyset: '匯出資料的公鑰組',
+      exportPublicKey: '匯出資料的公鑰',
       fingerprint: '金鑰指紋'
     },
     /**
@@ -170,6 +188,8 @@ export const zhTW: Messages = {
       storageQuota: '空間用完後會停止收集，但不會刪除已收集的資料。',
       required: '沒有這項權限就無法開始。',
       samplingPeriod: '這是取樣週期要求，不是頻率上限；裝置可能更快。',
+      ambientLightSamplingPeriod:
+        '這是相鄰輸出事件之間的硬性最短間隔；最新一筆達到變化門檻的讀值會保留到下一次可輸出時。',
       bandwidthEstimates: '平台的估計值，不是實測值。',
       pollInterval: '一分鐘是試跑用的設定，不是正式研究的設定。',
       fastestInterval: '不能比定位間隔長。',
@@ -195,6 +215,31 @@ export const zhTW: Messages = {
       name: '手機移動',
       records: '裝置座標系中的原始 x、y、z 軸加速度，包含重力',
       limit: '不含動作、姿勢或手勢標記'
+    },
+    'battery_state.v1': {
+      name: '電池狀態',
+      records: '電量百分比、充電狀態與來源，以及省電模式狀態',
+      limit: '不含序號、硬體 ID、健康狀態或溫度'
+    },
+    'temporal_context.v1': {
+      name: '時間脈絡',
+      records: '時區 ID、UTC 偏移、日光節約狀態與時間變更原因',
+      limit: '不把時區當作位置或旅行紀錄'
+    },
+    'gyroscope.v1': {
+      name: '旋轉',
+      records: '原始 x、y、z 軸角速度與感測器準確度',
+      limit: '不推論方向、活動、姿勢或手勢'
+    },
+    'ambient_light.v1': {
+      name: '環境光',
+      records: '原始照度、感測器時間與準確度',
+      limit: '不含影像或環境內容，也不推論人在不在場'
+    },
+    'proximity.v1': {
+      name: '距離感測',
+      records: '原始距離、最大範圍與遠近判定',
+      limit: '許多手機只能回報遠近；不同裝置的數值不可直接比較'
     },
     'network_state.v1': {
       name: '連線類型',
@@ -240,7 +285,7 @@ export const zhTW: Messages = {
     document_too_large: ({ max }) => `整份設定檔必須小於 ${number.format(max)} 個位元組`,
     signer_missing: '請先產生簽章金鑰',
     export_key_missing: '請先產生匯出資料的加密金鑰',
-    keyset_unusable: 'App 無法使用這組金鑰加密。請重新產生匯出資料的加密金鑰，或改為匯入另一組',
+    key_invalid: '這不是 Protocol v1 的 32-byte 標準公開金鑰。請重新產生或匯入金鑰',
     language_tag: '請使用有效的 BCP 47 語言標籤',
     unknown_reference: '請選擇這份設定檔中已定義的問卷',
     selection_bounds: '選取數量限制與這題不相容',
@@ -381,7 +426,17 @@ export const zhTW: Messages = {
       archive: '解密收到的資料時需要使用。',
       publish: '請將金鑰指紋放入招募資料。',
       distribute: '給參與者',
-      pilot: '正式招募前，請先在研究預計支援的 Android 版本與機型上完成測試。'
+      pilot: '正式招募前，請先在研究預計支援的 Android 版本與機型上完成測試。',
+      join: {
+        title: '選用的加入連結與 QR Code',
+        artifactUrl: '已簽署 .adccfg 的 HTTPS 位址',
+        artifactHint: '請先託管完全相同的已簽署檔案，再輸入最終位址；App 不接受重新導向。',
+        personalizedHint: '最後一段路徑必須是夠長的隨機字串，且位址不得包含指定參與者 ID。',
+        copy: '複製加入連結',
+        invalid: '請輸入有效的最終 HTTPS 位址。個人化檔案須使用不洩露指定參與者 ID 的長隨機路徑。',
+        immutable: 'QR Code 完全在本機產生，並綁定此檔案的完整 SHA-256 與簽章指紋。App 只下載一次，不會輪詢更新。',
+        qrAlt: '不可變研究加入連結的 QR Code'
+      }
     },
     read: {
       lede: '開啟參與者回傳的匯出檔。所有內容都只保留在這個分頁。',

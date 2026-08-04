@@ -102,7 +102,7 @@ jobs:
             exit 1
           fi
           "$sdkmanager" "$ANDROID_PLATFORM_PACKAGE" "$ANDROID_BUILD_TOOLS_PACKAGE"
-          echo "$(dirname "$sdkmanager")" >> "$GITHUB_PATH"
+          dirname "$sdkmanager" >> "$GITHUB_PATH"
 
       - name: Materialize release-signing files
         shell: bash
@@ -128,6 +128,17 @@ jobs:
           test testDebugUnitTest lintDebug assembleRelease
           -PreleaseVersionName=${{ steps.release_metadata.outputs.version_name }}
           -PreleaseVersionCode=${{ github.run_number }}
+
+      - name: Recheck Protocol v1 and collector contracts
+        run: |
+          python3 tools/catalog.py check
+          python3 tools/catalog_parity.py
+          python3 tools/validate_protocol_vectors.py
+          python3 tools/collector_assurance.py
+          ./gradlew --no-daemon \
+            -I tools/protocol-conformance.init.gradle \
+            :core:export:test \
+            --tests adc.conformance.ProtocolConformanceTest
 
       - name: Verify and package signed APK
         id: signed_apk

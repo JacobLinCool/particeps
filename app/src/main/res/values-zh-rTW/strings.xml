@@ -71,6 +71,23 @@
         <item quantity="other">手機的移動狀況，每秒約記錄 %1$d 次以上</item>
     </plurals>
 
+    <string name="collector_battery_state_name">電池情境</string>
+    <string name="collector_battery_state_detail">整數電量百分比、充電狀態與來源，以及省電模式；不收集電池健康、溫度或硬體識別碼</string>
+
+    <string name="collector_temporal_context_name">時間情境</string>
+    <string name="collector_temporal_context_detail">時區設定、UTC 偏移、日光節約時間狀態與時鐘變更；這是裝置設定，不代表位置或旅行</string>
+
+    <string name="collector_gyroscope_name">手機旋轉</string>
+    <plurals name="collector_gyroscope_detail">
+        <item quantity="other">手機的原始旋轉速度，每秒約記錄 %1$d 次以上；不推論方向或活動</item>
+    </plurals>
+
+    <string name="collector_ambient_light_name">環境光線</string>
+    <string name="collector_ambient_light_detail">光線變化至少 %2$d millilux 時，最多每隔 %1$s記錄原始照度；不會記錄環境內容</string>
+
+    <string name="collector_proximity_name">接近感測器</string>
+    <string name="collector_proximity_detail">距離變化至少 %2$d mm 或遠近狀態切換時，最多每隔 %1$s記錄原始接近或距離狀態。許多手機只能回報近或遠，不能據此判定有人在場</string>
+
     <string name="collector_network_state_name">連線類型</string>
     <string name="collector_network_state_detail">目前使用 Wi-Fi 或行動網路，以及連線是否按流量計費</string>
 
@@ -87,6 +104,8 @@
     <string name="collector_keyboard_touch_detail">你在研究鍵盤內的觸控方式，包括觸碰位置、時間與力道</string>
 
     <string name="unit_seconds">%1$d 秒</string>
+    <string name="unit_milliseconds">%1$d 毫秒</string>
+    <string name="unit_microseconds">%1$d 微秒</string>
     <string name="unit_minutes">%1$d 分鐘</string>
     <string name="unit_hours">%1$d 小時</string>
     <plurals name="unit_days">
@@ -134,6 +153,9 @@
     <string name="access_research_keyboard_enabled">啟用研究鍵盤</string>
     <string name="access_research_keyboard_selected">選擇研究鍵盤</string>
     <string name="access_accelerometer_hardware">加速度感測器</string>
+    <string name="access_gyroscope_hardware">陀螺儀</string>
+    <string name="access_ambient_light_hardware">環境光感測器</string>
+    <string name="access_proximity_hardware">接近感測器</string>
 
     <plurals name="meter_events">
         <item quantity="other">%1$s 筆</item>

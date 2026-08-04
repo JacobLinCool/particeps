@@ -8,17 +8,24 @@
  * and the keys there are one list, split across two files that must not drift.
  */
 
-import { canonicalBytes, formatInstant, keysetJson, parseInstant, type Instant } from './canonical';
-import { isUsableHpkePublicKeyset } from './tink';
+import {
+  canonicalConfigurationBytes,
+  formatInstant,
+  isCanonicalDecimal,
+  parseInstant,
+  type Instant
+} from './canonical';
+import { decodeBase64Url } from './crypto';
 import {
   BOUNDS,
   ASSIGNED_PARTICIPANT_ID_PATTERN,
-  DEFAULT_MINIMUM_APP_VERSION,
+  DEFAULT_MINIMUM_CLIENT_VERSION,
   ID_PATTERN,
   MAXIMUM_INTERVENTION_OCCURRENCES,
   MAXIMUM_CONFIGURATION_BYTES,
   MAXIMUM_LOCAL_BYTES,
   MINIMUM_LOCAL_BYTES,
+  PLATFORM,
   SCHEMA_VERSION,
   UPLOAD_MAXIMUM_INTERVAL_MINUTES,
   UPLOAD_MINIMUM_INTERVAL_MINUTES,
@@ -46,7 +53,7 @@ export type IssueCode =
   | 'document_too_large'
   | 'signer_missing'
   | 'export_key_missing'
-  | 'keyset_unusable'
+  | 'key_invalid'
   | 'language_tag'
   | 'unknown_reference'
   | 'selection_bounds'
@@ -72,12 +79,20 @@ const DEFAULT_VALIDITY_DAYS = 90;
  */
 export const DEFAULT_LOCAL_BYTES = 1_024 * 1_024 * 1_024;
 
+/** Conservative UTC-18..UTC+18 local-date reach used by every Protocol v1 implementation. */
+export function maximumReachableLocalDates(studyMinutes: number): number {
+  return Math.ceil((studyMinutes + 36 * 60) / 1_440) + 1;
+}
+
 export function validate(configuration: StudyConfiguration): Issue[] {
   const issues: Issue[] = [];
 
   // A version other than the current one is not a field to correct; it is a different format.
   if (configuration.schema_version !== SCHEMA_VERSION) {
     issues.push(range('schema_version', [SCHEMA_VERSION, SCHEMA_VERSION]));
+  }
+  if (configuration.platform !== PLATFORM) {
+    issues.push({ path: 'platform', code: 'required' });
   }
   identifier(issues, 'experiment_id', configuration.experiment_id);
   identifier(issues, 'configuration_id', configuration.configuration_id);
@@ -92,7 +107,12 @@ export function validate(configuration: StudyConfiguration): Issue[] {
     issues.push({ path: 'expires_at', code: 'window_order' });
   }
 
-  integer(issues, 'minimum_app_version', configuration.minimum_app_version, BOUNDS.minimumAppVersion);
+  decimal(
+    issues,
+    'minimum_client_version',
+    configuration.minimum_client_version,
+    BOUNDS.minimumClientVersion
+  );
   text(issues, 'title', configuration.title, BOUNDS.title);
   text(issues, 'researcher.name', configuration.researcher.name, BOUNDS.researcherName);
   text(issues, 'researcher.contact', configuration.researcher.contact, BOUNDS.researcherContact);
@@ -172,18 +192,19 @@ export function validate(configuration: StudyConfiguration): Issue[] {
   ]);
 
   identifier(issues, 'signer.key_id', configuration.signer.key_id);
-  if (!configuration.signer.public_key) {
-    issues.push({ path: 'signer.public_key', code: 'signer_missing' });
-  } else {
-    text(issues, 'signer.public_key', configuration.signer.public_key, BOUNDS.signerPublicKey);
-  }
+  rawPublicKey(issues, 'signer.public_key', configuration.signer.public_key, 'signer_missing');
 
   identifier(issues, 'export.researcher_key_id', configuration.export.researcher_key_id);
-  keyset(issues, configuration);
+  rawPublicKey(
+    issues,
+    'export.hpke_public_key',
+    configuration.export.hpke_public_key,
+    'export_key_missing'
+  );
 
   upload(issues, configuration);
 
-  const bytes = canonicalBytes(configuration).length;
+  const bytes = canonicalConfigurationBytes(configuration).length;
   if (bytes > MAXIMUM_CONFIGURATION_BYTES) {
     issues.push({
       path: '',
@@ -200,6 +221,7 @@ export function emptyConfiguration(): StudyConfiguration {
   const now = Math.floor(Date.now() / 1_000);
   return {
     schema_version: SCHEMA_VERSION,
+    platform: PLATFORM,
     // Inert placeholders, and so are the two key IDs below. The editor derives all four —
     // `lib/adc/ids.ts` — and the document it signs carries the derived values, never these.
     // `validate` still checks them, because it also judges documents this editor did not build
@@ -210,7 +232,7 @@ export function emptyConfiguration(): StudyConfiguration {
     // revoked, so the default window is short enough to be a mistake worth noticing.
     issued_at: formatInstant({ second: now, nano: 0 }),
     expires_at: formatInstant({ second: now + DEFAULT_VALIDITY_DAYS * 86_400, nano: 0 }),
-    minimum_app_version: DEFAULT_MINIMUM_APP_VERSION,
+    minimum_client_version: DEFAULT_MINIMUM_CLIENT_VERSION,
     title: '',
     researcher: { name: '', contact: '' },
     purpose: '',
@@ -222,7 +244,7 @@ export function emptyConfiguration(): StudyConfiguration {
     interventions: [],
     storage: { maximum_local_bytes: DEFAULT_LOCAL_BYTES },
     signer: { key_id: '', public_key: '' },
-    export: { researcher_key_id: '', tink_hpke_public_keyset: { primaryKeyId: 0, key: [] } },
+    export: { researcher_key_id: '', hpke_public_key: '' },
     upload: null
   };
 }
@@ -242,6 +264,27 @@ export function defaultCollector(id: CollectorId): CollectorConfig {
         required: false,
         config: { sampling_period_us: 100_000, maximum_report_latency_us: 1_000_000 }
       };
+    case 'battery_state.v1':
+    case 'temporal_context.v1':
+      return { id, required: false, config: {} };
+    case 'gyroscope.v1':
+      return {
+        id,
+        required: false,
+        config: { sampling_period_us: 100_000, maximum_report_latency_us: 1_000_000 }
+      };
+    case 'ambient_light.v1':
+      return {
+        id,
+        required: false,
+        config: { sampling_period_us: 1_000_000, change_threshold_millilux: 1_000 }
+      };
+    case 'proximity.v1':
+      return {
+        id,
+        required: false,
+        config: { minimum_event_interval_ms: 1_000, change_threshold_millimeters: 0 }
+      };
     case 'network_state.v1':
       return { id, required: false, config: { include_bandwidth_estimates: false } };
     case 'network_usage.v1':
@@ -260,7 +303,7 @@ export function defaultCollector(id: CollectorId): CollectorConfig {
           interval_millis: 60_000,
           minimum_interval_millis: 30_000,
           maximum_batch_delay_millis: 300_000,
-          minimum_displacement_meters: 25,
+          minimum_displacement_millimeters: 25_000,
           priority: 'BALANCED'
         }
       };
@@ -342,6 +385,55 @@ function validateSchedule(
   schedule: StudyConfiguration['interventions'][number]['triggers'][number]['schedule'],
   studyMinutes: number
 ): void {
+  if (schedule.type === 'random_window') {
+    if (schedule.local_windows.length < 1 || schedule.local_windows.length > 8) {
+      issues.push(range(`${path}.local_windows`, [1, 8]));
+    }
+    const parsedWindows = schedule.local_windows.map((window, index) => {
+      const windowPath = `${path}.local_windows.${index}`;
+      const start = localMinute(issues, `${windowPath}.start_local_time`, window.start_local_time);
+      const end = localMinute(issues, `${windowPath}.end_local_time`, window.end_local_time);
+      if (start !== null && end !== null && start >= end) {
+        issues.push({ path: windowPath, code: 'window_order' });
+      }
+      return { start, end, path: windowPath };
+    });
+    parsedWindows.forEach((window, index) => {
+      const previous = parsedWindows[index - 1];
+      if (previous && previous.end !== null && window.start !== null && previous.end > window.start) {
+        issues.push({ path: window.path, code: 'window_order' });
+      }
+    });
+    integer(issues, `${path}.occurrences_per_window`, schedule.occurrences_per_window, [1, 8]);
+    integer(issues, `${path}.maximum_occurrences_per_day`, schedule.maximum_occurrences_per_day, [1, 64]);
+    integer(issues, `${path}.maximum_occurrences_total`, schedule.maximum_occurrences_total, [1, 512]);
+    integer(issues, `${path}.minimum_separation_minutes`, schedule.minimum_separation_minutes, [1, 1_440]);
+    if (
+      Number.isInteger(schedule.maximum_occurrences_per_day) &&
+      schedule.maximum_occurrences_per_day > schedule.local_windows.length * schedule.occurrences_per_window
+    ) {
+      issues.push({ path: `${path}.maximum_occurrences_per_day`, code: 'schedule_bounds' });
+    }
+    if (Number.isInteger(schedule.occurrences_per_window) &&
+        Number.isInteger(schedule.minimum_separation_minutes)) {
+      parsedWindows.forEach((window) => {
+        if (window.start !== null && window.end !== null &&
+            window.end - window.start < 1 +
+              (schedule.occurrences_per_window - 1) * schedule.minimum_separation_minutes) {
+          issues.push({ path: window.path, code: 'schedule_bounds' });
+        }
+      });
+      parsedWindows.forEach((window, index) => {
+        const next = parsedWindows[(index + 1) % parsedWindows.length];
+        if (!next || window.end === null || next.start === null) return;
+        const nextStart = next.start + (index === parsedWindows.length - 1 ? 1_440 : 0);
+        if (nextStart - (window.end - 1) < schedule.minimum_separation_minutes) {
+          issues.push({ path: next.path, code: 'schedule_bounds' });
+        }
+      });
+    }
+    return;
+  }
   if (schedule.type === 'daily_local') {
     if (!/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(schedule.local_time)) {
       issues.push({ path: `${path}.local_time`, code: 'instant' });
@@ -365,11 +457,24 @@ function occurrenceCount(
 ): number {
   if (!Number.isInteger(studyMinutes) || studyMinutes <= 0) return 0;
   if (schedule.type === 'one_time') return 1;
-  if (schedule.type === 'daily_local') return Math.ceil(studyMinutes / 1_440) + 1;
+  if (schedule.type === 'daily_local') return maximumReachableLocalDates(studyMinutes);
+  if (schedule.type === 'random_window') {
+    return Number.isInteger(schedule.maximum_occurrences_total) ? schedule.maximum_occurrences_total : 0;
+  }
   if (!Number.isInteger(schedule.start_offset_minutes) || !Number.isInteger(schedule.interval_minutes) ||
       schedule.start_offset_minutes < 0 || schedule.start_offset_minutes >= studyMinutes ||
       schedule.interval_minutes <= 0) return 0;
   return Math.ceil((studyMinutes - schedule.start_offset_minutes) / schedule.interval_minutes);
+}
+
+const LOCAL_TIME = /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/;
+
+function localMinute(issues: Issue[], path: string, value: string): number | null {
+  if (!LOCAL_TIME.test(value)) {
+    issues.push({ path, code: 'instant' });
+    return null;
+  }
+  return Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
 }
 
 function integer(issues: Issue[], path: string, value: number, bounds: Bounds): void {
@@ -401,6 +506,7 @@ function collectorConfig(issues: Issue[], path: string, collector: CollectorConf
     case 'app_lifecycle.v1':
       return;
     case 'accelerometer.v1':
+    case 'gyroscope.v1':
       integer(
         issues,
         `${path}.sampling_period_us`,
@@ -412,6 +518,37 @@ function collectorConfig(issues: Issue[], path: string, collector: CollectorConf
         `${path}.maximum_report_latency_us`,
         collector.config.maximum_report_latency_us,
         BOUNDS.maximumReportLatencyUs
+      );
+      return;
+    case 'battery_state.v1':
+    case 'temporal_context.v1':
+      return;
+    case 'ambient_light.v1':
+      integer(
+        issues,
+        `${path}.sampling_period_us`,
+        collector.config.sampling_period_us,
+        BOUNDS.ambientLightSamplingPeriodUs
+      );
+      integer(
+        issues,
+        `${path}.change_threshold_millilux`,
+        collector.config.change_threshold_millilux,
+        BOUNDS.changeThresholdMillilux
+      );
+      return;
+    case 'proximity.v1':
+      integer(
+        issues,
+        `${path}.minimum_event_interval_ms`,
+        collector.config.minimum_event_interval_ms,
+        BOUNDS.minimumEventIntervalMs
+      );
+      integer(
+        issues,
+        `${path}.change_threshold_millimeters`,
+        collector.config.change_threshold_millimeters,
+        BOUNDS.changeThresholdMillimeters
       );
       return;
     case 'network_state.v1':
@@ -460,12 +597,12 @@ function collectorConfig(issues: Issue[], path: string, collector: CollectorConf
         config.maximum_batch_delay_millis,
         BOUNDS.maximumBatchDelayMillis
       );
-      // The one field that is not an integer, so a bare comparison — NaN fails both of these.
-      const displacement = config.minimum_displacement_meters;
-      const [floor, ceiling] = BOUNDS.minimumDisplacementMeters;
-      if (!(displacement >= floor) || !(displacement <= ceiling)) {
-        issues.push(range(`${path}.minimum_displacement_meters`, BOUNDS.minimumDisplacementMeters));
-      }
+      integer(
+        issues,
+        `${path}.minimum_displacement_millimeters`,
+        config.minimum_displacement_millimeters,
+        BOUNDS.minimumDisplacementMillimeters
+      );
       return;
     }
     case 'keyboard_touch.v1':
@@ -479,22 +616,30 @@ function collectorConfig(issues: Issue[], path: string, collector: CollectorConf
   }
 }
 
-function keyset(issues: Issue[], configuration: StudyConfiguration): void {
-  const path = 'export.tink_hpke_public_keyset';
-  const value = configuration.export.tink_hpke_public_keyset;
-  if (!value || !Array.isArray(value.key) || value.key.length === 0) {
-    issues.push({ path, code: 'export_key_missing' });
+function decimal(issues: Issue[], path: string, value: string, bounds: Bounds): void {
+  if (!isCanonicalDecimal(value)) {
+    issues.push({ path, code: 'integer' });
     return;
   }
-  const length = keysetJson(value).length;
-  if (length < 32 || length > 16_384) {
-    issues.push({ path, code: 'length_range', bounds: { min: 32, max: 16_384 } });
+  const parsed = BigInt(value);
+  if (parsed < BigInt(bounds[0]) || parsed > BigInt(bounds[1])) issues.push(range(path, bounds));
+}
+
+function rawPublicKey(
+  issues: Issue[],
+  path: string,
+  value: string,
+  missing: 'signer_missing' | 'export_key_missing'
+): void {
+  if (!value) {
+    issues.push({ path, code: missing });
     return;
   }
-  // The length is the only thing `ExportConfiguration` checks, so it is the only thing that would
-  // have been caught before a participant's phone. Everything Tink itself would refuse is refused
-  // here instead, while the researcher is still in front of the key that produced it.
-  if (!isUsableHpkePublicKeyset(value)) issues.push({ path, code: 'keyset_unusable' });
+  try {
+    decodeBase64Url(value, 32);
+  } catch {
+    issues.push({ path, code: 'key_invalid' });
+  }
 }
 
 /**

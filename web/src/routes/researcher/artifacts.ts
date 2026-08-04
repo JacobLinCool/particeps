@@ -54,8 +54,8 @@ export const ARTIFACTS: readonly ArtifactDefinition[] = [
     secrecy: 'secret',
     icon: 'key-open',
     filename: (m, names) =>
-      names.exportKeyId ? `${names.exportKeyId}-private.json` : m.file.exportPrivate,
-    mime: 'application/json'
+      names.exportKeyId ? `${names.exportKeyId}-private.key` : m.file.exportPrivate,
+    mime: 'text/plain'
   },
   {
     id: 'canonical',
@@ -102,9 +102,9 @@ const encoder = new TextEncoder();
 
 /** What each artefact is made of, as bytes. `null` means it does not exist yet. */
 export interface ArtifactSource {
-  /** Base64 PKCS#8, exactly as `signing-keygen` writes it — no trailing newline. */
+  /** Raw 32-byte Ed25519 secret, canonical unpadded base64url. */
   signingPrivate: string | null;
-  /** The compact Tink keyset JSON, matching `INSECURE-demo-hpke-private.json` byte for byte. */
+  /** Raw 32-byte X25519 secret, canonical unpadded base64url. */
   hpkePrivate: string | null;
   canonical: Uint8Array;
   envelope: Uint8Array | null;

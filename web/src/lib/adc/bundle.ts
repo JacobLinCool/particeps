@@ -1,77 +1,99 @@
-/**
- * Opening a `.adcexp` — the file a phone hands back at the end of a study.
+/** Authenticated Protocol v1 `.adcexp` reader.
  *
- * This is the only reader on the site: everything else in `lib/adc` writes files for the app and
- * the CLI to read. `researcher-tools decrypt` is the other implementation of this function, and it
- * takes the same three inputs for the same reason — the bundle, the study configuration, and the
- * export private key. The configuration is not a convenience. Its `experiment_id`,
- * `configuration_id` and `export.researcher_key_id` are the AAD the body was sealed under and the
- * `info` the content key was wrapped under, and none of the three is anywhere in the file's
- * cleartext except the last. A personalised study issues one configuration per participant, so the
- * tag only verifies against *that* participant's file.
- *
- * The CLI stages its output and writes nothing until the tag verifies. The browser gets the same
- * guarantee for free and takes it: the body is one AES-GCM stream with one tag at the end —
- * `DECRYPT_CHUNK_BYTES` on the Kotlin side is a read buffer, not a frame size — so a single
- * `subtle.decrypt` covers the whole document, and WebCrypto verifies the tag before it resolves.
- * Nothing here returns a document that has not been authenticated.
- *
- * Every way this can fail returns a name rather than throwing one. A researcher holding last
- * month's key and this month's bundle has made a mistake with a precise fix, and "decryption
- * failed" is the one answer that does not tell them which of the three files to change.
+ * The browser keeps this as a convenience reader for bounded bundles. The offline Python pipeline
+ * remains the analysis path for large studies. No plaintext value is returned until both AEAD
+ * layers, canonical JSON, embedded configuration provenance, identities, and actual event range
+ * have all verified.
  */
 
-import { hpkePublicKey, readHpkePrivateKeyset } from './tink';
-import type { StudyConfiguration, TinkKeyset } from './types';
+import {
+  canonicalBytes,
+  canonicalConfigurationBytes,
+  canonicalize,
+  canonicalizeConfiguration,
+  isCanonicalDecimal,
+  parseCanonicalJson
+} from './canonical';
+import { decodeBase64Url, encodeBase64Url, verify } from './crypto';
+import { ID_PATTERN, type StudyConfiguration } from './types';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { expand, extract } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-
-/* ---- the container ------------------------------------------------------------------------- */
+import collectorCatalog from '../../../../protocol/v1/collector-catalog.json';
 
 const MAGIC = 'ADCEXP01';
-
-/** magic 8 | uint16 keyIdLen | int32 wrappedKeyLen | nonce 12. Everything after it is variable. */
-const HEADER_BYTES = 26;
-
+const FIXED_HEADER_BYTES = 70;
+const BUNDLE_ID_BYTES = 16;
+const DIGEST_BYTES = 32;
 const NONCE_BYTES = 12;
+const WRAPPED_KEY_BYTES = 80;
 const TAG_BYTES = 16;
 const CONTENT_KEY_BYTES = 32;
-
-/** Tink's `TINK` output prefix: `0x01` then the key id, big-endian. */
-const PREFIX_BYTES = 5;
-const ENCAPSULATED_BYTES = 32;
-
-/** `ResearchExport.decrypt`'s own bounds, so a length that lies is refused rather than allocated. */
 const MINIMUM_KEY_ID_BYTES = 3;
 const MAXIMUM_KEY_ID_BYTES = 64;
-const MINIMUM_WRAPPED_BYTES = 32;
-const MAXIMUM_WRAPPED_BYTES = 16_384;
+const MAXIMUM_INT64 = 9_223_372_036_854_775_807n;
+const PARTICIPANT_INSTANCE_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+const CANONICAL_SIGNED_INTEGER = /^(?:0|-?[1-9][0-9]*)$/;
+const DECIMAL_FLOAT = /^[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)$/;
+const UTF8 = new TextEncoder();
+const FATAL_UTF8 = new TextDecoder('utf-8', { fatal: true });
 
-/**
- * WebCrypto has no streaming AEAD, so the ciphertext and the plaintext are both resident at once
- * and a bundle is bounded by what a tab can hold rather than by what a phone can write —
- * `storage.maximum_local_bytes` reaches 8 GiB. Refusing at a stated size is a sentence a researcher
- * can act on; a `RangeError` out of `subtle.decrypt`, or a tab that stops responding, is not.
- */
-export const MAXIMUM_BUNDLE_BYTES = 268_435_456;
+type CatalogField = {
+  type: 'boolean' | 'decimal_string' | 'enum' | 'float32' | 'float64' | 'int32' | 'json_string' | 'string';
+  required: boolean;
+  enum?: string[];
+  minimum?: number;
+  maximum?: number;
+  maximum_length?: number;
+};
+type CatalogPayload = { fields: Record<string, CatalogField>; types: string[] };
+type CatalogCollector = {
+  id: string;
+  maximum_encoded_event_bytes: number;
+  payload_schema_version: number;
+  payloads: CatalogPayload[];
+};
+const EVENT_CONTRACTS = new Map(
+  (collectorCatalog.collectors as CatalogCollector[]).map((collector) => [collector.id, collector])
+);
+const TRANSITION_DESTINATIONS: Record<string, string> = {
+  ACCESS_PREFLIGHT_PASSED: 'READY',
+  CONFIGURATION_SIGNATURE_VERIFIED: 'CONFIG_VERIFIED',
+  CONSENT_ACCEPTED: 'ACCESS_SETUP',
+  CONSENT_REVIEW_OPENED: 'CONSENT_PENDING',
+  PARTICIPANT_FINISHED_EARLY: 'COMPLETED',
+  PARTICIPANT_PAUSED: 'PAUSED',
+  PARTICIPANT_RESUMED: 'RUNNING',
+  PARTICIPANT_STARTED: 'RUNNING',
+  PARTICIPANT_WITHDREW: 'WITHDRAWN',
+  STORAGE_FAILURE: 'PAUSED',
+  STUDY_DURATION_ELAPSED: 'COMPLETED'
+};
+const STATE_TRANSITIONS: Record<string, string[]> = {
+  ACCESS_SETUP: ['READY', 'WITHDRAWN'],
+  COMPLETED: ['WITHDRAWN'],
+  CONFIG_VERIFIED: ['CONSENT_PENDING', 'WITHDRAWN'],
+  CONSENT_PENDING: ['ACCESS_SETUP', 'WITHDRAWN'],
+  IMPORTED: ['CONFIG_VERIFIED', 'WITHDRAWN'],
+  PAUSED: ['RUNNING', 'COMPLETED', 'WITHDRAWN'],
+  READY: ['RUNNING', 'WITHDRAWN'],
+  RUNNING: ['PAUSED', 'COMPLETED', 'WITHDRAWN'],
+  WITHDRAWN: []
+};
 
-/* ---- what comes out ------------------------------------------------------------------------ */
+// Browser-only memory policy, not a Protocol wire limit. Automatic uploads happen to share this
+// bound; larger manual exports remain valid and belong in the streaming adc-analysis CLI.
+const MAXIMUM_BROWSER_PREVIEW_BYTES = 33_554_432;
+export const BUNDLE_FORMAT = 'research-bundle-v1';
 
-/**
- * The phone's clock, its uptime, and which boot the uptime is measured from. `elapsed_realtime_nanos`
- * passes `Number.MAX_SAFE_INTEGER` after about 104 days of uptime, so it is carried and shown and
- * never used in arithmetic.
- */
 export interface ResearchTime {
-  wall_time_utc_millis: number;
-  elapsed_realtime_nanos: number;
+  wall_time_utc_millis: string;
+  monotonic_time_nanos: string;
   boot_session_id: string;
 }
 
-/** `fields` is string→string in every event, including the ones whose values look like numbers. */
 export interface ResearchEvent {
-  sequence_number: number;
+  sequence_number: string;
   collector_id: string;
   payload_schema_version: number;
   observed_time: ResearchTime;
@@ -90,53 +112,38 @@ export interface ResearchExperiment {
   experiment_id: string;
   configuration_id: string;
   participant_instance_id: string;
-  /** The key is absent in an anonymous study, so absent and null are the same answer here. */
   assigned_participant_id: string | null;
   state: string;
-  next_sequence_number: number;
+  retained_from_sequence: string;
+  uploaded_through_sequence: string;
+  durable_through_sequence: string;
+  next_sequence_number: string;
+  first_sequence_number: string;
+  last_sequence_number: string;
+  event_count: string;
   transitions: ResearchTransition[];
   events: ResearchEvent[];
-  /**
-   * The window this file carries, which is not always the whole study: a scheduled upload sends a
-   * slice, and `next_sequence_number - 1` is what the device has recorded in its lifetime.
-   */
-  first_sequence_number: number;
-  last_sequence_number: number;
 }
 
-export const BUNDLE_FORMAT = 'research-bundle-v1';
-
 export interface ResearchDocument {
-  format: string;
-  exported_at_utc_millis: number;
-  /**
-   * The study's own canonical JSON, verbatim. Nothing here reads it: the tag verified under a
-   * context derived from the configuration the caller supplied, which is already the proof that the
-   * two are the same study.
-   */
-  configuration: unknown;
+  format: typeof BUNDLE_FORMAT;
+  bundle_id: string;
+  bundle_kind: 'manual_export' | 'automatic_upload';
+  configuration_sha256: string;
+  producer: { platform: 'android'; client_version: string };
+  exported_at_utc_millis: string;
+  configuration: StudyConfiguration;
+  configuration_signature: { signer_key_id: string; signature: string };
   experiment: ResearchExperiment;
 }
 
 export interface ResearchBundle {
-  /** `export.researcher_key_id`, as the file names it. */
   keyId: string;
   document: ResearchDocument;
-  /** The decrypted JSON exactly as the phone wrote it, which is what `--output` would contain. */
   text: string;
   bytes: number;
 }
 
-/**
- * Why nothing opened, in the order the checks run. Each one names a different file to change.
- *
- * The last two are a real distinction rather than two words for one failure, and which one comes
- * back says where the mismatch is. The context binds the wrap *and* the body, and the wrap is
- * opened first — so a configuration whose `experiment_id` or `configuration_id` is not the one this
- * file was sealed under fails as `unwrap_failed`, which is the personalised-study case of holding
- * another participant's configuration. `tag_failed` can only happen once the context and the key
- * have both already proved correct, so it means the bytes changed after the phone wrote them.
- */
 export type BundleFailure =
   | 'not_a_bundle'
   | 'too_large'
@@ -151,82 +158,78 @@ export type BundleResult =
   | { ok: false; failure: BundleFailure };
 
 const failed = (failure: BundleFailure): BundleResult => ({ ok: false, failure });
-
-/**
- * A `Uint8Array` is not a `BufferSource` to TypeScript, because a view could sit over a
- * `SharedArrayBuffer` and WebCrypto refuses those. None of these ever does — every array here comes
- * from a `File`, a `TextEncoder`, or `@noble` — so the narrowing is stated once instead of at each
- * of the four calls that would otherwise carry the same cast.
- */
 const source = (bytes: Uint8Array): BufferSource => bytes as unknown as BufferSource;
 
-/* ---- the read ------------------------------------------------------------------------------ */
+export function configurationDigest(configuration: StudyConfiguration): Uint8Array {
+  return sha256(canonicalConfigurationBytes(configuration));
+}
 
-/**
- * The context both layers are bound to: the wrap's RFC 9180 `info`, and the body's AES-GCM AAD.
- * The same bytes in two different roles, which is the one thing about this format that is easy to
- * get backwards — a reader that passes it as the wrap's *associated data* instead fails with an
- * `OperationError` indistinguishable from the wrong key.
- */
-export function bundleContext(configuration: StudyConfiguration): Uint8Array {
-  return utf8(
-    `${BUNDLE_FORMAT}:${configuration.experiment_id}:${configuration.configuration_id}:` +
-      configuration.export.researcher_key_id
-  );
+export function bundleContext(
+  bundleId: string,
+  configurationSha256: string,
+  researcherKeyId: string
+): Uint8Array {
+  return canonicalBytes({
+    bundle_format: BUNDLE_FORMAT,
+    bundle_id: bundleId,
+    configuration_sha256: configurationSha256,
+    researcher_key_id: researcherKeyId
+  });
 }
 
 export async function openBundle(
   bytes: Uint8Array,
   configuration: StudyConfiguration,
-  privateKeyset: TinkKeyset
+  privateKey: string
 ): Promise<BundleResult> {
-  if (bytes.length > MAXIMUM_BUNDLE_BYTES) return failed('too_large');
-  if (bytes.length < HEADER_BYTES) return failed('not_a_bundle');
+  if (bytes.length > MAXIMUM_BROWSER_PREVIEW_BYTES) return failed('too_large');
+  if (bytes.length < FIXED_HEADER_BYTES + MINIMUM_KEY_ID_BYTES + WRAPPED_KEY_BYTES + TAG_BYTES) {
+    return failed('not_a_bundle');
+  }
   for (let index = 0; index < MAGIC.length; index += 1) {
     if (bytes[index] !== MAGIC.charCodeAt(index)) return failed('not_a_bundle');
   }
 
   const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const keyIdLength = header.getUint16(8);
-  // Signed, as the Java writer wrote it, and range-checked before it is used as a length: read
-  // unsigned, a hostile `0xffffffff` becomes four gigabytes of subarray.
-  const wrappedLength = header.getInt32(10);
+  const keyIdLength = header.getUint16(56);
   if (keyIdLength < MINIMUM_KEY_ID_BYTES || keyIdLength > MAXIMUM_KEY_ID_BYTES) {
     return failed('not_a_bundle');
   }
-  if (wrappedLength < MINIMUM_WRAPPED_BYTES || wrappedLength > MAXIMUM_WRAPPED_BYTES) {
+  const keyIdEnd = FIXED_HEADER_BYTES + keyIdLength;
+  const wrappedEnd = keyIdEnd + WRAPPED_KEY_BYTES;
+  if (bytes.length <= wrappedEnd + TAG_BYTES) return failed('not_a_bundle');
+
+  let keyId: string;
+  try {
+    keyId = FATAL_UTF8.decode(bytes.subarray(FIXED_HEADER_BYTES, keyIdEnd));
+  } catch {
     return failed('not_a_bundle');
   }
-  const bodyAt = HEADER_BYTES + keyIdLength + wrappedLength;
-  if (bytes.length <= bodyAt + TAG_BYTES) return failed('not_a_bundle');
+  const bundleId = uuid(bytes.subarray(8, 8 + BUNDLE_ID_BYTES));
+  if (!bundleId || !ID_PATTERN.test(keyId)) return failed('not_a_bundle');
+  const digest = bytes.subarray(24, 24 + DIGEST_BYTES);
+  const digestHex = hex(digest);
+  const nonce = bytes.subarray(58, 58 + NONCE_BYTES);
+  const wrapped = bytes.subarray(keyIdEnd, wrappedEnd);
+  const body = bytes.subarray(wrappedEnd);
 
-  const nonce = bytes.subarray(14, 14 + NONCE_BYTES);
-  const keyId = new TextDecoder().decode(bytes.subarray(HEADER_BYTES, HEADER_BYTES + keyIdLength));
-  const wrapped = bytes.subarray(HEADER_BYTES + keyIdLength, bodyAt);
-  const body = bytes.subarray(bodyAt);
-
-  // Before any crypto, exactly as the CLI does it. Bundle and configuration from two different
-  // studies is the commonest mistake of the three, and this is the only check that can name it.
   if (keyId !== configuration.export.researcher_key_id) return failed('wrong_study');
+  if (!same(digest, configurationDigest(configuration))) return failed('wrong_study');
 
-  const recipient = readHpkePrivateKeyset(privateKeyset);
-  if (!recipient) return failed('wrong_key');
-  // The 5-byte prefix names the key that sealed this. A mismatch here is last month's key file, and
-  // saying so costs one comparison; letting it through costs an HPKE failure with no name.
-  const prefix = new DataView(wrapped.buffer, wrapped.byteOffset, wrapped.byteLength);
-  if (wrapped[0] !== 1 || prefix.getUint32(1) !== recipient.keyId) return failed('wrong_key');
-  // Deliberately stricter than `ResearchExport.decrypt`, which never looks at the configuration's
-  // keyset on the read path. `researcher_key_id` is derived from the public key, so a configuration
-  // naming a different key was already refused above; what is left is a configuration whose own two
-  // halves disagree — a key id from one keyset beside the bytes of another, which only a hand-edited
-  // or corrupted file has. Nothing this site or the CLI writes can reach here, and a study whose
-  // declared key cannot be the one that sealed the bundle is worth saying so rather than letting
-  // HPKE fail with no name.
-  const study = hpkePublicKey(configuration.export.tink_hpke_public_keyset);
-  if (!study || !same(study, x25519.getPublicKey(recipient.scalar))) return failed('wrong_key');
+  let recipientPrivate: Uint8Array;
+  let recipientPublic: Uint8Array;
+  try {
+    recipientPrivate = decodeBase64Url(privateKey.trim(), 32);
+    recipientPublic = x25519.getPublicKey(recipientPrivate);
+    if (!same(recipientPublic, decodeBase64Url(configuration.export.hpke_public_key, 32))) {
+      return failed('wrong_key');
+    }
+  } catch {
+    return failed('wrong_key');
+  }
 
-  const context = bundleContext(configuration);
-  const contentKey = await unwrap(wrapped, recipient.publicKey, recipient.scalar, context);
+  const context = bundleContext(bundleId, digestHex, keyId);
+  const contentKey = await unwrap(wrapped, recipientPublic, recipientPrivate, context);
   if (!contentKey) return failed('unwrap_failed');
 
   let plaintext: Uint8Array;
@@ -245,63 +248,56 @@ export async function openBundle(
     return failed('tag_failed');
   }
 
-  const text = new TextDecoder().decode(plaintext);
-  const document = readDocument(text);
+  let text: string;
+  let parsed: unknown;
+  try {
+    text = FATAL_UTF8.decode(plaintext);
+    parsed = parseCanonicalJson(plaintext);
+  } catch {
+    return failed('unreadable');
+  }
+  const document = readDocument(parsed, configuration, bundleId, digestHex);
   return document
     ? { ok: true, bundle: { keyId, document, text, bytes: plaintext.length } }
     : failed('unreadable');
 }
 
-/* ---- RFC 9180, base mode, DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / AES-256-GCM -------------
- *
- * The one suite Tink's `HpkeCrypto.validateParameters` accepts and the one this site writes, so
- * there is nothing to negotiate and no algorithm agility to implement. `mode` is 0 and the sequence
- * number is 0, which makes the AEAD nonce `base_nonce` unchanged.
- * ------------------------------------------------------------------------------------------- */
-
+/* RFC 9180 base mode: DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM. */
 const KEM_ID = 0x0020;
 const KDF_ID = 0x0001;
 const AEAD_ID = 0x0002;
-
-const encoder = new TextEncoder();
-const utf8 = (text: string) => encoder.encode(text);
 const EMPTY = new Uint8Array(0);
-
 const i2osp2 = (value: number) => Uint8Array.of((value >> 8) & 0xff, value & 0xff);
-
-const SUITE_KEM = concat(utf8('KEM'), i2osp2(KEM_ID));
-const SUITE_HPKE = concat(utf8('HPKE'), i2osp2(KEM_ID), i2osp2(KDF_ID), i2osp2(AEAD_ID));
-const VERSION = utf8('HPKE-v1');
+const SUITE_KEM = concat(UTF8.encode('KEM'), i2osp2(KEM_ID));
+const SUITE_HPKE = concat(
+  UTF8.encode('HPKE'),
+  i2osp2(KEM_ID),
+  i2osp2(KDF_ID),
+  i2osp2(AEAD_ID)
+);
+const VERSION = UTF8.encode('HPKE-v1');
 
 const labeledExtract = (suite: Uint8Array, salt: Uint8Array, label: string, ikm: Uint8Array) =>
-  extract(sha256, concat(VERSION, suite, utf8(label), ikm), salt);
-
+  extract(sha256, concat(VERSION, suite, UTF8.encode(label), ikm), salt);
 const labeledExpand = (
   suite: Uint8Array,
   prk: Uint8Array,
   label: string,
   info: Uint8Array,
   length: number
-) => expand(sha256, prk, concat(i2osp2(length), VERSION, suite, utf8(label), info), length);
+) => expand(sha256, prk, concat(i2osp2(length), VERSION, suite, UTF8.encode(label), info), length);
 
-/**
- * The content key out of `HybridEncrypt`'s output. `info` is the raw context — Tink passes
- * `contextInfo` straight into the key schedule, and the output prefix is no part of it — while the
- * sealed key's own associated data is empty.
- */
 async function unwrap(
   wrapped: Uint8Array,
   recipientPublic: Uint8Array,
-  scalar: Uint8Array,
+  recipientPrivate: Uint8Array,
   info: Uint8Array
 ): Promise<Uint8Array | null> {
-  const enc = wrapped.subarray(PREFIX_BYTES, PREFIX_BYTES + ENCAPSULATED_BYTES);
-  const sealed = wrapped.subarray(PREFIX_BYTES + ENCAPSULATED_BYTES);
-  if (enc.length !== ENCAPSULATED_BYTES || sealed.length <= TAG_BYTES) return null;
+  if (wrapped.length !== WRAPPED_KEY_BYTES) return null;
+  const enc = wrapped.subarray(0, 32);
+  const sealed = wrapped.subarray(32);
   try {
-    // Refuses a shared secret that is all zeroes, which is the low-order-point case RFC 9180
-    // requires an implementation to reject.
-    const dh = x25519.getSharedSecret(scalar, enc);
+    const dh = x25519.getSharedSecret(recipientPrivate, enc);
     const eaePrk = labeledExtract(SUITE_KEM, EMPTY, 'eae_prk', dh);
     const shared = labeledExpand(
       SUITE_KEM,
@@ -337,6 +333,336 @@ async function unwrap(
   }
 }
 
+function readDocument(
+  parsed: unknown,
+  expectedConfiguration: StudyConfiguration,
+  bundleId: string,
+  configurationSha256: string
+): ResearchDocument | null {
+  const root = exact(parsed, [
+    'bundle_id',
+    'bundle_kind',
+    'configuration',
+    'configuration_sha256',
+    'configuration_signature',
+    'experiment',
+    'exported_at_utc_millis',
+    'format',
+    'producer'
+  ]);
+  if (!root || root.format !== BUNDLE_FORMAT || root.bundle_id !== bundleId) return null;
+  if (root.bundle_kind !== 'manual_export' && root.bundle_kind !== 'automatic_upload') return null;
+  if (root.configuration_sha256 !== configurationSha256) return null;
+  if (!decimal(root.exported_at_utc_millis)) return null;
+
+  const producer = exact(root.producer, ['client_version', 'platform']);
+  if (!producer || producer.platform !== 'android' || !positiveDecimal(producer.client_version)) {
+    return null;
+  }
+  if (BigInt(producer.client_version as string) < BigInt(expectedConfiguration.minimum_client_version)) {
+    return null;
+  }
+
+  const configuration = record(root.configuration);
+  if (!configuration || canonicalize(configuration) !== canonicalizeConfiguration(expectedConfiguration)) {
+    return null;
+  }
+  if (hex(sha256(canonicalBytes(configuration))) !== configurationSha256) return null;
+
+  const provenance = exact(root.configuration_signature, ['signature', 'signer_key_id']);
+  if (!provenance || provenance.signer_key_id !== expectedConfiguration.signer.key_id) return null;
+  let signature: Uint8Array;
+  try {
+    signature = decodeBase64Url(string(provenance.signature), 64);
+  } catch {
+    return null;
+  }
+  if (!verify(canonicalBytes(configuration), signature, expectedConfiguration.signer.public_key)) {
+    return null;
+  }
+
+  const experiment = readExperiment(root.experiment, expectedConfiguration);
+  if (!experiment) return null;
+  if (
+    root.bundle_kind === 'automatic_upload' &&
+    (experiment.event_count === '0' ||
+      BigInt(experiment.first_sequence_number) !== BigInt(experiment.uploaded_through_sequence) + 1n)
+  ) return null;
+  return {
+    format: BUNDLE_FORMAT,
+    bundle_id: bundleId,
+    bundle_kind: root.bundle_kind,
+    configuration_sha256: configurationSha256,
+    producer: { platform: 'android', client_version: producer.client_version as string },
+    exported_at_utc_millis: root.exported_at_utc_millis as string,
+    configuration: expectedConfiguration,
+    configuration_signature: {
+      signer_key_id: provenance.signer_key_id as string,
+      signature: encodeBase64Url(signature)
+    },
+    experiment
+  };
+}
+
+function readExperiment(raw: unknown, configuration: StudyConfiguration): ResearchExperiment | null {
+  const source = exact(raw, [
+    'assigned_participant_id',
+    'configuration_id',
+    'durable_through_sequence',
+    'event_count',
+    'events',
+    'experiment_id',
+    'first_sequence_number',
+    'last_sequence_number',
+    'next_sequence_number',
+    'participant_instance_id',
+    'retained_from_sequence',
+    'state',
+    'transitions',
+    'uploaded_through_sequence'
+  ]);
+  if (!source) return null;
+  if (
+    source.experiment_id !== configuration.experiment_id ||
+    source.configuration_id !== configuration.configuration_id ||
+    source.assigned_participant_id !== configuration.assigned_participant_id ||
+    typeof source.participant_instance_id !== 'string' ||
+    !PARTICIPANT_INSTANCE_ID.test(source.participant_instance_id) ||
+    !nonempty(source.state)
+  ) return null;
+
+  const decimalKeys = [
+    'durable_through_sequence',
+    'event_count',
+    'first_sequence_number',
+    'last_sequence_number',
+    'next_sequence_number',
+    'retained_from_sequence',
+    'uploaded_through_sequence'
+  ] as const;
+  if (decimalKeys.some((key) => !decimal(source[key]))) return null;
+  if (!Array.isArray(source.events) || !Array.isArray(source.transitions)) return null;
+
+  const durable = BigInt(source.durable_through_sequence as string);
+  const next = BigInt(source.next_sequence_number as string);
+  const retained = BigInt(source.retained_from_sequence as string);
+  const uploaded = BigInt(source.uploaded_through_sequence as string);
+  const first = BigInt(source.first_sequence_number as string);
+  const last = BigInt(source.last_sequence_number as string);
+  if (
+    next !== durable + 1n || retained < 1n || retained > next || uploaded >= next ||
+    retained > uploaded + 1n || first < retained || last > durable
+  ) return null;
+
+  const events: ResearchEvent[] = [];
+  for (const rawEvent of source.events) {
+    const event = readEvent(rawEvent, configuration);
+    if (!event) return null;
+    events.push(event);
+  }
+  if (BigInt(source.event_count as string) !== BigInt(events.length)) return null;
+  if (events.length > 0) {
+    for (let index = 1; index < events.length; index += 1) {
+      if (BigInt(events[index].sequence_number) !== BigInt(events[index - 1].sequence_number) + 1n) {
+        return null;
+      }
+    }
+    if (
+      events[0].sequence_number !== source.first_sequence_number ||
+      events[events.length - 1].sequence_number !== source.last_sequence_number
+    ) return null;
+  } else if (
+    BigInt(source.last_sequence_number as string) + 1n !==
+      BigInt(source.first_sequence_number as string)
+  ) {
+    return null;
+  }
+
+  const transitions: ResearchTransition[] = [];
+  let transitionState = 'IMPORTED';
+  for (const rawTransition of source.transitions) {
+    const transition = readTransition(rawTransition);
+    if (
+      !transition || transition.from !== transitionState ||
+      TRANSITION_DESTINATIONS[transition.reason] !== transition.to ||
+      !STATE_TRANSITIONS[transition.from]?.includes(transition.to)
+    ) return null;
+    transitionState = transition.to;
+    transitions.push(transition);
+  }
+  if (
+    (transitions.length === 0 && source.state !== 'IMPORTED') ||
+    (transitions.length > 0 && source.state !== transitionState)
+  ) return null;
+
+  return {
+    experiment_id: configuration.experiment_id,
+    configuration_id: configuration.configuration_id,
+    participant_instance_id: source.participant_instance_id as string,
+    assigned_participant_id: configuration.assigned_participant_id,
+    state: source.state as string,
+    retained_from_sequence: source.retained_from_sequence as string,
+    uploaded_through_sequence: source.uploaded_through_sequence as string,
+    durable_through_sequence: source.durable_through_sequence as string,
+    next_sequence_number: source.next_sequence_number as string,
+    first_sequence_number: source.first_sequence_number as string,
+    last_sequence_number: source.last_sequence_number as string,
+    event_count: source.event_count as string,
+    transitions,
+    events
+  };
+}
+
+function readEvent(raw: unknown, configuration: StudyConfiguration): ResearchEvent | null {
+  const source = exact(raw, [
+    'collector_id',
+    'fields',
+    'observed_time',
+    'payload_schema_version',
+    'payload_type',
+    'sequence_number'
+  ]);
+  const fields = source && record(source.fields);
+  const time = source && readTime(source.observed_time);
+  if (
+    !source || !fields || !time || !decimal(source.sequence_number) ||
+    !nonempty(source.collector_id) || !nonempty(source.payload_type) ||
+    !Number.isSafeInteger(source.payload_schema_version) ||
+    (source.payload_schema_version as number) < 1
+  ) return null;
+  if (Object.values(fields).some((value) => typeof value !== 'string')) return null;
+  const event = {
+    sequence_number: source.sequence_number as string,
+    collector_id: source.collector_id as string,
+    payload_schema_version: source.payload_schema_version as number,
+    observed_time: time,
+    payload_type: source.payload_type as string,
+    fields: fields as Record<string, string>
+  };
+  return acceptsEvent(event, source, configuration) ? event : null;
+}
+
+function readTransition(raw: unknown): ResearchTransition | null {
+  const source = exact(raw, ['from', 'reason', 'time', 'to']);
+  const time = source && readTime(source.time);
+  if (!source || !time || !nonempty(source.from) || !nonempty(source.to) || !nonempty(source.reason)) {
+    return null;
+  }
+  return { from: source.from, to: source.to, reason: source.reason, time } as ResearchTransition;
+}
+
+function readTime(raw: unknown): ResearchTime | null {
+  const source = exact(raw, ['boot_session_id', 'monotonic_time_nanos', 'wall_time_utc_millis']);
+  if (
+    !source || !nonempty(source.boot_session_id) ||
+    UTF8.encode(source.boot_session_id as string).length > 128 ||
+    !decimal(source.monotonic_time_nanos) ||
+    !decimal(source.wall_time_utc_millis)
+  ) return null;
+  return {
+    boot_session_id: source.boot_session_id as string,
+    monotonic_time_nanos: source.monotonic_time_nanos as string,
+    wall_time_utc_millis: source.wall_time_utc_millis as string
+  };
+}
+
+function acceptsEvent(
+  event: ResearchEvent,
+  raw: Record<string, unknown>,
+  configuration: StudyConfiguration
+): boolean {
+  const configured = configuration.collectors.some((collector) => collector.id === event.collector_id) ||
+    (event.collector_id === 'interventions.v1' && configuration.interventions.length > 0);
+  const contract = EVENT_CONTRACTS.get(event.collector_id);
+  if (!configured || !contract || event.payload_schema_version !== contract.payload_schema_version) {
+    return false;
+  }
+  const payload = contract.payloads.find((candidate) => candidate.types.includes(event.payload_type));
+  if (!payload) return false;
+  const names = Object.keys(event.fields);
+  if (
+    names.some((name) => !Object.hasOwn(payload.fields, name)) ||
+    Object.entries(payload.fields).some(([name, field]) =>
+      field.required ? !Object.hasOwn(event.fields, name) : false
+    ) ||
+    Object.entries(event.fields).some(([name, value]) => !acceptsField(value, payload.fields[name]))
+  ) return false;
+  return canonicalBytes(raw).length <= contract.maximum_encoded_event_bytes;
+}
+
+function acceptsField(value: string, field: CatalogField): boolean {
+  if (field.maximum_length !== undefined && value.length > field.maximum_length) return false;
+  let numeric: number;
+  switch (field.type) {
+    case 'boolean':
+      return value === 'true' || value === 'false';
+    case 'decimal_string':
+      return decimal(value);
+    case 'enum':
+      return field.enum?.includes(value) === true;
+    case 'float32':
+      if (!DECIMAL_FLOAT.test(value)) return false;
+      numeric = Number(value);
+      return Number.isFinite(numeric) && Number.isFinite(Math.fround(numeric)) && inRange(numeric, field);
+    case 'float64':
+      if (!DECIMAL_FLOAT.test(value)) return false;
+      numeric = Number(value);
+      return Number.isFinite(numeric) && inRange(numeric, field);
+    case 'int32':
+      if (!CANONICAL_SIGNED_INTEGER.test(value)) return false;
+      numeric = Number(value);
+      return Number.isInteger(numeric) && numeric >= -2_147_483_648 && numeric <= 2_147_483_647 &&
+        inRange(numeric, field);
+    case 'json_string':
+      try {
+        JSON.parse(value);
+        return true;
+      } catch {
+        return false;
+      }
+    case 'string':
+      return true;
+  }
+}
+
+const inRange = (value: number, field: CatalogField) =>
+  (field.minimum === undefined || value >= field.minimum) &&
+  (field.maximum === undefined || value <= field.maximum);
+
+function exact(value: unknown, keys: readonly string[]): Record<string, unknown> | null {
+  const candidate = record(value);
+  if (!candidate) return null;
+  const actual = Object.keys(candidate);
+  return actual.length === keys.length && keys.every((key) => Object.hasOwn(candidate, key))
+    ? candidate
+    : null;
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+const string = (value: unknown): string => typeof value === 'string' ? value : '';
+const nonempty = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
+const decimal = (value: unknown): value is string => isCanonicalDecimal(value, MAXIMUM_INT64);
+const positiveDecimal = (value: unknown): value is string => decimal(value) && value !== '0';
+
+function uuid(bytes: Uint8Array): string | null {
+  if (
+    bytes.length !== BUNDLE_ID_BYTES ||
+    (bytes[6] & 0xf0) !== 0x40 ||
+    (bytes[8] & 0xc0) !== 0x80
+  ) return null;
+  const value = hex(bytes);
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
+}
+
+function hex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 function concat(...parts: Uint8Array[]): Uint8Array {
   const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
   let at = 0;
@@ -350,135 +676,3 @@ function concat(...parts: Uint8Array[]): Uint8Array {
 function same(left: Uint8Array, right: Uint8Array): boolean {
   return left.length === right.length && left.every((byte, index) => byte === right[index]);
 }
-
-/* ---- the document -------------------------------------------------------------------------- */
-
-/**
- * Structural, and only as deep as anything reads. A summary that maps over `events` cannot be shown
- * a `null` there and recover, and a document that fails this is one no version of this page wrote —
- * so it is refused with a name rather than half-rendered. Unknown fields are carried: this reads a
- * format the phone owns, and refusing a field somebody added would break every future bundle.
- */
-function readDocument(text: string): ResearchDocument | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  const root = record(parsed);
-  if (!root || root.format !== BUNDLE_FORMAT) return null;
-  if (!isNumber(root.exported_at_utc_millis)) return null;
-  if (!record(root.configuration)) return null;
-
-  const source = record(root.experiment);
-  if (!source) return null;
-  if (
-    !isString(source.experiment_id) ||
-    !isString(source.configuration_id) ||
-    !isString(source.participant_instance_id) ||
-    !isString(source.state) ||
-    !isNumber(source.next_sequence_number) ||
-    !isNumber(source.first_sequence_number) ||
-    !isNumber(source.last_sequence_number)
-  ) {
-    return null;
-  }
-  const assigned = source.assigned_participant_id;
-  if (assigned !== undefined && assigned !== null && !isString(assigned)) return null;
-  if (!Array.isArray(source.events) || !Array.isArray(source.transitions)) return null;
-
-  const events: ResearchEvent[] = [];
-  for (const raw of source.events) {
-    const event = readEvent(raw);
-    if (!event) return null;
-    events.push(event);
-  }
-  const transitions: ResearchTransition[] = [];
-  for (const raw of source.transitions) {
-    const transition = readTransition(raw);
-    if (!transition) return null;
-    transitions.push(transition);
-  }
-
-  return {
-    format: root.format,
-    exported_at_utc_millis: root.exported_at_utc_millis,
-    configuration: root.configuration,
-    experiment: {
-      experiment_id: source.experiment_id,
-      configuration_id: source.configuration_id,
-      participant_instance_id: source.participant_instance_id,
-      assigned_participant_id: isString(assigned) ? assigned : null,
-      state: source.state,
-      next_sequence_number: source.next_sequence_number,
-      transitions,
-      events,
-      first_sequence_number: source.first_sequence_number,
-      last_sequence_number: source.last_sequence_number
-    }
-  };
-}
-
-function readEvent(raw: unknown): ResearchEvent | null {
-  const source = record(raw);
-  if (!source) return null;
-  const time = readTime(source.observed_time);
-  const fields = record(source.fields);
-  if (!time || !fields) return null;
-  if (
-    !isNumber(source.sequence_number) ||
-    !isString(source.collector_id) ||
-    !isNumber(source.payload_schema_version) ||
-    !isString(source.payload_type)
-  ) {
-    return null;
-  }
-  // Always strings on the wire, including a survey submission, which arrives as JSON *text*.
-  for (const value of Object.values(fields)) if (!isString(value)) return null;
-  return {
-    sequence_number: source.sequence_number,
-    collector_id: source.collector_id,
-    payload_schema_version: source.payload_schema_version,
-    observed_time: time,
-    payload_type: source.payload_type,
-    fields: fields as Record<string, string>
-  };
-}
-
-function readTransition(raw: unknown): ResearchTransition | null {
-  const source = record(raw);
-  if (!source) return null;
-  const time = readTime(source.time);
-  if (!time || !isString(source.from) || !isString(source.to) || !isString(source.reason)) {
-    return null;
-  }
-  return { from: source.from, to: source.to, reason: source.reason, time };
-}
-
-function readTime(raw: unknown): ResearchTime | null {
-  const source = record(raw);
-  if (!source) return null;
-  if (
-    !isNumber(source.wall_time_utc_millis) ||
-    !isNumber(source.elapsed_realtime_nanos) ||
-    !isString(source.boot_session_id)
-  ) {
-    return null;
-  }
-  return {
-    wall_time_utc_millis: source.wall_time_utc_millis,
-    elapsed_realtime_nanos: source.elapsed_realtime_nanos,
-    boot_session_id: source.boot_session_id
-  };
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-const isString = (value: unknown): value is string => typeof value === 'string';
-const isNumber = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value);

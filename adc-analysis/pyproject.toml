@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adc-analysis"
+version = "0.1.0"
+description = "Offline verification and typed Parquet materialization for ADC Protocol v1"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+  "boto3>=1.40,<2",
+  "cryptography>=48.0.1,<49",
+  "ijson>=3.4,<4",
+  "pyarrow>=21,<24",
+]
+
+[dependency-groups]
+dev = ["ruff>=0.16,<0.17"]
+
+[project.scripts]
+adc-analysis = "adc_analysis.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+adc_analysis = ["py.typed"]
+
+[tool.ruff]
+target-version = "py311"

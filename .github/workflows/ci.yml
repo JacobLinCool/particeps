@@ -52,6 +52,13 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Validate Protocol v1 and collector contracts
+        run: |
+          python3 tools/catalog.py check
+          python3 tools/catalog_parity.py
+          python3 tools/validate_protocol_vectors.py
+          python3 -m unittest discover -s tools/tests -v
+
       # The wrapper JAR is a binary in the tree; this checks it against Gradle's published
       # checksums so nobody has to take it on faith.
       - name: Validate the Gradle wrapper
@@ -81,10 +88,22 @@ jobs:
             exit 1
           fi
           "$sdkmanager" "$ANDROID_PLATFORM_PACKAGE" "$ANDROID_BUILD_TOOLS_PACKAGE"
-          echo "$(dirname "$sdkmanager")" >> "$GITHUB_PATH"
+          dirname "$sdkmanager" >> "$GITHUB_PATH"
 
-      - name: Verify and build
-        run: ./gradlew --no-daemon test testDebugUnitTest lintDebug assembleDebug assembleRelease
+      - name: Test, lint, and build
+        run: >-
+          ./gradlew --no-daemon
+          test testDebugUnitTest lintDebug assembleDebug assembleRelease
+
+      - name: Consume shared Protocol v1 vectors in Kotlin
+        run: >-
+          ./gradlew --no-daemon
+          -I tools/protocol-conformance.init.gradle
+          :core:export:test
+          --tests adc.conformance.ProtocolConformanceTest
+
+      - name: Enforce collector capability boundary
+        run: python3 tools/collector_assurance.py
 
       - name: Upload debug APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

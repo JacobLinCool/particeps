@@ -8,8 +8,9 @@ and whether it delivers them to an endpoint on a schedule — sign that file wit
 key, and hand it to participants. The participant app verifies the signature, presents the
 study, and runs exactly what the configuration specifies.
 
-v1 ships seven collectors — app lifecycle, accelerometer, network state, network usage,
-usage events, location, and research-keyboard touch dynamics — and runs the complete
+v1 ships twelve selectable collectors — app lifecycle, accelerometer, battery state, temporal
+context, gyroscope, ambient light, proximity, network state, network usage, usage events,
+location, and research-keyboard touch dynamics — and runs the complete
 on-device loop on Android 14–17 (`minSdk 34`, `compileSdk`/`targetSdk 37`). Changing which
 of them a study uses, how often they sample, or how long the study lasts is a configuration
 change. Adding a collector that does not exist yet is a code change; see
@@ -17,7 +18,7 @@ change. Adding a collector that does not exist yet is a code change; see
 
 Deploying a study is a short pipeline, and this guide follows it:
 
-1. Generate the study signing key and the export encryption keyset (section 3).
+1. Generate the study signing key and the export encryption key (section 3).
 2. Write the study configuration (section 4).
 3. Canonicalise, sign, and verify it (section 5).
 4. Distribute the participant app and the `.adccfg` file, and publish your signing key
@@ -28,6 +29,13 @@ Deploying a study is a short pipeline, and this guide follows it:
 
 Sections 1 and 2 come first because they shape the design: what the data can and cannot
 support, and how the two key pairs must be handled.
+
+For implementation work, start with the [normative Protocol v1 contract](../protocol/v1/README.md),
+its [collector catalog](../protocol/v1/collector-catalog.json), the
+[P0–P2 decision record](p0-p2-implementation-contract.md), and the
+[Collector capability policy](../assurance/README.md). Configuration, envelope, export, outbox, and
+HTTP behavior live beside their tests in `core/study-definition`, `core/protocol`, `core/export`,
+and `app/src/{main,test}/…/platform`; those links are indexed in the repository README.
 
 The app runs the on-device loop; it does not run your study. Before you recruit anyone, the
 research team is responsible for:
@@ -54,6 +62,11 @@ written up.
 | --- | --- | --- |
 | `app_lifecycle.v1` | Lifecycle transitions of this app's own Activities, each with the Activity class name | Anything about time spent in other apps. This instruments the collector app, not the participant's phone use. |
 | `accelerometer.v1` | Raw x/y/z acceleration in m/s² in device coordinates, the sensor's own timestamp, and the platform accuracy code | A recognised movement, posture, or activity. The app ships no classifier and produces no ground-truth label. |
+| `battery_state.v1` | Whole battery percentage, charging state/source, and power-save state | Battery health, temperature, capacity, hardware identity, or the cause of a change. |
+| `temporal_context.v1` | Time-zone ID, UTC offset, DST state, and a bounded reason for a time-context snapshot | Physical location or travel. A configured time zone is not location evidence. |
+| `gyroscope.v1` | Raw x/y/z angular velocity in rad/s, sensor time, and accuracy | Orientation, posture, activity, or gesture labels. No inference is performed. |
+| `ambient_light.v1` | Raw illuminance in lux, sensor time, and accuracy | Image content, a calibrated environment across devices, or whether a person is present. |
+| `proximity.v1` | Raw sensor distance/range and the device's near/far interpretation | Comparable physical distance across devices or presence; many sensors are binary. |
 | `network_state.v1` | Transport flags for the default network (`wifi`, `mobile`, `ethernet`, `vpn`), `validated`/`metered`/`roaming`, and optional link bandwidth estimates | SSID, BSSID, IP address, hostname, URL, packet contents, or who the device communicated with. None of it is read. |
 | `network_usage.v1` | Device-total `rx_bytes`/`tx_bytes`/`rx_packets`/`tx_packets` per transport, over an explicit `[coverage_start_utc_millis, coverage_end_utc_millis]` window | An instantaneous throughput, a per-app attribution, or the precise time traffic occurred. The coverage window is the finest resolution that exists in the data. |
 | `usage_events.v1` | Raw platform events — activity resumed/paused/stopped, screen interactive/non-interactive, keyguard shown/hidden, device startup/shutdown — with the reporting package name where the platform supplies one | A complete or real-time session stream. The platform delays events, omits events, and does not guarantee that resume and pause pair up. |
@@ -84,7 +97,7 @@ v1 uses two key pairs with different purposes. They are not interchangeable.
 | Key | What the private key does | Where the public key goes |
 | --- | --- | --- |
 | Ed25519 study signing key | Signs the canonical study configuration bytes | The signed study configuration itself, as `signer.public_key` |
-| Tink X25519/HPKE keyset | Decrypts every bundle, exported or uploaded | The signed study configuration, as `export.tink_hpke_public_keyset` |
+| Raw X25519/HPKE key | Decrypts every bundle, exported or uploaded | The signed study configuration, as `export.hpke_public_key` |
 
 Both public halves therefore travel inside the configuration, and neither requires an app
 build. A configuration certifies itself: the app verifies the signature with the key the
@@ -104,10 +117,10 @@ The consequences differ, so track them separately.
   a new key and fingerprint, re-sign under the new key ID, and notify participants. There is
   no revocation mechanism, so configurations already signed under the old key remain valid
   until they expire — which is a reason to keep validity windows short.
-- **HPKE private key lost.** Every export encrypted to that keyset is permanently
+- **HPKE private key lost.** Every export encrypted to that key is permanently
   unreadable. There is no escrow and no recovery path. Participant devices cannot re-encrypt.
 - **HPKE private key leaked.** Anyone holding it can decrypt any export bundle for that
-  study that they can obtain. Rotating the keyset requires a new `configuration_id`, a new
+  study that they can obtain. Rotating the key requires a new `configuration_id`, a new
   signature, and fresh consent.
 
 Do not reuse one key pair for both roles, and do not reuse either across unrelated studies.
@@ -148,18 +161,19 @@ Generate a production signing key:
   --public /secure/study-signing-public.key"
 ```
 
-Generate the export HPKE keyset:
+Generate the export HPKE key:
 
 ```bash
 ./gradlew :researcher-tools:run --args="hpke-keygen \
-  --private /secure/export-hpke-private.json \
-  --public ./export-hpke-public.json"
+  --private /secure/export-hpke-private.key \
+  --public ./export-hpke-public.key"
 ```
 
-The public signing key is a base64 X.509 Ed25519 key. Paste it into the study
-configuration's `signer.public_key`, alongside the key ID you will sign with, and paste the
-HPKE public keyset JSON object into `export.tink_hpke_public_keyset`. Both private keys stay
-in the controlled research environment. Neither public key goes into an app build.
+Each `.key` file contains one raw 32-byte key encoded as unpadded base64url. Paste the
+Ed25519 public value into `signer.public_key` and the X25519 public value into
+`export.hpke_public_key`. Tink JSON/protobuf keysets, X.509, PKCS#8, padded base64, and
+standard-base64 keys are not Protocol v1 wire values. Both private keys stay in the controlled
+research environment; neither public key goes into an app build.
 
 An institution that wants one build to accept only its own studies can additionally pin the
 signer — see the end of section 6.
@@ -184,7 +198,7 @@ no fewer:
 
 ```text
 schema_version, experiment_id, configuration_id, assigned_participant_id,
-issued_at, expires_at, minimum_app_version,
+issued_at, expires_at, platform, minimum_client_version,
 title, researcher, purpose, duration_hours,
 consent, collectors, surveys, interventions, storage, signer, export, upload
 ```
@@ -204,7 +218,8 @@ Constraints enforced by
 - `issued_at` must precede `expires_at`. Verification requires the current time to be at or
   after `issued_at` and strictly before `expires_at`; the expiry instant itself is already
   expired.
-- `minimum_app_version` must be positive.
+- `platform` is exactly `"android"`. `minimum_client_version` is a positive canonical decimal
+  string (`"1"`, never a JSON number or a zero-padded string).
 - `title` 1–120 characters; `researcher.name` 1–120; `researcher.contact` 3–240;
   `purpose` 1–2,000.
 - `duration_hours` is 1–8,760, measured from the participant's first explicit start.
@@ -227,12 +242,11 @@ Constraints enforced by
   durable idempotency metadata remains inside its encrypted 1 MiB bound.
   WorkManager timing is best effort, not an exact alarm. Any intervention requires notification access.
 - `storage.maximum_local_bytes` is 8 MiB–8 GiB (8,388,608–8,589,934,592).
-- `signer` carries exactly `key_id` and `public_key`. `public_key` is the base64 X.509
-  Ed25519 public half of the key you sign with, 32–1,024 characters. `key_id` must equal the
+- `signer` carries exactly `key_id` and `public_key`. `public_key` is the raw 32-byte Ed25519
+  public half encoded as unpadded base64url. `key_id` must equal the
   `--key-id` you pass to `sign`, and the app checks it against the envelope's signer key ID
   on import.
-- `export.tink_hpke_public_keyset` must be a JSON object, 32–16,384 characters once
-  serialised.
+- `export.hpke_public_key` is a raw 32-byte X25519 public key encoded as unpadded base64url.
 - `upload` is either the empty object `{}`, meaning the study does not upload, or an object
   carrying exactly `endpoint`, `interval_minutes`, and `allow_metered`. A partially filled
   block is rejected, so no endpoint or cadence is ever inherited from a default.
@@ -247,7 +261,8 @@ With `"assigned_participant_id": null`, one signed artifact may be distributed t
 import independently mints a random `participant_instance_id`, including repeated imports of the
 same file. With a non-null assigned code, make a distinct artifact and `configuration_id` for each
 participant. The assigned code remains inside encrypted metadata and exports; only the random
-instance UUID appears in upload routing headers.
+instance UUID distinguishes events after decryption. Neither value appears in upload routing
+headers.
 
 For a batch, supply a UTF-8 tab-separated mapping with exactly
 `configuration_id<TAB>assigned_participant_id` per line, then run:
@@ -266,10 +281,33 @@ never placed in filenames or printed. `canonicalize` and `sign` also accept
 
 An action is defined once and reused by all of an intervention's triggers. Calendar-relative
 schedules include pauses; active-running schedules exclude them. Daily local schedules follow the
-phone's current time zone and are recomputed after time or zone changes. Each planned firing has a
+phone's current time zone and are recomputed after time or zone changes. For both daily-local and
+random-window schedules, a local minute that does not exist during a DST gap is skipped instead of
+shifted outside the signed time; if a minute occurs twice during a DST overlap, the first
+chronological occurrence is used. Each planned firing has a
 SHA-256 `occurrence_id` derived from its configuration, intervention, trigger, and schedule key, so
 reboot, process recovery, WorkManager retry, or duplicate execution cannot create a second firing.
 Occurrences stop at the study lifetime and expire after their availability window.
+While a study is paused, the app removes pending prompt work and visible intervention
+notifications, and it rejects prompt claims, opens, expiries, and survey submissions. Calendar
+time and signed availability windows still advance; on resume the app reconciles the durable
+occurrences, expires anything whose window elapsed, and schedules only what remains eligible.
+
+A `random_window` trigger fixes one to eight sorted, non-overlapping local-time windows plus
+`occurrences_per_window`, daily and total caps, and `minimum_separation_minutes` in the signed
+configuration. The phone uses a CSPRNG to choose each instant and persists the occurrence before
+WorkManager is scheduled. Process death, retry, and reboot therefore reuse the same choice.
+If a daily or total cap is smaller than the signed slots, the planner considers local dates in
+planning order, then windows in their signed array order, then occurrence ordinals; the first
+eligible slots consume capacity. A past or DST-nonexistent slot consumes nothing. The CSPRNG
+chooses the minute inside a selected slot, not which window survives the cap.
+Already materialized occurrences are never moved after a clock or time-zone change; only future
+local dates are planned under the new context. Because repeated wall-clock edits can expose more
+local dates than study duration alone implies, each random trigger contributes its full signed
+`maximum_occurrences_total` to the global 512-occurrence safety bound. The Web editor shows that
+true worst-case prompt count and the window bounds, never a participant's selected instants. Daily
+local schedules still use the conservative UTC-18 through UTC+18 reachable-date bound. There is no
+server trigger.
 
 A survey action references a reusable survey by ID. Display text uses `{ "default": "...",
 "translations": { "zh-TW": "..." } }`; stable IDs, never labels, appear in answers. Submissions
@@ -281,7 +319,7 @@ The `signer` block looks like this:
 ```json
 "signer": {
   "key_id": "lab-signer-2026",
-  "public_key": "MCowBQYDK2Vw…the contents of study-signing-public.key"
+  "public_key": "<unpadded-base64url raw Ed25519 public key>"
 }
 ```
 
@@ -291,10 +329,15 @@ Per-collector configuration:
 | --- | --- |
 | `app_lifecycle.v1` | `{}` |
 | `accelerometer.v1` | `sampling_period_us` 5,000–1,000,000; `maximum_report_latency_us` 0–60,000,000 |
+| `battery_state.v1` | `{}` |
+| `temporal_context.v1` | `{}` |
+| `gyroscope.v1` | `sampling_period_us` 5,000–1,000,000; `maximum_report_latency_us` 0–60,000,000 |
+| `ambient_light.v1` | `sampling_period_us` 200,000–10,000,000; `change_threshold_millilux` 0–100,000,000 |
+| `proximity.v1` | `minimum_event_interval_ms` 100–60,000; `change_threshold_millimeters` 0–10,000 |
 | `network_state.v1` | `include_bandwidth_estimates` boolean |
 | `network_usage.v1` | `transports` non-empty subset of `wifi`/`mobile`; `poll_interval_minutes` 1–1,440 |
 | `usage_events.v1` | `poll_interval_minutes` 1–1,440 |
-| `location.v1` | `interval_millis` 1,000–3,600,000; `minimum_interval_millis` 500 to `interval_millis`; `maximum_batch_delay_millis` 0–86,400,000; `minimum_displacement_meters` 0–10,000; `priority` `BALANCED` or `HIGH_ACCURACY`. This collector always requires precise location; `priority` trades power against accuracy within it, and there is no coarse-only mode. |
+| `location.v1` | `interval_millis` 1,000–3,600,000; `minimum_interval_millis` 500 to `interval_millis`; `maximum_batch_delay_millis` 0–86,400,000; `minimum_displacement_millimeters` 0–10,000,000; `priority` `BALANCED` or `HIGH_ACCURACY`. This collector always requires precise location; `priority` trades power against accuracy within it, and there is no coarse-only mode. |
 | `keyboard_touch.v1` | `trajectory_sampling_hz` 1–120 |
 
 Both polling collectors, and scheduled delivery, accept a one-minute floor. That floor exists
@@ -318,14 +361,16 @@ into the app, in the participant's app language, that you can neither write nor 
 
 Each entry is a name and a description filled in from that study's parameters, so a study
 sampling location every ten seconds and one sampling it every ten minutes do not read alike.
-What the screen does not carry is a negative: it states what each source records, not what it
-cannot see. Where a participant needs that — and an ethics submission usually does — it has
-to come from your consent document. The parameters that
-reach the screen are `accelerometer.v1`'s `sampling_period_us` (as a rate in hertz, stated as
-"or more" because Android treats a sampling period as a hint and devices deliver faster than
-asked), the `poll_interval_minutes` of `network_usage.v1` and `usage_events.v1`, and
-`location.v1`'s `interval_millis` and `minimum_displacement_meters`. The other three
-collectors read the same in every study. The exact wording is in
+The description states what each source records and selected limits the implementation can
+guarantee, such as omitted battery identity, text, inference, or presence claims. It is not an
+exhaustive threat model, so study-specific risks and every additional participant commitment still
+belong in your consent document. The parameters that
+reach the screen include the accelerometer and gyroscope `sampling_period_us` (as a rate in hertz,
+stated as "or more" because Android treats the period as a hint), the ambient-light interval and
+threshold, the proximity interval and threshold, the `poll_interval_minutes` of
+`network_usage.v1` and `usage_events.v1`, and
+`location.v1`'s `interval_millis` and `minimum_displacement_millimeters` (displayed in metres).
+Collectors without configuration fields read the same in every study. The exact wording is in
 [`app/src/main/res/values/strings.xml`](../app/src/main/res/values/strings.xml) and its
 `values-zh-rTW` counterpart; read it before you write your consent summary, because your
 participants will.
@@ -363,8 +408,8 @@ The deployment consequence is real and worth planning for. **A study recruiting 
 languages may still need one signed configuration per language for study and consent prose — same collectors, same parameters,
 its own consent document version, its own `configuration_id`, and its own signature — with
 each participant given the one written in theirs. Keep `experiment_id` shared across them so
-the arms are recognisable as one study, and remember that bundles are de-duplicated on
-`experiment_id` + `configuration_id` + `collector_id` + `sequence_number` (section 10), so
+the arms are recognisable as one study, and remember that events are de-duplicated on
+`experiment_id` + `configuration_id` + `participant_instance_id` + `sequence_number` (section 10), so
 the split reaches your analysis. Telling a participant to switch the app's language does not
 change a single word you wrote.
 
@@ -401,8 +446,7 @@ fall back on, so it is re-established whenever the app's session initialises.
 
 Every link is constrained to an unmetered network unless `allow_metered` is true, plus a
 battery that is not low. Those constraints are why `interval_minutes` is a floor and not a
-promise: a phone on mobile data all week delivers nothing until it reaches Wi-Fi. A failed
-attempt retries with exponential backoff from one minute.
+promise: a phone on mobile data all week delivers nothing until it reaches Wi-Fi.
 
 Delivery continues while the study is `PAUSED`, for data collected before the pause, and it
 continues after the study ends: finishing, completing on the duration deadline, and withdrawing
@@ -411,30 +455,24 @@ reaches you. The chain stops renewing once the study is `COMPLETED` or `WITHDRAW
 everything it collected has been delivered. Deleting local data cancels delivery outright, so
 plan for a tail you may never receive and keep manual export in your protocol as the fallback.
 
-**How much each run sends.** There is no configured chunk size. Each run asks for everything
-outstanding, and how much fits is decided while the bundle streams: it stops at the first event
-boundary past a 16 MiB plaintext budget, and the receipt records where it actually stopped. The
-next run resumes from there. The budget is a transport constant in `OkHttpStudyUploader`, not a
-per-study setting — `interval_minutes` is what paces delivery, and the budget only binds while a
-backlog is being worked off, so a study keeping up with its cadence never meets it.
-
-The consequence for you is that chunk boundaries are not predictable from the configuration.
-Read `first_sequence_number` and `last_sequence_number` out of each bundle rather than deriving
-them from `interval_minutes` or an event count.
+**How much each run sends.** Before opening HTTP, the app selects an exact event boundary, creates
+one complete `ADCEXP01` bundle under its no-backup directory, flushes it to durable storage, and
+records a manifest containing its bundle UUID, exact range/count, byte count, and SHA-256. One
+outbox entry exists at a time. Its target plaintext budget is about 16 MiB and its hard wire limit
+is 32 MiB. Process death, reboot, timeout, and response loss reuse the same bytes; the app never
+regenerates ciphertext for a retry. Chunk boundaries are therefore read from the bundle or
+receipt, not derived from cadence or an expected event count.
 
 **What upload does not do.** It does not gate collection: a study whose endpoint is down,
 misconfigured, or never deployed keeps recording, and a delivery failure is not treated as a
 collection incident on the participant's screen.
 
-**When delivery fails.** The participant's dashboard shows a fixed code for the last failed
-attempt, derived from the transport failure and never from response content: `UPLOAD_TIMEOUT`,
-`UPLOAD_HOST_UNRESOLVED`, `UPLOAD_CONNECT_REFUSED`, `UPLOAD_TLS_HANDSHAKE_FAILED`,
-`UPLOAD_TLS_FAILED`, `UPLOAD_INTERRUPTED`, `UPLOAD_IO_FAILED`, `UPLOAD_HTTP_<status>` for a
-non-2xx response, or `UPLOAD_FAILED` for anything else. That code is what to ask a participant
-to read out when your endpoint has seen nothing from them, because it separates a name
-resolution or TLS problem on your side from a phone that never had a network. It does not
-overwrite the incident code a storage or access problem sets, and collection carries on either
-way.
+**When delivery fails.** Only I/O failures, `408`, `425`, `429`, and `5xx` are retryable. A
+redirect, `202`, every other `4xx`, malformed receipt, or receipt mismatch is a terminal failure
+for that staged bundle. It remains explicit and collection continues; the app does not silently
+drop the staged bytes or advance the watermark. The dashboard's fixed incident code is derived
+from transport state rather than response content, so support can distinguish DNS, connection,
+TLS, timeout, I/O, and HTTP failures without logging a participant identifier.
 
 **What confirmed delivery does to local storage.** A study that comfortably fits its quota
 keeps every event on the phone. Once storage passes 80% of `storage.maximum_local_bytes`, a
@@ -449,53 +487,48 @@ The research consequence is in section 10: once a participant's device has recla
 prefix, their manual export covers a window rather than the whole study, so an uploading
 study's dataset is the reassembled chunks plus that final export.
 
-What the endpoint receives is the same `ADCEXP01` bundle described in section 9 — ciphertext
-wrapped to your HPKE public key — as an `application/octet-stream` POST body with a chunked
-transfer encoding, because the bundle is generated as it is written and its length is not
-known up front. Everything needed to file and de-duplicate a chunk travels in request
-headers, since reading it out of the body would require the private key:
+What the endpoint receives is the same `ADCEXP01` bundle described in section 9: a fixed-length
+`application/vnd.adc.research-bundle` POST with `Content-Digest` and no transfer encoding. These
+are the only ADC routing headers:
 
 | Header | Value |
 | --- | --- |
 | `X-ADC-Bundle-Format` | `research-bundle-v1` |
-| `X-ADC-Experiment-Id` | `experiment_id` from the configuration |
-| `X-ADC-Configuration-Id` | `configuration_id` from the configuration |
-| `X-ADC-Participant-Instance` | The participant instance ID |
-| `X-ADC-Sequence-From` | The first sequence in this chunk. Exact, and strictly increasing across a participant's chunks |
-| `X-ADC-Sequence-To-At-Most` | The last sequence durable on the device when the request began. An upper bound, not the window |
+| `X-ADC-Bundle-Id` | Lowercase bundle UUID; the receiver's immutable object key |
+| `X-ADC-Configuration-SHA256` | SHA-256 of the exact canonical configuration bytes |
+| `X-ADC-Researcher-Key-Id` | Export recipient key ID |
+| `X-ADC-Sequence-From` | Exact claimed first sequence |
+| `X-ADC-Sequence-To` | Exact claimed last sequence |
+| `X-ADC-Event-Count` | Exact claimed event count |
 
-The two headers are not symmetric, and the asymmetry is in the name for a reason. Headers are
-sent before the body is generated, so the device knows where a chunk starts but not yet where it
-ends: the request budget can stop it at any earlier event boundary. The range a chunk actually
-contains is the `first_sequence_number` and `last_sequence_number` inside it, which your endpoint
-cannot read — that is ciphertext. **File and de-duplicate on `X-ADC-Sequence-From` together with
-`X-ADC-Participant-Instance`**; the next chunk resumes exactly where this one stopped, so that
-pair is unique per chunk. An endpoint that records `X-ADC-Sequence-To-At-Most` as a held range
-will claim sequences it does not have, and nothing later will correct it.
+`Content-Length` and `Content-Digest` are also required. The headers are untrusted routing claims:
+the receiver can check their syntax, arithmetic, body digest, and the identities exposed by the
+outer framing, but cannot authenticate the encrypted participant or sequence claims. No
+`participant_instance_id`, `assigned_participant_id`, `experiment_id`, or `configuration_id`
+appears in the URL or headers. Do not invent such a header or deduplicate ingestion by a
+participant/range pair. Receiver replay identity is the bundle UUID plus exact stored bytes and
+metadata.
 
-`assigned_participant_id` is intentionally absent from the URL and every header. It is sensitive
-join data and exists only inside the HPKE-encrypted configuration/experiment content. Do not add it
-to reverse-proxy logs or invent a routing header for it.
+After durable storage, a new object returns `201 Created`; an exact replay returns `200 OK` with
+the original response bytes. Both carry compact canonical JSON containing exactly `bundle_id`,
+`byte_count`, `configuration_sha256`, `event_count`, `first_sequence_number`,
+`last_sequence_number`, and `sha256`, with counts and sequence values as decimal strings. Only a
+receipt that matches every outbox value advances the watermark. A reused bundle ID with different
+content is `409 Conflict`; `202` is never success.
 
-Your endpoint must answer 2xx only once it has durably stored the body. The device advances its
-watermark to wherever the bundle actually stopped, never sends those sequences again, and may
-release them locally if the study's storage runs high — so a 2xx you have not earned can cost
-data that exists nowhere else. Answer 408, 429, or 5xx to ask for a retry; any other 4xx is
-treated as a request that will keep failing and is not worth the participant's battery.
-
-**The participant instance ID.** A fresh random UUID generated on the device for every import when the study is
-imported, stored in that study's metadata, and included in every bundle and every upload
-request. Without it, bundles from different participants arrive indistinguishable — a manual
-export carries that information out of band, an upload does not. It is pseudonymous: it
+**The participant instance ID.** A fresh random UUID generated on the device for every import,
+stored in that study's encrypted metadata, and included in every decrypted bundle. It is
+pseudonymous: it
 contains no name, account, device identifier, or advertising ID, and it is not shared across
-studies. Re-importing the same anonymous or personalized artifact generates a different UUID, so
-its upload chunk identity cannot collide. Treat it as personal data anyway, because it links every
-chunk one import produced.
+studies. Re-importing the same anonymous or personalized artifact generates a different UUID.
+Treat it as personal data because it links every event one import produced, but do not use it as
+receiver authentication.
 
 **You must disclose upload in your consent text.** The app renders the endpoint host, the
 cadence, the network condition, the fact that only your key can open the payload, and the
-existence of the instance ID into the consent step, directly below your summary and taken
-from the signed configuration rather than from it. That is a floor, not a substitute — the
+fact that a random installation code travels inside the encrypted data so datasets can be
+distinguished. This block sits directly below your summary and is derived from signed state rather
+than your prose. That is a floor, not a substitute — the
 same relationship the data step has to your summary: your consent document has
 to say who operates the endpoint, where it is hosted, what jurisdiction it sits in, how long
 chunks are retained there, and who can reach them. A participant cannot decline upload while
@@ -517,9 +550,9 @@ Canonicalise first:
   --output ./study-canonical.json"
 ```
 
-Canonicalisation re-emits the object with a fixed key order and normalised timestamp and
-number formatting. The signing step decodes the file again and refuses it if the bytes are
-not already canonical, so you cannot accidentally sign a hand-edited draft.
+Canonicalisation emits RFC 8785 JCS bytes. The signing step parses the file again and refuses it
+unless re-encoding produces exactly the same bytes, so duplicate members, noncanonical numbers,
+unknown fields, and hand-edited near-canonical drafts fail closed.
 
 Sign the canonical bytes:
 
@@ -537,8 +570,10 @@ written, because a mismatch would produce a file that signs cleanly and then fai
 device: the second failure reads `signer.public_key in the configuration does not match
 --private`.
 
-The result is a signed study configuration: an `ADCCFG01` envelope carrying the signer key
-ID, the canonical configuration bytes, and the Ed25519 signature over exactly those bytes.
+The result is a signed study configuration: an `ADCCFG01` envelope containing magic, a two-byte
+signer-key-ID length, a four-byte configuration length, the key ID, exact JCS configuration bytes,
+and a fixed 64-byte Ed25519 signature over only those configuration bytes. No signature-length
+field or alternate framing is accepted.
 On success the command prints the IDs it signed and the fingerprint of the signing key, for
 example:
 
@@ -547,11 +582,11 @@ signed my-study-2026 my-study-config-01
 fingerprint 9D0D AE5A 0D20 B29F D642 942A 0E17 4AAE
 ```
 
-That fingerprint is SHA-256 over the encoded public key, truncated to 16 bytes and rendered
+That fingerprint is SHA-256 over the raw 32-byte public key, truncated to 16 bytes and rendered
 as eight groups of four hex characters. It is what the consent screen shows the participant,
 and what you publish in your recruitment material — section 6.
 
-Verify independently — envelope structure, signature, app version floor, and the validity
+Verify independently — envelope structure, signature, client build floor, platform, and validity
 window — before anything reaches a participant:
 
 ```bash
@@ -573,8 +608,8 @@ Supply both and the check pins the signer instead, reproducing what a build list
 would enforce; the last line then reads `pinned yes`. A configuration that names the pinned
 key ID while carrying a different public key is rejected, so pinning cannot be sidestepped.
 
-`--app-version` is the participant app's `versionCode`; if omitted the check treats the app
-version floor as satisfied. `--now` takes an ISO instant and lets you confirm that a
+`--app-version` is the participant client's `versionCode`; if omitted the check treats the client
+build floor as satisfied. `--now` takes an ISO instant and lets you confirm that a
 configuration is refused before `issued_at` and after `expires_at` without changing the
 system clock.
 
@@ -596,10 +631,12 @@ Actions release workflow; the required secrets and setup are described in the re
 Google Play distribution uses the corresponding AAB and track process. Building the app is
 not part of issuing a study: the same build verifies any correctly signed `.adccfg`.
 
-Distribution of the configuration is manual. There is no download endpoint: participants
-import the `.adccfg` through the system file picker. Getting data back is manual too unless
-the study declares an upload endpoint, in which case delivery is automatic and manual export
-remains available alongside it. Plan the logistics of both directions into your protocol.
+Participants can import the `.adccfg` through the system file picker, or open an immutable
+`adc://join/v1` link / QR generated by the Web authoring surface. Join hosting is transport only:
+the link fixes the artifact's complete SHA-256 and signer fingerprint, and the app downloads once,
+verifies the digest before the ordinary signature flow, and never polls for replacement. Getting
+data back is manual unless the study declares an upload endpoint, in which case delivery is
+automatic and manual export remains available alongside it. Plan both directions separately.
 
 The app declares `android.permission.INTERNET` and sets `usesCleartextTraffic="false"`, so
 the permission list of a build no longer tells you whether a given study transmits — the
@@ -617,6 +654,28 @@ jq .upload ./study-canonical.json
 
 `{}` means the study never transmits. Run the second check against the exact configuration
 you are about to sign, and against what your consent document tells participants.
+
+### Optional immutable join link and QR
+
+After signing in the Web authoring flow, enter the HTTPS location where the exact `.adccfg` bytes
+will be served. The browser creates the join URI and QR locally; it does not call a QR service. The
+artifact URL must use the narrow Protocol v1 profile: lowercase DNS-style HTTPS host, no credentials,
+explicit default port, query, fragment, percent escape, dot segment, or repeated slash, followed by one or
+more ASCII filename / token path segments. This restriction keeps Kotlin and browser URL handling
+byte-for-byte identical rather than relying on either platform's silent normalization.
+
+For a personalized configuration, publish each file at a unique path whose final segment is at
+least 22 random base64url characters (128 bits or more). Never put the roster code in the path,
+filename, query, CDN analytics, or access-log label. The Web authoring control rejects a URL that
+contains the assigned ID or lacks the opaque token. An anonymous configuration can use a stable
+immutable filename.
+
+Treat a generated join link as part of the exact signed artifact release: changing the hosted
+bytes makes its SHA-256 fail and requires a newly generated link. The app rejects redirects,
+implicit retry, an oversized artifact, a fingerprint mismatch, and every join attempted while a
+study or deletion is active. Download staging lives under no-backup storage and is removed at app
+startup and after every outcome. Join does not add configuration refresh, remote control, or a
+second consent path.
 
 ### Publish your fingerprint
 
@@ -734,10 +793,10 @@ Researchers must not:
 The app sends no telemetry, no analytics, and no crash reports. In a study with an empty
 `upload` block you therefore learn nothing about a participant's progress unless they tell
 you, and completeness can only be assessed once they choose to share an encrypted export. In
-an uploading study your endpoint sees delivery activity per participant instance, which is
-the closest thing to monitoring available — and it is arrival of ciphertext, not a health
-check. A silent instance may have paused, withdrawn, run out of Wi-Fi, or lost the phone,
-and the four look alike from the endpoint.
+an uploading study your endpoint sees ciphertext object arrivals, but the clear routing metadata
+does not identify a participant and is not a health check. Silence can mean pause, withdrawal,
+network constraints, a lost phone, or a terminal upload error; those cases look alike from the
+endpoint.
 
 ## 9. Receive and decrypt bundles
 
@@ -747,47 +806,51 @@ data governance procedure. Filenames and receipt timestamps are metadata a parti
 controls; they are not evidence of identity or integrity. An uploaded chunk carries no more
 proof of origin than an emailed export does — see [`threat-model.md`](threat-model.md).
 
-Decrypt with the matching canonical configuration and the HPKE private keyset:
+Decrypt with the matching canonical configuration and raw HPKE private key:
 
 ```bash
 ./gradlew :researcher-tools:run --args="decrypt \
   --bundle ./participant-export.adcexp \
-  --private /secure/export-hpke-private.json \
+  --private /secure/export-hpke-private.key \
   --config ./study-canonical.json \
   --output /controlled/participant-export.json"
 ```
 
 The same command decrypts an uploaded chunk; point `--bundle` at the stored request body.
 
-`decrypt` streams, so a bundle larger than your machine's memory still decrypts. Size your
-controlled environment for that. A bundle has no ceiling of its own: it is bounded by the study's
-`storage.maximum_local_bytes`, so a manual export at the end of a long, high-rate study scales
-with the quota you asked for, which can be 8 GiB.
+`decrypt` streams, so a bundle larger than your machine's memory still decrypts. A manual bundle
+has no separate transport ceiling: it is bounded by `storage.maximum_local_bytes`, so an end-of-study
+export can scale to the 8 GiB quota. Automatic upload bodies are instead capped at 32 MiB.
 
-The command refuses to overwrite an existing `--output` path, and writes its plaintext to a
-temporary file in the destination directory first, moving it into place only after the whole
-bundle has decrypted. That staging is not tidiness. The AES-GCM tag is verified only once the
-last byte has been read, so a truncated or tampered bundle produces plausible-looking plaintext
-right up to the point where it fails; staging means a failed verification leaves nothing behind
-that could be mistaken for a partial dataset.
+The command refuses to overwrite an existing `--output` path. It creates a mode-`0600` temporary
+file in the destination directory, decrypts into it, then rereads it through the sole closed-world
+bundle verifier. Only after AEAD, JCS, repeated identities, configuration signature, range/count,
+transition history, and every catalog event contract pass does it flush and atomically move the
+file into place. The AES-GCM tag is verified only at EOF, so failed decryption or semantic
+verification deletes staging and publishes no partial plaintext.
 
-The bundle is an `ADCEXP01` container: a per-bundle AES-256-GCM content key wrapped to your
-HPKE public keyset, over a plaintext JSON document with this shape:
+The bundle is an `ADCEXP01` container: a per-bundle AES-256-GCM content key wrapped with RFC 9180
+base-mode X25519/HKDF-SHA256/AES-256-GCM HPKE, over one authenticated JCS document with this
+shape:
 
 ```text
-format                          "research-bundle-v1"
-exported_at_utc_millis
-configuration                   the canonical study configuration
+bundle_id, bundle_kind, format  outer UUID, manual_export/automatic_upload, research-bundle-v1
+configuration_sha256            SHA-256 of the exact embedded canonical configuration
+configuration                   the exact signed configuration object
+configuration_signature         signer_key_id and raw Ed25519 signature provenance
+producer                        platform and client_version
+exported_at_utc_millis           decimal string
 experiment:
   experiment_id, configuration_id, participant_instance_id,
-  assigned_participant_id (personalized studies only),
-  state, next_sequence_number,
+  assigned_participant_id (nullable), state,
+  next_sequence_number, retained_from_sequence, durable_through_sequence,
+  uploaded_through_sequence, event_count,
   transitions[]:
     from, to, reason,
-    time: { wall_time_utc_millis, elapsed_realtime_nanos, boot_session_id }
+    time: { wall_time_utc_millis, monotonic_time_nanos, boot_session_id }
   events[]:
     sequence_number, collector_id, payload_schema_version,
-    observed_time: { wall_time_utc_millis, elapsed_realtime_nanos, boot_session_id },
+    observed_time: { wall_time_utc_millis, monotonic_time_nanos, boot_session_id },
     payload_type, fields
   first_sequence_number, last_sequence_number
 ```
@@ -799,26 +862,32 @@ phone if the device has reclaimed a delivered prefix. `participant_instance_id` 
 pseudonymous per-import identifier described in section 4. A personalized export additionally
 carries `assigned_participant_id`; use it only as the researcher's opaque join key.
 
-The two window fields are written after `events`, not before it, because a budget decides where
-an uploaded bundle stops while it is still streaming. Declaring the window up front would let a
-bundle claim a range it does not contain, which is worse than not declaring one. JSON object
-member order carries no meaning, so this changes nothing for a parser that reads by key, and it
-changes nothing about decryption — the format string is unchanged and bundles produced by
-earlier builds decrypt exactly as before. It does matter to code that streams a bundle and
-expects the window before the events it describes.
+All sequence, count, wall-time, monotonic-time, byte-count, and client-version values are
+canonical decimal strings. Every value inside `fields` is also a JSON string, but its exact field
+set, type interpretation, units, clock basis, and bound come from
+[`protocol/v1/collector-catalog.json`](../protocol/v1/collector-catalog.json); do not infer a
+schema from observed data. The embedded configuration, its digest, its original signature,
+producer, outer identities, range/count contiguity, and every catalog payload are verified before
+plaintext is published.
 
-Every value inside `fields` is a JSON string, including numeric ones. Parsing and range
-checking are your responsibility.
+The JCS context binds `research-bundle-v1`, bundle UUID, full configuration SHA-256, and
+researcher key ID into HPKE `info` and document AES-GCM AAD. A wrong key, context, framing byte,
+embedded identity, or old Protocol v1 artifact fails closed. This Protocol v1 definition is a
+destructive pre-1.0 replacement; there is no former-v1 fallback.
 
-`research-bundle-v1` is bound into the HPKE and AES-GCM associated data, so a reader built
-for a different version fails to decrypt rather than misreading one. Use
-the `researcher-tools` build that matches the app you distributed.
+Successful validation proves encryption to the configured researcher key, document integrity,
+and the provenance of the exact embedded signed configuration. It proves nothing about the
+participant's legal identity, participant/device authenticity, device attestation, or whether the
+platform dropped data before it was recorded.
 
-Successful decryption proves that the HPKE context and the AES-GCM tag verified: the bundle
-was encrypted to your key, for this `experiment_id`/`configuration_id`/`researcher_key_id`
-triple, and has not been altered since. It proves nothing about the participant's legal
-identity, nothing about device attestation, and nothing about whether the platform dropped
-data before it was recorded.
+For a dataset rather than a one-file inspection, use [`adc-analysis`](../adc-analysis/README.md).
+Its `inventory` command copies local exports or R2/S3-compatible objects into a
+content-addressed ciphertext workspace before keys are used. `materialize` then verifies each
+whole bundle, quarantines failures, reassembles by
+`(experiment_id, configuration_id, participant_instance_id, sequence_number)`, refuses
+conflicting duplicates, and atomically publishes typed Parquet plus a provenance manifest and
+quality summary. It performs no schema inference and has no database sink or receiver-side
+decryption path.
 
 Do not partially analyse a file that fails to decrypt. Quarantine it, and where
 appropriate ask the participant to export a fresh encrypted bundle.
@@ -834,8 +903,8 @@ An export is a snapshot, not a state change:
 - A later export contains the earlier events plus newer ones. Overlap between bundles from
   the same participant is expected, not an error. Uploaded chunks are the exception: each one
   starts after the sequence the previous delivery confirmed, so consecutive chunks abut
-  rather than overlap. Where they abut is decided by the plaintext budget while each bundle
-  streams, so chunk sizes vary and are not derivable from the configuration — take the window
+  rather than overlap. Where they abut is selected before the immutable outbox bundle is staged,
+  so chunk sizes vary and are not derivable from the configuration — take the window
   from `first_sequence_number` and `last_sequence_number`.
 - In a study that does not upload, every export is a whole history and the last one is the
   dataset. In an uploading study it need not be: once a device has reclaimed a delivered
@@ -843,9 +912,11 @@ An export is a snapshot, not a state change:
   then the reassembled chunks plus the final export, and `first_sequence_number` on each
   bundle tells you where it starts. Keep the chunks; do not treat a late manual export as a
   replacement for them.
-- De-duplicate events on `participant_instance_id` + `sequence_number`; the sequence is global to
-  collectors, intervention lifecycle, and survey responses within one import. `experiment_id` and
-  `configuration_id` identify the signed artifact rather than a unique device run. Sequence numbers come from a single monotonic counter per study, so
+- Partition a dataset by `(experiment_id, configuration_id)` and de-duplicate events on
+  `(participant_instance_id, sequence_number)`. Equivalently, the complete event identity is
+  `(experiment_id, configuration_id, participant_instance_id, sequence_number)`. If the same key
+  carries different content, report a conflict; never choose a last writer. The sequence is global
+  to collectors, intervention lifecycle, and survey responses within one import. Sequence numbers come from a single monotonic counter per study, so
   they are stable across exports and uploads alike, and reclaiming never reissues one. In an
   uploading study, `participant_instance_id` is what separates repeated imports and devices.
 - A gap in the delivered sequence range is not proof of data loss. A chunk may not have been
@@ -854,7 +925,7 @@ An export is a snapshot, not a state change:
   for them in the chunks you already hold. Ask for a manual export before treating a gap as
   missing data.
 - Reconstruct running and paused windows from `transitions` together with
-  `observed_time.elapsed_realtime_nanos` and `observed_time.boot_session_id`. Do not infer
+  `observed_time.monotonic_time_nanos` and `observed_time.boot_session_id`. Do not infer
   them from export times.
 
 ## 11. Analysis notes
@@ -874,6 +945,23 @@ relative to the participant is unknown. Sort by the sensor timestamp, split by b
 session, and inspect sampling gaps before filtering, feature extraction, or modelling.
 Posture requires estimating the gravity direction. Movement classification requires
 independent labels and independent validation. The app supplies no ground truth.
+
+Gyroscope axes use the same device coordinate system and boot-relative hardware timestamp, but
+measure rad/s rather than acceleration. Combining the two can support a model; it does not turn
+either stream into orientation or activity ground truth.
+
+### Battery and temporal context
+
+Battery percentage is a whole platform reading, and charging/power-save fields are context rather
+than a causal explanation for sampling gaps. Temporal-context events identify settings and clock
+changes. Treat time-zone ID as a setting, not location; split monotonic analyses by boot session
+and use these events when interpreting wall-clock discontinuities.
+
+### Ambient light and proximity
+
+Illuminance and distance are raw, device-specific sensor values. Do not compare their numeric
+precision across models without calibration. Many proximity sensors are binary, and neither a
+near event nor a light change proves participant presence or behavior.
 
 ### Network state and usage
 

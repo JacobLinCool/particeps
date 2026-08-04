@@ -18,6 +18,7 @@
   import Fingerprint from '$lib/ui/Fingerprint.svelte';
   import IconButton from '$lib/ui/IconButton.svelte';
   import Note from '$lib/ui/Note.svelte';
+  import JoinLinkPanel from './JoinLinkPanel.svelte';
   import {
     ARTIFACTS,
     artifactBytes,
@@ -25,7 +26,6 @@
     type ArtifactId,
     type ArtifactSource
   } from './artifacts';
-  import { keysetJson } from '$lib/adc/canonical';
   import type { Draft } from './draft.svelte';
   import type { Messages } from '$lib/i18n/types';
 
@@ -40,8 +40,8 @@
 
   const source = $derived<ArtifactSource>({
     signingPrivate:
-      draft.signing.kind === 'held' ? draft.signing.material.privatePkcs8Base64 : null,
-    hpkePrivate: draft.hpke.kind === 'held' ? keysetJson(draft.hpke.material.privateKeyset) : null,
+      draft.signing.kind === 'held' ? draft.signing.material.privateKey : null,
+    hpkePrivate: draft.hpke.kind === 'held' ? draft.hpke.material.privateKey : null,
     canonical: draft.canonicalBytes,
     envelope: draft.envelope
   });
@@ -204,6 +204,15 @@
         />
       </div>
     </div>
+  {/if}
+
+  {#if draft.envelope && draft.fingerprint}
+    <JoinLinkPanel
+      envelope={draft.envelope}
+      fingerprint={draft.fingerprint}
+      assignedParticipantId={draft.configuration.assigned_participant_id}
+      {m}
+    />
   {/if}
 
   {#if !signed}

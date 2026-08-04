@@ -565,7 +565,7 @@ private fun AccessPanel(checks: List<AccessStatus>, actions: StudyUiActions, bus
     val requiredReady = checks.none { it.requirement.required && !it.granted }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         checks.forEach { check ->
-            val actionable = !check.granted && check.requirement.kind != AccessKind.ACCELEROMETER_HARDWARE
+            val actionable = !check.granted && check.requirement.kind !in HARDWARE_ACCESS
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -997,7 +997,17 @@ private fun AccessKind.labelRes(): Int = when (this) {
     AccessKind.RESEARCH_KEYBOARD_ENABLED -> R.string.access_research_keyboard_enabled
     AccessKind.RESEARCH_KEYBOARD_SELECTED -> R.string.access_research_keyboard_selected
     AccessKind.ACCELEROMETER_HARDWARE -> R.string.access_accelerometer_hardware
+    AccessKind.GYROSCOPE_HARDWARE -> R.string.access_gyroscope_hardware
+    AccessKind.AMBIENT_LIGHT_HARDWARE -> R.string.access_ambient_light_hardware
+    AccessKind.PROXIMITY_HARDWARE -> R.string.access_proximity_hardware
 }
+
+private val HARDWARE_ACCESS = setOf(
+    AccessKind.ACCELEROMETER_HARDWARE,
+    AccessKind.GYROSCOPE_HARDWARE,
+    AccessKind.AMBIENT_LIGHT_HARDWARE,
+    AccessKind.PROXIMITY_HARDWARE,
+)
 
 private val TERMINAL_STATES = setOf(ExperimentState.COMPLETED, ExperimentState.WITHDRAWN)
 

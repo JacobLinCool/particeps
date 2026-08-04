@@ -10,6 +10,8 @@ import cool.linc.androiddatacollector.core.collector.CollectorHealth
 import cool.linc.androiddatacollector.core.definition.StudyConfiguration
 import cool.linc.androiddatacollector.core.export.ExportReceipt
 import cool.linc.androiddatacollector.core.model.StudyMetadata
+import cool.linc.androiddatacollector.core.protocol.JoinLink
+import cool.linc.androiddatacollector.core.protocol.SignedConfigurationCodec
 import cool.linc.androiddatacollector.core.runtime.CommandResult
 import java.io.OutputStream
 import kotlinx.coroutines.CancellationException
@@ -81,8 +83,12 @@ class StudyViewModel(
 
     fun importSignedConfiguration(load: () -> ByteArray) = operation(INCIDENT_IMPORT_FAILED) {
         val bytes = withContext(Dispatchers.IO) { load() }
-        require(bytes.size <= MAXIMUM_CONFIGURATION_ENVELOPE_BYTES) { "Configuration is too large" }
+        require(bytes.size <= SignedConfigurationCodec.MAXIMUM_ENVELOPE_BYTES) { "Configuration is too large" }
         session.importSignedConfiguration(bytes)
+    }
+
+    fun importJoin(link: JoinLink, load: suspend () -> ByteArray) = operation(INCIDENT_JOIN_FAILED) {
+        session.importSignedConfiguration(load(), link)
     }
 
     fun reviewStudy() = command(session::reviewStudy)
@@ -145,8 +151,8 @@ class StudyViewModel(
     }
 
     private companion object {
-        const val MAXIMUM_CONFIGURATION_ENVELOPE_BYTES = 1_100_000
         const val INCIDENT_IMPORT_FAILED = "CONFIGURATION_IMPORT_FAILED"
+        const val INCIDENT_JOIN_FAILED = "JOIN_IMPORT_FAILED"
         const val INCIDENT_EXPORT_FAILED = "EXPORT_FAILED"
         const val INCIDENT_DELETE_FAILED = "LOCAL_DATA_DELETE_FAILED"
         const val INCIDENT_COMMAND_FAILED = "COMMAND_FAILED"

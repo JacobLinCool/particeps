@@ -4,12 +4,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import cool.linc.androiddatacollector.core.definition.AccelerometerConfiguration
+import cool.linc.androiddatacollector.core.definition.AmbientLightConfiguration
 import cool.linc.androiddatacollector.core.definition.AppLifecycleConfiguration
+import cool.linc.androiddatacollector.core.definition.BatteryStateConfiguration
 import cool.linc.androiddatacollector.core.definition.CollectorConfiguration
 import cool.linc.androiddatacollector.core.definition.KeyboardTouchConfiguration
+import cool.linc.androiddatacollector.core.definition.GyroscopeConfiguration
 import cool.linc.androiddatacollector.core.definition.LocationConfiguration
 import cool.linc.androiddatacollector.core.definition.NetworkStateConfiguration
 import cool.linc.androiddatacollector.core.definition.NetworkUsageConfiguration
+import cool.linc.androiddatacollector.core.definition.ProximityConfiguration
+import cool.linc.androiddatacollector.core.definition.TemporalContextConfiguration
 import cool.linc.androiddatacollector.core.definition.UsageEventsConfiguration
 import cool.linc.androiddatacollector.core.definition.UploadConfiguration
 
@@ -50,6 +55,51 @@ fun CollectorConfiguration.summarize(): CollectorSummary = when (this) {
         optional = !required,
     )
 
+    is BatteryStateConfiguration -> CollectorSummary(
+        glyph = Glyph.DATA_VOLUME,
+        name = stringResource(R.string.collector_battery_state_name),
+        detail = stringResource(R.string.collector_battery_state_detail),
+        optional = !required,
+    )
+
+    is TemporalContextConfiguration -> CollectorSummary(
+        glyph = Glyph.CLOCK,
+        name = stringResource(R.string.collector_temporal_context_name),
+        detail = stringResource(R.string.collector_temporal_context_detail),
+        optional = !required,
+    )
+
+    is GyroscopeConfiguration -> CollectorSummary(
+        glyph = Glyph.MOTION,
+        name = stringResource(R.string.collector_gyroscope_name),
+        detail = (1_000_000.0 / samplingPeriodUs).toInt().coerceAtLeast(1).let { hz ->
+            pluralStringResource(R.plurals.collector_gyroscope_detail, hz, hz)
+        },
+        optional = !required,
+    )
+
+    is AmbientLightConfiguration -> CollectorSummary(
+        glyph = Glyph.APP,
+        name = stringResource(R.string.collector_ambient_light_name),
+        detail = stringResource(
+            R.string.collector_ambient_light_detail,
+            microsLabel(samplingPeriodUs.toLong()),
+            changeThresholdMillilux,
+        ),
+        optional = !required,
+    )
+
+    is ProximityConfiguration -> CollectorSummary(
+        glyph = Glyph.CONNECTION,
+        name = stringResource(R.string.collector_proximity_name),
+        detail = stringResource(
+            R.string.collector_proximity_detail,
+            millisLabel(minimumEventIntervalMs.toLong()),
+            changeThresholdMillimeters,
+        ),
+        optional = !required,
+    )
+
     is NetworkStateConfiguration -> CollectorSummary(
         glyph = Glyph.CONNECTION,
         name = stringResource(R.string.collector_network_state_name),
@@ -77,7 +127,7 @@ fun CollectorConfiguration.summarize(): CollectorSummary = when (this) {
         detail = stringResource(
             R.string.collector_location_detail,
             millisLabel(intervalMillis),
-            stringResource(R.string.unit_metres, minimumDisplacementMeters.toInt()),
+            stringResource(R.string.unit_metres, minimumDisplacementMillimeters / 1_000),
         ),
         optional = !required,
     )
@@ -99,9 +149,31 @@ fun minutesLabel(minutes: Int): String = when {
 }
 
 @Composable
-fun millisLabel(millis: Long): String = when {
-    millis % 60_000L == 0L -> minutesLabel((millis / 60_000L).toInt())
-    else -> stringResource(R.string.unit_seconds, (millis / 1_000L).toInt())
+fun millisLabel(millis: Long): String = microsLabel(Math.multiplyExact(millis, 1_000L))
+
+@Composable
+fun microsLabel(micros: Long): String = when (val duration = exactDuration(micros)) {
+    is ExactDuration.Microseconds -> stringResource(R.string.unit_microseconds, duration.value)
+    is ExactDuration.Milliseconds -> stringResource(R.string.unit_milliseconds, duration.value)
+    is ExactDuration.Seconds -> stringResource(R.string.unit_seconds, duration.value)
+    is ExactDuration.Minutes -> minutesLabel(duration.value.toInt())
+}
+
+internal sealed interface ExactDuration {
+    val value: Long
+
+    data class Microseconds(override val value: Long) : ExactDuration
+    data class Milliseconds(override val value: Long) : ExactDuration
+    data class Seconds(override val value: Long) : ExactDuration
+    data class Minutes(override val value: Long) : ExactDuration
+}
+
+/** Chooses the coarsest integral unit without discarding any signed microseconds. */
+internal fun exactDuration(microseconds: Long): ExactDuration = when {
+    microseconds % 60_000_000L == 0L -> ExactDuration.Minutes(microseconds / 60_000_000L)
+    microseconds % 1_000_000L == 0L -> ExactDuration.Seconds(microseconds / 1_000_000L)
+    microseconds % 1_000L == 0L -> ExactDuration.Milliseconds(microseconds / 1_000L)
+    else -> ExactDuration.Microseconds(microseconds)
 }
 
 @Composable

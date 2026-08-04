@@ -9,10 +9,9 @@
  * denominator and both are read as digit columns — a comma at 12,480 and none at 480 makes the
  * columns disagree, and a comma is a decimal point to half the world.
  */
-export function groupDigits(value: number): string {
-  return Math.trunc(value)
-    .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+export function groupDigits(value: number | bigint | string): string {
+  const digits = typeof value === 'number' ? Math.trunc(value).toString() : value.toString();
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
 
 /** `12 480 / 1 048 576 B` — the denominator is `MAXIMUM_CONFIGURATION_BYTES`, literally. */

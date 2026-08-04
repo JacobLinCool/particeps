@@ -3,7 +3,7 @@
    * How much this collector writes, as a length in one colour.
    *
    * Four lit segments is four decades of events per hour, computed from the parameters on the card
-   * itself. Across seven cards it is the only cross-collector comparison on the page.
+   * itself. Across twelve cards it is the only cross-collector comparison on the page.
    *
    * It used to warm from green through amber to red, which is the battery-meter idiom exactly: a
    * ramp encodes danger, and there is no measurement behind danger here. Length encodes magnitude,

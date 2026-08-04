@@ -52,9 +52,9 @@ class EncryptedExperimentStore(
                 return@withLock null
             }
             val key = existingKey() ?: error("Encrypted experiment key is unavailable")
-            // Framing and sequence contiguity are checked from the plaintext frame headers, so
-            // opening a study is linear in frames rather than in bytes decrypted. Event payloads
-            // are authenticated when they are actually read, in readEvents.
+            // Framing and contiguity come from plaintext frame headers. Normal opening decrypts no
+            // event payload; the unique journal+durable-tail recovery state authenticates only the
+            // last one through readDurableTail below.
             val scan = scanEvents(
                 key,
                 fromSequenceInclusive = 1,
@@ -62,26 +62,41 @@ class EncryptedExperimentStore(
                 recoverTail = true,
                 decryptPayloads = false,
             )
-            val encodedMetadata = decryptMetadata(metadataFile.readFully(), key)
-            var metadata = StudyDataJsonCodec.decodeMetadata(
-                encodedMetadata,
+            val mainMetadata = StudyDataJsonCodec.decodeMetadata(
+                decryptMetadata(metadataFile.readFully(), key),
+            )
+            val hasTransaction = transactionFile.baseFile.exists()
+            val transactionMetadata = if (hasTransaction) {
+                StudyDataJsonCodec.decodeMetadata(
+                    decryptDocument(transactionFile.readFully(), key, TRANSACTION_HEADER),
+                )
+            } else {
+                null
+            }
+            val durableTail = if (
+                transactionMetadata != null &&
+                transactionMetadata.eventCount == mainMetadata.eventCount + 1 &&
+                transactionMetadata.eventCount == scan.lastSequence
+            ) {
+                readDurableTail(key, scan.lastSequence)
+            } else {
+                null
+            }
+            val recovery = AppendTransactionRecovery.recover(
+                main = mainMetadata,
+                transaction = transactionMetadata,
+                durableLastSequence = scan.lastSequence,
+                durableTail = durableTail,
+            )
+            val metadata = StudyDataJsonCodec.reconcileMetadata(
+                recovery.metadata,
                 scan.firstSequence,
                 scan.lastSequence,
             )
-            if (transactionFile.baseFile.exists()) {
-                val recovered = runCatching {
-                    StudyDataJsonCodec.decodeMetadata(
-                        decryptDocument(transactionFile.readFully(), key, TRANSACTION_HEADER),
-                        scan.firstSequence,
-                        scan.lastSequence,
-                    )
-                }.getOrNull()
-                if (recovered != null && recovered.eventCount == scan.lastSequence &&
-                    recovered.eventCount == metadata.eventCount + 1
-                ) {
-                    metadata = recovered
-                    writeMetadata(encryptDocument(StudyDataJsonCodec.encodeMetadata(metadata), key, METADATA_HEADER))
-                }
+            if (recovery.rewriteMetadata || metadata != recovery.metadata) {
+                writeMetadata(encryptDocument(StudyDataJsonCodec.encodeMetadata(metadata), key, METADATA_HEADER))
+            }
+            if (hasTransaction) {
                 transactionFile.delete()
             }
             require(metadata.experimentId == experimentId) { "Encrypted experiment ID mismatch" }
@@ -133,12 +148,21 @@ class EncryptedExperimentStore(
         withContext(Dispatchers.IO) { mutex.withLock { appendTransaction(event, metadata) } }
 
     private fun appendTransaction(event: RecordedEvent, metadata: StudyMetadata) {
-        requireNotNull(persistedMetadata) { "Study storage is not initialized" }
+        val current = requireNotNull(persistedMetadata) { "Study storage is not initialized" }
         require(event.sequenceNumber == persistedSequenceBoundary + 1) { "Non-contiguous event append" }
         require(metadata.eventCount == event.sequenceNumber && metadata.nextSequenceNumber == event.sequenceNumber + 1) {
             "Atomic metadata boundary mismatch"
         }
         require(metadata.experimentId == experimentId) { "Experiment ID mismatch" }
+        val validated = AppendTransactionRecovery.recover(
+            main = current,
+            transaction = metadata,
+            durableLastSequence = event.sequenceNumber,
+            durableTail = event,
+        )
+        check(validated.rewriteMetadata && validated.metadata == metadata) {
+            "Atomic append metadata is not a valid one-event successor"
+        }
         val key = existingKey() ?: error("Encrypted experiment key is unavailable")
         val encoded = StudyDataJsonCodec.encodeMetadata(metadata)
         require(encoded.size <= MAXIMUM_METADATA_BYTES) { "Experiment metadata quota exceeded" }
@@ -354,6 +378,22 @@ class EncryptedExperimentStore(
             }
         }
         return EventScan(firstSequence, lastSequence)
+    }
+
+    /** Reuses the range reader so recovery authenticates one event and adds no second framing path. */
+    private fun readDurableTail(key: SecretKey, sequenceNumber: Long): RecordedEvent {
+        var durableTail: RecordedEvent? = null
+        val scan = scanEvents(
+            key = key,
+            fromSequenceInclusive = sequenceNumber,
+            upToSequenceInclusive = sequenceNumber,
+            recoverTail = false,
+        ) { event ->
+            check(durableTail == null) { "Durable event boundary is not unique" }
+            durableTail = event
+        }
+        require(scan.lastSequence == sequenceNumber) { "Durable event tail is unavailable" }
+        return requireNotNull(durableTail) { "Durable event tail was not decoded" }
     }
 
     private fun recoverTrailingPartialFrame(

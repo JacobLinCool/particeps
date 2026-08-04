@@ -23,6 +23,10 @@ tasks.named<JavaExec>("run") {
     workingDir(rootProject.projectDir)
 }
 
+tasks.withType<Test>().configureEach {
+    systemProperty("adc.repository.root", rootProject.projectDir.absolutePath)
+}
+
 dependencies {
     implementation(project(":core:crypto"))
     implementation(project(":core:export"))

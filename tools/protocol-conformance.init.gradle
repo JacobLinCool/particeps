@@ -1,0 +1,14 @@
+// Adds the repository-owned shared-vector consumer without making a protocol test part of one
+// platform module's source of truth.
+gradle.beforeProject { project ->
+    if (project.path == ":core:export") {
+        project.pluginManager.withPlugin("org.jetbrains.kotlin.jvm") {
+            project.extensions.getByName("kotlin")
+                .sourceSets.getByName("test")
+                .kotlin.srcDir(project.rootProject.file("tools/conformance/kotlin"))
+            project.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+                systemProperty("adc.repository.root", project.rootProject.projectDir.absolutePath)
+            }
+        }
+    }
+}

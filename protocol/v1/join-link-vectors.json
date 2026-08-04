@@ -1,0 +1,48 @@
+{
+  "corpus_format": "adc-join-link-conformance-v1",
+  "schema_version": 1,
+  "valid": {
+    "artifact_url": "https://artifacts.example.invalid/join/dGhpcy1pcy1hLTEyOC1iaXQtdG9rZW4",
+    "artifact_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "signer_fingerprint": "0123456789ABCDEFFEDCBA9876543210",
+    "encoded": "adc://join/v1?artifact=https%3A%2F%2Fartifacts.example.invalid%2Fjoin%2FdGhpcy1pcy1hLTEyOC1iaXQtdG9rZW4&sha256=0000000000000000000000000000000000000000000000000000000000000000&signer_fingerprint=0123456789ABCDEFFEDCBA9876543210"
+  },
+  "hostile": [
+    {
+      "id": "url-uppercase-default-port-dot-segment",
+      "encoded": "adc://join/v1?artifact=https%3A%2F%2FEXAMPLE.invalid%3A443%2Fa%2F..%2Fconfig.adccfg&sha256=0000000000000000000000000000000000000000000000000000000000000000&signer_fingerprint=0123456789ABCDEFFEDCBA9876543210"
+    },
+    {
+      "id": "url-query",
+      "encoded": "adc://join/v1?artifact=https%3A%2F%2Fartifacts.example.invalid%2Fconfig.adccfg%3Fdownload%3D1&sha256=0000000000000000000000000000000000000000000000000000000000000000&signer_fingerprint=0123456789ABCDEFFEDCBA9876543210"
+    },
+    {
+      "id": "url-credentials",
+      "encoded": "adc://join/v1?artifact=https%3A%2F%2Fuser%40artifacts.example.invalid%2Fconfig.adccfg&sha256=0000000000000000000000000000000000000000000000000000000000000000&signer_fingerprint=0123456789ABCDEFFEDCBA9876543210"
+    },
+    {
+      "id": "url-fragment",
+      "encoded": "adc://join/v1?artifact=https%3A%2F%2Fartifacts.example.invalid%2Fconfig.adccfg%23mutable&sha256=0000000000000000000000000000000000000000000000000000000000000000&signer_fingerprint=0123456789ABCDEFFEDCBA9876543210"
+    },
+    {
+      "id": "url-empty-segment",
+      "encoded": "adc://join/v1?artifact=https%3A%2F%2Fartifacts.example.invalid%2Fa%2F%2Fconfig.adccfg&sha256=0000000000000000000000000000000000000000000000000000000000000000&signer_fingerprint=0123456789ABCDEFFEDCBA9876543210"
+    },
+    {
+      "id": "url-percent-escape",
+      "encoded": "adc://join/v1?artifact=https%3A%2F%2Fartifacts.example.invalid%2Fa%2F%2563onfig.adccfg&sha256=0000000000000000000000000000000000000000000000000000000000000000&signer_fingerprint=0123456789ABCDEFFEDCBA9876543210"
+    },
+    {
+      "id": "url-numeric-host",
+      "encoded": "adc://join/v1?artifact=https%3A%2F%2F127.0.0.1%2Fconfig.adccfg&sha256=0000000000000000000000000000000000000000000000000000000000000000&signer_fingerprint=0123456789ABCDEFFEDCBA9876543210"
+    },
+    {
+      "id": "join-lowercase-escape",
+      "encoded": "adc://join/v1?artifact=https%3A%2f%2Fartifacts.example.invalid%2Fjoin%2FdGhpcy1pcy1hLTEyOC1iaXQtdG9rZW4&sha256=0000000000000000000000000000000000000000000000000000000000000000&signer_fingerprint=0123456789ABCDEFFEDCBA9876543210"
+    },
+    {
+      "id": "join-query-order",
+      "encoded": "adc://join/v1?sha256=0000000000000000000000000000000000000000000000000000000000000000&artifact=https%3A%2F%2Fartifacts.example.invalid%2Fjoin%2FdGhpcy1pcy1hLTEyOC1iaXQtdG9rZW4&signer_fingerprint=0123456789ABCDEFFEDCBA9876543210"
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
 Every field that can appear in an exported dataset, per collector. This document is written to be quotable in an ethics submission: it describes what the code in this repository actually emits, including the gaps.
 
-Read the "what you cannot claim" column in the [researcher guide](researcher-guide.md) alongside this. This document says what a field *is*; that one says what it does not prove.
+Read the "what you cannot claim" column in the [researcher guide](researcher-guide.md) alongside this. This document says what a field *is*; that one says what it does not prove. The machine-readable source of truth is the [Protocol v1 collector catalog](../protocol/v1/collector-catalog.json); [Protocol v1](../protocol/v1/README.md) defines the enclosing document and validation order.
 
 ## Reading an export
 
@@ -10,55 +10,65 @@ A decrypted bundle is a `research-bundle-v1` JSON document.
 
 ```json
 {
-  "format": "research-bundle-v1",
-  "exported_at_utc_millis": 1767225600000,
-  "configuration": { },
+  "bundle_id": "0a1b2c3d-4e5f-4071-8293-a4b5c6d7e8f9",
+  "bundle_kind": "automatic_upload",
+  "configuration": {},
+  "configuration_sha256": "<64 lowercase hex characters>",
+  "configuration_signature": {"signature": "<unpadded-base64url>", "signer_key_id": "lab-signer-2026"},
   "experiment": {
-    "experiment_id": "...",
-    "configuration_id": "...",
-    "participant_instance_id": "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
     "assigned_participant_id": "cohortA-0042",
+    "configuration_id": "config-2026",
+    "durable_through_sequence": "4210",
+    "event_count": "10",
+    "events": [],
+    "experiment_id": "study-2026",
+    "first_sequence_number": "4201",
+    "last_sequence_number": "4210",
+    "next_sequence_number": "4211",
+    "participant_instance_id": "1a1b2c3d-4e5f-4071-8293-a4b5c6d7e8f9",
+    "retained_from_sequence": "1",
     "state": "RUNNING",
-    "next_sequence_number": 4211,
-    "transitions": [ { "from": "READY", "to": "RUNNING", "reason": "...", "time": { } } ],
-    "events": [ ],
-    "first_sequence_number": 1,
-    "last_sequence_number": 4210
-  }
+    "transitions": [],
+    "uploaded_through_sequence": "4200"
+  },
+  "exported_at_utc_millis": "1767225600000",
+  "format": "research-bundle-v1",
+  "producer": {"client_version": "1", "platform": "android"}
 }
 ```
 
-The window fields come after `events`, and that placement is deliberate. A bundle is written as
-a stream, and an uploaded one stops at the first event boundary past a plaintext budget, so the
-last sequence it contains is not known until the events have been written. Declaring the window
-before them would let a bundle claim a range it does not contain. JSON object member order
-carries no meaning, so a parser that reads by key is unaffected, and decryption is unaffected
-too. Code that consumes a bundle as a token stream must still follow the v1 order shown here.
+The example is expanded for readability. The authenticated bytes are RFC 8785 JCS, so member
+order and number spelling are canonical. An automatic upload's exact event boundary is selected
+before its complete ciphertext and manifest are durably staged; retries never regenerate it.
 
 `configuration` is the canonical study configuration the participant consented to, reproduced verbatim. Every dataset therefore carries its own definition of what was supposed to be collected — including its `upload` block, so a dataset states whether the study it came from delivered data to an endpoint.
 
-It also includes the `signer` block, so provenance travels with the data: `configuration.signer.key_id` and `configuration.signer.public_key` name the key the configuration was signed with, and the same key fingerprint the participant saw on the consent screen can be recomputed from the public key at analysis time. That identifies which signing key issued the study a dataset came from — useful when a lab runs several studies or rotates keys — and does not by itself attest to who held that key.
+`configuration_signature` preserves the original signer key ID and raw Ed25519 signature, while `configuration_sha256` binds the exact embedded configuration to the outer `ADCEXP01` framing. The signature and digest are verified again during decryption; they identify which key issued the artifact but do not attest who held that key or which device submitted the bundle. `producer` records the producing platform and client build.
 
 | Field | Meaning |
 | --- | --- |
-| `participant_instance_id` | A random UUID generated on the device for each import. Importing the same signed configuration again creates a different ID and independent sequence space. It is pseudonymous: no name, account, device identifier, or advertising ID. It is disclosed on the consent screen and exposed in upload routing, so treat it as personal data. |
+| `participant_instance_id` | A random UUID generated on the device for each import. Importing the same signed configuration again creates a different ID and independent sequence space. It is pseudonymous: no name, account, device identifier, or advertising ID. It is absent from upload URLs and headers, but remains personal data after decryption. |
 | `assigned_participant_id` | Optional researcher-assigned opaque code copied from the signed configuration. It exists only for a personalized study. It is stored in encrypted metadata and appears in the encrypted export, but is deliberately absent from clear upload headers. It can link the dataset to a research roster and must be governed as personal data. |
-| `next_sequence_number` | The device's counter at the moment the bundle was written: one past the last event durably stored, across the whole study rather than this bundle. |
-| `first_sequence_number` | The first event sequence this bundle contains, inclusive. |
-| `last_sequence_number` | The last event sequence this bundle contains, inclusive. |
+| `next_sequence_number` | The device's counter at the snapshot: one past the last event durably stored. Decimal string. |
+| `retained_from_sequence` | Lowest sequence still retained locally after confirmed-prefix reclamation. Decimal string. |
+| `durable_through_sequence` | Highest event durably stored at the snapshot. Decimal string. |
+| `uploaded_through_sequence` | Highest sequence committed after an exact upload receipt. Decimal string. |
+| `event_count` | Number of events in this bundle; must agree with the inclusive range. Decimal string. |
+| `first_sequence_number` | First event sequence this bundle contains, inclusive. Decimal string. |
+| `last_sequence_number` | Last event sequence this bundle contains, inclusive. Decimal string. |
 
 ### Whole exports and uploaded chunks
 
 The two ways data leaves the device produce the same document. What differs is the window.
 
-- A **manual export** runs to whatever was durable when the participant pressed export. It starts at `first_sequence_number: 1` unless the device has reclaimed a delivered prefix to free space, in which case it starts at the lowest sequence still on the phone. Successive exports from one participant therefore overlap, each containing everything the previous one did that has not since been reclaimed.
-- An **uploaded chunk**, from a study whose configuration names an endpoint, starts after the last sequence that endpoint confirmed. There is no configured chunk size: each delivery asks for everything outstanding and stops at the first event boundary past a 16 MiB plaintext budget, so chunk sizes vary with event size and with how much backlog was waiting. Consecutive chunks abut rather than overlap, and reassembling a participant's data means concatenating them in sequence order.
+- A **manual export** runs to whatever was durable when the participant pressed export. It starts at `first_sequence_number: "1"` unless the device has reclaimed a delivered prefix to free space, in which case it starts at the lowest sequence still on the phone. Successive exports from one participant therefore overlap, each containing everything the previous one did that has not since been reclaimed.
+- An **uploaded chunk**, from a study whose configuration names an endpoint, starts after the last sequence an exact receipt confirmed. The app selects a boundary near a 16 MiB plaintext target, durably stages one immutable ciphertext bundle, and enforces a 32 MiB wire ceiling. Consecutive chunks normally abut; exact replays have the same bundle UUID and bytes.
 
 Read `first_sequence_number` and `last_sequence_number` on every bundle rather than assuming a starting point or deriving a boundary from the study's configuration. In an uploading study the complete dataset for a participant is the chunks plus the final export, joined on sequence number.
 
-A bundle has no size ceiling of its own; it is bounded by the study's `storage.maximum_local_bytes`, which is why `researcher-tools decrypt` streams rather than decrypting in memory.
+A manual bundle is bounded by `storage.maximum_local_bytes`, which is why `researcher-tools decrypt` streams rather than decrypting in memory. The 32 MiB ceiling applies to automatic upload bodies.
 
-`state`, `transitions`, and `configuration` describe the study as a whole in both cases, not just the window, so the same transition history repeats in every chunk. Only `events`, `first_sequence_number`, and `last_sequence_number` are window-scoped.
+`state`, `transitions`, and `configuration` describe the study as a whole in both cases, not just the window, so the same transition history repeats in every chunk. `events`, `event_count`, `first_sequence_number`, and `last_sequence_number` are window-scoped.
 
 `format` is bound into the bundle's cryptographic associated data, so a reader built for a different version fails to decrypt rather than silently misreading one: the authentication tag fails before any field is parsed.
 
@@ -68,12 +78,12 @@ Every event has the same shape regardless of collector.
 
 ```json
 {
-  "sequence_number": 1,
+  "sequence_number": "1",
   "collector_id": "accelerometer.v1",
   "payload_schema_version": 1,
   "observed_time": {
-    "wall_time_utc_millis": 1767225600000,
-    "elapsed_realtime_nanos": 12345678901234,
+    "wall_time_utc_millis": "1767225600000",
+    "monotonic_time_nanos": "12345678901234",
     "boot_session_id": "0a1b2c3d4e5f60718293a4b5c6d7e8f9"
   },
   "payload_type": "ACCELEROMETER_SAMPLE",
@@ -83,7 +93,7 @@ Every event has the same shape regardless of collector.
 
 | Envelope field | JSON type | Meaning |
 | --- | --- | --- |
-| `sequence_number` | number | Monotonic, starts at 1, **shared across all collectors in a study**. Not per-collector. |
+| `sequence_number` | decimal string | Monotonic, starts at 1, **shared across all collectors in a study**. Not per-collector. |
 | `collector_id` | string | Which collector produced this event |
 | `payload_schema_version` | number | Version of the `fields` schema for this collector |
 | `observed_time` | object | See below |
@@ -94,9 +104,9 @@ Every event has the same shape regardless of collector.
 
 This is the most important thing to know before writing a parser.
 
-`fields` is a string-to-string map. Numbers and booleans are stringified: acceleration appears as `"9.81"`, not `9.81`, and flags appear as `"true"` / `"false"`, not `true` / `false`. Only the envelope's `sequence_number`, `payload_schema_version`, and the three `observed_time` values are real JSON numbers.
+`fields` is a string-to-string map. Numbers and booleans are stringified: acceleration appears as `"9.81"`, not `9.81`, and flags appear as `"true"` / `"false"`, not `true` / `false`. `payload_schema_version` is a bounded JSON number; sequence and time values are canonical decimal strings.
 
-Field keys match `[a-z][a-z0-9_]{0,63}` and an event has at most 32 fields. A field value is capped at 60 KiB of characters; storage independently caps the complete encoded event at 64 KiB. Ordinary collectors emit much smaller scalar values. The larger bound exists so one survey submission can be committed as a single immutable value.
+Field keys match `[a-z][a-z0-9_]{0,63}` and an event has at most 32 fields. A field value is capped at 60 Ki UTF-16 code units; storage independently caps the complete protocol-encoded event at 64 KiB. Ordinary collectors emit much smaller scalar values. The larger bound exists so one survey submission can be committed as a single immutable value.
 
 ### Time
 
@@ -105,21 +115,25 @@ Three clocks are recorded on every event, because no single one is sufficient.
 | Field | Source | Unit | Caveat |
 | --- | --- | --- | --- |
 | `wall_time_utc_millis` | `System.currentTimeMillis()` | ms since Unix epoch, UTC | Can jump forwards or backwards — NTP corrections, manual changes, timezone travel. Do not assume monotonicity. |
-| `elapsed_realtime_nanos` | `SystemClock.elapsedRealtimeNanos()` | ns since boot | Monotonic and includes deep sleep, but only comparable **within the same `boot_session_id`** |
+| `monotonic_time_nanos` | `SystemClock.elapsedRealtimeNanos()` on Android | ns on a continuous monotonic clock | Includes deep sleep on Android and is only comparable **within the same `boot_session_id`** |
 | `boot_session_id` | derived | 32 hex characters | Changes on every reboot. A change means the two elapsed-realtime values either side are incomparable. |
 
-**No timezone or UTC offset is recorded anywhere.** If local time matters to your analysis, you have to obtain it another way; it cannot be recovered from an export.
+The common event envelope does not carry a time zone or UTC offset. A study that explicitly enables
+`temporal_context.v1` receives the bounded snapshots documented below; otherwise local time cannot
+be reconstructed from an export.
 
 `observed_time` is stamped inside the collector callback at capture time, with two exceptions: `network_usage.v1` and `usage_events.v1` are polling collectors and stamp one `observed_time` per poll, shared by every event in that batch. For those two, use the in-payload source time instead.
 
 Several collectors also carry a source-supplied time in their payload. **Do not subtract across clock bases:**
 
-- `elapsed_realtime_nanos` and the `source_elapsed_realtime_nanos` fields (accelerometer, location) use the elapsed-realtime base, which **includes** deep sleep.
+- `monotonic_time_nanos` and `source_elapsed_realtime_nanos` fields (accelerometer, gyroscope,
+  ambient light, proximity, and location) use Android's elapsed-realtime base, which **includes**
+  deep sleep.
 - The keyboard's `event_uptime_millis` and `down_uptime_millis` use Android's uptime base, which **excludes** deep sleep.
 
 ### Deduplication
 
-Exports overlap by design — a participant can export repeatedly, and each export contains everything from its retained floor up to its boundary. Uploaded chunks do not overlap each other, and a manual export overlaps every chunk after that floor. Deduplicate on `participant_instance_id` + `sequence_number`. Do not merge solely on an assigned ID: two imports for one assigned participant intentionally have different instance IDs and independent sequence spaces. Sequence numbers are never reissued within one instance.
+Exports overlap by design — a participant can export repeatedly, and each export contains everything from its retained floor up to its boundary. Partition by `(experiment_id, configuration_id)` and deduplicate on `(participant_instance_id, sequence_number)`, making the complete event identity all four values. Identical repeats are duplicates; different content at one identity is a conflict, never a last-write-wins update. Do not merge solely on an assigned ID. Receiver ingestion instead deduplicates the immutable bundle UUID and exact bytes/metadata; a participant/range pair is not an ingest key.
 
 ### Intervention and survey events (`interventions.v1`)
 
@@ -142,7 +156,7 @@ For compliance metrics, start with the lifecycle event that actually supports th
 
 ### Gaps are real and are not errors
 
-- Nothing is recorded while a study is `PAUSED`. The polling collectors do not back-fill the paused interval on resume; that data is deliberately never collected.
+- Nothing is recorded while a study is `PAUSED`, including intervention lifecycle or survey-submission events. Prompt work and visible intervention notifications are removed; calendar time and availability continue, and durable occurrences are reconciled on resume. Polling collectors do not back-fill the paused interval; that data is deliberately never collected.
 - Across a process restart, `network_usage.v1` and `usage_events.v1` do resume their query window from the last stored event, so a restart is not the same as a pause.
 - A collector that loses access reports `BLOCKED_ACCESS` and stops. It never emits a placeholder or interpolated value.
 
@@ -178,7 +192,7 @@ Raw accelerometer samples, **including gravity**. No filtering, orientation esti
 | Sampling period | `sampling_period_us` | int | microseconds | 5,000–1,000,000 (200 Hz–1 Hz) |
 | Maximum report latency | `maximum_report_latency_us` | int | microseconds | 0–60,000,000 (batching window) |
 
-The sampling period is a **hint to Android**, not a guarantee. Actual delivery rate varies by device, by sensor, and with system power state. Measure the achieved rate from the data rather than assuming the configured one.
+The sampling period is a **hint to Android**, not a guarantee. Actual delivery rate varies by device, by sensor, and with system power state. Measure the achieved rate from `source_elapsed_realtime_nanos`, not the event-envelope callback time: FIFO batching can deliver many earlier hardware samples in one callback burst.
 
 **Access:** accelerometer hardware must be present. This is a capability check, not an Android permission — there is no dialog and nothing for the participant to grant. A device without the sensor cannot run a study that requires this collector.
 
@@ -193,6 +207,133 @@ The sampling period is a **hint to Android**, not a guarantee. Actual delivery r
 | `accuracy` | int | enum ordinal | Raw `SensorEvent.accuracy`, written unmapped |
 
 Not recorded: gyroscope, magnetometer, or any other sensor; derived orientation, step counts, or activity labels. Accuracy-*change* callbacks are discarded — accuracy is observable only as it rides along on samples, so a transition between two samples is not visible.
+
+---
+
+## `battery_state.v1`
+
+Event-driven battery context with exact duplicate suppression and a one-minute emission bound. If
+several changes arrive inside the bound, the newest distinct state is retained.
+
+**Configuration:** `{}`. **Access:** none.
+
+**Payload type:** `BATTERY_STATE`.
+
+| Field | Type | Unit | Meaning |
+| --- | --- | --- | --- |
+| `percentage` | int | whole percent | `(level × 100) / scale`, bounded to 0–100 |
+| `charging_state` | enum | — | `CHARGING`, `DISCHARGING`, `FULL`, `NOT_CHARGING`, or `UNKNOWN` |
+| `charging_source` | enum | — | `AC`, `USB`, `WIRELESS`, `DOCK`, `MULTIPLE`, `NONE`, or `UNKNOWN` |
+| `power_save_enabled` | boolean-as-string | — | Current Android power-save mode |
+
+Not recorded: battery serial or hardware ID, capacity, health, voltage, current, temperature, or
+the cause of a battery change. Percentage is an integer platform reading, not a calibrated energy
+measurement.
+
+---
+
+## `temporal_context.v1`
+
+A snapshot at study start/reconciliation and when Android reports a time, time-zone, or UTC-offset
+change. Exact duplicates are suppressed and rapid changes retain the newest event under a
+one-minute bound.
+
+**Configuration:** `{}`. **Access:** none.
+
+**Payload type:** `TEMPORAL_CONTEXT`.
+
+| Field | Type | Unit | Meaning |
+| --- | --- | --- | --- |
+| `change_reason` | enum | — | `STUDY_STARTED`, `RECONCILED`, `TIMEZONE_CHANGED`, `TIME_SET`, or `UTC_OFFSET_CHANGED` |
+| `timezone_id` | string | IANA/Android zone ID | Current `ZoneId.systemDefault()` setting |
+| `utc_offset_seconds` | int | seconds | Zone-rule offset at observation, −64,800 to 64,800 |
+| `daylight_saving_time` | boolean-as-string | — | Whether that zone's rules are in DST at observation |
+
+A time zone is a device setting, not proof of physical location or travel. `TIME_SET` proves that
+Android announced a wall-clock change; it does not identify who or what changed it.
+
+---
+
+## `gyroscope.v1`
+
+Raw angular velocity in device coordinates. No filtering, orientation estimation, or activity
+inference is applied.
+
+**Configuration:**
+
+| Parameter | JSON key | Type | Unit | Range |
+| --- | --- | --- | --- | --- |
+| Sampling period | `sampling_period_us` | int | microseconds | 5,000–1,000,000 (200 Hz–1 Hz) |
+| Maximum report latency | `maximum_report_latency_us` | int | microseconds | 0–60,000,000 |
+
+**Access:** gyroscope hardware. **Payload type:** `GYROSCOPE_SAMPLE`.
+
+| Field | Type | Unit | Meaning |
+| --- | --- | --- | --- |
+| `source_elapsed_realtime_nanos` | long | ns since boot | Hardware `SensorEvent.timestamp` |
+| `x_radians_per_second` | float | rad/s | Raw angular velocity around device X |
+| `y_radians_per_second` | float | rad/s | Raw angular velocity around device Y |
+| `z_radians_per_second` | float | rad/s | Raw angular velocity around device Z |
+| `accuracy` | int | enum ordinal | Raw `SensorEvent.accuracy` |
+
+The requested period is a hint; use source timestamps to measure achieved rate. Not recorded:
+orientation, posture, gesture, or activity labels.
+
+---
+
+## `ambient_light.v1`
+
+Raw ambient illuminance after a monotonic rate gate and change threshold. Because Android light
+sensors are commonly on-change sources, the newest threshold-sized change inside the minimum
+interval is retained and emitted when the interval opens; its original observation time and
+`source_elapsed_realtime_nanos` are preserved. A later reading equivalent to the last emitted lux
+value cancels that pending change. Accuracy is descriptive metadata on emitted lux samples and is
+not an independent emission trigger.
+
+**Configuration:**
+
+| Parameter | JSON key | Type | Unit | Range |
+| --- | --- | --- | --- | --- |
+| Minimum sample period | `sampling_period_us` | int | microseconds | 200,000–10,000,000 |
+| Change threshold | `change_threshold_millilux` | int | millilux | 0–100,000,000 |
+
+**Access:** ambient-light hardware. **Payload type:** `AMBIENT_LIGHT_SAMPLE`.
+
+| Field | Type | Unit | Meaning |
+| --- | --- | --- | --- |
+| `source_elapsed_realtime_nanos` | long | ns since boot | Hardware `SensorEvent.timestamp` |
+| `illuminance_lux` | float | lux | Non-negative raw sensor reading |
+| `accuracy` | int | enum ordinal | Raw `SensorEvent.accuracy` |
+
+Not recorded: images, colour, environmental content, or presence. Lux accuracy and calibration vary
+by device; the collector does not normalize across hardware.
+
+---
+
+## `proximity.v1`
+
+Raw proximity readings with a monotonic minimum interval. The newest meaningful reading inside the
+interval is retained; exact duplicates and same-state changes below the configured threshold are
+suppressed.
+
+**Configuration:**
+
+| Parameter | JSON key | Type | Unit | Range |
+| --- | --- | --- | --- | --- |
+| Minimum event interval | `minimum_event_interval_ms` | int | milliseconds | 100–60,000 |
+| Change threshold | `change_threshold_millimeters` | int | millimetres | 0–10,000 |
+
+**Access:** proximity hardware. **Payload type:** `PROXIMITY_SAMPLE`.
+
+| Field | Type | Unit | Meaning |
+| --- | --- | --- | --- |
+| `source_elapsed_realtime_nanos` | long | ns since boot | Hardware `SensorEvent.timestamp` |
+| `distance_centimeters` | float | centimetres | Non-negative raw Android distance |
+| `maximum_range_centimeters` | float | centimetres | This sensor's declared maximum range |
+| `near` | boolean-as-string | — | `distance_centimeters < maximum_range_centimeters` |
+
+Many proximity sensors expose only near and maximum range. Values are not assumed precise or
+comparable across devices, and neither `near` nor distance proves a person's presence.
 
 ---
 
@@ -311,7 +452,7 @@ Fused Location fixes via Google Play Services.
 | Interval | `interval_millis` | long | ms | 1,000–3,600,000 |
 | Minimum interval | `minimum_interval_millis` | long | ms | 500 up to the configured interval |
 | Maximum batch delay | `maximum_batch_delay_millis` | long | ms | 0–86,400,000 |
-| Minimum displacement | `minimum_displacement_meters` | float | metres | 0–10,000 |
+| Minimum displacement | `minimum_displacement_millimeters` | int | millimetres | 0–10,000,000 |
 | Priority | `priority` | `"BALANCED"` or `"HIGH_ACCURACY"` | — | — |
 
 This collector always requires precise location. There is no coarse-only mode, and `priority` selects a power/accuracy trade-off within fine location rather than reducing the permission it needs. Say so in your consent text.
@@ -396,6 +537,10 @@ In a study that uploads, a confirmed delivery lets the device reclaim space. Abo
 
 Study metadata is held separately from the events. It is capped at 1 MiB and kept outside the event budget by a 2 MiB reserve, so the record of what a study is and how far it has been delivered cannot be crowded out by the events it describes. Its container header is `ADCMET01`.
 
-Opening a study does not decrypt its event log. Framing and sequence contiguity are checked from the plaintext frame headers, and each collector's most recent event is persisted in that metadata rather than recovered by scanning, so start-up cost is linear in frames rather than in bytes decrypted. Event payloads are therefore authenticated when they are read rather than when a study is opened, which means a damaged payload surfaces at export or upload time rather than at launch.
+Normal study opening does not decrypt its event log. Framing and sequence contiguity are checked from plaintext frame headers, and each collector's most recent event is persisted in metadata rather than recovered by scanning, so start-up cost is linear in frames rather than in bytes decrypted. The sole exception is a one-boundary-ahead append journal with a durable tail: recovery authenticates exactly that tail before applying its metadata. All other event payloads are authenticated when read, so damage outside the recovery tail surfaces at export or upload rather than at launch.
 
-Per-collector byte ceilings appear in each collector's descriptor, but they are declarative and not enforced at runtime. The 64 KiB global limit is the one that applies.
+Each collector descriptor declares `maximumEncodedEventBytes`. The runtime encodes every admitted
+event with the worst-case sequence width and rejects it before append when it exceeds that
+collector-specific ceiling; the store's 64 KiB global cap remains a second boundary. CI also
+checks collector source, compiled constants, and module dependencies as documented in the
+[Collector capability policy](../assurance/README.md).

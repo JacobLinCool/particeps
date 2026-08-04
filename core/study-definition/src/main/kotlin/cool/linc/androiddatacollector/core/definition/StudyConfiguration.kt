@@ -8,7 +8,8 @@ data class StudyConfiguration(
     val configurationId: String,
     val issuedAt: Instant,
     val expiresAt: Instant,
-    val minimumAppVersion: Int,
+    val platform: String,
+    val minimumClientVersion: Long,
     val title: String,
     val researcherName: String,
     val researcherContact: String,
@@ -31,7 +32,8 @@ data class StudyConfiguration(
         require(ID.matches(experimentId)) { "Invalid experiment ID" }
         require(ID.matches(configurationId)) { "Invalid configuration ID" }
         require(issuedAt < expiresAt) { "Configuration expiry must follow issue time" }
-        require(minimumAppVersion > 0) { "Minimum app version must be positive" }
+        require(platform == ANDROID_PLATFORM) { "Unsupported target platform" }
+        require(minimumClientVersion > 0) { "Minimum client version must be positive" }
         require(title.length in 1..120) { "Invalid study title" }
         require(researcherName.length in 1..120) { "Invalid researcher name" }
         require(researcherContact.length in 3..240) { "Invalid researcher contact" }
@@ -67,12 +69,12 @@ data class StudyConfiguration(
 
     companion object {
         /**
-         * The only accepted schema. There is no fallback reader and no migration: a configuration
-         * either matches this exactly or is refused, which is what keeps the closed-world key
-         * checks meaningful. Adding a root key is a version bump that invalidates every existing
-         * file, so the number moves only when the format really changes in the field.
+         * The only accepted pre-1.0 Protocol v1 schema. Protocol v1 is replaced in place while it
+         * is pre-release: there is no legacy reader, fallback, or migration. An artifact either
+         * matches the current closed-world contract exactly or is refused.
          */
         const val CURRENT_SCHEMA_VERSION = 1
+        const val ANDROID_PLATFORM = "android"
         /**
          * Local budget a study may claim, 8 MiB to 8 GiB. The floor leaves room for the metadata
          * reserve; the ceiling is generous because high-rate collectors fill space quickly — an
@@ -113,6 +115,67 @@ data class AccelerometerConfiguration(
     }
 
     companion object { const val ID = "accelerometer.v1" }
+}
+
+data class BatteryStateConfiguration(
+    override val required: Boolean,
+) : CollectorConfiguration {
+    override val id: String = ID
+
+    companion object { const val ID = "battery_state.v1" }
+}
+
+data class TemporalContextConfiguration(
+    override val required: Boolean,
+) : CollectorConfiguration {
+    override val id: String = ID
+
+    companion object { const val ID = "temporal_context.v1" }
+}
+
+data class GyroscopeConfiguration(
+    override val required: Boolean,
+    val samplingPeriodUs: Int,
+    val maximumReportLatencyUs: Int,
+) : CollectorConfiguration {
+    override val id: String = ID
+
+    init {
+        require(samplingPeriodUs in 5_000..1_000_000) { "Invalid gyroscope sampling period" }
+        require(maximumReportLatencyUs in 0..60_000_000) { "Invalid gyroscope report latency" }
+    }
+
+    companion object { const val ID = "gyroscope.v1" }
+}
+
+data class AmbientLightConfiguration(
+    override val required: Boolean,
+    val samplingPeriodUs: Int,
+    val changeThresholdMillilux: Int,
+) : CollectorConfiguration {
+    override val id: String = ID
+
+    init {
+        require(samplingPeriodUs in 200_000..10_000_000) { "Invalid ambient-light sampling period" }
+        require(changeThresholdMillilux in 0..100_000_000) { "Invalid ambient-light change threshold" }
+    }
+
+    companion object { const val ID = "ambient_light.v1" }
+}
+
+data class ProximityConfiguration(
+    override val required: Boolean,
+    val minimumEventIntervalMs: Int,
+    val changeThresholdMillimeters: Int,
+) : CollectorConfiguration {
+    override val id: String = ID
+
+    init {
+        require(minimumEventIntervalMs in 100..60_000) { "Invalid proximity event interval" }
+        require(changeThresholdMillimeters in 0..10_000) { "Invalid proximity change threshold" }
+    }
+
+    companion object { const val ID = "proximity.v1" }
 }
 
 data class NetworkStateConfiguration(
@@ -161,7 +224,7 @@ data class LocationConfiguration(
     val intervalMillis: Long,
     val minimumIntervalMillis: Long,
     val maximumBatchDelayMillis: Long,
-    val minimumDisplacementMeters: Float,
+    val minimumDisplacementMillimeters: Int,
     val priority: LocationPriority,
 ) : CollectorConfiguration {
     override val id: String = ID
@@ -170,7 +233,7 @@ data class LocationConfiguration(
         require(intervalMillis in 1_000..3_600_000) { "Invalid location interval" }
         require(minimumIntervalMillis in 500..intervalMillis) { "Invalid location minimum interval" }
         require(maximumBatchDelayMillis in 0..86_400_000) { "Invalid location batch delay" }
-        require(minimumDisplacementMeters in 0f..10_000f) { "Invalid location displacement" }
+        require(minimumDisplacementMillimeters in 0..10_000_000) { "Invalid location displacement" }
     }
 
     companion object { const val ID = "location.v1" }
@@ -245,6 +308,16 @@ sealed interface InterventionSchedule {
     fun maximumOccurrences(studyMinutes: Int): Long
 }
 
+/**
+ * Conservative count of local dates reachable while Android's zone can move between its legal
+ * fixed-offset extremes (UTC-18 through UTC+18). The extra partial dates matter to the global
+ * durable-occurrence bound even for a study shorter than one day.
+ */
+internal fun maximumReachableLocalDates(studyMinutes: Int): Long =
+    (studyMinutes + MAXIMUM_ZONE_OFFSET_SPAN_MINUTES + 1_439L) / 1_440L + 1
+
+private const val MAXIMUM_ZONE_OFFSET_SPAN_MINUTES = 36 * 60
+
 enum class RelativeClock { CALENDAR_TIME, ACTIVE_RUNNING_TIME }
 
 data class OneTimeSchedule(
@@ -280,10 +353,67 @@ data class DailyLocalSchedule(
 ) : InterventionSchedule {
     init { require(LOCAL_TIME.matches(localTime)) { "Invalid daily local time" } }
     override fun requireWithin(studyMinutes: Int) = Unit
-    override fun maximumOccurrences(studyMinutes: Int): Long = (studyMinutes + 1_439L) / 1_440L + 1
+    override fun maximumOccurrences(studyMinutes: Int): Long = maximumReachableLocalDates(studyMinutes)
 
     companion object { private val LOCAL_TIME = Regex("(?:[01][0-9]|2[0-3]):[0-5][0-9]") }
 }
+
+data class RandomLocalWindow(
+    /** Inclusive local wall-clock minute, `HH:mm`. */
+    val startLocalTime: String,
+    /** Exclusive local wall-clock minute on the same local date, `HH:mm`. */
+    val endLocalTime: String,
+) {
+    val startMinute: Int = parseLocalMinute(startLocalTime)
+    val endMinute: Int = parseLocalMinute(endLocalTime)
+
+    init { require(startMinute < endMinute) { "Random window must end after it starts" } }
+}
+
+data class RandomWindowSchedule(
+    val localWindows: List<RandomLocalWindow>,
+    val occurrencesPerWindow: Int,
+    val maximumOccurrencesPerDay: Int,
+    val maximumOccurrencesTotal: Int,
+    val minimumSeparationMinutes: Int,
+) : InterventionSchedule {
+    init {
+        require(localWindows.size in 1..8) { "Invalid random-window count" }
+        require(localWindows.zipWithNext().all { (first, second) -> first.endMinute <= second.startMinute }) {
+            "Random windows must be sorted and non-overlapping"
+        }
+        require(occurrencesPerWindow in 1..8) { "Invalid occurrences per random window" }
+        require(maximumOccurrencesPerDay in 1..64) { "Invalid daily random occurrence limit" }
+        require(maximumOccurrencesPerDay <= localWindows.size * occurrencesPerWindow) {
+            "Daily random occurrence limit exceeds window capacity"
+        }
+        require(maximumOccurrencesTotal in 1..512) { "Invalid total random occurrence limit" }
+        require(minimumSeparationMinutes in 1..1_440) { "Invalid random occurrence separation" }
+        require(localWindows.all { window ->
+            window.endMinute - window.startMinute >=
+                1 + (occurrencesPerWindow - 1) * minimumSeparationMinutes
+        }) { "A random window cannot fit its configured occurrences" }
+        require(localWindows.indices.all { index ->
+            val current = localWindows[index]
+            val next = localWindows[(index + 1) % localWindows.size]
+            val nextStart = next.startMinute + if (index == localWindows.lastIndex) 1_440 else 0
+            nextStart - (current.endMinute - 1) >= minimumSeparationMinutes
+        }) { "Random windows are too close for the configured separation" }
+    }
+
+    override fun requireWithin(studyMinutes: Int) = Unit
+
+    // Wall-clock edits can expose arbitrarily many local dates inside a short monotonic study.
+    // The signed lifetime cap is therefore the only safe contribution to the global 512 bound.
+    override fun maximumOccurrences(studyMinutes: Int): Long = maximumOccurrencesTotal.toLong()
+}
+
+private fun parseLocalMinute(value: String): Int {
+    require(LOCAL_MINUTE.matches(value)) { "Invalid local time" }
+    return value.substring(0, 2).toInt() * 60 + value.substring(3).toInt()
+}
+
+private val LOCAL_MINUTE = Regex("(?:[01][0-9]|2[0-3]):[0-5][0-9]")
 
 data class SurveyDefinition(
     val id: String,
@@ -413,12 +543,12 @@ private fun validateOptions(options: List<ChoiceOption>) {
  */
 data class SignerIdentity(
     val keyId: String,
-    /** Base64 X.509 SubjectPublicKeyInfo for an Ed25519 key. */
+    /** Unpadded base64url raw 32-byte Ed25519 public key. */
     val publicKey: String,
 ) {
     init {
         require(StudyConfiguration.ID.matches(keyId)) { "Invalid signer key ID" }
-        require(publicKey.length in 32..1_024) { "Invalid signer public key" }
+        ProtocolBase64Url.decodeExact(publicKey, RAW_PUBLIC_KEY_BYTES, "signer public key")
     }
 
     /**
@@ -427,22 +557,28 @@ data class SignerIdentity(
      */
     val fingerprint: String by lazy {
         java.security.MessageDigest.getInstance("SHA-256")
-            .digest(java.util.Base64.getDecoder().decode(publicKey))
+            .digest(ProtocolBase64Url.decodeExact(publicKey, RAW_PUBLIC_KEY_BYTES, "signer public key"))
             .take(16)
             .joinToString("") { "%02X".format(it) }
             .chunked(4)
             .joinToString(" ")
     }
+
+    companion object { const val RAW_PUBLIC_KEY_BYTES = 32 }
 }
 
 data class ExportConfiguration(
     val researcherKeyId: String,
-    val tinkHpkePublicKeysetJson: String,
+    /** Unpadded base64url raw 32-byte X25519 public key. */
+    val hpkePublicKey: String,
 ) {
     init {
         require(StudyConfiguration.ID.matches(researcherKeyId)) { "Invalid researcher key ID" }
-        require(tinkHpkePublicKeysetJson.length in 32..16_384) { "Invalid researcher public keyset" }
+        ProtocolBase64Url.decodeExact(hpkePublicKey, RAW_PUBLIC_KEY_BYTES, "researcher public key")
     }
+
+
+    companion object { const val RAW_PUBLIC_KEY_BYTES = 32 }
 }
 
 /**

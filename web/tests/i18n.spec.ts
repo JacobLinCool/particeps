@@ -12,6 +12,7 @@ import { LOCALES, type Messages } from '$lib/i18n/types';
 /** Sample arguments for every message that is a template, keyed by its path. */
 const ARGUMENTS: Record<string, unknown> = {
   'control.stepPosition': { index: 2, total: 4 },
+  'intervention.randomWindowSummary': { minimum: 0, maximum: 14 },
   'issue.length_range': { min: 1, max: 120 },
   'issue.number_range': { min: 5_000, max: 1_000_000 },
   'issue.document_too_large': { max: 1_048_576 },

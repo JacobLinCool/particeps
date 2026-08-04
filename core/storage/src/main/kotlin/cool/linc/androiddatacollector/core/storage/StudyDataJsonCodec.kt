@@ -73,54 +73,18 @@ internal object StudyDataJsonCodec {
         .toString()
         .toByteArray(Charsets.UTF_8)
 
-    /**
-     * Reconciles the persisted metadata against what is actually on disk.
-     *
-     * [scanFirstSequence] and [scanLastSequence] describe the surviving events, and are both 0 when
-     * no segment exists. The stored counter is authoritative for how far the study has counted,
-     * because reclaimed events are gone from disk but their sequence numbers must never be reissued.
-     * The scan is authoritative for the tail, because an event is fsynced before the metadata naming
-     * it and a crash in between leaves the counter one behind the durable truth.
-     */
-    fun decodeMetadata(
-        bytes: ByteArray,
-        scanFirstSequence: Long,
-        scanLastSequence: Long,
-    ): StudyMetadata {
+    /** Decodes exactly the persisted boundary; append recovery reconciles it with the event log. */
+    fun decodeMetadata(bytes: ByteArray): StudyMetadata {
         val root = JSONObject(bytes.toString(Charsets.UTF_8))
         root.requireExactKeys(METADATA_KEYS)
         val transitionsJson = root.getJSONArray("transitions")
         val storedNextSequence = root.getLong("next_sequence_number")
         val storedRetainedFrom = root.getLong("retained_from_sequence")
         val uploadedThrough = root.getLong("uploaded_through_sequence")
-
-        val nextSequenceNumber: Long
-        val retainedFrom: Long
-        if (scanFirstSequence == 0L) {
-            // Reclaiming never removes the newest segment, so an empty store means no event was
-            // ever written. A populated counter here would mean the log was lost, not reclaimed.
-            require(storedNextSequence == 1L) {
-                "Experiment metadata references events that are not durable"
-            }
-            nextSequenceNumber = 1L
-            retainedFrom = 1L
-        } else {
-            // The floor is persisted before the segments below it are unlinked, so finding more on
-            // disk than the floor claims just means an interrupted reclaim; the next pass finishes
-            // it. Finding *less* means a prefix disappeared without being reclaimed, which is
-            // indistinguishable from tampering and must not be opened.
-            require(scanFirstSequence <= storedRetainedFrom) {
-                "Event segments below the retained floor are missing"
-            }
-            require(storedNextSequence <= scanLastSequence + 1) {
-                "Experiment metadata references an event that is not durable"
-            }
-            nextSequenceNumber = maxOf(storedNextSequence, scanLastSequence + 1)
-            retainedFrom = scanFirstSequence
-        }
+        require(storedNextSequence > 0) { "Invalid persisted event boundary" }
         // Claiming an endpoint received something that was never durable would let it be reclaimed
         // before it was ever sent.
-        require(uploadedThrough in 0 until nextSequenceNumber) {
+        require(uploadedThrough in 0 until storedNextSequence) {
             "Experiment metadata claims an upload beyond the lifetime event count"
         }
 
@@ -131,11 +95,13 @@ internal object StudyDataJsonCodec {
             transitions = List(transitionsJson.length()) { index ->
                 decodeTransition(transitionsJson.getJSONObject(index))
             },
-            eventCount = nextSequenceNumber - 1,
-            nextSequenceNumber = nextSequenceNumber,
+            eventCount = storedNextSequence - 1,
+            nextSequenceNumber = storedNextSequence,
             lastEvents = root.getJSONObject("last_events").let { events ->
                 events.keys().asSequence().associateWith { collectorId ->
-                    decodeEvent(events.getJSONObject(collectorId).toString().toByteArray(Charsets.UTF_8))
+                    decodeEvent(events.getJSONObject(collectorId).toString().toByteArray(Charsets.UTF_8)).also {
+                        require(it.collectorId == collectorId) { "Latest-event collector key mismatch" }
+                    }
                 }
             },
             participantInstanceId = root.getString("participant_instance_id"),
@@ -144,8 +110,30 @@ internal object StudyDataJsonCodec {
                 occurrences.keys().asSequence().associateWith { id -> decodeOccurrence(occurrences.getJSONObject(id)) }
             },
             uploadedThroughSequence = uploadedThrough,
-            retainedFromSequence = retainedFrom,
+            retainedFromSequence = storedRetainedFrom,
         )
+    }
+
+    /** Validates the recovered metadata boundary and reconciles an interrupted prefix eviction. */
+    fun reconcileMetadata(
+        metadata: StudyMetadata,
+        scanFirstSequence: Long,
+        scanLastSequence: Long,
+    ): StudyMetadata {
+        if (scanFirstSequence == 0L) {
+            require(scanLastSequence == 0L && metadata.eventCount == 0L) {
+                "Experiment metadata references events that are not durable"
+            }
+            return metadata
+        }
+        require(scanFirstSequence in 1..scanLastSequence) { "Invalid durable event range" }
+        require(metadata.eventCount == scanLastSequence) { "Metadata does not name the durable event tail" }
+        // The floor is persisted before old segments are unlinked. Extra prefix segments therefore
+        // mean eviction was interrupted; a missing segment below the stored floor is corruption.
+        require(scanFirstSequence <= metadata.retainedFromSequence) {
+            "Event segments below the retained floor are missing"
+        }
+        return metadata.copy(retainedFromSequence = scanFirstSequence)
     }
 
     fun encodeEvent(event: RecordedEvent): ByteArray = JSONObject()

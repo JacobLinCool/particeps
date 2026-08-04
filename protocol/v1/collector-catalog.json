@@ -1,0 +1,1411 @@
+{
+  "catalog_format": "adc-collector-catalog-v1",
+  "catalog_version": 1,
+  "collectors": [
+    {
+      "access": [
+        {
+          "kind": "ACCELEROMETER_HARDWARE",
+          "mode": "hardware"
+        }
+      ],
+      "configuration": {
+        "fields": {
+          "maximum_report_latency_us": {
+            "maximum": 60000000,
+            "meaning": "Maximum Android hardware FIFO batching latency.",
+            "minimum": 0,
+            "type": "integer",
+            "unit": "microsecond"
+          },
+          "sampling_period_us": {
+            "maximum": 1000000,
+            "meaning": "Requested Android sensor sampling period; this is a hint, not an achieved-rate guarantee.",
+            "minimum": 5000,
+            "type": "integer",
+            "unit": "microsecond"
+          }
+        },
+        "required": [
+          "maximum_report_latency_us",
+          "sampling_period_us"
+        ]
+      },
+      "id": "accelerometer.v1",
+      "implementation": {
+        "android_module": ":collector:accelerometer",
+        "status": "implemented"
+      },
+      "maximum_encoded_event_bytes": 2048,
+      "payload_schema_version": 1,
+      "payloads": [
+        {
+          "fields": {
+            "accuracy": {
+              "clock_basis": null,
+              "meaning": "Raw Android SensorEvent accuracy code.",
+              "required": true,
+              "type": "int32",
+              "unit": "android_sensor_accuracy"
+            },
+            "source_elapsed_realtime_nanos": {
+              "clock_basis": "continuous_monotonic_since_boot",
+              "meaning": "SensorEvent hardware sample timestamp.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "nanosecond"
+            },
+            "x_meters_per_second_squared": {
+              "clock_basis": null,
+              "meaning": "Raw acceleration including gravity on the device X axis.",
+              "required": true,
+              "type": "float32",
+              "unit": "meter_per_second_squared"
+            },
+            "y_meters_per_second_squared": {
+              "clock_basis": null,
+              "meaning": "Raw acceleration including gravity on the device Y axis.",
+              "required": true,
+              "type": "float32",
+              "unit": "meter_per_second_squared"
+            },
+            "z_meters_per_second_squared": {
+              "clock_basis": null,
+              "meaning": "Raw acceleration including gravity on the device Z axis.",
+              "required": true,
+              "type": "float32",
+              "unit": "meter_per_second_squared"
+            }
+          },
+          "types": [
+            "ACCELEROMETER_SAMPLE"
+          ]
+        }
+      ],
+      "platforms": [
+        "android"
+      ],
+      "privacy_class": "SENSITIVE",
+      "rate_bound": {
+        "enforced_by": "android_platform_without_high-rate-permission",
+        "kind": "android_platform_cap",
+        "maximum_events_per_hour": 720000
+      },
+      "selectable": true
+    },
+    {
+      "access": [
+        {
+          "kind": "AMBIENT_LIGHT_HARDWARE",
+          "mode": "hardware"
+        }
+      ],
+      "configuration": {
+        "fields": {
+          "change_threshold_millilux": {
+            "maximum": 100000000,
+            "meaning": "Minimum illuminance change from the last emitted sample. The newest changed on-change sample inside the rate interval is retained and emitted later with its original observation and hardware times.",
+            "minimum": 0,
+            "type": "integer",
+            "unit": "millilux"
+          },
+          "sampling_period_us": {
+            "maximum": 10000000,
+            "meaning": "Minimum emitted-sample period and Android sensor request period; rate limiting coalesces to the newest meaningful sample rather than dropping it.",
+            "minimum": 200000,
+            "type": "integer",
+            "unit": "microsecond"
+          }
+        },
+        "required": [
+          "change_threshold_millilux",
+          "sampling_period_us"
+        ]
+      },
+      "id": "ambient_light.v1",
+      "implementation": {
+        "android_module": ":collector:ambient-light",
+        "status": "implemented"
+      },
+      "maximum_encoded_event_bytes": 1024,
+      "payload_schema_version": 1,
+      "payloads": [
+        {
+          "fields": {
+            "accuracy": {
+              "clock_basis": null,
+              "meaning": "Raw Android SensorEvent accuracy code.",
+              "required": true,
+              "type": "int32",
+              "unit": "android_sensor_accuracy"
+            },
+            "illuminance_lux": {
+              "clock_basis": null,
+              "meaning": "Raw ambient illuminance reported by the light sensor.",
+              "minimum": 0,
+              "required": true,
+              "type": "float32",
+              "unit": "lux"
+            },
+            "source_elapsed_realtime_nanos": {
+              "clock_basis": "continuous_monotonic_since_boot",
+              "meaning": "SensorEvent hardware sample timestamp.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "nanosecond"
+            }
+          },
+          "types": [
+            "AMBIENT_LIGHT_SAMPLE"
+          ]
+        }
+      ],
+      "platforms": [
+        "android"
+      ],
+      "privacy_class": "SENSITIVE",
+      "rate_bound": {
+        "enforced_by": "collector-monotonic-rate-gate",
+        "kind": "collector_rate_limit",
+        "maximum_events_per_hour": 18000
+      },
+      "selectable": true
+    },
+    {
+      "access": [],
+      "configuration": {
+        "fields": {},
+        "required": []
+      },
+      "id": "app_lifecycle.v1",
+      "implementation": {
+        "android_module": ":collector:app-lifecycle",
+        "status": "implemented"
+      },
+      "maximum_encoded_event_bytes": 2048,
+      "payload_schema_version": 1,
+      "payloads": [
+        {
+          "fields": {
+            "activity_class": {
+              "clock_basis": null,
+              "maximum_length": 512,
+              "meaning": "Fully-qualified class name of this app's Activity.",
+              "required": true,
+              "type": "string",
+              "unit": "none"
+            }
+          },
+          "types": [
+            "ACTIVITY_CREATED",
+            "ACTIVITY_DESTROYED",
+            "ACTIVITY_INSTANCE_STATE_SAVED",
+            "ACTIVITY_PAUSED",
+            "ACTIVITY_RESUMED",
+            "ACTIVITY_STARTED",
+            "ACTIVITY_STOPPED"
+          ]
+        }
+      ],
+      "platforms": [
+        "android"
+      ],
+      "privacy_class": "SENSITIVE",
+      "rate_bound": {
+        "enforced_by": "none",
+        "kind": "not_enforced",
+        "maximum_events_per_hour": null
+      },
+      "selectable": true
+    },
+    {
+      "access": [],
+      "configuration": {
+        "fields": {},
+        "required": []
+      },
+      "id": "battery_state.v1",
+      "implementation": {
+        "android_module": ":collector:battery-state",
+        "status": "implemented"
+      },
+      "maximum_encoded_event_bytes": 1024,
+      "payload_schema_version": 1,
+      "payloads": [
+        {
+          "fields": {
+            "charging_source": {
+              "clock_basis": null,
+              "enum": [
+                "AC",
+                "DOCK",
+                "MULTIPLE",
+                "NONE",
+                "UNKNOWN",
+                "USB",
+                "WIRELESS"
+              ],
+              "meaning": "Mapped Android charging source without hardware identity.",
+              "required": true,
+              "type": "enum",
+              "unit": "none"
+            },
+            "charging_state": {
+              "clock_basis": null,
+              "enum": [
+                "CHARGING",
+                "DISCHARGING",
+                "FULL",
+                "NOT_CHARGING",
+                "UNKNOWN"
+              ],
+              "meaning": "Mapped Android battery charging status.",
+              "required": true,
+              "type": "enum",
+              "unit": "none"
+            },
+            "percentage": {
+              "clock_basis": null,
+              "maximum": 100,
+              "meaning": "Whole remaining-battery percentage.",
+              "minimum": 0,
+              "required": true,
+              "type": "int32",
+              "unit": "percent"
+            },
+            "power_save_enabled": {
+              "clock_basis": null,
+              "meaning": "Whether Android power-save mode is enabled.",
+              "required": true,
+              "type": "boolean",
+              "unit": "none"
+            }
+          },
+          "types": [
+            "BATTERY_STATE"
+          ]
+        }
+      ],
+      "platforms": [
+        "android"
+      ],
+      "privacy_class": "SENSITIVE",
+      "rate_bound": {
+        "enforced_by": "collector-coalescing-rate-gate",
+        "kind": "collector_rate_limit",
+        "maximum_events_per_hour": 60
+      },
+      "selectable": true
+    },
+    {
+      "access": [
+        {
+          "kind": "GYROSCOPE_HARDWARE",
+          "mode": "hardware"
+        }
+      ],
+      "configuration": {
+        "fields": {
+          "maximum_report_latency_us": {
+            "maximum": 60000000,
+            "meaning": "Maximum Android hardware FIFO batching latency.",
+            "minimum": 0,
+            "type": "integer",
+            "unit": "microsecond"
+          },
+          "sampling_period_us": {
+            "maximum": 1000000,
+            "meaning": "Requested Android sensor sampling period; this is a hint, not an achieved-rate guarantee.",
+            "minimum": 5000,
+            "type": "integer",
+            "unit": "microsecond"
+          }
+        },
+        "required": [
+          "maximum_report_latency_us",
+          "sampling_period_us"
+        ]
+      },
+      "id": "gyroscope.v1",
+      "implementation": {
+        "android_module": ":collector:gyroscope",
+        "status": "implemented"
+      },
+      "maximum_encoded_event_bytes": 2048,
+      "payload_schema_version": 1,
+      "payloads": [
+        {
+          "fields": {
+            "accuracy": {
+              "clock_basis": null,
+              "meaning": "Raw Android SensorEvent accuracy code.",
+              "required": true,
+              "type": "int32",
+              "unit": "android_sensor_accuracy"
+            },
+            "source_elapsed_realtime_nanos": {
+              "clock_basis": "continuous_monotonic_since_boot",
+              "meaning": "SensorEvent hardware sample timestamp.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "nanosecond"
+            },
+            "x_radians_per_second": {
+              "clock_basis": null,
+              "meaning": "Raw angular velocity around the device X axis.",
+              "required": true,
+              "type": "float32",
+              "unit": "radian_per_second"
+            },
+            "y_radians_per_second": {
+              "clock_basis": null,
+              "meaning": "Raw angular velocity around the device Y axis.",
+              "required": true,
+              "type": "float32",
+              "unit": "radian_per_second"
+            },
+            "z_radians_per_second": {
+              "clock_basis": null,
+              "meaning": "Raw angular velocity around the device Z axis.",
+              "required": true,
+              "type": "float32",
+              "unit": "radian_per_second"
+            }
+          },
+          "types": [
+            "GYROSCOPE_SAMPLE"
+          ]
+        }
+      ],
+      "platforms": [
+        "android"
+      ],
+      "privacy_class": "SENSITIVE",
+      "rate_bound": {
+        "enforced_by": "android-platform-without-high-rate-permission",
+        "kind": "android_platform_cap",
+        "maximum_events_per_hour": 720000
+      },
+      "selectable": true
+    },
+    {
+      "access": [],
+      "configuration": null,
+      "id": "interventions.v1",
+      "implementation": {
+        "android_module": ":core:experiment-runtime",
+        "status": "implemented"
+      },
+      "maximum_encoded_event_bytes": 65536,
+      "payload_schema_version": 1,
+      "payloads": [
+        {
+          "fields": {
+            "intervention_id": {
+              "clock_basis": null,
+              "maximum_length": 64,
+              "meaning": "Stable signed intervention identifier.",
+              "required": true,
+              "type": "string",
+              "unit": "none"
+            },
+            "occurrence_id": {
+              "clock_basis": null,
+              "maximum_length": 64,
+              "meaning": "SHA-256 identity of the logical occurrence.",
+              "required": true,
+              "type": "string",
+              "unit": "none"
+            },
+            "scheduled_for_utc_millis": {
+              "clock_basis": "wall_utc",
+              "meaning": "Materialized scheduled instant.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "millisecond"
+            },
+            "trigger_id": {
+              "clock_basis": null,
+              "maximum_length": 64,
+              "meaning": "Stable signed trigger identifier.",
+              "required": true,
+              "type": "string",
+              "unit": "none"
+            }
+          },
+          "types": [
+            "INTERVENTION_EXPIRED",
+            "INTERVENTION_OPENED",
+            "INTERVENTION_RESCHEDULED",
+            "INTERVENTION_SCHEDULED",
+            "NOTIFICATION_POSTED",
+            "SURVEY_EXPIRED",
+            "SURVEY_OPENED"
+          ]
+        },
+        {
+          "fields": {
+            "answers_json": {
+              "clock_basis": null,
+              "maximum_length": 61440,
+              "meaning": "Validated final survey answers as compact JSON keyed by stable question IDs.",
+              "required": true,
+              "type": "json_string",
+              "unit": "none"
+            },
+            "intervention_id": {
+              "clock_basis": null,
+              "maximum_length": 64,
+              "meaning": "Stable signed intervention identifier.",
+              "required": true,
+              "type": "string",
+              "unit": "none"
+            },
+            "occurrence_id": {
+              "clock_basis": null,
+              "maximum_length": 64,
+              "meaning": "SHA-256 identity of the logical occurrence.",
+              "required": true,
+              "type": "string",
+              "unit": "none"
+            },
+            "opened_time": {
+              "clock_basis": "research_time_object",
+              "meaning": "Compact canonical ResearchTime JSON for the open action.",
+              "required": true,
+              "type": "json_string",
+              "unit": "none"
+            },
+            "scheduled_for_utc_millis": {
+              "clock_basis": "wall_utc",
+              "meaning": "Materialized scheduled instant.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "millisecond"
+            },
+            "scheduled_time": {
+              "clock_basis": "research_time_object",
+              "meaning": "Compact canonical ResearchTime JSON for the scheduled instant.",
+              "required": true,
+              "type": "json_string",
+              "unit": "none"
+            },
+            "submitted_time": {
+              "clock_basis": "research_time_object",
+              "meaning": "Compact canonical ResearchTime JSON for submission.",
+              "required": true,
+              "type": "json_string",
+              "unit": "none"
+            },
+            "survey_id": {
+              "clock_basis": null,
+              "maximum_length": 64,
+              "meaning": "Stable signed survey identifier.",
+              "required": true,
+              "type": "string",
+              "unit": "none"
+            },
+            "trigger_id": {
+              "clock_basis": null,
+              "maximum_length": 64,
+              "meaning": "Stable signed trigger identifier.",
+              "required": true,
+              "type": "string",
+              "unit": "none"
+            }
+          },
+          "types": [
+            "SURVEY_SUBMITTED"
+          ]
+        }
+      ],
+      "platforms": [
+        "android"
+      ],
+      "privacy_class": "SENSITIVE",
+      "rate_bound": {
+        "enforced_by": "none-for-lifecycle-reschedules",
+        "kind": "not_enforced",
+        "maximum_events_per_hour": null
+      },
+      "selectable": false
+    },
+    {
+      "access": [
+        {
+          "kind": "RESEARCH_KEYBOARD_ENABLED",
+          "mode": "participant_setting"
+        },
+        {
+          "kind": "RESEARCH_KEYBOARD_SELECTED",
+          "mode": "participant_setting"
+        }
+      ],
+      "configuration": {
+        "fields": {
+          "trajectory_sampling_hz": {
+            "maximum": 120,
+            "meaning": "Maximum MOVE-event sampling rate; boundary actions are not rate limited.",
+            "minimum": 1,
+            "type": "integer",
+            "unit": "hertz"
+          }
+        },
+        "required": [
+          "trajectory_sampling_hz"
+        ]
+      },
+      "id": "keyboard_touch.v1",
+      "implementation": {
+        "android_module": ":collector:keyboard-ime",
+        "status": "implemented"
+      },
+      "maximum_encoded_event_bytes": 4096,
+      "payload_schema_version": 1,
+      "payloads": [
+        {
+          "fields": {
+            "action": {
+              "clock_basis": null,
+              "enum": [
+                "CANCEL",
+                "DOWN",
+                "MOVE",
+                "UP"
+              ],
+              "meaning": "Touch lifecycle action.",
+              "required": true,
+              "type": "enum",
+              "unit": "none"
+            },
+            "down_uptime_millis": {
+              "clock_basis": "uptime_since_boot_excluding_deep_sleep",
+              "meaning": "Uptime when the gesture began.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "millisecond"
+            },
+            "event_uptime_millis": {
+              "clock_basis": "uptime_since_boot_excluding_deep_sleep",
+              "meaning": "Uptime of this touch event.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "millisecond"
+            },
+            "geometry_version": {
+              "clock_basis": null,
+              "enum": [
+                "qwerty-v1"
+              ],
+              "meaning": "Fixed research-keyboard geometry identity.",
+              "required": true,
+              "type": "enum",
+              "unit": "none"
+            },
+            "key_category": {
+              "clock_basis": null,
+              "enum": [
+                "BACKSPACE",
+                "ENTER",
+                "LETTER",
+                "SPACE"
+              ],
+              "meaning": "Key category only; never key identity or text.",
+              "required": true,
+              "type": "enum",
+              "unit": "none"
+            },
+            "orientation_radians": {
+              "clock_basis": null,
+              "meaning": "Raw MotionEvent touch-major-axis orientation.",
+              "required": true,
+              "type": "float32",
+              "unit": "radian"
+            },
+            "pointer_id": {
+              "clock_basis": null,
+              "meaning": "Pointer identity within the current gesture.",
+              "minimum": 0,
+              "required": true,
+              "type": "int32",
+              "unit": "none"
+            },
+            "pressure": {
+              "clock_basis": null,
+              "meaning": "Uncalibrated device-relative MotionEvent pressure.",
+              "required": true,
+              "type": "float32",
+              "unit": "device_relative"
+            },
+            "relative_x": {
+              "clock_basis": null,
+              "maximum": 1,
+              "meaning": "Clamped horizontal position within the touched key.",
+              "minimum": 0,
+              "required": true,
+              "type": "float32",
+              "unit": "fraction"
+            },
+            "relative_y": {
+              "clock_basis": null,
+              "maximum": 1,
+              "meaning": "Clamped vertical position within the touched key.",
+              "minimum": 0,
+              "required": true,
+              "type": "float32",
+              "unit": "fraction"
+            },
+            "size": {
+              "clock_basis": null,
+              "meaning": "Uncalibrated device-relative contact size.",
+              "required": true,
+              "type": "float32",
+              "unit": "device_relative"
+            },
+            "tool_type": {
+              "clock_basis": null,
+              "meaning": "Raw Android MotionEvent tool-type code.",
+              "required": true,
+              "type": "int32",
+              "unit": "android_tool_type"
+            }
+          },
+          "types": [
+            "KEYBOARD_TOUCH"
+          ]
+        }
+      ],
+      "platforms": [
+        "android"
+      ],
+      "privacy_class": "RESTRICTED",
+      "rate_bound": {
+        "enforced_by": "move-events-only",
+        "kind": "not_enforced",
+        "maximum_events_per_hour": null
+      },
+      "selectable": true
+    },
+    {
+      "access": [
+        {
+          "kind": "BACKGROUND_LOCATION",
+          "mode": "runtime_permission"
+        },
+        {
+          "kind": "FINE_LOCATION",
+          "mode": "runtime_permission"
+        }
+      ],
+      "configuration": {
+        "fields": {
+          "interval_millis": {
+            "maximum": 3600000,
+            "meaning": "Requested fused-location interval.",
+            "minimum": 1000,
+            "type": "integer",
+            "unit": "millisecond"
+          },
+          "maximum_batch_delay_millis": {
+            "maximum": 86400000,
+            "meaning": "Maximum fused-location batching delay.",
+            "minimum": 0,
+            "type": "integer",
+            "unit": "millisecond"
+          },
+          "minimum_displacement_millimeters": {
+            "maximum": 10000000,
+            "meaning": "Requested minimum displacement, represented without a floating-point configuration value.",
+            "minimum": 0,
+            "type": "integer",
+            "unit": "millimeter"
+          },
+          "minimum_interval_millis": {
+            "maximum": 3600000,
+            "maximum_field": "interval_millis",
+            "meaning": "Fastest requested fused-location interval; additionally bounded by interval_millis.",
+            "minimum": 500,
+            "type": "integer",
+            "unit": "millisecond"
+          },
+          "priority": {
+            "enum": [
+              "BALANCED",
+              "HIGH_ACCURACY"
+            ],
+            "meaning": "Fused-location power/accuracy priority within precise location.",
+            "type": "enum",
+            "unit": "none"
+          }
+        },
+        "required": [
+          "interval_millis",
+          "maximum_batch_delay_millis",
+          "minimum_displacement_millimeters",
+          "minimum_interval_millis",
+          "priority"
+        ]
+      },
+      "id": "location.v1",
+      "implementation": {
+        "android_module": ":collector:location",
+        "status": "implemented"
+      },
+      "maximum_encoded_event_bytes": 4096,
+      "payload_schema_version": 1,
+      "payloads": [
+        {
+          "fields": {
+            "altitude_meters": {
+              "clock_basis": null,
+              "meaning": "WGS84 ellipsoid altitude when supplied.",
+              "required": false,
+              "type": "float64",
+              "unit": "meter"
+            },
+            "bearing_accuracy_degrees": {
+              "clock_basis": null,
+              "meaning": "Bearing accuracy when supplied.",
+              "minimum": 0,
+              "required": false,
+              "type": "float32",
+              "unit": "degree"
+            },
+            "bearing_degrees": {
+              "clock_basis": null,
+              "maximum": 360,
+              "meaning": "Bearing from true north when supplied.",
+              "minimum": 0,
+              "required": false,
+              "type": "float32",
+              "unit": "degree"
+            },
+            "horizontal_accuracy_meters": {
+              "clock_basis": null,
+              "meaning": "Horizontal 68-percent confidence radius.",
+              "minimum": 0,
+              "required": true,
+              "type": "float32",
+              "unit": "meter"
+            },
+            "latitude_degrees": {
+              "clock_basis": null,
+              "maximum": 90,
+              "meaning": "WGS84 latitude.",
+              "minimum": -90,
+              "required": true,
+              "type": "float64",
+              "unit": "degree"
+            },
+            "longitude_degrees": {
+              "clock_basis": null,
+              "maximum": 180,
+              "meaning": "WGS84 longitude.",
+              "minimum": -180,
+              "required": true,
+              "type": "float64",
+              "unit": "degree"
+            },
+            "mock": {
+              "clock_basis": null,
+              "meaning": "Whether Android marks this location as mock.",
+              "required": true,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "source_elapsed_realtime_nanos": {
+              "clock_basis": "continuous_monotonic_since_boot",
+              "meaning": "Provider monotonic fix timestamp.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "nanosecond"
+            },
+            "source_time_utc_millis": {
+              "clock_basis": "wall_utc",
+              "meaning": "Provider wall-clock fix timestamp.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "millisecond"
+            },
+            "speed_accuracy_meters_per_second": {
+              "clock_basis": null,
+              "meaning": "Speed accuracy when supplied.",
+              "minimum": 0,
+              "required": false,
+              "type": "float32",
+              "unit": "meter_per_second"
+            },
+            "speed_meters_per_second": {
+              "clock_basis": null,
+              "meaning": "Provider speed when supplied.",
+              "minimum": 0,
+              "required": false,
+              "type": "float32",
+              "unit": "meter_per_second"
+            },
+            "vertical_accuracy_meters": {
+              "clock_basis": null,
+              "meaning": "Vertical accuracy when supplied.",
+              "minimum": 0,
+              "required": false,
+              "type": "float32",
+              "unit": "meter"
+            }
+          },
+          "types": [
+            "LOCATION_FIX"
+          ]
+        }
+      ],
+      "platforms": [
+        "android"
+      ],
+      "privacy_class": "SENSITIVE",
+      "rate_bound": {
+        "enforced_by": "none-android-request-is-a-hint",
+        "kind": "not_enforced",
+        "maximum_events_per_hour": null
+      },
+      "selectable": true
+    },
+    {
+      "access": [
+        {
+          "kind": "ACCESS_NETWORK_STATE",
+          "mode": "install_permission"
+        }
+      ],
+      "configuration": {
+        "fields": {
+          "include_bandwidth_estimates": {
+            "meaning": "Whether capability events include Android link-bandwidth estimates.",
+            "type": "boolean",
+            "unit": "none"
+          }
+        },
+        "required": [
+          "include_bandwidth_estimates"
+        ]
+      },
+      "id": "network_state.v1",
+      "implementation": {
+        "android_module": ":collector:network-state",
+        "status": "implemented"
+      },
+      "maximum_encoded_event_bytes": 4096,
+      "payload_schema_version": 1,
+      "payloads": [
+        {
+          "fields": {},
+          "types": [
+            "NETWORK_AVAILABLE",
+            "NETWORK_LOST"
+          ]
+        },
+        {
+          "fields": {
+            "downstream_kbps": {
+              "clock_basis": null,
+              "meaning": "Android downstream link-bandwidth estimate when enabled.",
+              "minimum": 0,
+              "required": false,
+              "type": "int32",
+              "unit": "kilobit_per_second"
+            },
+            "ethernet": {
+              "clock_basis": null,
+              "meaning": "Whether the default network has ethernet transport.",
+              "required": true,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "metered": {
+              "clock_basis": null,
+              "meaning": "Whether Android reports the default network as metered.",
+              "required": true,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "mobile": {
+              "clock_basis": null,
+              "meaning": "Whether the default network has cellular transport.",
+              "required": true,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "roaming": {
+              "clock_basis": null,
+              "meaning": "Whether Android reports the default network as roaming.",
+              "required": true,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "upstream_kbps": {
+              "clock_basis": null,
+              "meaning": "Android upstream link-bandwidth estimate when enabled.",
+              "minimum": 0,
+              "required": false,
+              "type": "int32",
+              "unit": "kilobit_per_second"
+            },
+            "validated": {
+              "clock_basis": null,
+              "meaning": "Whether Android validated internet connectivity.",
+              "required": true,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "vpn": {
+              "clock_basis": null,
+              "meaning": "Whether the default network has VPN transport.",
+              "required": true,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "wifi": {
+              "clock_basis": null,
+              "meaning": "Whether the default network has Wi-Fi transport.",
+              "required": true,
+              "type": "boolean",
+              "unit": "none"
+            }
+          },
+          "types": [
+            "NETWORK_CAPABILITIES"
+          ]
+        },
+        {
+          "fields": {
+            "connected": {
+              "clock_basis": null,
+              "meaning": "Whether a default network was available at snapshot time.",
+              "required": true,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "downstream_kbps": {
+              "clock_basis": null,
+              "meaning": "Android downstream link-bandwidth estimate when connected and enabled.",
+              "minimum": 0,
+              "required": false,
+              "type": "int32",
+              "unit": "kilobit_per_second"
+            },
+            "ethernet": {
+              "clock_basis": null,
+              "meaning": "Ethernet transport; omitted when disconnected.",
+              "required": false,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "metered": {
+              "clock_basis": null,
+              "meaning": "Metered state; omitted when disconnected.",
+              "required": false,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "mobile": {
+              "clock_basis": null,
+              "meaning": "Cellular transport; omitted when disconnected.",
+              "required": false,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "roaming": {
+              "clock_basis": null,
+              "meaning": "Roaming state; omitted when disconnected.",
+              "required": false,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "upstream_kbps": {
+              "clock_basis": null,
+              "meaning": "Android upstream link-bandwidth estimate when connected and enabled.",
+              "minimum": 0,
+              "required": false,
+              "type": "int32",
+              "unit": "kilobit_per_second"
+            },
+            "validated": {
+              "clock_basis": null,
+              "meaning": "Validated state; omitted when disconnected.",
+              "required": false,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "vpn": {
+              "clock_basis": null,
+              "meaning": "VPN transport; omitted when disconnected.",
+              "required": false,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "wifi": {
+              "clock_basis": null,
+              "meaning": "Wi-Fi transport; omitted when disconnected.",
+              "required": false,
+              "type": "boolean",
+              "unit": "none"
+            }
+          },
+          "types": [
+            "NETWORK_SNAPSHOT"
+          ]
+        }
+      ],
+      "platforms": [
+        "android"
+      ],
+      "privacy_class": "SENSITIVE",
+      "rate_bound": {
+        "enforced_by": "none",
+        "kind": "not_enforced",
+        "maximum_events_per_hour": null
+      },
+      "selectable": true
+    },
+    {
+      "access": [
+        {
+          "kind": "USAGE_ACCESS",
+          "mode": "special_access"
+        }
+      ],
+      "configuration": {
+        "fields": {
+          "poll_interval_minutes": {
+            "maximum": 1440,
+            "meaning": "Polling interval for Android device-total counters.",
+            "minimum": 1,
+            "type": "integer",
+            "unit": "minute"
+          },
+          "transports": {
+            "items_enum": [
+              "mobile",
+              "wifi"
+            ],
+            "maximum_items": 2,
+            "meaning": "Device-total transports to query.",
+            "minimum_items": 1,
+            "type": "enum_array",
+            "unit": "none"
+          }
+        },
+        "required": [
+          "poll_interval_minutes",
+          "transports"
+        ]
+      },
+      "id": "network_usage.v1",
+      "implementation": {
+        "android_module": ":collector:network-usage",
+        "status": "implemented"
+      },
+      "maximum_encoded_event_bytes": 2048,
+      "payload_schema_version": 1,
+      "payloads": [
+        {
+          "fields": {
+            "coverage_end_utc_millis": {
+              "clock_basis": "wall_utc",
+              "meaning": "Exclusive end of the queried accounting window.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "millisecond"
+            },
+            "coverage_start_utc_millis": {
+              "clock_basis": "wall_utc",
+              "meaning": "Inclusive start of the queried accounting window.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "millisecond"
+            },
+            "rx_bytes": {
+              "clock_basis": null,
+              "meaning": "Device-total received bytes in the window.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "byte"
+            },
+            "rx_packets": {
+              "clock_basis": null,
+              "meaning": "Device-total received packets in the window.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "packet"
+            },
+            "transport": {
+              "clock_basis": null,
+              "enum": [
+                "MOBILE",
+                "WIFI"
+              ],
+              "meaning": "Transport whose device-total counters were queried.",
+              "required": true,
+              "type": "enum",
+              "unit": "none"
+            },
+            "tx_bytes": {
+              "clock_basis": null,
+              "meaning": "Device-total transmitted bytes in the window.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "byte"
+            },
+            "tx_packets": {
+              "clock_basis": null,
+              "meaning": "Device-total transmitted packets in the window.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "packet"
+            }
+          },
+          "types": [
+            "NETWORK_USAGE_AGGREGATE"
+          ]
+        }
+      ],
+      "platforms": [
+        "android"
+      ],
+      "privacy_class": "SENSITIVE",
+      "rate_bound": {
+        "enforced_by": "poll-interval-and-two-transport-maximum",
+        "kind": "poll_configuration",
+        "maximum_events_per_hour": 120
+      },
+      "selectable": true
+    },
+    {
+      "access": [
+        {
+          "kind": "PROXIMITY_HARDWARE",
+          "mode": "hardware"
+        }
+      ],
+      "configuration": {
+        "fields": {
+          "change_threshold_millimeters": {
+            "maximum": 10000,
+            "meaning": "Minimum raw-distance change before another same-state event is emitted.",
+            "minimum": 0,
+            "type": "integer",
+            "unit": "millimeter"
+          },
+          "minimum_event_interval_ms": {
+            "maximum": 60000,
+            "meaning": "Minimum interval between emitted events; the latest pending state is retained.",
+            "minimum": 100,
+            "type": "integer",
+            "unit": "millisecond"
+          }
+        },
+        "required": [
+          "change_threshold_millimeters",
+          "minimum_event_interval_ms"
+        ]
+      },
+      "id": "proximity.v1",
+      "implementation": {
+        "android_module": ":collector:proximity",
+        "status": "implemented"
+      },
+      "maximum_encoded_event_bytes": 1024,
+      "payload_schema_version": 1,
+      "payloads": [
+        {
+          "fields": {
+            "distance_centimeters": {
+              "clock_basis": null,
+              "meaning": "Raw Android proximity distance; binary sensors report only near and maximum range.",
+              "minimum": 0,
+              "required": true,
+              "type": "float32",
+              "unit": "centimeter"
+            },
+            "maximum_range_centimeters": {
+              "clock_basis": null,
+              "meaning": "Maximum range declared by this device's sensor.",
+              "minimum": 0,
+              "required": true,
+              "type": "float32",
+              "unit": "centimeter"
+            },
+            "near": {
+              "clock_basis": null,
+              "meaning": "True when raw distance is less than the sensor maximum range.",
+              "required": true,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "source_elapsed_realtime_nanos": {
+              "clock_basis": "continuous_monotonic_since_boot",
+              "meaning": "SensorEvent hardware sample timestamp.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "nanosecond"
+            }
+          },
+          "types": [
+            "PROXIMITY_SAMPLE"
+          ]
+        }
+      ],
+      "platforms": [
+        "android"
+      ],
+      "privacy_class": "SENSITIVE",
+      "rate_bound": {
+        "enforced_by": "collector-coalescing-rate-gate",
+        "kind": "collector_rate_limit",
+        "maximum_events_per_hour": 36000
+      },
+      "selectable": true
+    },
+    {
+      "access": [],
+      "configuration": {
+        "fields": {},
+        "required": []
+      },
+      "id": "temporal_context.v1",
+      "implementation": {
+        "android_module": ":collector:temporal-context",
+        "status": "implemented"
+      },
+      "maximum_encoded_event_bytes": 1024,
+      "payload_schema_version": 1,
+      "payloads": [
+        {
+          "fields": {
+            "change_reason": {
+              "clock_basis": null,
+              "enum": [
+                "RECONCILED",
+                "STUDY_STARTED",
+                "TIMEZONE_CHANGED",
+                "TIME_SET",
+                "UTC_OFFSET_CHANGED"
+              ],
+              "meaning": "Reason the temporal-context snapshot was emitted.",
+              "required": true,
+              "type": "enum",
+              "unit": "none"
+            },
+            "daylight_saving_time": {
+              "clock_basis": null,
+              "meaning": "Whether the selected zone rules are in daylight-saving time at observation.",
+              "required": true,
+              "type": "boolean",
+              "unit": "none"
+            },
+            "timezone_id": {
+              "clock_basis": null,
+              "maximum_length": 128,
+              "meaning": "Current device ZoneId; this is a setting, not a location claim.",
+              "required": true,
+              "type": "string",
+              "unit": "none"
+            },
+            "utc_offset_seconds": {
+              "clock_basis": null,
+              "maximum": 64800,
+              "meaning": "Zone-rule UTC offset at the observation instant.",
+              "minimum": -64800,
+              "required": true,
+              "type": "int32",
+              "unit": "second"
+            }
+          },
+          "types": [
+            "TEMPORAL_CONTEXT"
+          ]
+        }
+      ],
+      "platforms": [
+        "android"
+      ],
+      "privacy_class": "SENSITIVE",
+      "rate_bound": {
+        "enforced_by": "distinct-minute-context-gate",
+        "kind": "collector_rate_limit",
+        "maximum_events_per_hour": 60
+      },
+      "selectable": true
+    },
+    {
+      "access": [
+        {
+          "kind": "USAGE_ACCESS",
+          "mode": "special_access"
+        }
+      ],
+      "configuration": {
+        "fields": {
+          "poll_interval_minutes": {
+            "maximum": 1440,
+            "meaning": "Interval between UsageStats queries; it does not improve source completeness.",
+            "minimum": 1,
+            "type": "integer",
+            "unit": "minute"
+          }
+        },
+        "required": [
+          "poll_interval_minutes"
+        ]
+      },
+      "id": "usage_events.v1",
+      "implementation": {
+        "android_module": ":collector:usage-events",
+        "status": "implemented"
+      },
+      "maximum_encoded_event_bytes": 4096,
+      "payload_schema_version": 1,
+      "payloads": [
+        {
+          "fields": {
+            "package_name": {
+              "clock_basis": null,
+              "maximum_length": 255,
+              "meaning": "Reporting package when Android supplies a nonblank value.",
+              "required": false,
+              "type": "string",
+              "unit": "none"
+            },
+            "source_time_utc_millis": {
+              "clock_basis": "wall_utc",
+              "meaning": "Android UsageEvents source timestamp.",
+              "required": true,
+              "type": "decimal_string",
+              "unit": "millisecond"
+            }
+          },
+          "types": [
+            "ACTIVITY_PAUSED",
+            "ACTIVITY_RESUMED",
+            "ACTIVITY_STOPPED",
+            "DEVICE_SHUTDOWN",
+            "DEVICE_STARTUP",
+            "KEYGUARD_HIDDEN",
+            "KEYGUARD_SHOWN",
+            "SCREEN_INTERACTIVE",
+            "SCREEN_NON_INTERACTIVE"
+          ]
+        }
+      ],
+      "platforms": [
+        "android"
+      ],
+      "privacy_class": "SENSITIVE",
+      "rate_bound": {
+        "enforced_by": "none-source-query-can-return-an-unbounded-count",
+        "kind": "not_enforced",
+        "maximum_events_per_hour": null
+      },
+      "selectable": true
+    }
+  ],
+  "protocol_schema_version": 1
+}

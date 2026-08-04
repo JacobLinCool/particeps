@@ -6,7 +6,7 @@
    * the mark the participant will see beside it on the consent screen. That is the strongest
    * wordless tie between the two surfaces, and it costs nothing to keep.
    *
-   * All seven cards are always present, in the codec's emission order, and none of them can be
+   * All twelve cards are always present, in the codec's emission order, and none can be
    * reordered: array order is participant-visible — it is what the data screen lists — so leaving
    * it free would make two otherwise-identical studies non-diffable for no benefit.
    *
@@ -47,6 +47,11 @@
   const GLYPHS: Record<CollectorId, IconRef> = {
     'app_lifecycle.v1': 'app',
     'accelerometer.v1': 'motion',
+    'battery_state.v1': 'data-volume',
+    'temporal_context.v1': 'clock',
+    'gyroscope.v1': 'motion',
+    'ambient_light.v1': 'app',
+    'proximity.v1': 'connection',
     'network_state.v1': 'connection',
     'network_usage.v1': 'data-volume',
     'usage_events.v1': 'screen',
@@ -138,7 +143,7 @@
         <span>{copy.limit}</span>
       </div>
 
-      {#if collector.id === 'accelerometer.v1'}
+      {#if collector.id === 'accelerometer.v1' || collector.id === 'gyroscope.v1'}
         {@const cfg = collector.config}
         <!-- Hertz in the control, microseconds in the file. The box says `50` and `Hz`; the period
              it stores is `scales.ts`'s business and appears nowhere on screen. -->
@@ -157,6 +162,41 @@
           value={cfg.maximum_report_latency_us}
           unit={S.maximum_report_latency_us}
           onchange={(value) => (cfg.maximum_report_latency_us = value)}
+        />
+      {:else if collector.id === 'ambient_light.v1'}
+        {@const cfg = collector.config}
+        <RangeField
+          label={m.field.label.samplingPeriod}
+          hint={m.field.hint.ambientLightSamplingPeriod}
+          path={`${path}.config.sampling_period_us`}
+          value={cfg.sampling_period_us}
+          unit={S.ambient_sampling_period_us}
+          icon="clock"
+          onchange={(value) => (cfg.sampling_period_us = value)}
+        />
+        <RangeField
+          label={m.field.label.changeThreshold}
+          path={`${path}.config.change_threshold_millilux`}
+          value={cfg.change_threshold_millilux}
+          unit={S.change_threshold_millilux}
+          onchange={(value) => (cfg.change_threshold_millilux = value)}
+        />
+      {:else if collector.id === 'proximity.v1'}
+        {@const cfg = collector.config}
+        <RangeField
+          label={m.field.label.minimumEventInterval}
+          path={`${path}.config.minimum_event_interval_ms`}
+          value={cfg.minimum_event_interval_ms}
+          unit={S.minimum_event_interval_ms}
+          icon="clock"
+          onchange={(value) => (cfg.minimum_event_interval_ms = value)}
+        />
+        <RangeField
+          label={m.field.label.changeThreshold}
+          path={`${path}.config.change_threshold_millimeters`}
+          value={cfg.change_threshold_millimeters}
+          unit={S.change_threshold_millimeters}
+          onchange={(value) => (cfg.change_threshold_millimeters = value)}
         />
       {:else if collector.id === 'network_state.v1'}
         {@const cfg = collector.config}
@@ -228,15 +268,13 @@
           icon="package"
           onchange={(value) => (cfg.maximum_batch_delay_millis = value)}
         />
-        <!-- The box shows `formatFloat`, not the typed value: this field is a Kotlin Float, and
-             `1234.5678` is written as `1234.5677`. Nobody should meet that at diff time. -->
         <RangeField
           label={m.field.label.displacement}
-          path={`${path}.config.minimum_displacement_meters`}
-          value={cfg.minimum_displacement_meters}
-          unit={S.minimum_displacement_meters}
+          path={`${path}.config.minimum_displacement_millimeters`}
+          value={cfg.minimum_displacement_millimeters}
+          unit={S.minimum_displacement_millimeters}
           icon="location"
-          onchange={(value) => (cfg.minimum_displacement_meters = value)}
+          onchange={(value) => (cfg.minimum_displacement_millimeters = value)}
         />
         <ChoiceField
           label={m.field.label.priority}

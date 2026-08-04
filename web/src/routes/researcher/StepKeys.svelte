@@ -40,7 +40,6 @@
   import DropTarget from '$lib/ui/DropTarget.svelte';
   import Fingerprint from '$lib/ui/Fingerprint.svelte';
   import Note from '$lib/ui/Note.svelte';
-  import { keysetJson } from '$lib/adc/canonical';
   import { artifactFilename } from './artifacts';
   import type { Messages } from '$lib/i18n/types';
   import type { Draft } from './draft.svelte';
@@ -68,10 +67,10 @@
   // rather than by pulling the canonical document through `artifactBytes` on a step that has none.
   const encoder = new TextEncoder();
   const signingBytes = $derived(
-    signing.kind === 'held' ? encoder.encode(signing.material.privatePkcs8Base64).length : 0
+    signing.kind === 'held' ? encoder.encode(signing.material.privateKey).length : 0
   );
   const hpkeBytes = $derived(
-    hpke.kind === 'held' ? encoder.encode(keysetJson(hpke.material.privateKeyset)).length : 0
+    hpke.kind === 'held' ? encoder.encode(hpke.material.privateKey).length : 0
   );
 
   const savedCount = $derived(
@@ -116,7 +115,7 @@
 
   <!-- Both paths are produced by the generator rather than typed into a control, so this block is
        what an issue row scrolls to when either key is missing. -->
-  <div class="keyfiles" data-issue-host="signer.public_key export.tink_hpke_public_keyset">
+  <div class="keyfiles" data-issue-host="signer.public_key export.hpke_public_key">
     <ArtifactGroup
       destination="hold"
       icon="lock"
@@ -204,7 +203,7 @@
         <DropTarget
           label={m.researcher.keys.export.title}
           filename={m.file.exportPrivate}
-          accept=".json,application/json"
+          accept=".key,text/plain"
           onfile={(file) => take('hpke', file)}
           testid="key-import-hpke"
         />
