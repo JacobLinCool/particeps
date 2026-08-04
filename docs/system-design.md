@@ -6,6 +6,12 @@ study configuration can only select collectors that are already compiled into th
 download or execute arbitrary code. Collection and storage never require the network; delivery to
 a researcher endpoint is an option a study configuration turns on.
 
+The [normative Protocol v1 contract](../protocol/v1/README.md) and its
+[collector catalog](../protocol/v1/collector-catalog.json) define the wire and event schemas. The
+[P0–P2 implementation contract](p0-p2-implementation-contract.md) records the locked decisions, and
+[`assurance`](../assurance/README.md) defines the static Collector capability policy. This document
+explains how the current modules realize those contracts.
+
 ## 1. Goals and boundaries
 
 - Android 14-17 (`minSdk 34`, `compileSdk`/`targetSdk 37`).
@@ -49,6 +55,8 @@ flowchart LR
     Session --> Runtime[":core:experiment-runtime"]
     Runtime --> API[":core:collector-api"]
     Collectors[":collector:*"] --> API
+    SensorCollectors["hardware sensor collectors"] --> SensorCommon[":collector:sensor-common"]
+    SensorCommon --> API
     Session --> StorePort["StudyStore port"]
     Storage[":core:storage"] --> StorePort
     Session --> Export[":core:export"]
@@ -66,24 +74,28 @@ flowchart LR
 
 | Module | Responsibility |
 | --- | --- |
-| `:app` | Compose interface and its localized string resources, bounded UI state, SAF, and the Android foreground/work/recovery/upload adapters |
+| `:app` | Compose interface and localized resources, bounded UI state, SAF, Android foreground/work/recovery adapters, single-entry upload outbox, and HTTP adapter |
 | `:core:model` | Bounded study metadata, the state and event model, and the `StudyStore` port with its retained-window contract |
 | `:core:study-definition` | Strict canonical JSON, closed-world typed study and collector configuration |
-| `:core:protocol` | Signed envelope, signature verification, optional signer pinning, validity-window and version checks |
+| `:core:protocol` | Signed envelope, immutable join URI, signature verification, optional signer pinning, validity-window and version checks |
 | `:core:collector-api` | Collector lifecycle, health, registry, access contract, and the shared callback dispatcher |
-| `:core:crypto` | Tink HPKE key handling, wrapping, and unwrapping |
+| `:core:crypto` | Protocol v1 raw-key Ed25519 verification and fixed-suite RFC 9180 HPKE over raw X25519 keys; Tink remains internal only, never a wire keyset |
 | `:core:access` | Runtime permission, Usage Access, input-method, and hardware preflight |
 | `:core:experiment-runtime` | Command serialization, state machine, collector supervision, event admission gate, durable occurrence lifecycle, and atomic survey submission |
 | `:core:study-application` | The single active-study session; recovery and coordination of storage/access/host/work/export/upload ports, schedule reconciliation, and the upload watermark |
-| `:core:storage` | Android Keystore, encrypted metadata, appended event segments, reclaiming delivered ones, recovery |
-| `:core:export` | Streaming JSON/AES-GCM over a requested sequence window under an optional plaintext budget, HPKE key wrapping, and receipts |
+| `:core:storage` | Android Keystore, encrypted metadata, appended event segments, reclaiming delivered ones, and strict one-event journal recovery |
+| `:core:export` | Authenticated JCS/AES-GCM bundle construction over an exact sequence window, HPKE wrapping, closed-world streaming bundle verification, provenance, and strict receipt parsing |
 | `:collector:*` | One independent module per data source |
+| `:collector:sensor-common` | Listener-thread ownership shared only by raw Android hardware-sensor collectors; no schema, inference, or storage policy |
 | `:researcher-tools` | CLI for Ed25519/HPKE key generation, canonicalization, signing, configuration checking, and decryption (`signing-keygen`, `hpke-keygen`, `canonicalize`, `sign`, `check-config`, `decrypt`) |
 
-A collector feature depends on `collector-api` and `study-definition` and nothing else in the module
-graph. It emits through `EventSink` only. It cannot see storage or the runtime, change state
-directly, write files, export, or request permissions. `CollectorRegistry` rejects an ID that is not
-compiled in, and rejects duplicate IDs at construction.
+A collector feature depends on `collector-api`, `study-definition`, and, for raw hardware listener
+ownership only, `collector:sensor-common`. This is the sole collector-to-collector dependency and
+the capability policy scans it with the feature modules. A collector emits through `EventSink`
+only. It cannot see storage or the runtime, change state directly, write files, export, or request
+permissions.
+`CollectorRegistry` rejects an ID that is not compiled in, and rejects duplicate IDs at
+construction.
 
 ### The participant interface
 
@@ -113,37 +125,41 @@ was signed.
 
 ## 3. Trust and configuration protocol
 
-A study configuration is strict canonical JSON. Object fields must match the current schema exactly.
-Unknown fields, unknown collectors, duplicate IDs, non-canonical encoding, and out-of-range numbers
-are rejected outright. There is no guessing and no compatibility fallback.
+A study configuration is strict RFC 8785 JCS. Object fields must match the current schema exactly.
+Unknown fields, unknown collectors, duplicate IDs, noncanonical bytes, malformed UTF-8,
+non-integral or out-of-range numbers, and trailing bytes are rejected. Sequence/time/build values
+are canonical decimal strings. Protocol v1 is a destructive pre-1.0 definition: artifacts from the
+former v1 implementation have no fallback reader.
 
 The configuration is wrapped in an `ADCCFG01` binary envelope. All multi-byte integers in the binary
 layouts in this document are big-endian.
 
 ```text
 magic(8) | signerKeyIdLength(u16) | configLength(u32) |
-signatureLength(u16) | signerKeyId | canonicalConfig | Ed25519Signature
+signerKeyId | canonicalConfig | Ed25519Signature(64)
 ```
 
 The signing public key travels inside the signed bytes, as a mandatory root `signer` block of
-`key_id` and a base64 X.509 Ed25519 `public_key`. A configuration therefore certifies itself, which
+`key_id` and an unpadded-base64url raw 32-byte Ed25519 `public_key`. The export block similarly
+carries a raw 32-byte X25519 key. X.509, PKCS#8, Tink JSON/protobuf keysets, padded base64, and
+standard-base64 are invalid wire values. A configuration therefore certifies itself, which
 is what lets one published app verify any researcher's study.
 
 Verification order:
 
 1. Validate the envelope length and format.
-2. Strictly decode the configuration and validate the schema and the collector parameters. Nothing
-   decoded is acted on until step 5 passes.
+2. Strictly decode and exactly re-encode the JCS configuration; validate schema, Android platform,
+   raw keys, collector parameters, and `minimum_client_version`. Nothing decoded is acted on until
+   the signature passes.
 3. Require `signer.key_id` to equal the envelope's `signerKeyId`.
 4. Resolve the Ed25519 public key: the pinned key for that key ID if the build has one, otherwise
    the key the configuration declares.
 5. Verify the signature over the raw canonical configuration bytes.
-6. Check `issued_at <= now < expires_at` and `minimum_app_version`.
-7. Confirm the Tink HPKE public keyset carried in the configuration can build a `HybridEncrypt`.
+6. Check `issued_at <= now < expires_at`, platform, and the client build floor.
 
-Steps 1-6 live in `ConfigurationVerifier`, which returns a `VerifiedConfiguration` — the
-configuration plus `signerAnchored`. Step 7 is applied by the app's composition root when it
-activates a configuration, so the `check-config` CLI covers steps 1-6 only.
+These checks live in `ConfigurationVerifier`, which returns a `VerifiedConfiguration` containing
+the exact canonical bytes, signer key ID and signature, configuration SHA-256, typed configuration,
+and `signerAnchored`. That preserved provenance is embedded and reverified in every bundle.
 
 `ConfigurationVerifier` takes a map of pinned signers, `CollectorApplication.TRUSTED_SIGNING_KEYS`.
 Empty is the shipped default: any correctly signed configuration is accepted and `signerAnchored` is
@@ -154,7 +170,7 @@ key ID while carrying a different key.
 
 What this establishes is that the configuration is unchanged since it was signed. It does not
 establish who wrote it unless the build pins that signer; `SignerIdentity.fingerprint` (SHA-256 over
-the encoded public key, first 16 bytes, as eight uppercase groups of four hex characters) is what a
+the raw public key, first 16 bytes, as eight uppercase groups of four hex characters) is what a
 participant compares against what the research team published. See
 [`threat-model.md`](threat-model.md).
 
@@ -162,6 +178,18 @@ The researcher HPKE public key needs no separate distribution either: it sits in
 bytes, so the same signature covers it. The signing private key and the HPKE private key have
 separate purposes and must not be shared. A build embeds public keys only — and none at all unless
 it pins a signer; it contains no study private key.
+
+### Immutable join import
+
+`adc://join/v1` is an immutable transport pointer, not remote configuration. Its fixed query binds
+one canonical HTTPS artifact URL, the full envelope SHA-256, and the signer fingerprint. Kotlin and
+TypeScript consume one shared corpus and enforce a narrow ASCII URL profile instead of accepting
+different normalization from `URI` and WHATWG `URL`. Android handles only the exact exported
+`VIEW` filter, rejects an active study before network I/O, performs one bounded non-redirecting GET,
+and removes no-backup staging on startup and every outcome. The session then checks digest,
+ordinary `ADCCFG01` signature / configuration rules, and fingerprint in that order. The host can
+withhold bytes but cannot replace an accepted artifact, schedule a refresh, change collectors, or
+assign a participant ID through the link.
 
 ## 4. Study state machine
 
@@ -231,6 +259,11 @@ others.
 | --- | --- | --- |
 | `app_lifecycle.v1` | This app's own Activity lifecycle | None |
 | `accelerometer.v1` | Raw x/y/z in m/s², sensor time, accuracy | Accelerometer hardware |
+| `battery_state.v1` | Whole percentage, charging state/source, power-save state | None |
+| `temporal_context.v1` | Time-zone ID, UTC offset, DST state, clock-change reason | None |
+| `gyroscope.v1` | Raw x/y/z angular velocity in rad/s, sensor time, accuracy | Gyroscope hardware |
+| `ambient_light.v1` | Raw illuminance in lux, sensor time, accuracy | Ambient-light hardware |
+| `proximity.v1` | Raw distance/range and near/far interpretation | Proximity hardware |
 | `network_state.v1` | Default network availability, transport, validated, metered, roaming, VPN, optional bandwidth estimates | `ACCESS_NETWORK_STATE` (a manifest normal permission) |
 | `network_usage.v1` | Device-total Wi‑Fi and mobile rx/tx bytes and packets, plus the interval the query covers | Usage Access |
 | `usage_events.v1` | App resumed/paused/stopped, screen, keyguard, and startup/shutdown raw events, including the foreground app's `package_name` when the platform reports one | Usage Access |
@@ -252,6 +285,8 @@ consent material.
 Each study uses one non-exportable Android Keystore AES-256-GCM key. The study ID is hashed with
 SHA-256 into an opaque file and key locator. All data lives under `noBackupFilesDir/experiments`.
 The manifest disables backup, and the cloud-backup and device-transfer rules exclude all app data.
+The app neither requests StrongBox nor verifies hardware backing, so this is a Keystore isolation
+claim, not an absolute hardware-protection claim.
 
 - Metadata: an `AtomicFile` in the format `ADCMET01 | random 96-bit IV | ciphertext+tag`. `ADCMET01`
   carries the fresh-per-import instance ID, optional researcher-assigned ID, upload watermark,
@@ -271,8 +306,10 @@ The manifest disables backup, and the cloud-backup and device-transfer rules exc
 - Every event append is followed by an `fsync`; metadata is committed through `AtomicFile`.
 - An event plus its resulting metadata is one recoverable commit. Before appending, the store writes
   an encrypted `ADCTXN01` journal containing the resulting metadata before the event append.
-  Recovery either completes that exact commit or
-  recognizes it as already complete, then removes the journal. This is the one write path used for
+  If the journal is one boundary ahead and its event is durable, recovery authenticates that exact
+  tail event and commits the journal metadata; if the event is absent, it discards the prepared
+  journal. A same-boundary leftover is discarded with main metadata authoritative. Any other
+  boundary, malformed journal, or event mismatch fails closed. This is the one write path used for
   occurrence lifecycle events and survey submissions; there is no independent draft store.
 - The active signed configuration is held separately, under its own Keystore key, as
   `ADCACT01 | random 96-bit IV | ciphertext+tag`.
@@ -293,21 +330,20 @@ or a missing key all fail closed. Nothing is skipped over.
 The sequence number sits unencrypted at the front of every frame, which is what lets both paths
 skip work without giving up a check.
 
-`loadMetadata` walks the frames and decrypts none of them (`scanEvents(…, decryptPayloads = false)`).
-Framing, the segment index, and sequence contiguity come from the plaintext headers, and the
-surviving sequence range is what the metadata is reconciled against. `lastEvents` — the last event
-each collector recorded — is read from the encrypted metadata, where it is persisted, rather than
-rebuilt by scanning. Opening a study is therefore linear in frames, with no per-event crypto and no
-per-event JSON parsing, which is what makes an 8 GiB quota usable. The consequence is stated in the
-[threat model](threat-model.md): an event payload is authenticated when it is read, not when the
-study is opened. The metadata's own AEAD tag, the framing, and the contiguity of the sequence are
-all still checked at open.
+`loadMetadata` normally walks the frames with `scanEvents(…, decryptPayloads = false)`. Framing, the
+segment index, and sequence contiguity come from the plaintext headers, and the surviving sequence
+range is what the metadata is reconciled against. Only the unique state where a one-boundary-ahead
+journal and its complete event tail are both durable causes a second header walk and decrypts that
+single tail event before committing its metadata. `lastEvents` — the last event each collector
+recorded — is persisted inside encrypted metadata rather than rebuilt by scanning. Opening is thus
+linear in frames with no per-event crypto or JSON parsing; normal opening decrypts no events and
+crash recovery decrypts at most one. The consequence is stated in the [threat model](threat-model.md):
+event payloads are authenticated when read, plus the one recovery tail when required. Metadata AEAD,
+framing, and sequence contiguity are always checked at open.
 
 `readEvents` walks the same headers and decrypts only the frames at or above the requested start,
-seeking past the rest. That matters beyond speed: an upload streams its bundle as it is generated,
-so time spent decrypting events the window will discard is time the connection sits silent, and
-that silence grows with the study's length until it outlasts the network. Measured on an emulator,
-the same delivery took 90-149 s before this change and 31 s after.
+seeking past the rest. That keeps manual export and durable upload staging proportional to the
+requested retained window instead of repeatedly decrypting an already delivered prefix.
 
 ### Reclaiming delivered data
 
@@ -355,65 +391,60 @@ nothing qualified.
 
 ## 8. Export and upload
 
-Both paths produce the same bundle. An `ExportSnapshot` carries `fromSequence`, an optional
-`toSequence`, and an optional `maximumPlaintextBytes`; a participant export runs from
-`retainedFromSequence` to `nextSequenceNumber - 1` with no budget, so their copy is complete, and an
-upload asks for everything after the last sequence an endpoint confirmed under a 16 MiB budget. The
-runtime hands out a copy of the bounded `StudyMetadata` only. The exporter reads the requested range
-from the store one event at a time and streams JSON → AES-GCM → destination. It never loads the full
-event history, the full plaintext JSON, or the full ciphertext into memory. During `RUNNING`, later
-events keep appending with larger sequence numbers, which is why no pause is required for either
-path.
+Both paths use `ResearchExport` and the same authenticated document schema. A manual export reads
+`[retainedFromSequence, nextSequenceNumber - 1]` and streams directly to the participant's Storage
+Access Framework destination, so it may scale to the configured 8 GiB local quota. An automatic
+upload first selects an exact non-empty window near a 16 MiB plaintext target, while enforcing a
+32 MiB automatic-upload container ceiling.
 
-No size failure can strand a study. The format previously enforced a 256 MiB plaintext ceiling by
-throwing mid-stream, which under an 8 GiB quota was a permanent-failure state: once the undelivered
-tail passed the ceiling, every upload regenerated the whole bundle and then threw, with no way
-forward. The budget replaces that. A bundle stops cleanly at the first event boundary past the
-budget — checked every `BUDGET_CHECK_STRIDE` = 256 events, so overshoot is bounded by one stride —
-and always takes at least one event, so a run cannot make zero progress. The receipt reports where
-it stopped, and the rest goes out on the next run.
+Automatic upload does not stream a newly generated request. `FileUploadOutbox` creates the complete
+ciphertext in no-backup storage, flushes and atomically publishes it, then persists a bounded
+recovery manifest with bundle ID, exact first/last sequence, event count, byte count, configuration
+digest, ciphertext SHA-256, and an optional terminal code. It contains no participant, experiment,
+or configuration ID. At most one entry exists. Recovery
+accepts it only when manifest, length, digest, and outer framing agree. Process death, reboot, I/O retry, or lost response reuses
+the same file byte-for-byte; a new bundle cannot supersede it until an exact receipt commits it.
 
-Export uses the Storage Access Framework's `CreateDocument` so the participant chooses the
-destination. Upload writes the same stream into an OkHttp request body; because the bundle is
-generated as it is written its length is unknown up front, so `contentLength()` is `-1` and OkHttp
-falls back to chunked transfer encoding. The body is one-shot, so OkHttp cannot replay it once
-sending has started; `retryOnConnectionFailure` is left at its default, which then only recovers a
-pooled connection that turns out to be dead before anything was written — a common case between
-widely spaced uploads. WorkManager owns retry beyond that.
+The HTTP body is therefore replayable, has fixed `Content-Length` and `Content-Digest`, and is never
+chunked. Automatic redirects and OkHttp connection-level request replay are disabled; the outbox
+and worker own retry semantics. Collection and later manual export can continue while the staged
+file is pending.
 
 `ResearchExport.decrypt` streams as well, for the same reason: a bundle is bounded by the study's
 quota rather than by a fixed ceiling, so it can be larger than a researcher's machine wants to hold
 in memory. It drives the cipher directly rather than through `CipherInputStream`, which reports an
 AEAD failure as a normal end of stream and would turn a tampered bundle into a silently truncated
-file. The trade-off is that plaintext reaches the caller before the tag is verified, which is why
-`researcher-tools decrypt` writes to a temporary file in the destination directory and moves it into
-place only after `decrypt` returns.
+file. Plaintext therefore reaches only a mode-`0600` staging file before the tag is verified.
+`researcher-tools decrypt` then streams that file through
+[`ResearchBundleVerifier`](../core/export/src/main/kotlin/cool/linc/androiddatacollector/core/export/ResearchBundleVerifier.kt)
+and publishes it
+with an atomic move only after the authenticated document, signature, identities, ranges,
+transitions, and catalog payloads all pass.
 
 Export format:
 
 ```text
-ADCEXP01 | keyIdLength(u16) | wrappedKeyLength(u32) | nonce(12) |
-researcherKeyId | TinkHPKEWrappedAESKey | AES-GCMCiphertext
+ADCEXP01 | bundleId(16) | configurationSha256(32) | keyIdLength(u16) |
+contentNonce(12) | researcherKeyId | HPKEWrappedContentKey(80) | AES-GCMCiphertext
 ```
 
-- Content: `research-bundle-v1` JSON containing the canonical configuration, the snapshot time, the
-  current state, the participant instance ID, optional assigned participant ID, all transitions,
-  the events in the window, and then
-  the bundle's own `first_sequence_number` and `last_sequence_number`. Those two sit *after* the
-  `events` array, because a budget decides where a bundle stops while it streams; declaring the
-  window up front would let a bundle claim a range it does not contain. A reader that needs the
-  window before the events has to buffer or make a second pass.
+- Content: one closed-world JCS `research-bundle-v1` document containing the outer bundle identity,
+  manual/automatic kind, exact embedded configuration, configuration digest and original signature,
+  producer platform/build, snapshot time, full study metadata, transitions, and the exact contiguous
+  event window. Sequence, count, time, and client-build values are decimal strings.
 - Content key: a freshly generated AES-256 key and 96-bit nonce for every bundle.
-- Key wrapping: Tink HPKE, `DHKEM_X25519_HKDF_SHA256 / HKDF_SHA256 / AES_256_GCM`.
-- The context and AAD bind the format string, `experimentId`, `configurationId`, and
-  `researcherKeyId`. Because the format string is in the AAD, a reader built for another version
-  fails on the tag rather than misreading the bundle.
-- Receipt: key ID, first sequence, sequence boundary, event count, byte count, and the SHA-256 of
-  the entire encrypted bundle.
+- Key wrapping: RFC 9180 base mode with X25519/HKDF-SHA256/AES-256-GCM. The fixed 80-byte wire
+  value is `enc[32] || sealed_key[48]`; library-specific keysets or prefixes never appear.
+- Context: exact JCS containing bundle format, bundle UUID, full configuration SHA-256, and
+  researcher key ID. It is HPKE `info` and document AES-GCM AAD.
+- Validation: framing and bounds, HPKE, content AEAD, JCS, outer/inner identities, embedded
+  configuration digest/signature/platform/build, exact range/count, and catalog payloads all pass
+  before plaintext-derived output is published.
 
 A state can be exported any number of times, and each file uses a new random key. Repeated exports
-normally overlap, so the research side should deduplicate on
-`participant_instance_id + sequence_number`. In a study that has reclaimed space, an export
+normally overlap, so the research side partitions by `(experiment_id, configuration_id)` and
+deduplicates on `(participant_instance_id, sequence_number)`, treating different content at one
+identity as a conflict. In a study that has reclaimed space, an export
 starts at the retained floor instead of at 1 and its `first_sequence_number` says so, which makes
 it a window over the events still on the device rather than the whole history. The wrong private
 key, the wrong configuration, or any tampering with the header or the ciphertext leaves the bundle
@@ -421,11 +452,17 @@ undecryptable.
 
 Upload advances a durable watermark rather than repeating history. `StudyMetadata.uploadedThroughSequence`
 holds the highest sequence an endpoint confirmed; it starts at 0, advances only after a successful
-response, and never moves backwards. There is no fixed chunk size. Each run asks for everything
-outstanding — `[uploadedThroughSequence + 1, nextSequenceNumber - 1]` — the budget decides how much
-of that fits, and the watermark follows `ExportReceipt.sequenceBoundary` rather than the range that
-was planned. The configured interval is what paces delivery; the budget only binds while a backlog
-is being worked off, and the next run picks up where the last one stopped.
+receipt, and never moves backwards. Requests use `application/vnd.adc.research-bundle` plus bundle
+UUID, format, configuration SHA-256, researcher key ID, exact from/to/count, length, and digest
+headers. There are no clear participant, assigned, experiment, or configuration IDs; routing
+metadata is explicitly untrusted.
+
+A new durable object succeeds only with `201 Created`; an exact replay succeeds only with `200 OK`.
+Both return the same compact JCS receipt with exactly `bundle_id`, `byte_count`,
+`configuration_sha256`, `event_count`, `first_sequence_number`, `last_sequence_number`, and
+`sha256`. Every value must equal the outbox manifest before commit. Receipt loss is safe because an
+exact replay returns the original receipt; a bundle-ID/content conflict is terminal rather than an
+overwrite.
 
 The session lock is taken twice and briefly — once to compute the range, once to commit — with the
 HTTP transfer in between under a separate mutex, so an unresponsive endpoint cannot block the
@@ -440,9 +477,12 @@ identifier rather than a message and validates it against the same `[A-Z][A-Z0-9
 a collector's health reason, so nothing that reaches a screen or a log can hold study data.
 `OkHttpStudyUploader` classifies the transport failure into `UPLOAD_TIMEOUT`,
 `UPLOAD_HOST_UNRESOLVED`, `UPLOAD_CONNECT_REFUSED`, `UPLOAD_TLS_HANDSHAKE_FAILED`,
-`UPLOAD_TLS_FAILED`, `UPLOAD_INTERRUPTED`, `UPLOAD_IO_FAILED`, or `UPLOAD_FAILED`, and a non-2xx
-response becomes `UPLOAD_HTTP_<status>`. The dashboard renders that code in place of the delivered
-count, and a collector in `FAILED` or `BLOCKED_ACCESS` shows its own reason code the same way.
+`UPLOAD_TLS_FAILED`, `UPLOAD_INTERRUPTED`, `UPLOAD_IO_FAILED`, or `UPLOAD_FAILED`, and an HTTP error
+becomes `UPLOAD_HTTP_<status>`. Only I/O, `408`, `425`, `429`, and `5xx` retry. Redirects, `202`,
+every other `4xx`, malformed receipts, and mismatched receipts are terminal for the staged bundle,
+without stopping collection or advancing the watermark. The dashboard renders that code in place
+of the delivered count, and a collector in `FAILED` or `BLOCKED_ACCESS` shows its own reason code
+the same way.
 
 ## 9. Background execution, interventions, and recovery
 
@@ -455,15 +495,27 @@ count, and a collector in `FAILED` or `BLOCKED_ACCESS` shows its own reason code
   restored only when the persisted state was `RUNNING`.
 - Each intervention combines a reusable action with one or more triggers. Actions are localized
   notifications or localized native surveys. Triggers are one-time offsets, repeating intervals,
-  or daily local times; each declares whether elapsed study time means calendar time or active
-  collecting time. WorkManager timing is inexact and delivery can be late.
+  daily local times, or signed random local windows. Relative triggers declare whether elapsed
+  study time means calendar time or active collecting time. WorkManager timing is inexact and
+  delivery can be late.
 - `InterventionSchedulePlanner` derives every occurrence ID from configuration, intervention,
-  trigger, and logical schedule position. The ID is independent of current timezone and process
-  history. The durable occurrence record owns its scheduled instant, expiry, and lifecycle
+  trigger, and logical schedule position. Daily-local logical positions are stable indexes;
+  random-window positions include the current-zone local date selected for a not-yet-materialized
+  slot. Once materialized, an occurrence ID and instant are durable and independent of later zone
+  changes or process history. The durable occurrence record owns its scheduled instant, expiry, and lifecycle
   (`SCHEDULED`, `POSTING`, `NOTIFICATION_POSTED`, `OPENED`, `SURVEY_SUBMITTED`, `EXPIRED`). Recovery,
   boot, time changes, timezone changes, pause, and resume reconcile by that identity, so they do not
   enqueue a second logical occurrence. A configuration is bounded to 512 lifetime occurrences so
   this exact durable set remains inside the encrypted metadata ceiling.
+- Prompt lifecycle mutations are accepted only in `RUNNING`. Pause cancels pending intervention
+  work and visible prompt notifications without freezing calendar time or signed availability;
+  resume reconciles the durable set, expires elapsed windows, and schedules only still-eligible
+  occurrences. Survey answers cannot be opened or submitted during the pause.
+- Random-window triggers use a CSPRNG and persist the chosen instant before WorkManager receives
+  it. Restart and retry reuse that record. Time/time-zone changes leave materialized occurrences
+  unchanged and affect only future local dates. Caps truncate eligible slots in local-date planning
+  order, then signed window array order, then ordinal; randomness selects only the minute within a
+  selected slot. No server can trigger or redraw an occurrence.
 - A notification content intent carries only the exact occurrence ID. Opening resolves its signed
   action from durable state. Survey answers validate against stable survey/question/option IDs and
   commit as one immutable `SURVEY_SUBMITTED` event plus terminal occurrence state. Closing the UI
@@ -487,20 +539,20 @@ count, and a collector in `FAILED` or `BLOCKED_ACCESS` shows its own reason code
   cancels interventions and the deadline but leaves delivery running, so a study that has ended still
   sends its undelivered tail. The chain is simply not renewed once `uploadDrained()` reports that a
   terminal study has nothing outstanding; deleting local data cancels it outright.
-- A failed run returns `Result.retry()` rather than `failure()`: the usual cause is a network or
-  endpoint problem that resolves on its own, and the events remain durable on the device meanwhile.
-  A retry keeps the current link alive, so no successor is enqueued on that path.
+- A retryable run returns `Result.retry()` and keeps the immutable outbox entry. A terminal protocol
+  or receipt failure is persisted explicitly and does not spin forever; collection remains
+  independent and the staged ciphertext is not acknowledged or reclaimed.
 
 ## 10. Security and privacy invariants
 
 - No unsigned study configuration is accepted, and none whose signature, canonicality, schema,
-  validity window, or app-version floor fails. A build that pins signers additionally refuses every
+  validity window, platform, or client-build floor fails. A build that pins signers additionally refuses every
   signer it does not list.
 - No dynamically downloaded collector, no parsing fallback, no legacy reader.
 - The current shape remains schema v1. Earlier prompt-shaped v1 configurations are rejected; there
   is no compatibility decoder or schema-version alias.
-- The researcher-assigned ID is present only inside the signed configuration and encrypted bundle.
-  Upload routing exposes the random per-import instance ID but never the assigned ID.
+- Automatic upload URLs and headers exclude participant, assigned, experiment, and configuration
+  IDs. Routing exposes only bundle-level claims and does not authenticate a participant or device.
 - No plaintext study file, no plaintext export scratch file, no secret key in a log.
 - Study data leaves the device only as an HPKE-wrapped bundle, and only to a destination the
   participant chose or to the endpoint the signed configuration names. No analytics, no crash
@@ -511,11 +563,9 @@ count, and a collector in `FAILED` or `BLOCKED_ACCESS` shows its own reason code
 - Upload is decided by the signed configuration, so it is covered by the same signature, expiry, and
   canonicality checks as the collector set. There is no runtime toggle and no way to redirect a
   study to a different endpoint without a new signature and fresh consent.
-- The upload watermark only advances, only on a confirmed response, and only as far as the receipt
-  says the bundle actually reached. A failed or hostile endpoint can delay delivery; it cannot cause
-  events to be skipped or re-sent as a gap. It can, by confirming a bundle it did not keep, make
-  those events reclaimable from the device under storage pressure — a 2xx is a statement that the
-  body is durably stored.
+- The upload watermark advances only for a `201 Created` or exact-replay `200 OK` whose canonical
+  seven-member receipt matches the durable outbox manifest. `202`, redirects, generic `2xx`, and
+  malformed or mismatched receipts never commit or make events reclaimable.
 - Both public keys travel inside the signed configuration; the study signing and export private keys
   belong in neither the app nor a production repository.
 - Of the app's own components, only the launcher activity and the boot receiver and IME service that
@@ -527,30 +577,30 @@ count, and a collector in `FAILED` or `BLOCKED_ACCESS` shows its own reason code
 
 ## 11. Verification scope
 
-Automated tests cover the strict protocol and signature handling, the state machine, the admission
-gate, runtime pause/resume and repeated export, HPKE and AES-GCM round trips with wrong-context and
-wrong-suite rejection, and Android Keystore encrypted segmented storage. The eight protocol tests
-include the self-certifying path with an empty anchor map, a populated map refusing every other
-signer, a configuration that names a pinned key ID while carrying a substituted key, and an envelope
-whose signer key ID disagrees with the one in the signed bytes. For upload they cover the
-`upload` block round-tripping in both shapes and rejecting a partial or cleartext one, ranged bundles
-carrying and declaring only their window, the watermark advancing on success and holding on failure,
-a failure not masking a collection incident, an upload before collection starting as a no-op, a
-finished study still delivering its backlog and then reporting itself drained, and a study without
-an `upload` block never contacting an endpoint.
+Protocol behavior is executable in the shared valid/hostile
+[conformance corpus](../protocol/v1/conformance-vectors.json). The neighbouring Kotlin
+[configuration](../core/protocol/src/test/kotlin/cool/linc/androiddatacollector/core/protocol/ConfigurationProtocolTest.kt)
+and [bundle](../core/export/src/test/kotlin/cool/linc/androiddatacollector/core/export/ResearchExportTest.kt)
+tests cover JCS, raw keys, fixed framing, signature provenance, RFC 9180 context, exact ranges, and
+wrong-key/context/tamper rejection; TypeScript consumes the same corpus. Runtime tests cover the
+state machine, admission barrier, repeated export, watermark commit, and encrypted segmented
+storage.
 
-Schedule tests cover calendar and active-time one-shots, intervals, daily local time across timezone
-changes, restart reconstruction, terminal occurrences, and pause accounting. Runtime tests cover all
+Schedule tests cover calendar and active-time one-shots, intervals, daily local time, durable CSPRNG
+random windows across restart/time-zone/date-line changes, explicit DST gap/overlap resolution,
+separation/caps, terminal occurrences, and pause accounting. Runtime tests cover all
 four survey question types, required/optional validation, stable IDs without labels, expiry, and
 concurrent submission proving exactly one immutable event. Identity tests cover distinct import
 instance IDs, assigned-ID persistence/export, upload-header exclusion, CLI bulk uniqueness, and
 cross-language canonical bytes.
 
-The budget and streaming decryption have their own export tests: a budget stopping at an event
-boundary with the receipt naming that boundary and the bundle declaring the window it actually
-holds, a snapshot with no budget sending everything it was asked for, and a one-byte change to a
-finished bundle raising `AEADBadTagException` from the chunked decrypt path rather than yielding a
-short file.
+Upload reliability has focused tests for the
+[single-entry outbox](../app/src/test/kotlin/cool/linc/androiddatacollector/platform/FileUploadOutboxTest.kt)
+and [HTTP adapter](../app/src/test/kotlin/cool/linc/androiddatacollector/platform/OkHttpStudyUploaderTest.kt):
+recovery, exact byte replay, digest/length/range identity, redirect refusal, retry classification,
+`201`/exact-replay `200`, generic-`2xx` rejection, and exact seven-field receipt matching. Export
+tests separately verify streaming manual decryption publishes no successful output after AEAD
+failure.
 
 Reclaiming is covered on both sides of the split. `EvictionPlanner`'s rules have JVM tests: oldest
 delivered segments first, a study under its target keeping everything, undelivered events blocking a
@@ -559,12 +609,9 @@ adds instrumentation tests, on real Android Keystore, for segment rollover, recl
 from the new floor, appending after a reclaim without reusing a sequence, reclaimed events no longer
 being readable, and a missing prefix that was not reclaimed refusing to open.
 
-These areas are not covered by tests today, and should be read as unverified rather than as working:
-trailing-frame recovery in the encrypted store, tampering with an `ADCEXP01` *header* rather than its
-ciphertext, the withdraw path through `ExperimentRuntime` and `StudySessionManager`, and the two
-Android-side upload classes — `OkHttpStudyUploader` and `UploadWorker` — whose request shaping,
-failure classification, status-code handling, chain renewal, and WorkManager constraints have no test
-of their own.
+Collector admission has two complementary checks. The runtime enforces each descriptor's
+`maximumEncodedEventBytes` before append, while CI executes the source, bytecode, and dependency
+capability policy.
 
 The instrumentation test defines the full Compose participation flow: importing the demo study under
 the shipped empty anchor map, the study step, a Continue through the data step, consent, access
@@ -577,6 +624,14 @@ debug variant, which is the only one that carries the demo study — a release b
 the signed envelope nor its loader, so the entry point the test drives does not exist there. It
 scrolls to the export control but does not perform an export. It has to actually run on an
 emulator or a device; assembling the test APK is not a device-test pass.
+
+Two narrower Android regressions sit beside that UI flow. `AndroidConfigurationImportTest`
+proves raw-key Ed25519 demo import on Android itself, so a JCA provider-order
+regression cannot hide behind JVM-only protocol tests. `P2CollectorEmulatorTest` creates the five P2
+plugins against real Android broadcast and `SensorManager` surfaces, validates every emitted draft
+against its Protocol v1 descriptor, and checks pause/resume/stop boundaries. It skips when the test
+device lacks gyro, light, or proximity hardware; its explicit `p2SyntheticInputs=true` mode requires
+host-side emulator injection and checks the fixed readings documented in the root README.
 
 Before real recruitment, a study still needs study-specific testing on the target physical devices
 and OEMs: permissions, background restrictions, battery, storage volume, location accuracy, Usage

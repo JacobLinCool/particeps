@@ -2,6 +2,12 @@
 
 A reference description of the protections in the current release, the limitations that come with them, and a few checks anyone can run. It is written to be attached to an ethics submission or read by a security reviewer, and it describes the system as implemented in this repository. Where a protection is weaker than it looks, that is stated here.
 
+The [normative Protocol v1 contract](../protocol/v1/README.md), its
+[collector catalog](../protocol/v1/collector-catalog.json), the
+[implementation decision record](p0-p2-implementation-contract.md), and
+[Collector capability policy](../assurance/README.md) are the implementation sources behind the
+claims in this document.
+
 ## What is being protected
 
 | Asset | Primary concern |
@@ -9,6 +15,8 @@ A reference description of the protections in the current release, the limitatio
 | Study events on the device | Confidentiality while the phone is out of the participant's hands |
 | The exported or uploaded bundle | Confidentiality in transit and at the destination |
 | The study configuration | Integrity — a participant gets exactly the study they consented to |
+| Researcher Ed25519 and HPKE private keys | Preventing forged studies and unauthorized bundle decryption |
+| Receiver R2/S3 credentials and ciphertext objects | Durable, bounded custody without exposing a decrypt path |
 | Assigned and random participant codes | Confidentiality and controlled linkability to a research roster or import |
 | Survey answers and intervention history | Atomicity, immutability, and truthful lifecycle interpretation |
 | The participant's control | That start, pause, withdrawal, and deletion mean what they say |
@@ -36,11 +44,20 @@ One detail matters for review: the app does **not** request StrongBox and does *
 
 ### Study configuration integrity
 
+The researcher Web tool is a static client-side application. It generates or imports raw private
+keys in the browser, keeps the draft and keys only in memory, downloads private-key files directly,
+and has no analytics or application network destination. That reduces the number of places a key
+can land; it does not make the browser a trusted hardware boundary. A malicious extension,
+compromised same-origin deployment, or injected dependency can read keys while the page is open or
+substitute what is signed. High-risk deployments should use the CLI in a controlled environment,
+archive the canonical configuration beside the key material, and verify the resulting signer
+fingerprint through an independent recruitment channel.
+
 A configuration is Ed25519-signed inside an `ADCCFG01` envelope. The signing public key travels inside the signed bytes, in a mandatory `signer` block, so a configuration certifies itself and one published app can verify any researcher's study without a rebuild.
 
 **What a signature proves is that the configuration is unchanged since it was signed.** It does not prove who wrote it. A verified configuration establishes that identity mode, collectors, localized surveys, intervention actions and triggers, duration, consent, export key, and `upload` block are exactly the bytes the signer produced. It establishes nothing about the identity behind that key unless the build pins that signer.
 
-On import the app checks envelope framing and length bounds, decodes the configuration strictly, requires the declared `signer.key_id` to equal the envelope's signer key ID, verifies the signature over the canonical configuration bytes, and checks the validity window and minimum app version. Nothing decoded is acted on until the signature verifies. Canonicality is enforced by re-encoding the decoded configuration and requiring a byte-identical match, so reordered keys, altered whitespace, duplicate keys, and reformatted numbers are rejected. Every object has an exact required key set — unknown *and* missing keys both fail — and an unknown collector ID fails even if the collector is marked optional. The current shape deliberately remains schema v1; prompt-shaped older v1 documents fail instead of entering a compatibility branch.
+On import the app bounds the fixed `ADCCFG01` framing, strictly decodes and byte-for-byte rechecks RFC 8785 JCS, requires the declared `signer.key_id` to equal the envelope key ID, verifies the fixed 64-byte signature over the exact configuration bytes, and checks validity, Android platform, and the decimal-string client build floor. Ed25519 and X25519 wire keys must be raw 32-byte values encoded as unpadded base64url; X.509, PKCS#8, padded base64, and library keysets are rejected. Nothing decoded is acted on until the signature verifies. Every object has an exact key set and an unknown collector fails even when optional. Protocol v1 is a destructive pre-1.0 replacement: former-v1 artifacts fail rather than entering a compatibility branch.
 
 A build may additionally pin signers, as `CollectorApplication.TRUSTED_SIGNING_KEYS`. That map is empty in the shipped build, which therefore accepts any correctly signed configuration and reports the publisher as unverified to the participant. A non-empty map is strictly exclusive: only listed signers are accepted, and the pinned key overrides the one the configuration declares and must equal it, so a configuration cannot claim a pinned key ID while carrying a different key. `ConfigurationVerifier` returns both the configuration and whether its signer was pinned, and the consent screen renders that distinction.
 
@@ -48,9 +65,27 @@ Failures are fail-closed: a failed import does not activate a study, and a faile
 
 ### Scope of collection
 
-Collectors are selected by ID from a registry of modules compiled into the APK: no plugin download, no scripting layer, no dynamic class loading. Every collector parameter has a validated range in the schema, study duration is bounded, and the local quota a study may claim is bounded to 8 MiB-8 GiB. The module graph enforces the boundary structurally — a `collector:*` module depends only on `core:collector-api` and `core:study-definition`, so a collector cannot write files, change study state, start activities, or request permissions, because the code that would is not on its classpath.
+Collectors are selected by ID from modules compiled into the APK: no plugin download, scripting,
+or dynamic loading. Every parameter has a validated range. The module graph enforces the boundary:
+a feature collector depends on `core:collector-api`, `core:study-definition`, and optionally the
+narrow `collector:sensor-common` helper, so storage, protocol/export, study-state, and UI code are
+not on its classpath.
 
-**What the participant is told about that scope is the app's text, not the researcher's.** Setup is five steps with one panel each — study, data, consent, access, start — and the data step, which comes before the consent text, lists every collector the signed configuration enables. Each entry is described from a template compiled into the app and filled in from that study's own signed parameters: the accelerometer's rate, the poll interval of each polling collector, the location interval and minimum displacement. No configuration field changes any of it, so a researcher cannot understate what a collector captures on the screen a participant reads immediately before consenting. This is a small integrity property rather than a large one, and its limits are worth stating exactly: it constrains how each enabled source is described, not the honesty of the consent summary beside it, which remains the researcher's own prose — and it is entirely positive. The screen says what each source records; it makes no claim about what a source cannot see. A participant who wants that has the documentation and their research team, not this screen.
+That boundary is also checked rather than merely documented. CI scans collector source, compiled
+constants, and dependency graphs for network, files/database/preferences, dynamic loading,
+logging, activity/service launch, protocol/export/storage, and cryptographic capabilities. The
+runtime validates catalog identity/schema and enforces `maximumEncodedEventBytes` before append. A
+new collector also needs catalog metadata, disclosure, bounds, lifecycle/access tests, and power
+and storage estimates.
+
+**What the participant is told about that scope is the app's text, not the researcher's.** Setup is
+five steps with one panel each — study, data, consent, access, start — and the data step, which comes
+before the consent text, lists every collector the signed configuration enables. Each entry is
+described from a template compiled into the app and filled in from signed parameters: motion-sensor
+rates, ambient-light/proximity gates, polling intervals, and location interval/displacement. No
+configuration field changes the wording, so a researcher cannot understate what a collector
+captures on the screen a participant reads immediately before consenting. This integrity property
+constrains each enabled source's description, not the honesty of the researcher's consent prose.
 
 One template hedges on purpose. The accelerometer entry reads "about N times per second **or more**", because Android treats a sampling period as a hint rather than a contract and a device is free to deliver faster than the study asked for — observed on a current emulator image at over ten times the requested rate. Stating the configured rate alone would understate what is recorded.
 
@@ -58,9 +93,32 @@ Every participant-facing app string lives in resources and ships in English and 
 
 ### Identity and survey integrity
 
-Every import mints a new random UUID, even when the same configuration is imported twice. A personalized configuration may also contain one opaque assigned code restricted to a small ASCII grammar. The consent screen distinguishes the two modes and shows the assigned code for comparison. Both codes live in encrypted metadata and exports; only the random per-import UUID is allowed onto the clear upload-routing surface.
+Every import mints a new random UUID, even when the same configuration is imported twice. A personalized configuration may also contain one opaque assigned code restricted to a small ASCII grammar. The consent screen distinguishes the two modes and shows the assigned code for comparison. Both appear in encrypted metadata and bundles. Clear upload URLs and headers contain neither one, nor the experiment or configuration ID; they are not participant or device authentication.
 
-An intervention occurrence is keyed by a deterministic SHA-256 identity over its signed logical schedule position. Its durable state distinguishes scheduled, notification posted, opened, submitted, and expired; recovery and timezone reconciliation use that identity instead of generating a new occurrence. Survey submission validates stable question and option IDs, then uses an encrypted transaction journal to commit one event and the corresponding terminal metadata together. There is no draft store and no update path after submission. These controls prevent duplicate commits and partial durable answers; they do not prove that a participant saw a notification or personally supplied an answer.
+An optional `adc://join/v1` link adds an untrusted HTTPS host only as artifact transport. The link
+binds the complete artifact SHA-256 and signer fingerprint; Android disables redirects and implicit
+retry, verifies the digest before the normal signature flow, and never polls for updates. A hostile
+host can deny service, but changing bytes fails before consent and cannot alter an accepted study.
+Personalized authoring requires a random opaque path and rejects the assigned ID in the URL. The
+URL still reaches the host and may appear in infrastructure logs, so researchers must not encode a
+roster identifier into its path or operational labels.
+
+The link controls one unauthenticated HTTPS `GET`. Redirects and connection retries are disabled,
+no HTTP cookies or participant credentials are attached, the response is tightly bounded, and
+no response becomes a study without the pinned digest, signature, and fingerprint. The parser does
+not resolve the DNS name itself or filter the address to which DNS maps it, however. Opening an
+untrusted join link can therefore make the participant's device contact an HTTPS service reachable
+from its current network even though the app neither reveals that response nor accepts it as a
+configuration. Join links should be treated as recruitment links, not as harmless display text.
+
+An intervention occurrence is keyed by a deterministic SHA-256 identity over its signed logical
+schedule position. A random-window trigger selects its instant locally with a CSPRNG and persists
+the occurrence before scheduling; retry/reboot do not redraw it, time-zone reconciliation only
+plans future local dates, and there is no server trigger. Durable state distinguishes scheduled,
+notification posted, opened, submitted, and expired. Survey submission validates stable question
+and option IDs, then uses an encrypted transaction journal to commit one event and terminal
+metadata together. These controls prevent duplicate commits and partial durable answers; they do
+not prove that a participant saw a notification or personally supplied an answer.
 
 The configuration admits at most 512 lifetime occurrences. This is a security and reliability bound, not an authoring suggestion: retaining every terminal identity is what prevents an old logical firing from reappearing after recovery, and the bound keeps that set under the authenticated metadata limit instead of silently weakening idempotency.
 
@@ -70,23 +128,32 @@ Study data leaves the device two ways, and both carry the same encrypted bundle.
 
 The first is export: the participant picks a Storage Access Framework destination and the app writes the bundle there. The second is upload, which exists only if the signed configuration carries a populated `upload` block naming an `https://` endpoint, an interval, and whether metered networks are allowed. The app then posts bundles to that endpoint and to no other. A study whose `upload` block is empty transmits nothing. Which of the two applies is fixed by the configuration the participant consented to, and the endpoint host, the cadence, and the network condition are rendered into the consent step from the signed bytes rather than from the researcher's free-text summary — as a block the app asserts itself, directly below that summary and on the same panel as it. The manifest declares `android.permission.INTERNET`, so a build's permission list no longer distinguishes an uploading study from a non-uploading one. The signed configuration is what a reviewer should read, and the checks at the end of this document cover both.
 
-The bundle itself is encrypted with a fresh AES-256 key per bundle, wrapped with Tink HPKE (`DHKEM_X25519_HKDF_SHA256` / `HKDF_SHA256` / `AES_256_GCM`) to the researcher public key carried in the signed configuration. The keyset is validated at configuration import — exactly one enabled primary key, with KEM, KDF, AEAD, and variant each checked — so a study with a malformed or downgraded export key is rejected before any data is collected. The app never holds the researcher's private key, and a bundle streams from the store through AES-GCM to its destination without a plaintext or full-ciphertext temporary file.
+Each bundle has a fresh AES-256 content key and nonce. RFC 9180 base-mode X25519/HKDF-SHA256/AES-256-GCM HPKE wraps that key to the raw researcher public key in the signed configuration; the wire value is fixed and contains no Tink keyset or prefix. Exact JCS context binds the bundle format, bundle UUID, full configuration SHA-256, and researcher key ID into HPKE and document AEAD. The authenticated document embeds the exact configuration, its original Ed25519 signature, producer platform/build, and exact range/count. The app never holds the researcher private key.
 
-Decryption on the researcher's machine streams too, because a bundle is bounded by the study's storage quota rather than by a fixed size. One detail is deliberate and worth a reviewer's attention: `ResearchExport.decrypt` drives the AES-GCM cipher directly rather than reading through `CipherInputStream`, which reports an authentication failure as an ordinary end of stream. Through `CipherInputStream` a tampered bundle would decrypt into a silently truncated file that looks like a short study; driving the cipher directly keeps a bad tag an exception. The trade-off is that plaintext reaches the caller before the tag has been verified, so `researcher-tools decrypt` writes to a temporary file in the destination directory and moves it into place only after verification succeeds. Anything else consuming this API inherits the same obligation: do not publish the output until the call returns normally.
+A participant-directed export streams ciphertext to the chosen destination. Automatic upload is
+different by design: before HTTP, the app durably stages one complete ciphertext bundle and a
+bounded recovery manifest in no-backup storage. The bundle contains no plaintext. Only one entry exists,
+and every retry after process death, reboot, timeout, or response loss sends exactly those bytes.
+The manifest contains only bounded bundle/receipt bookkeeping and an optional terminal code—no
+participant, assigned, experiment, or configuration ID—and is never placed in an HTTP request.
+
+Decryption on the researcher's machine streams too, because a bundle is bounded by the study's storage quota rather than by a fixed size. One detail is deliberate and worth a reviewer's attention: `ResearchExport.decrypt` drives the AES-GCM cipher directly rather than reading through `CipherInputStream`, which reports an authentication failure as an ordinary end of stream. Through `CipherInputStream` a tampered bundle would decrypt into a silently truncated file that looks like a short study; driving the cipher directly keeps a bad tag an exception. Plaintext reaches only a mode-`0600` staging file before the tag is verified. The CLI then streams staging through `ResearchBundleVerifier`, which rechecks canonical bytes, embedded configuration and signature, identities, ranges, transition history, and catalog event contracts. It atomically publishes the file only when both phases pass and deletes staging on any failure. Anything else consuming the lower-level decrypt API inherits the same obligation: authenticate and validate the complete document before publishing plaintext.
 
 What an upload endpoint therefore sees:
 
 | The endpoint learns | The endpoint does not learn |
 | --- | --- |
-| That this install is participating, and when each delivery arrives | Any event content; the body is ciphertext only the researcher's HPKE private key opens |
-| How much data was collected, from the body size and the declared sequence range | Anything derived from the payload without that private key |
-| The `experiment_id`, `configuration_id`, and random participant instance ID, sent in request headers | The assigned participant ID, survey content, event content, name, account, device identifier, or advertising ID |
+| A ciphertext bundle UUID, receive time, body size/digest, configuration digest, researcher key ID, and claimed range/count | Event content; the body is ciphertext only the researcher private key opens |
+| That the same bundle UUID was replayed, and whether its bytes/metadata match | The participant instance ID, assigned ID, experiment ID, configuration ID, name, account, device identifier, or advertising ID |
+| A stable configuration digest may link bundles from one issued artifact or cohort | Whether a submission came from an enrolled participant or genuine device |
 
-The participant instance ID is a random UUID minted for every import and kept in that study's metadata. An uploading study needs it because encrypted chunks otherwise arrive indistinguishable. It is pseudonymous and disclosed on the consent screen. A researcher-assigned ID, when present, stays inside HPKE ciphertext and must not be copied into endpoint headers or logs.
+All clear headers are untrusted routing claims. Receiver ingestion identity is the immutable bundle
+UUID plus exact bytes and metadata, never a participant/range pair. The participant UUID and any
+assigned code become linkable only after authorized decryption and remain personal data there.
 
 Transport is TLS: the endpoint must be `https://`, validated when the configuration is decoded, and `usesCleartextTraffic="false"` remains set, so a plaintext HTTP endpoint cannot be configured or reached. There is **no certificate pinning**. The connection trusts the device's system trust store, so an attacker holding a certificate that store accepts — an enterprise or otherwise installed CA, for example — can see the delivery metadata above and can substitute their own endpoint. They still cannot read a bundle.
 
-Delivery is durable rather than best-effort, and this is deliberate: `StudyMetadata.uploadedThroughSequence` records the highest sequence an endpoint confirmed, advances only after a successful response, and never moves backwards. It advances to what the bundle's receipt says was actually written, not to what the run set out to send, so a delivery that stopped early at its size budget leaves the remainder marked undelivered. A study that fails to upload keeps collecting, and the participant can still export by hand.
+Delivery is durable rather than best-effort. A new durable object returns `201 Created`; an exact replay returns `200 OK` with the original canonical seven-field receipt. The client requires its bundle ID, byte count, configuration digest, event count, exact first/last sequence, and SHA-256 to match the outbox manifest before it advances `uploadedThroughSequence`. Redirects, `202`, other `2xx`, malformed receipts, and mismatches do not commit. Only I/O, `408`, `425`, `429`, and `5xx` retry; other protocol and `4xx` failures are terminal for that staged bundle but do not stop collection. The participant can still export by hand.
 
 A failed delivery is reported to the participant as a fixed reason code — `UPLOAD_TIMEOUT`, `UPLOAD_TLS_FAILED`, `UPLOAD_HTTP_<status>`, `UPLOAD_IO_FAILED` and a few others. `StudyUploadException` carries the code instead of a message and validates it against the same `[A-Z][A-Z0-9_]{2,63}` pattern a collector's health reason uses, so a string that reaches the screen or the log cannot carry study data, an endpoint's response body, or a URL. The underlying transport exception is written to the Android log, where it is a network error rather than research data. Collector health failures surface their reason code the same way.
 
@@ -98,11 +165,11 @@ Entering `RUNNING` mints an admission epoch token that collectors must present, 
 
 A storage write failure or exhausted quota force-closes the admission gate, records an incident code, and fail-closes the study to `PAUSED`. There is no ring buffer and no silent dropping of events, and reclaiming space is a different thing from either: it can only release events an endpoint has already confirmed receiving, so a quota that fills with nothing delivered stops the study rather than making room, and what was released is recorded in `retainedFromSequence`, declared in every bundle's `first_sequence_number`, and stated on the participant's dashboard. Nothing that has not reached the research team is ever discarded to free space.
 
-Occurrence lifecycle events and survey submissions have a stronger two-record boundary: the encrypted `ADCTXN01` journal makes the event append and updated metadata recoverable as one idempotent commit. Recovery completes the exact pending transaction or recognizes it as already complete. No unverified fallback reconstructs a response from UI state.
+Occurrence lifecycle events and survey submissions have a stronger two-record boundary: the encrypted `ADCTXN01` journal makes the event append and updated metadata recoverable as one idempotent commit. Recovery applies a one-boundary-ahead journal only after authenticating an exactly matching durable tail event; it discards a prepared journal whose event is absent, and treats a same-boundary journal as a stale leftover with main metadata authoritative. Any other boundary or content mismatch fails closed. No unverified fallback reconstructs a response from UI state.
 
-A corrupt segment, index gap, AEAD failure, or missing key is a hard failure, and only an incomplete trailing frame in the final segment may be recovered. Event segments missing *below* the retained floor are a hard failure too, because a prefix that disappeared without being reclaimed is indistinguishable from one that was tampered away. Metadata claiming more events than are durable is rejected in favour of the durable count, and an export that cannot read its whole window to the boundary fails rather than producing a partial file. Missing required access keeps a study from reaching `READY`, and a foreground service that fails to start rolls the runtime back instead of collecting. A dataset is therefore either complete over the window it declares or absent, rather than quietly partial.
+A corrupt segment, index gap, AEAD failure, or missing key is a hard failure, and only an incomplete trailing frame in the final segment may be recovered. Event segments missing *below* the retained floor are a hard failure too, because a prefix that disappeared without being reclaimed is indistinguishable from one that was tampered away. Main metadata must name the durable tail unless the authenticated one-event journal proves the single permitted append-recovery state; no durable count is guessed or rebuilt as fallback. An export that cannot read its whole window to the boundary fails rather than producing a partial file. Missing required access keeps a study from reaching `READY`, and a foreground service that fails to start rolls the runtime back instead of collecting. A dataset is therefore either complete over the window it declares or absent, rather than quietly partial.
 
-**When an event payload is authenticated, and when it is not.** Opening a study decrypts no events. The sequence number is stored unencrypted at the front of each frame, so the framing, the segment index, and the contiguity of the sequence are checked from the plaintext headers, and the metadata — which holds each collector's last event — is verified by its own AES-GCM tag. This is what makes a large quota workable: the cost of opening a study is linear in the number of frames rather than in the bytes decrypted. The trade-off is direct. **An event payload's authentication tag is verified when that event is read, not when the study is opened.** Corruption or tampering inside an event body surfaces on export or upload, as a hard failure at that point, rather than at startup. Nothing is accepted unverified — a tampered event still cannot reach a bundle — but the detection is deferred, so a device holding a damaged log can look healthy until its data is next read.
+**When an event payload is authenticated, and when it is not.** Normal study opening decrypts no events. The sequence number is stored unencrypted at the front of each frame, so framing, segment index, and contiguity are checked from plaintext headers, while metadata — including each collector's last event — has its own AES-GCM tag. The only exception is the unique crash state where a one-boundary-ahead journal and a complete event tail are both durable: opening then decrypts and authenticates exactly that tail before applying the journal. This keeps open cost linear in frames with no per-event crypto; recovery adds at most one event decrypt. **An event payload's authentication tag is otherwise verified when that event is read.** Corruption or tampering inside another event body surfaces on export or upload as a hard failure at that point. Nothing is accepted unverified — a tampered event still cannot reach a bundle — but detection for non-recovery-tail events is deferred, so a device holding a damaged log can look healthy until its data is next read.
 
 ### Deletion
 
@@ -122,19 +189,28 @@ One narrow part of this is closed by the data step described under *Scope of col
 
 **Publisher impersonation.** The researcher name and contact shown on the consent screen come from the signed configuration, which makes them text the signer chose. Anyone can generate an Ed25519 key, write a configuration naming any research team, sign it, and produce a file that verifies on a build with no pinned signers. The signature is genuine; what it certifies is the file, not its author.
 
-Three things narrow this. The consent step shows the key fingerprint — SHA-256 over the encoded public key, first 16 bytes, as eight uppercase groups of four hex characters — under the heading *Configuration signature*, and, when the signer is not pinned, asks the participant to check that fingerprint against the one their research team published, noting underneath that a signature shows a file is unaltered rather than who wrote it. Deliberately none of it is in the error colour. An unpinned signer is the deployment model, not a failure, and rendering the ordinary case as an alarm trains a reader to skip the block — the mitigation here depends on the participant actually performing a comparison, so the text is an instruction rather than a warning. That wording is in the app's string resources rather than in Kotlin, so it is translated with the rest of the interface and no configuration can alter it. A team that publishes its fingerprint through the channel that recruited its participants gives them a check that copied prose does not defeat. And a configuration is not an anonymous download: it reaches a participant through a relationship that already exists, so an impersonator has to get their file in front of someone through that channel.
+Three things narrow this. The consent step shows the key fingerprint — SHA-256 over the raw 32-byte public key, first 16 bytes, as eight uppercase groups of four hex characters — under the heading *Configuration signature*, and, when the signer is not pinned, asks the participant to check that fingerprint against the one their research team published, noting underneath that a signature shows a file is unaltered rather than who wrote it. Deliberately none of it is in the error colour. An unpinned signer is the deployment model, not a failure, and rendering the ordinary case as an alarm trains a reader to skip the block — the mitigation here depends on the participant actually performing a comparison, so the text is an instruction rather than a warning. That wording is in the app's string resources rather than in Kotlin, so it is translated with the rest of the interface and no configuration can alter it. A team that publishes its fingerprint through the channel that recruited its participants gives them a check that copied prose does not defeat. And a configuration is not an anonymous download: it reaches a participant through a relationship that already exists, so an impersonator has to get their file in front of someone through that channel.
 
 A build that pins its signers removes this exposure for the studies it accepts, and accepts nothing else. See the [researcher guide](researcher-guide.md) for both sides of that choice.
 
 **What happens to a bundle after it leaves.** Once the participant picks a destination, or the app posts a bundle to the study's endpoint, the bytes are beyond the app's reach. Confidentiality holds — only the researcher's HPKE private key opens them — with three caveats:
 
-- A bundle is not authenticated as to origin. It is encrypted *to* the researcher, not signed *by* the device. Anyone with the researcher's public keyset, which is inside every copy of the signed configuration, can fabricate a syntactically valid bundle that decrypts cleanly. A decryptable bundle is not proof of who produced it, and an endpoint receiving one has no cryptographic evidence that a real participant device sent it.
+- A bundle is not authenticated as to origin. It is encrypted *to* the researcher, not signed *by* the device. Anyone with the raw researcher public key, which is inside every signed configuration, can fabricate a syntactically valid bundle that decrypts cleanly. A decryptable bundle is not proof of who produced it, and an endpoint receiving one has no cryptographic evidence that a real participant device sent it.
 - The bundle header exposes the researcher key ID in cleartext, and the suggested export filename contains the study ID and an export timestamp. Anyone handling the file can tell that this person participated in that study.
 - Size discloses roughly how much data was collected. The same is true on the device: event segment file sizes and modification times leak collection volume and timing to anyone with filesystem read access, without any decryption.
 
-**A compromised or hostile upload endpoint.** An endpoint that is taken over, misconfigured, or logging more than the study intended still cannot read a bundle without the researcher's HPKE private key, which does not belong on a collection server. What it does get is the metadata above for every delivery: which install, which study, how many events, and when. Whoever operates the endpoint can therefore build a participation timeline per instance ID even while the payloads stay closed. It can also refuse deliveries indefinitely; the effect is that the device keeps the data and the researcher does not receive it, not that collection stops. The converse matters more: an endpoint that answers 2xx without durably storing the body advances the watermark, and under storage pressure the device may then release those events. A success response is a claim to have stored the bundle, and an endpoint that cannot honour it should answer 408, 429, or 5xx instead. Treat the endpoint as part of the study's data governance, keep the decryption key off it, and state its operator in the consent material.
+**A compromised or hostile upload endpoint.** An endpoint that is taken over, misconfigured, or logging more than intended still cannot read a bundle without the researcher private key. It does learn the untrusted bundle metadata above, including a stable configuration digest that can link submissions from the same issued artifact. It can refuse delivery indefinitely; the device retains the data and collection continues. Conversely, an endpoint can fabricate a matching seven-field `201`/`200` receipt without keeping the body. That can advance the watermark and eventually make those events reclaimable under storage pressure. Receipt matching makes response loss and accidental mismatch safe; it cannot prove remote durability against the server itself. Treat the endpoint as study infrastructure, keep the decryption key off it, minimize logs, and state its operator in consent material.
 
-**Inference from the data itself.** That location traces, keyboard touch dynamics, and app usage patterns can identify a person is a property of the data, not a defect in the software. Minimisation and consent are the controls. The keyboard collector cannot see text, but its timing and within-key position data are behaviourally distinctive; the [data dictionary](data-dictionary.md) states this per collector.
+The receiver ingress has no participant authentication or device attestation. An attacker can submit
+bounded bogus ciphertext and consume storage. Deployment-time configuration-digest/key allowlists,
+the 32 MiB body limit, WAF/rate limits, create-only object writes, and R2 lifecycle policy bound the
+cost; they do not establish origin.
+
+**Inference from the data itself.** That location traces, motion sensors, temporal context,
+keyboard touch dynamics, and app usage patterns can identify a person is a property of the data,
+not a defect in the software. Minimisation and consent are the controls. The keyboard collector
+cannot see text, but its timing and within-key position data are behaviourally distinctive; the
+[data dictionary](data-dictionary.md) states this per collector.
 
 **Assigned IDs and survey responses are direct governance responsibilities.** An opaque assigned code can still be identifying to the team that holds its roster, and free-text survey answers can contain names or other sensitive details. Bulk personalization keeps codes out of filenames and logs, and transport keeps them out of headers, but decryption intentionally reveals them to the private-key holder. Ethics review should minimize free text, document the roster join and retention policy, and state that closing an unfinished survey stores no answer while submission is final.
 
@@ -144,7 +220,7 @@ A build that pins its signers removes this exposure for the studies it accepts, 
 
 **No signer revocation.** There is no revocation list, rotation protocol, or kill switch at any layer. A leaked study signing key can mint configurations that any build with an empty anchor map accepts, and configurations already signed with it stay valid until they expire; a short validity window is the only control. Where a build does pin signers, that set is fixed and auditable at build time, and retiring one of those keys requires shipping a new APK.
 
-**Key loss.** Losing the researcher's HPKE private key makes every export from that study permanently unreadable. There is no escrow, and the keyset validation mandates exactly one key, so multi-recipient encryption is not available. Losing the device's Keystore key — through device wipe, uninstall, or clearing app data — destroys all un-exported local data. Neither case has a recovery path.
+**Key loss.** Losing the researcher HPKE private key makes every export for that configuration permanently unreadable. There is no escrow and Protocol v1 names exactly one raw recipient key, so multi-recipient encryption is unavailable. Losing the device's Keystore key — through device wipe, uninstall, or clearing app data — destroys all un-exported local data. Neither case has a recovery path.
 
 **Per-collector supervision is not fail-closed.** A collector that crashes or loses its permission is marked `FAILED` or `BLOCKED_ACCESS`, and the study continues with the others. This keeps one flaky data source from ending someone's participation, but a dataset can be missing one collector's data for a period while the study looks healthy overall. The collector's status and the resulting gap are visible in the data.
 
@@ -162,7 +238,9 @@ What a real deployment owes participants is its own key pairs and a published si
 
 The dependency set is small: Tink for cryptography, Gson for parsing, AndroidX Compose, Lifecycle and WorkManager, Google Play Services Location for the fused location provider, and OkHttp 5.3.0 for the upload request. There is no analytics, crash reporter, or telemetry library. OkHttp is used from one class, `OkHttpStudyUploader`, which builds a single POST to the endpoint the signed configuration names; Play Services Location is the only other dependency with a plausible network surface.
 
-The release runtime classpath resolves to 136 Maven components. On 2026-08-03, the exact Gradle-resolved graph was exported as a CycloneDX SBOM and scanned with Trivy 0.70.0 against vulnerability and Java databases downloaded that day; no known vulnerability at any severity was found. A separate source and `pnpm-lock.yaml` scan found no secret or known vulnerability. These are point-in-time results rather than a continuing guarantee, so re-run both scans before any deployment.
+Gradle and package lockfiles make the selected dependency graph reviewable. Vulnerability and
+secret-scan results are point-in-time observations rather than a continuing guarantee, so re-run
+the relevant scans before deployment.
 
 ## Verifying this yourself
 
