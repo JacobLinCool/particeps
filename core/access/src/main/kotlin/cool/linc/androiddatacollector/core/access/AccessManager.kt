@@ -41,7 +41,10 @@ class AccessManager(
         AccessKind.FINE_LOCATION,
         AccessKind.NOTIFICATIONS,
         AccessKind.RESEARCH_KEYBOARD_SELECTED,
-        AccessKind.ACCELEROMETER_HARDWARE -> null
+        AccessKind.ACCELEROMETER_HARDWARE,
+        AccessKind.GYROSCOPE_HARDWARE,
+        AccessKind.AMBIENT_LIGHT_HARDWARE,
+        AccessKind.PROXIMITY_HARDWARE -> null
     }
 
     fun showInputMethodPicker() {
@@ -58,7 +61,14 @@ class AccessManager(
         AccessKind.ACCELEROMETER_HARDWARE -> applicationContext
             .getSystemService(SensorManager::class.java)
             .getDefaultSensor(Sensor.TYPE_ACCELEROMETER) != null
+        AccessKind.GYROSCOPE_HARDWARE -> hasSensor(Sensor.TYPE_GYROSCOPE)
+        AccessKind.AMBIENT_LIGHT_HARDWARE -> hasSensor(Sensor.TYPE_LIGHT)
+        AccessKind.PROXIMITY_HARDWARE -> hasSensor(Sensor.TYPE_PROXIMITY)
     }
+
+    private fun hasSensor(type: Int): Boolean = applicationContext
+        .getSystemService(SensorManager::class.java)
+        .getDefaultSensor(type) != null
 
     private fun permissionGranted(permission: String): Boolean =
         applicationContext.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED

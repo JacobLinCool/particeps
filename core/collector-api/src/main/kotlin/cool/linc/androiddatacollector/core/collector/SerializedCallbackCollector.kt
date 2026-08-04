@@ -19,13 +19,17 @@ abstract class SerializedCallbackCollector(
     private val messages = Channel<Message>(queueCapacity)
     private val mutableHealth = MutableStateFlow(CollectorHealth(CollectorStatus.STOPPED))
     private var consumerJob: Job? = null
-    private var sourceRegistered = false
+    private var sourceState = SourceState.RELEASED
 
     final override val health: StateFlow<CollectorHealth>
         get() = mutableHealth.asStateFlow()
 
+    final override val requiresStop: Boolean
+        get() = consumerJob != null
+
     final override suspend fun start() {
         check(consumerJob == null) { "Collector is already started" }
+        check(sourceState == SourceState.RELEASED) { "Collector source is not released" }
         check(mutableHealth.value.status in setOf(CollectorStatus.STOPPED, CollectorStatus.FAILED)) {
             "Collector cannot be started"
         }
@@ -35,9 +39,7 @@ abstract class SerializedCallbackCollector(
             register()
             mutableHealth.value = CollectorHealth(CollectorStatus.ACTIVE)
         } catch (failure: Throwable) {
-            messages.send(Message.Stop)
-            job.join()
-            consumerJob = null
+            if (sourceState == SourceState.RELEASED) stopConsumer(job)
             fail("SOURCE_REGISTRATION_FAILED")
             throw failure
         }
@@ -45,13 +47,14 @@ abstract class SerializedCallbackCollector(
 
     final override suspend fun pause() {
         checkNotNull(consumerJob) { "Collector is not started" }
-        try {
-            unregister()
-        } catch (failure: Throwable) {
+        val failure = runCatching { unregister() }.exceptionOrNull()
+        // unregisterSource owns physical teardown and must finish it before reporting failure. Drain
+        // every event admitted before that boundary even when Android reports a cleanup error.
+        flush()
+        if (failure != null) {
             fail("SOURCE_UNREGISTRATION_FAILED")
             throw failure
         }
-        flush()
         if (mutableHealth.value.status != CollectorStatus.FAILED) {
             mutableHealth.value = CollectorHealth(CollectorStatus.PAUSED)
         }
@@ -73,13 +76,25 @@ abstract class SerializedCallbackCollector(
 
     final override suspend fun stop() {
         val job = consumerJob ?: return
-        val failure = runCatching { unregister() }.exceptionOrNull()
+        var failure = runCatching { unregister() }.exceptionOrNull()
+        if (sourceState == SourceState.UNCERTAIN) {
+            try {
+                flush()
+            } catch (flushFailure: Throwable) {
+                val first = failure
+                if (first == null) {
+                    failure = flushFailure
+                } else if (first !== flushFailure) {
+                    first.addSuppressed(flushFailure)
+                }
+            }
+            fail("SOURCE_UNREGISTRATION_FAILED")
+            throw checkNotNull(failure) { "Uncertain source teardown did not report a failure" }
+        }
         try {
             flush()
         } finally {
-            messages.send(Message.Stop)
-            job.join()
-            consumerJob = null
+            stopConsumer(job)
         }
         if (failure != null) {
             fail("SOURCE_UNREGISTRATION_FAILED")
@@ -99,19 +114,45 @@ abstract class SerializedCallbackCollector(
         mutableHealth.value = CollectorHealth(CollectorStatus.FAILED, reasonCode)
     }
 
-    protected abstract suspend fun registerSource()
-    protected abstract suspend fun unregisterSource()
+    protected abstract suspend fun registerSource(): SourceRegistrationResult
+    /**
+     * Returns only when a fresh source generation is safe. An exception means physical teardown is
+     * uncertain, so the base class deliberately keeps the logical registration and blocks resume.
+     */
+    protected abstract suspend fun unregisterSource(): SourceTeardownResult
 
     private suspend fun register() {
-        check(!sourceRegistered) { "Collector source is already registered" }
-        registerSource()
-        sourceRegistered = true
+        check(sourceState == SourceState.RELEASED) { "Collector source is not released" }
+        when (val result = registerSource()) {
+            SourceRegistrationResult.Registered -> sourceState = SourceState.REGISTERED
+            is SourceRegistrationResult.Released -> throw result.failure
+            is SourceRegistrationResult.Uncertain -> {
+                sourceState = SourceState.UNCERTAIN
+                throw result.failure
+            }
+        }
     }
 
     private suspend fun unregister() {
-        if (!sourceRegistered) return
-        unregisterSource()
-        sourceRegistered = false
+        if (sourceState == SourceState.RELEASED) return
+        try {
+            when (val result = unregisterSource()) {
+                SourceTeardownResult.Released -> sourceState = SourceState.RELEASED
+                is SourceTeardownResult.ReleasedWithFailure -> {
+                    sourceState = SourceState.RELEASED
+                    throw result.failure
+                }
+            }
+        } catch (failure: Throwable) {
+            if (sourceState != SourceState.RELEASED) sourceState = SourceState.UNCERTAIN
+            throw failure
+        }
+    }
+
+    private suspend fun stopConsumer(job: Job) {
+        messages.send(Message.Stop)
+        job.join()
+        consumerJob = null
     }
 
     private suspend fun flush() {
@@ -131,7 +172,11 @@ abstract class SerializedCallbackCollector(
                     } catch (_: Throwable) {
                         EmitResult.StorageFailure
                     }
-                    if (result == EmitResult.StorageFailure) fail("STORAGE_WRITE_FAILED")
+                    when (result) {
+                        EmitResult.ContractViolation -> fail("EVENT_CONTRACT_VIOLATION")
+                        EmitResult.StorageFailure -> fail("STORAGE_WRITE_FAILED")
+                        else -> Unit
+                    }
                 }
                 is Message.Barrier -> message.completion.complete(Unit)
                 Message.Stop -> return
@@ -149,4 +194,6 @@ abstract class SerializedCallbackCollector(
 
         data object Stop : Message
     }
+
+    private enum class SourceState { RELEASED, REGISTERED, UNCERTAIN }
 }

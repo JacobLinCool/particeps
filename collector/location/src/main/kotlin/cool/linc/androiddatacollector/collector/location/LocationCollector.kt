@@ -12,18 +12,26 @@ import cool.linc.androiddatacollector.core.definition.CollectorConfiguration
 import cool.linc.androiddatacollector.core.definition.LocationConfiguration
 import cool.linc.androiddatacollector.core.definition.LocationPriority
 import cool.linc.androiddatacollector.core.collector.PrivacyClass
+import cool.linc.androiddatacollector.core.collector.ProtocolEventContracts
 import cool.linc.androiddatacollector.core.collector.Collector
 import cool.linc.androiddatacollector.core.collector.CollectorContext
 import cool.linc.androiddatacollector.core.collector.CollectorDescriptor
 import cool.linc.androiddatacollector.core.collector.CollectorPlugin
 import cool.linc.androiddatacollector.core.collector.SerializedCallbackCollector
+import cool.linc.androiddatacollector.core.collector.SourceCallbackBoundary
+import cool.linc.androiddatacollector.core.collector.SourceRegistrationResult
+import cool.linc.androiddatacollector.core.collector.SourceTeardownResult
+import cool.linc.androiddatacollector.core.collector.completeSourceTeardown
+import cool.linc.androiddatacollector.core.collector.registerSourceWithRollback
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 
 class LocationCollectorPlugin(
     context: Context,
@@ -32,10 +40,9 @@ class LocationCollectorPlugin(
 
     override val descriptor = CollectorDescriptor(
         id = LocationConfiguration.ID,
-        payloadSchemaVersion = 1,
         displayName = "Location",
         privacyClass = PrivacyClass.SENSITIVE,
-        maximumEncodedEventBytes = 4_096,
+        eventContract = requireNotNull(ProtocolEventContracts[LocationConfiguration.ID]),
     )
 
     override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
@@ -65,14 +72,15 @@ private class LocationCollector(
 ) : SerializedCallbackCollector(collectorContext, CHANNEL_CAPACITY) {
     private val client: FusedLocationProviderClient =
         LocationServices.getFusedLocationProviderClient(applicationContext)
+    private val callbackBoundary = SourceCallbackBoundary()
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
-            result.locations.forEach(::capture)
+            callbackBoundary.runIfActive { result.locations.forEach(::capture) }
         }
     }
     private var handlerThread: HandlerThread? = null
 
-    override suspend fun registerSource() {
+    override suspend fun registerSource(): SourceRegistrationResult {
         if (applicationContext.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) !=
             PackageManager.PERMISSION_GRANTED
         ) {
@@ -82,21 +90,40 @@ private class LocationCollector(
         val request = LocationRequest.Builder(configuration.priority.toPlayServicesPriority(), configuration.intervalMillis)
             .setMinUpdateIntervalMillis(configuration.minimumIntervalMillis)
             .setMaxUpdateDelayMillis(configuration.maximumBatchDelayMillis)
-            .setMinUpdateDistanceMeters(configuration.minimumDisplacementMeters)
+            .setMinUpdateDistanceMeters(configuration.minimumDisplacementMillimeters / 1_000f)
             .build()
-        try {
-            client.requestLocationUpdates(request, callback, thread.looper).await()
-        } catch (failure: Throwable) {
-            thread.quitSafely()
-            throw failure
-        }
-        handlerThread = thread
+        callbackBoundary.activate()
+        var updatesRegistered = false
+        val result = registerSourceWithRollback(
+            register = {
+                withContext(NonCancellable) {
+                    client.requestLocationUpdates(request, callback, thread.looper).await()
+                    updatesRegistered = true
+                }
+            },
+            rollback = {
+                completeSourceTeardown(
+                    { if (updatesRegistered) client.removeLocationUpdates(callback).await() },
+                    { callbackBoundary.deactivate() },
+                    { thread.quitSafely() },
+                )
+            },
+        )
+        if (result == SourceRegistrationResult.Registered) handlerThread = thread
+        return result
     }
 
-    override suspend fun unregisterSource() {
-        client.removeLocationUpdates(callback).await()
-        handlerThread?.quitSafely()
-        handlerThread = null
+    override suspend fun unregisterSource(): SourceTeardownResult {
+        val thread = handlerThread
+        completeSourceTeardown(
+            { client.removeLocationUpdates(callback).await() },
+            { callbackBoundary.deactivate() },
+            {
+                thread?.quitSafely()
+                handlerThread = null
+            },
+        )
+        return SourceTeardownResult.Released
     }
 
     private fun capture(location: Location) {

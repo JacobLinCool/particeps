@@ -1,0 +1,157 @@
+{
+  "allowed_catalog_dependencies": [
+    "libs.coroutines.android",
+    "libs.coroutines.play.services",
+    "libs.play.services.location"
+  ],
+  "allowed_project_dependencies": [
+    ":collector:sensor-common",
+    ":core:collector-api",
+    ":core:study-definition"
+  ],
+  "forbidden_class_prefixes": [
+    "android/database/",
+    "android/provider/",
+    "android/webkit/",
+    "androidx/datastore/",
+    "androidx/preference/",
+    "androidx/room/",
+    "cool/linc/androiddatacollector/core/crypto/",
+    "cool/linc/androiddatacollector/core/export/",
+    "cool/linc/androiddatacollector/core/protocol/",
+    "cool/linc/androiddatacollector/core/storage/",
+    "dalvik/system/",
+    "java/io/",
+    "java/lang/reflect/",
+    "java/net/",
+    "java/nio/file/",
+    "java/security/",
+    "java/sql/",
+    "java/util/logging/",
+    "javax/crypto/",
+    "javax/net/",
+    "kotlin/io/path/",
+    "kotlin/io/FilesKt",
+    "kotlin/reflect/",
+    "okhttp3/",
+    "org/apache/http/",
+    "org/apache/logging/",
+    "org/slf4j/",
+    "retrofit2/",
+    "timber/log/"
+  ],
+  "forbidden_classes": [
+    "android/app/DownloadManager",
+    "android/app/PendingIntent",
+    "android/content/ContentResolver",
+    "android/content/SharedPreferences",
+    "android/util/Log",
+    "android/util/EventLog",
+    "java/lang/ClassLoader",
+    "java/lang/ProcessBuilder",
+    "java/lang/Runtime",
+    "java/lang/reflect/AccessibleObject",
+    "java/util/ServiceLoader",
+    "kotlin/io/ConsoleKt"
+  ],
+  "forbidden_import_prefixes": [
+    "android.database.",
+    "android.provider.",
+    "android.webkit.",
+    "androidx.datastore.",
+    "androidx.preference.",
+    "androidx.room.",
+    "cool.linc.androiddatacollector.core.crypto.",
+    "cool.linc.androiddatacollector.core.export.",
+    "cool.linc.androiddatacollector.core.protocol.",
+    "cool.linc.androiddatacollector.core.storage.",
+    "dalvik.system.",
+    "java.io.",
+    "java.lang.ClassLoader",
+    "java.lang.reflect.",
+    "java.net.",
+    "java.nio.file.",
+    "java.security.",
+    "java.sql.",
+    "java.util.logging.",
+    "java.util.ServiceLoader",
+    "javax.crypto.",
+    "javax.net.",
+    "kotlin.io.path.",
+    "kotlin.reflect.",
+    "okhttp3.",
+    "org.apache.http.",
+    "org.apache.logging.",
+    "org.slf4j.",
+    "retrofit2.",
+    "timber.log."
+  ],
+  "forbidden_methods": [
+    {
+      "name": "forName",
+      "owner": "java/lang/Class"
+    },
+    {
+      "name": "load",
+      "owner": "java/lang/System"
+    },
+    {
+      "name": "loadLibrary",
+      "owner": "java/lang/System"
+    },
+    {
+      "name": "sendBroadcast",
+      "owner": "android/content/Context"
+    },
+    {
+      "name": "sendBroadcast",
+      "owner": "android/content/ContextWrapper"
+    },
+    {
+      "name": "startActivities",
+      "owner": "android/content/Context"
+    },
+    {
+      "name": "startActivity",
+      "owner": "android/content/Context"
+    },
+    {
+      "name": "startActivity",
+      "owner": "android/content/ContextWrapper"
+    },
+    {
+      "name": "startActivity",
+      "owner": "android/app/Activity"
+    },
+    {
+      "name": "startForegroundService",
+      "owner": "android/content/Context"
+    },
+    {
+      "name": "startActivities",
+      "owner": "androidx/core/content/ContextCompat"
+    },
+    {
+      "name": "startActivity",
+      "owner": "androidx/core/content/ContextCompat"
+    },
+    {
+      "name": "startService",
+      "owner": "android/content/Context"
+    }
+  ],
+  "forbidden_method_names": [
+    "databaseList",
+    "deleteDatabase",
+    "deleteFile",
+    "deleteSharedPreferences",
+    "fileList",
+    "getSharedPreferences",
+    "moveDatabaseFrom",
+    "moveSharedPreferencesFrom",
+    "openFileInput",
+    "openFileOutput",
+    "openOrCreateDatabase",
+    "writeEvent"
+  ]
+}

@@ -4,6 +4,7 @@ import cool.linc.androiddatacollector.core.collector.AccessKind
 import cool.linc.androiddatacollector.core.collector.AdmissionToken
 import cool.linc.androiddatacollector.core.collector.Collector
 import cool.linc.androiddatacollector.core.collector.CollectorContext
+import cool.linc.androiddatacollector.core.collector.CollectorDescriptor
 import cool.linc.androiddatacollector.core.collector.CollectorHealth
 import cool.linc.androiddatacollector.core.collector.CollectorPlugin
 import cool.linc.androiddatacollector.core.collector.CollectorRegistry
@@ -11,6 +12,7 @@ import cool.linc.androiddatacollector.core.collector.CollectorStatus
 import cool.linc.androiddatacollector.core.collector.EmitResult
 import cool.linc.androiddatacollector.core.collector.EventSink
 import cool.linc.androiddatacollector.core.collector.ResearchClocks
+import cool.linc.androiddatacollector.core.collector.ProtocolEventContracts
 import cool.linc.androiddatacollector.core.definition.StudyConfiguration
 import cool.linc.androiddatacollector.core.definition.InterventionAction
 import cool.linc.androiddatacollector.core.definition.MultipleChoiceQuestion
@@ -56,6 +58,33 @@ data class OccurrenceDispatch(
     val occurrence: InterventionOccurrence,
     val action: InterventionAction,
 )
+
+/** Atomic result of claiming one occurrence at its immutable scheduled wall instant. */
+sealed interface OccurrenceClaimResult {
+    data class Due(val dispatch: OccurrenceDispatch) : OccurrenceClaimResult
+    data class NotDue(val remainingDelayMillis: Long) : OccurrenceClaimResult {
+        init {
+            require(remainingDelayMillis > 0) { "An early delivery must retain a positive delay" }
+        }
+    }
+    data object Expired : OccurrenceClaimResult
+    data object Terminal : OccurrenceClaimResult
+    data object Missing : OccurrenceClaimResult
+    data object InactiveStudy : OccurrenceClaimResult
+}
+
+/** Atomic result of checking one durable occurrence against its signed expiry instant. */
+sealed interface OccurrenceExpiryResult {
+    data object Expired : OccurrenceExpiryResult
+    data class NotDue(val remainingDelayMillis: Long) : OccurrenceExpiryResult {
+        init {
+            require(remainingDelayMillis > 0) { "An early expiry must retain a positive delay" }
+        }
+    }
+    data object Terminal : OccurrenceExpiryResult
+    data object Missing : OccurrenceExpiryResult
+    data object InactiveStudy : OccurrenceExpiryResult
+}
 
 sealed interface SurveyAnswer {
     data class Text(val value: String) : SurveyAnswer
@@ -235,15 +264,20 @@ class ExperimentRuntime(
         planned
     }
 
-    suspend fun claimOccurrence(occurrenceId: String): OccurrenceDispatch? = metadataMutex.withLock {
+    suspend fun claimOccurrenceIfDue(occurrenceId: String): OccurrenceClaimResult = metadataMutex.withLock {
         val metadata = requireMetadata()
-        val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock null
+        if (metadata.state != ExperimentState.RUNNING) return@withLock OccurrenceClaimResult.InactiveStudy
+        val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock OccurrenceClaimResult.Missing
+        if (occurrence.state !in setOf(OccurrenceState.SCHEDULED, OccurrenceState.POSTING)) {
+            return@withLock OccurrenceClaimResult.Terminal
+        }
         val now = clocks.now()
         if (now.wallTimeUtcMillis >= occurrence.expiresAtUtcMillis) {
             expireOccurrence(metadata, occurrence, now)
-            return@withLock null
+            return@withLock OccurrenceClaimResult.Expired
         }
-        if (occurrence.state !in setOf(OccurrenceState.SCHEDULED, OccurrenceState.POSTING)) return@withLock null
+        val remaining = occurrence.scheduledFor.wallTimeUtcMillis - now.wallTimeUtcMillis
+        if (remaining > 0) return@withLock OccurrenceClaimResult.NotDue(remaining)
         val claimed = if (occurrence.state == OccurrenceState.SCHEDULED) {
             occurrence.copy(state = OccurrenceState.POSTING).also { next ->
                 val updated = metadata.copy(occurrences = metadata.occurrences + (occurrenceId to next))
@@ -254,24 +288,60 @@ class ExperimentRuntime(
         } else {
             occurrence
         }
-        OccurrenceDispatch(claimed, intervention(claimed).action)
+        OccurrenceClaimResult.Due(OccurrenceDispatch(claimed, intervention(claimed).action))
     }
 
-    suspend fun markNotificationPosted(occurrenceId: String) = metadataMutex.withLock {
+    /**
+     * Expires one occurrence without ever claiming delivery.
+     *
+     * WorkManager may wake early after a wall-clock change. Returning [OccurrenceExpiryResult.NotDue]
+     * leaves the durable lifecycle untouched so the adapter can retry instead of consuming the only
+     * expiry job. Notification-only occurrences that were already opened are terminal; surveys stay
+     * open until submitted or expired.
+     */
+    suspend fun expireOccurrenceIfDue(occurrenceId: String): OccurrenceExpiryResult = metadataMutex.withLock {
         val metadata = requireMetadata()
-        val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock
-        if (occurrence.state != OccurrenceState.POSTING) return@withLock
+        if (metadata.state != ExperimentState.RUNNING) return@withLock OccurrenceExpiryResult.InactiveStudy
+        val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock OccurrenceExpiryResult.Missing
+        if (
+            occurrence.state in setOf(OccurrenceState.EXPIRED, OccurrenceState.SURVEY_SUBMITTED) ||
+            (occurrence.state == OccurrenceState.OPENED && intervention(occurrence).action !is SurveyAction)
+        ) {
+            return@withLock OccurrenceExpiryResult.Terminal
+        }
+        val now = clocks.now()
+        val remaining = occurrence.expiresAtUtcMillis - now.wallTimeUtcMillis
+        if (remaining > 0) return@withLock OccurrenceExpiryResult.NotDue(remaining)
+        expireOccurrence(metadata, occurrence, now)
+        OccurrenceExpiryResult.Expired
+    }
+
+    suspend fun markNotificationPosted(occurrenceId: String): Boolean = metadataMutex.withLock {
+        val metadata = requireMetadata()
+        if (metadata.state != ExperimentState.RUNNING) return@withLock false
+        val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock false
+        if (occurrence.state !in setOf(OccurrenceState.POSTING, OccurrenceState.NOTIFICATION_POSTED)) {
+            return@withLock false
+        }
+        val now = clocks.now()
+        if (now.wallTimeUtcMillis >= occurrence.expiresAtUtcMillis) {
+            expireOccurrence(metadata, occurrence, now)
+            return@withLock false
+        }
+        if (occurrence.state == OccurrenceState.NOTIFICATION_POSTED) return@withLock true
         val posted = occurrence.copy(state = OccurrenceState.NOTIFICATION_POSTED)
         appendOccurrenceEvent(
             metadata.copy(occurrences = metadata.occurrences + (occurrenceId to posted)),
             posted,
             "NOTIFICATION_POSTED",
-            clocks.now(),
+            now,
         )
+        true
     }
 
     suspend fun openOccurrence(occurrenceId: String): OccurrenceDispatch? = metadataMutex.withLock {
         val metadata = requireMetadata()
+        if (metadata.state != ExperimentState.RUNNING) return@withLock null
         val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock null
         val now = clocks.now()
         if (now.wallTimeUtcMillis >= occurrence.expiresAtUtcMillis && occurrence.state != OccurrenceState.SURVEY_SUBMITTED) {
@@ -299,6 +369,7 @@ class ExperimentRuntime(
         answers: Map<String, SurveyAnswer>,
     ): SurveySubmissionResult = metadataMutex.withLock {
         val metadata = requireMetadata()
+        if (metadata.state != ExperimentState.RUNNING) return@withLock SurveySubmissionResult.INVALID
         val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock SurveySubmissionResult.INVALID
         if (occurrence.state == OccurrenceState.SURVEY_SUBMITTED) return@withLock SurveySubmissionResult.ALREADY_SUBMITTED
         val now = clocks.now()
@@ -408,6 +479,9 @@ class ExperimentRuntime(
         token: AdmissionToken,
         event: EventDraft,
     ): EmitResult {
+        val descriptor = collectorEntries[event.collectorId]?.plugin?.descriptor
+            ?: return EmitResult.ContractViolation
+        if (!descriptor.eventContract.accepts(event, Long.MAX_VALUE)) return EmitResult.ContractViolation
         if (!admissionGate.accepts(token, event.observedTime.elapsedRealtimeNanos)) {
             return EmitResult.RejectedByAdmissionGate
         }
@@ -479,7 +553,7 @@ class ExperimentRuntime(
                 configuration,
                 CollectorContext(
                     scope = scope,
-                    eventSink = this,
+                    eventSink = CollectorEventSink(plugin.descriptor),
                     clocks = clocks,
                 ),
             )
@@ -519,6 +593,7 @@ class ExperimentRuntime(
                     entry.hasStarted = true
                 }
             } catch (failure: Throwable) {
+                entry.hasStarted = entry.hasStarted || entry.collector.requiresStop
                 failure.rethrowIfCancellation()
                 updateCollectorHealth(id, CollectorHealth(CollectorStatus.FAILED, "COLLECTOR_START_FAILED"))
             }
@@ -546,7 +621,7 @@ class ExperimentRuntime(
                 failure.rethrowIfCancellation()
                 updateCollectorHealth(id, CollectorHealth(CollectorStatus.FAILED, "COLLECTOR_STOP_FAILED"))
             } finally {
-                entry.hasStarted = false
+                entry.hasStarted = entry.collector.requiresStop
             }
         }
     }
@@ -631,9 +706,8 @@ class ExperimentRuntime(
         observedAt: cool.linc.androiddatacollector.core.model.ResearchTime,
         additionalFields: Map<String, String> = emptyMap(),
     ) {
-        val event = RecordedEvent(
-            sequenceNumber = metadataAfterState.nextSequenceNumber,
-            collectorId = "interventions.v1",
+        val draft = EventDraft(
+            collectorId = INTERVENTION_COLLECTOR_ID,
             payloadSchemaVersion = 1,
             observedTime = observedAt,
             payloadType = payloadType,
@@ -643,6 +717,18 @@ class ExperimentRuntime(
                 "occurrence_id" to occurrence.occurrenceId,
                 "scheduled_for_utc_millis" to occurrence.scheduledFor.wallTimeUtcMillis.toString(),
             ) + additionalFields,
+        )
+        check(requireNotNull(ProtocolEventContracts[INTERVENTION_COLLECTOR_ID]).accepts(
+            draft,
+            metadataAfterState.nextSequenceNumber,
+        )) { "Runtime intervention event violates Protocol v1" }
+        val event = RecordedEvent(
+            sequenceNumber = metadataAfterState.nextSequenceNumber,
+            collectorId = draft.collectorId,
+            payloadSchemaVersion = draft.payloadSchemaVersion,
+            observedTime = draft.observedTime,
+            payloadType = draft.payloadType,
+            fields = draft.fields.toSortedMap(),
         )
         val updated = metadataAfterState.copy(
             eventCount = event.sequenceNumber,
@@ -726,6 +812,25 @@ class ExperimentRuntime(
         var hasStarted: Boolean = false,
     )
 
+    /** Binds a collector's shared admission capability to its own declared event contract. */
+    private inner class CollectorEventSink(
+        private val descriptor: CollectorDescriptor,
+    ) : EventSink {
+        override fun captureToken(): AdmissionToken? = this@ExperimentRuntime.captureToken()
+
+        override suspend fun emit(token: AdmissionToken, event: EventDraft): EmitResult =
+            if (event.collectorId != descriptor.id) {
+                EmitResult.ContractViolation
+            } else {
+                this@ExperimentRuntime.emit(token, event)
+            }
+
+        override suspend fun latestEvent(collectorId: String): RecordedEvent? {
+            require(collectorId == descriptor.id) { "Collector cannot inspect another collector's event" }
+            return this@ExperimentRuntime.latestEvent(collectorId)
+        }
+    }
+
     private companion object {
         val EXPORTABLE_STATES = setOf(
             ExperimentState.RUNNING,
@@ -745,6 +850,7 @@ class ExperimentRuntime(
         const val INCIDENT_STORAGE_WRITE_FAILED = "STORAGE_WRITE_FAILED"
         const val INCIDENT_PAUSE_PERSISTENCE_FAILED = "PAUSE_PERSISTENCE_FAILED"
         const val MAXIMUM_SURVEY_ANSWERS_BYTES = 60 * 1024
+        const val INTERVENTION_COLLECTOR_ID = "interventions.v1"
     }
 }
 

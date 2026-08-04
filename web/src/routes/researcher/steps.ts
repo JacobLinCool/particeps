@@ -39,7 +39,7 @@ export const STEPS: readonly StepDefinition[] = [
     id: 'study',
     icon: 'document',
     // Three root keys the study step no longer owns: both identifiers are derived and shown on the
-    // sign step, and `minimum_app_version` is pinned with no control anywhere. `stepForPath`'s
+    // sign step, while platform and `minimum_client_version` are pinned with no control anywhere.
     // `?? 'sign'` fallback routes them to the step that now holds them.
     paths: [
       'schema_version',

@@ -1,14 +1,9 @@
 /**
  * Colouring for the byte pane.
  *
- * Three roles and one exception, deliberately fewer than an editor would use: keys, string
+ * Three roles, deliberately fewer than an editor would use: keys, string
  * values, and numbers-and-booleans. A fourth colour would invite a fifth, and the pane would stop
  * being a view of the bytes and start being a place to edit them.
- *
- * The exception is the opaque blob. `tink_hpke_public_keyset` is re-emitted from Gson's
- * `JsonObject.toString()` with no whitespace at all, so it is drawn as one collapsed line in the
- * colour reserved for things nobody is meant to read. Pretty-printing it would misrepresent the
- * bytes that get signed.
  */
 
 export type ByteRole = 'key' | 'str' | 'num' | 'blob' | 'plain';
@@ -19,9 +14,9 @@ export interface ByteSpan {
 }
 
 /** Keys whose value is opaque. Everything here renders in --binary, collapsed to one line. */
-export const OPAQUE_KEYS = ['tink_hpke_public_keyset'] as const;
+export const OPAQUE_KEYS: readonly string[] = [];
 
-/** Walks a JSON value from `start`, string-aware, and returns the index just past it. */
+/** Walks a JSON value from `start`, respecting string boundaries, and returns the next index. */
 function endOfValue(text: string, start: number): number {
   const open = text[start];
   if (open !== '{' && open !== '[') {

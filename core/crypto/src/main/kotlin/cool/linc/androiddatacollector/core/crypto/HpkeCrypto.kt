@@ -1,102 +1,95 @@
 package cool.linc.androiddatacollector.core.crypto
 
+import com.google.crypto.tink.AccessesPartialKey
 import com.google.crypto.tink.HybridDecrypt
 import com.google.crypto.tink.HybridEncrypt
 import com.google.crypto.tink.InsecureSecretKeyAccess
-import com.google.crypto.tink.KeyStatus
-import com.google.crypto.tink.KeyTemplates
 import com.google.crypto.tink.KeysetHandle
 import com.google.crypto.tink.RegistryConfiguration
-import com.google.crypto.tink.TinkJsonProtoKeysetFormat
 import com.google.crypto.tink.hybrid.HybridConfig
 import com.google.crypto.tink.hybrid.HpkeParameters
 import com.google.crypto.tink.hybrid.HpkePrivateKey
 import com.google.crypto.tink.hybrid.HpkePublicKey
+import com.google.crypto.tink.subtle.X25519
+import com.google.crypto.tink.util.Bytes
+import com.google.crypto.tink.util.SecretBytes
 
-data class HpkeKeysetPair(
-    val privateKeysetJson: String,
-    val publicKeysetJson: String,
+data class HpkeKeyPair(
+    val privateKey: ByteArray,
+    val publicKey: ByteArray,
 )
 
+/** RFC 9180 base-mode X25519/HKDF-SHA256/AES-256-GCM with raw, prefix-free keys. */
+@AccessesPartialKey
 object HpkeCrypto {
-    private const val TEMPLATE = "DHKEM_X25519_HKDF_SHA256_HKDF_SHA256_AES_256_GCM"
+    private val PARAMETERS = HpkeParameters.builder()
+        .setKemId(HpkeParameters.KemId.DHKEM_X25519_HKDF_SHA256)
+        .setKdfId(HpkeParameters.KdfId.HKDF_SHA256)
+        .setAeadId(HpkeParameters.AeadId.AES_256_GCM)
+        .setVariant(HpkeParameters.Variant.NO_PREFIX)
+        .build()
 
     init {
         HybridConfig.register()
     }
 
-    fun generateKeyset(): HpkeKeysetPair {
-        val privateHandle = KeysetHandle.generateNew(KeyTemplates.get(TEMPLATE))
-        return HpkeKeysetPair(
-            privateKeysetJson = TinkJsonProtoKeysetFormat.serializeKeyset(
-                privateHandle,
-                InsecureSecretKeyAccess.get(),
-            ),
-            publicKeysetJson = TinkJsonProtoKeysetFormat.serializeKeysetWithoutSecret(
-                privateHandle.publicKeysetHandle,
-            ),
-        )
+    fun generateKeyPair(): HpkeKeyPair {
+        val privateKey = X25519.generatePrivateKey()
+        return HpkeKeyPair(privateKey, X25519.publicFromPrivate(privateKey))
+    }
+
+    fun validatePublicKey(publicKey: ByteArray) {
+        publicHandle(publicKey)
+            .getPrimitive(RegistryConfiguration.get(), HybridEncrypt::class.java)
+            .encrypt(ByteArray(0), VALIDATION_CONTEXT)
     }
 
     fun encrypt(
-        publicKeysetJson: String,
+        publicKey: ByteArray,
         plaintext: ByteArray,
         contextInfo: ByteArray,
-    ): ByteArray {
-        val handle = TinkJsonProtoKeysetFormat.parseKeysetWithoutSecret(publicKeysetJson)
-        validatePublicHandle(handle)
-        val primitive = handle.getPrimitive(RegistryConfiguration.get(), HybridEncrypt::class.java)
-        return primitive.encrypt(plaintext, contextInfo)
-    }
-
-    fun validatePublicKeyset(publicKeysetJson: String) {
-        val handle = TinkJsonProtoKeysetFormat.parseKeysetWithoutSecret(publicKeysetJson)
-        validatePublicHandle(handle)
-        handle.getPrimitive(RegistryConfiguration.get(), HybridEncrypt::class.java)
-    }
+    ): ByteArray = publicHandle(publicKey)
+        .getPrimitive(RegistryConfiguration.get(), HybridEncrypt::class.java)
+        .encrypt(plaintext, contextInfo)
+        .also { require(it.size == plaintext.size + ENCAPSULATED_KEY_BYTES + TAG_BYTES) { "Unexpected HPKE output size" } }
 
     fun decrypt(
-        privateKeysetJson: String,
+        privateKey: ByteArray,
         ciphertext: ByteArray,
         contextInfo: ByteArray,
     ): ByteArray {
-        val handle = TinkJsonProtoKeysetFormat.parseKeyset(
-            privateKeysetJson,
-            InsecureSecretKeyAccess.get(),
+        require(ciphertext.size >= ENCAPSULATED_KEY_BYTES + TAG_BYTES) { "Truncated HPKE ciphertext" }
+        return privateHandle(privateKey)
+            .getPrimitive(RegistryConfiguration.get(), HybridDecrypt::class.java)
+            .decrypt(ciphertext, contextInfo)
+    }
+
+    private fun publicHandle(raw: ByteArray): KeysetHandle {
+        require(raw.size == RAW_KEY_BYTES) { "X25519 public key must be 32 bytes" }
+        val key = HpkePublicKey.create(PARAMETERS, Bytes.copyFrom(raw), null)
+        return handle(key)
+    }
+
+    private fun privateHandle(raw: ByteArray): KeysetHandle {
+        require(raw.size == RAW_KEY_BYTES) { "X25519 private key must be 32 bytes" }
+        val publicKey = HpkePublicKey.create(
+            PARAMETERS,
+            Bytes.copyFrom(X25519.publicFromPrivate(raw)),
+            null,
         )
-        validatePrivateHandle(handle)
-        val primitive = handle.getPrimitive(RegistryConfiguration.get(), HybridDecrypt::class.java)
-        return primitive.decrypt(ciphertext, contextInfo)
+        val privateKey = HpkePrivateKey.create(
+            publicKey,
+            SecretBytes.copyFrom(raw, InsecureSecretKeyAccess.get()),
+        )
+        return handle(privateKey)
     }
 
-    private fun validatePublicHandle(handle: KeysetHandle) {
-        require(handle.size() == 1) { "HPKE public keyset must contain exactly one key" }
-        val entry = handle.getAt(0)
-        require(entry.isPrimary && entry.status == KeyStatus.ENABLED) { "HPKE public key must be primary and enabled" }
-        val key = entry.key as? HpkePublicKey
-            ?: throw IllegalArgumentException("Export key must be an HPKE public key")
-        validateParameters(key.parameters)
-    }
+    private fun handle(key: com.google.crypto.tink.Key): KeysetHandle = KeysetHandle.newBuilder()
+        .addEntry(KeysetHandle.importKey(key).withRandomId().makePrimary())
+        .build()
 
-    private fun validatePrivateHandle(handle: KeysetHandle) {
-        require(handle.size() == 1) { "HPKE private keyset must contain exactly one key" }
-        val entry = handle.getAt(0)
-        require(entry.isPrimary && entry.status == KeyStatus.ENABLED) { "HPKE private key must be primary and enabled" }
-        val key = entry.key as? HpkePrivateKey
-            ?: throw IllegalArgumentException("Export decryption key must be an HPKE private key")
-        validateParameters(key.parameters)
-    }
-
-    private fun validateParameters(parameters: HpkeParameters) {
-        require(parameters.kemId == HpkeParameters.KemId.DHKEM_X25519_HKDF_SHA256) {
-            "Export HPKE KEM must be X25519/HKDF-SHA256"
-        }
-        require(parameters.kdfId == HpkeParameters.KdfId.HKDF_SHA256) {
-            "Export HPKE KDF must be HKDF-SHA256"
-        }
-        require(parameters.aeadId == HpkeParameters.AeadId.AES_256_GCM) {
-            "Export HPKE AEAD must be AES-256-GCM"
-        }
-        require(parameters.variant == HpkeParameters.Variant.TINK) { "Export HPKE key must use the TINK variant" }
-    }
+    const val RAW_KEY_BYTES = 32
+    const val ENCAPSULATED_KEY_BYTES = 32
+    const val TAG_BYTES = 16
+    private val VALIDATION_CONTEXT = "adc-hpke-public-key-validation".toByteArray(Charsets.US_ASCII)
 }

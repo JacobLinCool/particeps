@@ -1,5 +1,5 @@
 <script lang="ts">
-  /** All seven, always. A study uses some of them; which ones is a question only the phone can
+  /** All twelve, always. A study uses some of them; which ones is a question only the phone can
    *  answer, and it answers it on the screen before the one that asks for consent. */
   import SourceTile from './SourceTile.svelte';
   import { sourceDetail, sourceName, type SourceEntry } from './content';

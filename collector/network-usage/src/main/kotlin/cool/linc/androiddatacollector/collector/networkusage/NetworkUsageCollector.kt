@@ -9,6 +9,7 @@ import cool.linc.androiddatacollector.core.definition.CollectorConfiguration
 import cool.linc.androiddatacollector.core.definition.NetworkTransport
 import cool.linc.androiddatacollector.core.definition.NetworkUsageConfiguration
 import cool.linc.androiddatacollector.core.collector.PrivacyClass
+import cool.linc.androiddatacollector.core.collector.ProtocolEventContracts
 import cool.linc.androiddatacollector.core.collector.Collector
 import cool.linc.androiddatacollector.core.collector.CollectorContext
 import cool.linc.androiddatacollector.core.collector.CollectorDescriptor
@@ -35,10 +36,9 @@ class NetworkUsageCollectorPlugin(
 
     override val descriptor = CollectorDescriptor(
         id = NetworkUsageConfiguration.ID,
-        payloadSchemaVersion = 1,
         displayName = "Aggregate network usage",
         privacyClass = PrivacyClass.SENSITIVE,
-        maximumEncodedEventBytes = 2_048,
+        eventContract = requireNotNull(ProtocolEventContracts[NetworkUsageConfiguration.ID]),
     )
 
     override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
@@ -152,9 +152,16 @@ private class NetworkUsageCollector(
                         ),
                     ),
                 )
-                if (result == EmitResult.StorageFailure) {
-                    mutableHealth.value = CollectorHealth(CollectorStatus.FAILED, "STORAGE_WRITE_FAILED")
-                    return
+                when (result) {
+                    EmitResult.ContractViolation -> {
+                        mutableHealth.value = CollectorHealth(CollectorStatus.FAILED, "EVENT_CONTRACT_VIOLATION")
+                        return
+                    }
+                    EmitResult.StorageFailure -> {
+                        mutableHealth.value = CollectorHealth(CollectorStatus.FAILED, "STORAGE_WRITE_FAILED")
+                        return
+                    }
+                    else -> Unit
                 }
             }
             coverageStartUtcMillis = end

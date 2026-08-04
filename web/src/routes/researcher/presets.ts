@@ -29,14 +29,18 @@ export const PRESETS = {
   // a preset row that needs a second line costs 50px on the card, and the sixth value is the one
   // the box reaches in two keystrokes. 5 Hz is typed.
   sampling_period_us: [1, 10, 50, 100, 200],
+  ambient_sampling_period_us: [0.2, 0.5, 1, 5, 10],
   // Seconds. Zero is unbatched delivery and is a real choice, not an empty box.
   maximum_report_latency_us: [0, 1, 5, 30, 60],
+  change_threshold_millilux: [0, 1, 10, 100, 1_000],
+  minimum_event_interval_ms: [0.1, 0.5, 1, 10, 60],
+  change_threshold_millimeters: [0, 1, 10, 100, 1_000],
   // 6 hours comes off the shortlist and stays a rung on the ladder below, one arrow press from 4.
   poll_interval_minutes: [1, 5, 15, 60, 1_440],
   interval_millis: [1_000, 10_000, 60_000, 300_000, 3_600_000],
   maximum_batch_delay_millis: [0, 30_000, 300_000, 3_600_000, 86_400_000],
   // 1 km is a kilometre of walking between fixes; it is typed, not clicked.
-  minimum_displacement_meters: [0, 5, 25, 100],
+  minimum_displacement_millimeters: [0, 5, 25, 100],
   trajectory_sampling_hz: [30, 60, 120],
   // `DEFAULT_LOCAL_BYTES` rather than a fourth literal: the study opens on that value, so the chip
   // showing it has to be the same number and cannot be left behind if the default moves.

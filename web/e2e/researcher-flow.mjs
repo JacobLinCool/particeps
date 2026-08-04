@@ -19,21 +19,21 @@
  *      comparison worth making — and because agreement alone would still hold for a page that
  *      invented one string and printed it everywhere, both key names are also recomputed here from
  *      the key material in the signed file, by an implementation that is not the site's.
- *   2. The bytes are Gson's bytes. The study text below is deliberately hostile — an em dash, CJK,
+ *   2. The bytes are RFC 8785 JCS bytes. The study text below is deliberately hostile — an em dash, CJK,
  *      an emoji, a quote, a backslash, a newline, and characters Gson leaves alone — and the
  *      canonical JSON the page hands over is fed back through `researcher-tools canonicalize`,
- *      which must return it unchanged. An encoder that "helpfully" escapes `<` or `&`, or that
- *      emits `—` for the em dash, fails here and only here.
+ *      which must return it unchanged.
  *
  *   pnpm build && pnpm exec http-server build -p 4173   # or any static server
  *   node e2e/researcher-flow.mjs
  */
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
-import { createHash, createPrivateKey, createPublicKey } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ed25519, x25519 } from '@noble/curves/ed25519.js';
 
 const ORIGIN = process.env.ORIGIN ?? 'http://localhost:4173';
 const CLI = join(
@@ -92,12 +92,12 @@ await page.goto(`${ORIGIN}/researcher/`, { waitUntil: 'networkidle' });
 // Keys, which is the second step now: the page opens on the study, so the rail has to be used to
 // get here. Nothing is typed and no button is pressed to make the keys — the step generates both
 // pairs on arrival, and both names derive from the key material. The two tiles are taken by the
-// names they carry, which are those derived names with `-private.key` / `-private.json` after them.
+// names they carry, which are those derived names with `-private.key` after them.
 await page.locator('[data-testid="rail-keys"]').click();
 await page.waitForSelector('[data-testid="step-keys"]');
 await page.waitForTimeout(600);
 const signingTile = page.getByRole('button', { name: /signer-[0-9a-z]{13}-private\.key$/ });
-const hpkeTile = page.getByRole('button', { name: /export-[0-9a-z]{13}-private\.json$/ });
+const hpkeTile = page.getByRole('button', { name: /export-[0-9a-z]{13}-private\.key$/ });
 if ((await signingTile.count()) !== 1) fail('the keys step did not make a signing key on arrival');
 if ((await hpkeTile.count()) !== 1) fail('the keys step did not make an export key on arrival');
 // The step offers nothing to type at all. A key-ID field here is the thing that was removed, and a
@@ -224,7 +224,7 @@ for (const id of ['read-configuration-session', 'read-key-session']) {
   await page.locator(`[data-testid="${id}"]`).click();
 }
 const staged = await page.locator('[data-testid="step-read"] .note').allTextContents();
-for (const name of ['study-canonical.json', 'export-hpke-private.json']) {
+for (const name of ['study-canonical.json', 'export-hpke-private.key']) {
   if (!staged.some((line) => line.includes(name))) {
     fail(`the read step did not name ${name} after taking it from this tab`);
   }
@@ -241,7 +241,7 @@ if (problems.length) fail('the page logged errors:\n  ' + problems.join('\n  '))
 // `researcher-tools sign --key-id` wants.
 for (const name of [
   `${signerKeyId}-private.key`,
-  `${exportKeyId}-private.json`,
+  `${exportKeyId}-private.key`,
   'study-canonical.json',
   'study.adccfg'
 ]) {
@@ -323,9 +323,9 @@ claim(
   'Required was pressed on Motion alone and App activity came out required too'
 );
 
-// Gson's escape table and nothing else: these appear as themselves, and these are escaped.
+// JCS preserves non-ASCII text and uses JSON escapes only where the string grammar requires them.
 for (const raw of ['—', '瀏覽器建立 🔬', '正體中文 & <ok> = fine.']) {
-  claim(text.includes(raw), `the encoder escaped ${JSON.stringify(raw)}, which Gson emits raw`);
+  claim(text.includes(raw), `the encoder changed ${JSON.stringify(raw)}`);
 }
 for (const escaped of ['E2E Lab \\"Verification\\" \\\\ Group', 'app activity.\\nStays on the phone']) {
   claim(text.includes(escaped), `the encoder did not write ${JSON.stringify(escaped)}`);
@@ -342,8 +342,7 @@ for (const escaped of ['E2E Lab \\"Verification\\" \\\\ Group', 'app activity.\\
 //
 // `lib/adc/ids.ts` is re-implemented below from its own specification rather than imported — a
 // derivation checked against itself proves nothing. Sixty-four bits of SHA-256 over a
-// domain-separated *raw* public key (not the DER, not the Tink JSON), as thirteen base-36
-// characters behind a word stem.
+// domain-separated raw public key, as thirteen base-36 characters behind a word stem.
 // ---------------------------------------------------------------------------------------------
 
 const keyTag = (domain, raw) =>
@@ -358,50 +357,10 @@ const keyTag = (domain, raw) =>
     .toString(36)
     .padStart(13, '0');
 
-/** The one length-delimited field `number` at the top level of a protobuf message, or `null`. */
-function field(message, number) {
-  let at = 0;
-  const varint = () => {
-    let value = 0;
-    let shift = 0;
-    for (;;) {
-      const byte = message[at];
-      at += 1;
-      value += (byte & 0x7f) * 2 ** shift;
-      if ((byte & 0x80) === 0) return value;
-      shift += 7;
-    }
-  };
-  while (at < message.length) {
-    const key = varint();
-    const wire = key & 7;
-    if (wire === 2) {
-      const length = varint();
-      if (key >>> 3 === number) return message.subarray(at, at + length);
-      at += length;
-    } else if (wire === 0) varint();
-    else if (wire === 5) at += 4;
-    else if (wire === 1) at += 8;
-    else throw new Error(`unreadable protobuf wire type ${wire}`);
-  }
-  return null;
-}
-
-/** X.509 SubjectPublicKeyInfo for Ed25519: fixed length, so the last 32 bytes are the key. */
-const X509_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
-
-const spki = Buffer.from(document.signer.public_key, 'base64');
-claim(
-  spki.length === 44 && spki.subarray(0, 12).equals(X509_PREFIX),
-  'signer.public_key is not an X.509 Ed25519 key'
-);
-const signerRaw = spki.subarray(12);
-
-const exportRaw = field(
-  Buffer.from(document.export.tink_hpke_public_keyset.key[0].keyData.value, 'base64'),
-  3
-);
-claim(exportRaw?.length === 32, 'the public keyset in the file carries no 32-byte X25519 point');
+const signerRaw = Buffer.from(document.signer.public_key, 'base64url');
+const exportRaw = Buffer.from(document.export.hpke_public_key, 'base64url');
+claim(signerRaw.length === 32, 'the configuration carries no raw 32-byte Ed25519 public key');
+claim(exportRaw.length === 32, 'the configuration carries no raw 32-byte X25519 public key');
 
 claim(
   document.signer.key_id === `signer-${keyTag('adc:signer-key-id:v1:', signerRaw)}`,
@@ -421,46 +380,37 @@ claim(
 // And the two files the researcher keeps hold those same keys, so a file named after a key is
 // named after the key that is actually inside it.
 const signingPrivate = readFileSync(join(out, `${signerKeyId}-private.key`), 'utf8');
-const derivedSpki = createPublicKey(
-  createPrivateKey({
-    key: Buffer.from(signingPrivate.trim(), 'base64'),
-    format: 'der',
-    type: 'pkcs8'
-  })
-).export({ format: 'der', type: 'spki' });
+const derivedSigningPublic = ed25519.getPublicKey(Buffer.from(signingPrivate.trim(), 'base64url'));
 claim(
-  Buffer.from(derivedSpki).equals(spki),
+  Buffer.from(derivedSigningPublic).equals(signerRaw),
   `${signerKeyId}-private.key is not the key the configuration is signed under`
 );
 
-const privateKeyset = JSON.parse(readFileSync(join(out, `${exportKeyId}-private.json`), 'utf8'));
-const privateValue = Buffer.from(privateKeyset.key[0].keyData.value, 'base64');
-const publicInPrivate = field(privateValue, 2);
-claim(publicInPrivate !== null, `${exportKeyId}-private.json carries no public half`);
+const exportPrivate = readFileSync(join(out, `${exportKeyId}-private.key`), 'utf8');
+const derivedExportPublic = x25519.getPublicKey(Buffer.from(exportPrivate.trim(), 'base64url'));
 claim(
-  Buffer.from(field(publicInPrivate, 3) ?? []).equals(exportRaw),
-  `${exportKeyId}-private.json cannot decrypt what this study encrypts to`
+  Buffer.from(derivedExportPublic).equals(exportRaw),
+  `${exportKeyId}-private.key cannot decrypt what this study encrypts to`
 );
 
 // The envelope carries exactly the canonical bytes the page also handed over as a file. A
 // researcher who archives one and distributes the other is archiving the right thing.
-// `ADCCFG01`, uint16 key-id length, int32 configuration length, uint16 signature length.
+// `ADCCFG01`, uint16 key-id length, uint32 configuration length, key ID, JCS, signature64.
 const envelope = readFileSync(join(out, 'study.adccfg'));
 claim(envelope.subarray(0, 8).toString('latin1') === 'ADCCFG01', 'the envelope has no magic');
 const keyIdLength = envelope.readUInt16BE(8);
-const configurationLength = envelope.readInt32BE(10);
-const signatureLength = envelope.readUInt16BE(14);
+const configurationLength = envelope.readUInt32BE(10);
 claim(
-  envelope.length === 16 + keyIdLength + configurationLength + signatureLength,
+  envelope.length === 14 + keyIdLength + configurationLength + 64,
   'the envelope lengths do not add up to its size'
 );
 claim(
-  envelope.subarray(16, 16 + keyIdLength).toString('utf8') === signerKeyId,
+  envelope.subarray(14, 14 + keyIdLength).toString('utf8') === signerKeyId,
   'the envelope names a signer other than the one the page showed'
 );
 claim(
   envelope
-    .subarray(16 + keyIdLength, 16 + keyIdLength + configurationLength)
+    .subarray(14 + keyIdLength, 14 + keyIdLength + configurationLength)
     .equals(canonical),
   'the .adccfg does not carry the canonical JSON the page offered beside it'
 );

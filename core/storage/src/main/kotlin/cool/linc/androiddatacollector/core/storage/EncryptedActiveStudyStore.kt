@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
+import cool.linc.androiddatacollector.core.protocol.ActiveStudyRecord
 import cool.linc.androiddatacollector.core.protocol.ActiveStudyStore
 import java.nio.ByteBuffer
 import java.security.KeyStore
@@ -23,7 +24,7 @@ class EncryptedActiveStudyStore(
     private val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
     private val atomicFile = AtomicFile(context.noBackupFilesDir.resolve(FILE_NAME))
 
-    override suspend fun load(): ByteArray? = withContext(Dispatchers.IO) {
+    override suspend fun load(): ActiveStudyRecord? = withContext(Dispatchers.IO) {
         mutex.withLock {
             if (!atomicFile.baseFile.exists()) return@withLock null
             val bytes = atomicFile.readFully()
@@ -32,22 +33,34 @@ class EncryptedActiveStudyStore(
             }
             val key = keyStore.getKey(KEY_ALIAS, null) as? SecretKey
                 ?: error("Active-study encryption key is unavailable")
-            decrypt(bytes, key)
+            decodeRecord(decrypt(bytes, key))
         }
     }
 
     override suspend fun save(envelopeBytes: ByteArray) = withContext(Dispatchers.IO) {
         require(envelopeBytes.size in 1..MAXIMUM_PLAINTEXT_BYTES) { "Invalid signed study size" }
         mutex.withLock {
-            val encrypted = encrypt(envelopeBytes, getOrCreateKey())
-            val output = atomicFile.startWrite()
-            try {
-                output.write(encrypted)
-                atomicFile.finishWrite(output)
-            } catch (failure: Throwable) {
-                atomicFile.failWrite(output)
-                throw failure
-            }
+            writeRecord(byteArrayOf(ACTIVE_RECORD) + envelopeBytes, getOrCreateKey())
+        }
+    }
+
+    override suspend fun markDeletionPending(
+        experimentId: String,
+        maximumLocalBytes: Long,
+    ) = withContext(Dispatchers.IO) {
+        val deletion = ActiveStudyRecord.DeletionPending(experimentId, maximumLocalBytes)
+        mutex.withLock {
+            require(atomicFile.baseFile.exists()) { "No active study to delete" }
+            val key = keyStore.getKey(KEY_ALIAS, null) as? SecretKey
+                ?: error("Active-study encryption key is unavailable")
+            val id = deletion.experimentId.toByteArray(Charsets.US_ASCII)
+            val plaintext = ByteBuffer.allocate(1 + 1 + id.size + Long.SIZE_BYTES)
+                .put(DELETION_RECORD)
+                .put(id.size.toByte())
+                .put(id)
+                .putLong(deletion.maximumLocalBytes)
+                .array()
+            writeRecord(plaintext, key)
         }
     }
 
@@ -73,6 +86,39 @@ class EncryptedActiveStudyStore(
             .put(cipher.iv)
             .put(ciphertext)
             .array()
+    }
+
+    private fun writeRecord(plaintext: ByteArray, key: SecretKey) {
+        val encrypted = encrypt(plaintext, key)
+        val output = atomicFile.startWrite()
+        try {
+            output.write(encrypted)
+            atomicFile.finishWrite(output)
+        } catch (failure: Throwable) {
+            atomicFile.failWrite(output)
+            throw failure
+        }
+    }
+
+    private fun decodeRecord(plaintext: ByteArray): ActiveStudyRecord {
+        require(plaintext.isNotEmpty()) { "Active-study record is empty" }
+        val buffer = ByteBuffer.wrap(plaintext)
+        return when (buffer.get()) {
+            ACTIVE_RECORD -> {
+                require(buffer.hasRemaining()) { "Active-study envelope is empty" }
+                ActiveStudyRecord.Active(ByteArray(buffer.remaining()).also(buffer::get))
+            }
+            DELETION_RECORD -> {
+                require(buffer.remaining() >= 1 + Long.SIZE_BYTES) { "Deletion record is truncated" }
+                val idLength = buffer.get().toInt() and 0xff
+                require(idLength in 3..64 && buffer.remaining() == idLength + Long.SIZE_BYTES) {
+                    "Deletion record length is invalid"
+                }
+                val experimentId = ByteArray(idLength).also(buffer::get).toString(Charsets.US_ASCII)
+                ActiveStudyRecord.DeletionPending(experimentId, buffer.long)
+            }
+            else -> throw IllegalArgumentException("Unsupported active-study record")
+        }
     }
 
     private fun decrypt(
@@ -116,8 +162,10 @@ class EncryptedActiveStudyStore(
         const val IV_BYTES = 12
         const val TAG_BITS = 128
         const val MAXIMUM_PLAINTEXT_BYTES = 1_100_000
-        const val MAXIMUM_ENCODED_BYTES = MAXIMUM_PLAINTEXT_BYTES + 64
+        const val MAXIMUM_ENCODED_BYTES = MAXIMUM_PLAINTEXT_BYTES + 65
         val HEADER = "ADCACT01".toByteArray(Charsets.US_ASCII)
-        val MINIMUM_ENCODED_BYTES = HEADER.size + IV_BYTES + TAG_BITS / 8 + 1
+        val MINIMUM_ENCODED_BYTES = HEADER.size + IV_BYTES + TAG_BITS / 8 + 2
+        const val ACTIVE_RECORD: Byte = 0
+        const val DELETION_RECORD: Byte = 1
     }
 }

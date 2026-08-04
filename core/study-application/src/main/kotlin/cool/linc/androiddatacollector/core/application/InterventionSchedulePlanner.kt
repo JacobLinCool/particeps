@@ -3,8 +3,10 @@ package cool.linc.androiddatacollector.core.application
 import cool.linc.androiddatacollector.core.definition.DailyLocalSchedule
 import cool.linc.androiddatacollector.core.definition.IntervalSchedule
 import cool.linc.androiddatacollector.core.definition.OneTimeSchedule
+import cool.linc.androiddatacollector.core.definition.RandomWindowSchedule
 import cool.linc.androiddatacollector.core.definition.RelativeClock
 import cool.linc.androiddatacollector.core.definition.StudyConfiguration
+import cool.linc.androiddatacollector.core.definition.InterventionTrigger
 import cool.linc.androiddatacollector.core.model.ExperimentState
 import cool.linc.androiddatacollector.core.model.InterventionOccurrence
 import cool.linc.androiddatacollector.core.model.OccurrenceState
@@ -13,12 +15,17 @@ import cool.linc.androiddatacollector.core.model.StudyMetadata
 import cool.linc.androiddatacollector.core.model.TransitionReason
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
+import kotlin.math.abs
 
-/** Pure, deterministic planner. Android owns only the final best-effort WorkManager delay. */
-class InterventionSchedulePlanner {
+/** Local planner; randomized times become durable occurrences before Android schedules work. */
+class InterventionSchedulePlanner(
+    private val randomIndex: (Int) -> Int = SecureRandom()::nextInt,
+) {
     fun next(
         configuration: StudyConfiguration,
         metadata: StudyMetadata,
@@ -26,13 +33,26 @@ class InterventionSchedulePlanner {
         zoneId: ZoneId,
         triggerId: String? = null,
     ): List<InterventionOccurrence> {
-        if (metadata.state in TERMINAL_STATES) return emptyList()
+        if (metadata.state != ExperimentState.RUNNING) return emptyList()
         val firstStart = metadata.transitions.firstOrNull { it.reason == TransitionReason.PARTICIPANT_STARTED }?.time
             ?: return emptyList()
-        val lifetimeEnd = now.wallTimeUtcMillis - elapsedMillis(firstStart, now) +
+        val effectiveStartWallUtcMillis = now.wallTimeUtcMillis - elapsedMillis(firstStart, now)
+        val lifetimeEnd = effectiveStartWallUtcMillis +
             configuration.durationHours * HOUR_MILLIS
         return configuration.interventions.flatMap { intervention ->
             intervention.triggers.filter { triggerId == null || it.id == triggerId }.mapNotNull { trigger ->
+                if (trigger.schedule is RandomWindowSchedule) {
+                    return@mapNotNull nextRandomOccurrence(
+                        configuration,
+                        metadata,
+                        intervention.id,
+                        trigger,
+                        effectiveStartWallUtcMillis,
+                        lifetimeEnd,
+                        now,
+                        zoneId,
+                    )
+                }
                 val candidates = when (val schedule = trigger.schedule) {
                     is OneTimeSchedule -> sequenceOf(
                         relativeCandidate(schedule.offsetMinutes.toLong(), schedule.clock, metadata, firstStart, now) to
@@ -46,6 +66,7 @@ class InterventionSchedulePlanner {
                         }
                     is DailyLocalSchedule -> dailyCandidates(firstStart, lifetimeEnd, schedule.localTime, zoneId)
                         .mapIndexed { index, scheduled -> scheduled to "daily:$index" }
+                    is RandomWindowSchedule -> error("Handled above")
                 }
                 candidates.takeWhile { it.first.wallTimeUtcMillis < lifetimeEnd }
                     .map { (scheduled, key) ->
@@ -69,6 +90,100 @@ class InterventionSchedulePlanner {
                     }
             }
         }
+    }
+
+    private fun nextRandomOccurrence(
+        configuration: StudyConfiguration,
+        metadata: StudyMetadata,
+        interventionId: String,
+        trigger: InterventionTrigger,
+        effectiveStartWallUtcMillis: Long,
+        lifetimeEnd: Long,
+        now: ResearchTime,
+        zoneId: ZoneId,
+    ): InterventionOccurrence? {
+        val schedule = trigger.schedule as RandomWindowSchedule
+        val existing = metadata.occurrences.values.filter {
+            it.interventionId == interventionId && it.triggerId == trigger.id &&
+                it.scheduleKey.startsWith(RANDOM_KEY_PREFIX)
+        }
+        existing.filter { it.state in PENDING_STATES }
+            .minByOrNull { it.scheduledFor.wallTimeUtcMillis }
+            ?.let { return it }
+        if (existing.size >= schedule.maximumOccurrencesTotal) return null
+        val materializedKeys = existing.mapTo(mutableSetOf()) { it.scheduleKey }
+        // Exact keys prevent a repeated local date from duplicating work. The chronological floor
+        // prevents wall-clock rollback from reopening elapsed time without treating local-date
+        // ordering as chronology when the participant crosses the date line.
+        val chronologicalFloor = existing.maxOfOrNull { it.scheduledFor.wallTimeUtcMillis }
+
+        val firstDate = Instant.ofEpochMilli(effectiveStartWallUtcMillis).atZone(zoneId).toLocalDate()
+        val finalDate = Instant.ofEpochMilli(lifetimeEnd - 1).atZone(zoneId).toLocalDate()
+        var date = firstDate
+        while (!date.isAfter(finalDate)) {
+            val datePrefix = "$RANDOM_KEY_PREFIX$date:"
+            val remainingDailyCapacity = schedule.maximumOccurrencesPerDay -
+                existing.count { it.scheduleKey.startsWith(datePrefix) }
+            val remainingTotalCapacity = schedule.maximumOccurrencesTotal - existing.size
+            if (remainingDailyCapacity > 0 && remainingTotalCapacity > 0) {
+                schedule.localWindows.forEachIndexed { windowIndex, window ->
+                    repeat(schedule.occurrencesPerWindow) { ordinal ->
+                        val key = "$RANDOM_KEY_PREFIX$date:$windowIndex:$ordinal"
+                        if (key in materializedKeys) return@repeat
+                        val previousKey = "$RANDOM_KEY_PREFIX$date:$windowIndex:${ordinal - 1}"
+                        val notBefore = existing.firstOrNull { it.scheduleKey == previousKey }
+                            ?.scheduledFor
+                            ?.wallTimeUtcMillis
+                            ?.plus(schedule.minimumSeparationMinutes * MINUTE_MILLIS)
+                            ?: Long.MIN_VALUE
+                        val remainingUnmaterializedInWindow =
+                            (ordinal + 1 until schedule.occurrencesPerWindow).count { later ->
+                                "$RANDOM_KEY_PREFIX$date:$windowIndex:$later" !in materializedKeys
+                            }
+                        val remainingInWindow = minOf(
+                            remainingUnmaterializedInWindow,
+                            remainingDailyCapacity - 1,
+                            remainingTotalCapacity - 1,
+                        )
+                        val latestMinute = window.endMinute - 1 -
+                            remainingInWindow * schedule.minimumSeparationMinutes
+                        val eligible = (window.startMinute..latestMinute).mapNotNull { minute ->
+                            val wallMillis = localMinuteInstant(date, minute, zoneId)
+                                ?: return@mapNotNull null
+                            if (
+                                wallMillis < effectiveStartWallUtcMillis ||
+                                wallMillis < now.wallTimeUtcMillis ||
+                                (chronologicalFloor != null && wallMillis <= chronologicalFloor) ||
+                                wallMillis < notBefore ||
+                                wallMillis >= lifetimeEnd
+                            ) return@mapNotNull null
+                            val separated = existing.all { occurrence ->
+                                abs(occurrence.scheduledFor.wallTimeUtcMillis - wallMillis) >=
+                                    schedule.minimumSeparationMinutes * MINUTE_MILLIS
+                            }
+                            wallMillis.takeIf { separated }
+                        }
+                        if (eligible.isEmpty()) return@repeat
+                        val wallMillis = eligible[randomIndex(eligible.size)]
+                        val scheduled = estimateResearchTime(wallMillis, now)
+                        return InterventionOccurrence(
+                            occurrenceId = occurrenceId(configuration, interventionId, trigger.id, key),
+                            interventionId = interventionId,
+                            triggerId = trigger.id,
+                            scheduleKey = key,
+                            scheduledFor = scheduled,
+                            expiresAtUtcMillis = minOf(
+                                wallMillis + trigger.availabilityMinutes * MINUTE_MILLIS,
+                                lifetimeEnd,
+                            ),
+                            state = OccurrenceState.SCHEDULED,
+                        )
+                    }
+                }
+            }
+            date = date.plusDays(1)
+        }
+        return null
     }
 
     private fun relativeCandidate(
@@ -123,7 +238,7 @@ class InterventionSchedulePlanner {
         val firstDate = Instant.ofEpochMilli(firstStart.wallTimeUtcMillis).atZone(zoneId).toLocalDate()
         val time = LocalTime.parse(localTime)
         return generateSequence(firstDate) { it.plusDays(1) }
-            .map { date -> date.atTime(time).atZone(zoneId).toInstant().toEpochMilli() }
+            .mapNotNull { date -> localMinuteInstant(date, time.hour * 60 + time.minute, zoneId) }
             .filter { it >= firstStart.wallTimeUtcMillis }
             .takeWhile { it < lifetimeEnd }
             .map { estimateResearchTime(it, firstStart) }
@@ -159,7 +274,17 @@ class InterventionSchedulePlanner {
     private companion object {
         const val MINUTE_MILLIS = 60_000L
         const val HOUR_MILLIS = 60 * MINUTE_MILLIS
-        val TERMINAL_STATES = setOf(ExperimentState.COMPLETED, ExperimentState.WITHDRAWN)
+        const val RANDOM_KEY_PREFIX = "random:"
         val PENDING_STATES = setOf(OccurrenceState.SCHEDULED, OccurrenceState.POSTING)
     }
+}
+
+/**
+ * Resolves a signed local minute without silently moving it outside its window. Gap minutes do not
+ * exist and are skipped. During an overlap, the first chronological occurrence is chosen.
+ */
+internal fun localMinuteInstant(date: LocalDate, minute: Int, zoneId: ZoneId): Long? {
+    val local = date.atTime(LocalTime.of(minute / 60, minute % 60))
+    return zoneId.rules.getValidOffsets(local)
+        .minOfOrNull { offset -> local.atOffset(offset).toInstant().toEpochMilli() }
 }

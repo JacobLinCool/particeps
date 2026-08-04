@@ -9,10 +9,15 @@ import cool.linc.androiddatacollector.core.model.ResearchTime
 import cool.linc.androiddatacollector.core.model.StorageUsage
 import cool.linc.androiddatacollector.core.model.StudyMetadata
 import cool.linc.androiddatacollector.core.model.StudyStore
+import cool.linc.androiddatacollector.core.collector.AccessKind
 import cool.linc.androiddatacollector.core.collector.AccessRequirement
 import cool.linc.androiddatacollector.core.collector.Collector
 import cool.linc.androiddatacollector.core.collector.CollectorContext
 import cool.linc.androiddatacollector.core.collector.CollectorDescriptor
+import cool.linc.androiddatacollector.core.collector.CollectorEventContract
+import cool.linc.androiddatacollector.core.collector.EventFieldContract
+import cool.linc.androiddatacollector.core.collector.EventFieldType
+import cool.linc.androiddatacollector.core.collector.EventPayloadContract
 import cool.linc.androiddatacollector.core.collector.CollectorHealth
 import cool.linc.androiddatacollector.core.collector.CollectorPlugin
 import cool.linc.androiddatacollector.core.collector.CollectorRegistry
@@ -45,12 +50,72 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ExperimentRuntimeTest {
+    @Test
+    fun requiredMissingHardwareBlocksEnrollment() = runTest {
+        val clocks = FakeClocks()
+        val plugin = FakeCollectorPlugin(
+            clocks,
+            AccessRequirement(AccessKind.GYROSCOPE_HARDWARE, required = true),
+        )
+        val runtime = ExperimentRuntime(
+            configuration = configuration(),
+            store = InMemoryStudyStore(),
+            collectorRegistry = CollectorRegistry(listOf(plugin)),
+            clocks = clocks,
+            scope = backgroundScope,
+            availableAccess = { emptySet() },
+        )
+
+        assertEquals(CommandResult.Success, runtime.initialize())
+        assertEquals(CommandResult.Success, runtime.reviewStudy())
+        assertEquals(CommandResult.Success, runtime.acceptConsent())
+        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), runtime.completeAccessSetup(emptySet()))
+        assertEquals(ExperimentState.ACCESS_SETUP, runtime.snapshot.value.metadata?.state)
+        assertEquals(0, plugin.collector.startCount)
+    }
+
+    @Test
+    fun optionalMissingHardwareBlocksOnlyItsCollectorAndStartsWhenAccessAppears() = runTest {
+        val clocks = FakeClocks()
+        val plugin = FakeCollectorPlugin(
+            clocks,
+            AccessRequirement(AccessKind.GYROSCOPE_HARDWARE, required = false),
+        )
+        var available = emptySet<AccessKind>()
+        val runtime = ExperimentRuntime(
+            configuration = configuration(),
+            store = InMemoryStudyStore(),
+            collectorRegistry = CollectorRegistry(listOf(plugin)),
+            clocks = clocks,
+            scope = backgroundScope,
+            availableAccess = { available },
+        )
+
+        assertEquals(CommandResult.Success, runtime.initialize())
+        assertEquals(CommandResult.Success, runtime.reviewStudy())
+        assertEquals(CommandResult.Success, runtime.acceptConsent())
+        assertEquals(CommandResult.Success, runtime.completeAccessSetup(emptySet()))
+        assertEquals(CommandResult.Success, runtime.start())
+        assertEquals(0, plugin.collector.startCount)
+        assertEquals(
+            CollectorHealth(CollectorStatus.BLOCKED_ACCESS, "ACCESS_UNAVAILABLE"),
+            runtime.snapshot.value.collectorHealth[AppLifecycleConfiguration.ID],
+        )
+
+        assertEquals(CommandResult.Success, runtime.pause())
+        available = setOf(AccessKind.GYROSCOPE_HARDWARE)
+        assertEquals(CommandResult.Success, runtime.resume())
+        assertEquals(1, plugin.collector.startCount)
+        assertEquals(CollectorStatus.ACTIVE, plugin.collector.health.value.status)
+    }
+
     @Test
     fun participantCommandsGateAndPersistCollectorEvents() = runTest {
         val store = InMemoryStudyStore()
@@ -123,6 +188,82 @@ class ExperimentRuntimeTest {
     }
 
     @Test
+    fun failedInitialStartRetainsCollectorOwnershipUntilShutdownReleasesIt() = runTest {
+        val clocks = FakeClocks()
+        val plugin = FakeCollectorPlugin(clocks)
+        val runtime = ExperimentRuntime(
+            configuration = configuration(),
+            store = InMemoryStudyStore(),
+            collectorRegistry = CollectorRegistry(listOf(plugin)),
+            clocks = clocks,
+            scope = backgroundScope,
+            availableAccess = { emptySet() },
+        )
+        assertEquals(CommandResult.Success, runtime.initialize())
+        plugin.collector.failNextStartWithOwnedResources = true
+        assertEquals(CommandResult.Success, runtime.reviewStudy())
+        assertEquals(CommandResult.Success, runtime.acceptConsent())
+        assertEquals(CommandResult.Success, runtime.completeAccessSetup(emptySet()))
+
+        assertEquals(CommandResult.Success, runtime.start())
+        assertTrue(plugin.collector.requiresStop)
+        assertEquals(CollectorStatus.FAILED, runtime.snapshot.value.collectorHealth[AppLifecycleConfiguration.ID]?.status)
+
+        runtime.shutdown()
+        assertEquals(1, plugin.collector.stopCount)
+        assertFalse(plugin.collector.requiresStop)
+    }
+
+    @Test
+    fun failedTerminalStopRemainsOwnedAndShutdownRetriesIt() = runTest {
+        val clocks = FakeClocks()
+        val plugin = FakeCollectorPlugin(clocks)
+        val runtime = ExperimentRuntime(
+            configuration = configuration(),
+            store = InMemoryStudyStore(),
+            collectorRegistry = CollectorRegistry(listOf(plugin)),
+            clocks = clocks,
+            scope = backgroundScope,
+            availableAccess = { emptySet() },
+        )
+        start(runtime)
+        plugin.collector.failNextStopWithOwnedResources = true
+
+        assertEquals(CommandResult.Success, runtime.finishEarly())
+        assertEquals(1, plugin.collector.stopCount)
+        assertTrue(plugin.collector.requiresStop)
+
+        runtime.shutdown()
+        assertEquals(2, plugin.collector.stopCount)
+        assertFalse(plugin.collector.requiresStop)
+    }
+
+    @Test
+    fun collectorEventContractIsEnforcedBeforePersistence() = runTest {
+        val store = InMemoryStudyStore()
+        val clocks = FakeClocks()
+        val plugin = FakeCollectorPlugin(clocks)
+        val runtime = ExperimentRuntime(
+            configuration = configuration(),
+            store = store,
+            collectorRegistry = CollectorRegistry(listOf(plugin)),
+            clocks = clocks,
+            scope = backgroundScope,
+            availableAccess = { emptySet() },
+        )
+        start(runtime)
+
+        assertEquals(EmitResult.ContractViolation, plugin.emit("ACTIVITY_RESUMED", schemaVersion = 2))
+        assertEquals(EmitResult.ContractViolation, plugin.emit("ACTIVITY_RESUMED", collectorId = "other.v1"))
+        assertEquals(
+            EmitResult.ContractViolation,
+            plugin.emit("ACTIVITY_RESUMED", fields = mapOf("source" to "x".repeat(2_000))),
+        )
+        assertTrue(store.events.isEmpty())
+        assertEquals(0L, runtime.snapshot.value.metadata?.eventCount)
+    }
+
+    @Test
     fun surveySubmissionValidatesEveryQuestionTypeAndCommitsExactlyOnce() = runTest {
         val store = InMemoryStudyStore()
         val clocks = FakeClocks()
@@ -145,7 +286,8 @@ class ExperimentRuntimeTest {
             state = OccurrenceState.SCHEDULED,
         )
         runtime.ensureOccurrence(occurrence)
-        assertTrue(runtime.claimOccurrence(occurrence.occurrenceId)?.action is SurveyAction)
+        val claim = runtime.claimOccurrenceIfDue(occurrence.occurrenceId) as OccurrenceClaimResult.Due
+        assertTrue(claim.dispatch.action is SurveyAction)
         runtime.markNotificationPosted(occurrence.occurrenceId)
         assertEquals(OccurrenceState.OPENED, runtime.openOccurrence(occurrence.occurrenceId)?.occurrence?.state)
 
@@ -198,10 +340,163 @@ class ExperimentRuntimeTest {
             state = OccurrenceState.SCHEDULED,
         )
         runtime.ensureOccurrence(occurrence)
-        assertNull(runtime.claimOccurrence(occurrence.occurrenceId))
+        assertEquals(OccurrenceClaimResult.Expired, runtime.claimOccurrenceIfDue(occurrence.occurrenceId))
         assertNull(runtime.openOccurrence(occurrence.occurrenceId))
         assertEquals(OccurrenceState.EXPIRED, runtime.snapshot.value.metadata?.occurrences?.get(occurrence.occurrenceId)?.state)
         assertEquals(listOf("INTERVENTION_SCHEDULED", "SURVEY_EXPIRED"), store.events.map { it.payloadType })
+    }
+
+    @Test
+    fun dedicatedExpiryCheckLeavesEarlyScheduledWorkUntouchedAndExpiresOnce() = runTest {
+        val store = InMemoryStudyStore()
+        val clocks = MutableClocks(1_000)
+        val runtime = ExperimentRuntime(
+            configuration = configuration(surveys = listOf(survey()), interventions = listOf(surveyIntervention())),
+            store = store,
+            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
+            clocks = clocks,
+            scope = backgroundScope,
+            availableAccess = { emptySet() },
+        )
+        start(runtime)
+        val occurrence = surveyOccurrence("c", expiresAtUtcMillis = 5_000)
+        runtime.ensureOccurrence(occurrence)
+
+        clocks.wallTimeUtcMillis = 4_250
+        assertEquals(OccurrenceExpiryResult.NotDue(750), runtime.expireOccurrenceIfDue(occurrence.occurrenceId))
+        assertEquals(
+            OccurrenceState.SCHEDULED,
+            runtime.snapshot.value.metadata?.occurrences?.get(occurrence.occurrenceId)?.state,
+        )
+
+        clocks.wallTimeUtcMillis = 5_000
+        assertEquals(OccurrenceExpiryResult.Expired, runtime.expireOccurrenceIfDue(occurrence.occurrenceId))
+        assertEquals(OccurrenceExpiryResult.Terminal, runtime.expireOccurrenceIfDue(occurrence.occurrenceId))
+        assertEquals(OccurrenceClaimResult.Terminal, runtime.claimOccurrenceIfDue(occurrence.occurrenceId))
+        assertEquals(
+            1,
+            store.events.count { it.payloadType == "SURVEY_EXPIRED" && it.fields["occurrence_id"] == occurrence.occurrenceId },
+        )
+    }
+
+    @Test
+    fun deliveryClaimWaitsForItsWallInstantAndARecoveredPostingClaimIsIdempotent() = runTest {
+        val clocks = MutableClocks(1_000)
+        val runtime = ExperimentRuntime(
+            configuration = configuration(surveys = listOf(survey()), interventions = listOf(surveyIntervention())),
+            store = InMemoryStudyStore(),
+            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
+            clocks = clocks,
+            scope = backgroundScope,
+            availableAccess = { emptySet() },
+        )
+        start(runtime)
+        val occurrence = surveyOccurrence("9", scheduledAtUtcMillis = 3_000, expiresAtUtcMillis = 5_000)
+        runtime.ensureOccurrence(occurrence)
+
+        clocks.wallTimeUtcMillis = 2_500
+        assertEquals(OccurrenceClaimResult.NotDue(500), runtime.claimOccurrenceIfDue(occurrence.occurrenceId))
+        assertEquals(
+            OccurrenceState.SCHEDULED,
+            runtime.snapshot.value.metadata?.occurrences?.get(occurrence.occurrenceId)?.state,
+        )
+
+        clocks.wallTimeUtcMillis = 3_000
+        val first = runtime.claimOccurrenceIfDue(occurrence.occurrenceId) as OccurrenceClaimResult.Due
+        val recovered = runtime.claimOccurrenceIfDue(occurrence.occurrenceId) as OccurrenceClaimResult.Due
+        assertEquals(OccurrenceState.POSTING, first.dispatch.occurrence.state)
+        assertEquals(first, recovered)
+        assertTrue(runtime.markNotificationPosted(occurrence.occurrenceId))
+        assertTrue(runtime.markNotificationPosted(occurrence.occurrenceId))
+
+        clocks.wallTimeUtcMillis = 5_000
+        assertFalse(runtime.markNotificationPosted(occurrence.occurrenceId))
+        assertEquals(
+            OccurrenceState.EXPIRED,
+            runtime.snapshot.value.metadata?.occurrences?.get(occurrence.occurrenceId)?.state,
+        )
+    }
+
+    @Test
+    fun dedicatedExpiryCheckExpiresPostingPostedAndOpenedSurveyStates() = runTest {
+        val store = InMemoryStudyStore()
+        val clocks = MutableClocks(1_000)
+        val runtime = ExperimentRuntime(
+            configuration = configuration(surveys = listOf(survey()), interventions = listOf(surveyIntervention())),
+            store = store,
+            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
+            clocks = clocks,
+            scope = backgroundScope,
+            availableAccess = { emptySet() },
+        )
+        start(runtime)
+        val occurrences = listOf("d", "e", "f").mapIndexed { index, prefix ->
+            surveyOccurrence(prefix, expiresAtUtcMillis = 5_000 + index * 1_000L).also {
+                runtime.ensureOccurrence(it)
+            }
+        }
+        runtime.claimOccurrenceIfDue(occurrences[0].occurrenceId)
+        runtime.claimOccurrenceIfDue(occurrences[1].occurrenceId)
+        runtime.markNotificationPosted(occurrences[1].occurrenceId)
+        runtime.claimOccurrenceIfDue(occurrences[2].occurrenceId)
+        runtime.markNotificationPosted(occurrences[2].occurrenceId)
+        runtime.openOccurrence(occurrences[2].occurrenceId)
+
+        clocks.wallTimeUtcMillis = 10_000
+        occurrences.forEach { occurrence ->
+            assertEquals(OccurrenceExpiryResult.Expired, runtime.expireOccurrenceIfDue(occurrence.occurrenceId))
+            assertEquals(
+                OccurrenceState.EXPIRED,
+                runtime.snapshot.value.metadata?.occurrences?.get(occurrence.occurrenceId)?.state,
+            )
+        }
+        assertEquals(3, store.events.count { it.payloadType == "SURVEY_EXPIRED" })
+        assertEquals(OccurrenceExpiryResult.Missing, runtime.expireOccurrenceIfDue("0".repeat(64)))
+    }
+
+    @Test
+    fun pausedFinishedAndWithdrawnStudiesRejectEveryInterventionMutation() = runTest {
+        val lifecycleCases = listOf<Pair<String, suspend (ExperimentRuntime) -> CommandResult>>(
+            "pause" to { it.pause() },
+            "finish" to { it.finishEarly() },
+            "withdraw" to { it.withdraw() },
+        )
+        lifecycleCases.forEach { (name, transition) ->
+            val store = InMemoryStudyStore()
+            val clocks = MutableClocks(1_000)
+            val runtime = ExperimentRuntime(
+                configuration = configuration(surveys = listOf(survey()), interventions = listOf(surveyIntervention())),
+                store = store,
+                collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
+                clocks = clocks,
+                scope = backgroundScope,
+                availableAccess = { emptySet() },
+            )
+            start(runtime)
+            val posted = surveyOccurrence("1", expiresAtUtcMillis = 60_000)
+            val opened = surveyOccurrence("2", expiresAtUtcMillis = 60_000)
+            val scheduled = surveyOccurrence("3", expiresAtUtcMillis = 60_000)
+            val posting = surveyOccurrence("4", expiresAtUtcMillis = 60_000)
+            listOf(posted, opened, scheduled, posting).forEach { runtime.ensureOccurrence(it) }
+            runtime.claimOccurrenceIfDue(posted.occurrenceId)
+            assertTrue(runtime.markNotificationPosted(posted.occurrenceId))
+            runtime.claimOccurrenceIfDue(opened.occurrenceId)
+            assertTrue(runtime.markNotificationPosted(opened.occurrenceId))
+            assertTrue(runtime.openOccurrence(opened.occurrenceId)?.action is SurveyAction)
+            runtime.claimOccurrenceIfDue(posting.occurrenceId)
+            assertEquals(CommandResult.Success, transition(runtime))
+            val eventCount = store.events.size
+
+            assertEquals(OccurrenceClaimResult.InactiveStudy, runtime.claimOccurrenceIfDue(scheduled.occurrenceId))
+            assertEquals(OccurrenceExpiryResult.InactiveStudy, runtime.expireOccurrenceIfDue(posted.occurrenceId))
+            assertFalse(runtime.markNotificationPosted(posting.occurrenceId))
+            assertNull(runtime.openOccurrence(posted.occurrenceId))
+            assertEquals(
+                SurveySubmissionResult.INVALID,
+                runtime.submitSurvey(opened.occurrenceId, validSurveyAnswers()),
+            )
+            assertEquals("$name must not append intervention events", eventCount, store.events.size)
+        }
     }
 
     @Test
@@ -338,22 +633,43 @@ class ExperimentRuntimeTest {
         )
     }
 
+    private class MutableClocks(
+        var wallTimeUtcMillis: Long,
+    ) : ResearchClocks {
+        private var elapsedRealtimeNanos = 0L
+
+        override fun now(): ResearchTime = ResearchTime(
+            wallTimeUtcMillis = wallTimeUtcMillis,
+            elapsedRealtimeNanos = ++elapsedRealtimeNanos,
+            bootSessionId = "boot-test",
+        )
+    }
+
     private class FakeCollectorPlugin(
         private val clocks: ResearchClocks,
+        private val accessRequirement: AccessRequirement? = null,
     ) : CollectorPlugin {
         override val descriptor = CollectorDescriptor(
             id = AppLifecycleConfiguration.ID,
-            payloadSchemaVersion = 1,
             displayName = "Fake collector",
             privacyClass = PrivacyClass.SENSITIVE,
-            maximumEncodedEventBytes = 1_024,
+            eventContract = CollectorEventContract(
+                payloadSchemaVersion = 1,
+                maximumEncodedEventBytes = 512,
+                payloads = listOf("ACTIVITY_RESUMED", "ACTIVITY_STOPPED", "ACTIVITY_STARTED")
+                    .associateWith {
+                        EventPayloadContract(
+                            mapOf("source" to EventFieldContract(EventFieldType.STRING, required = true)),
+                        )
+                    },
+            ),
         )
         lateinit var context: CollectorContext
         lateinit var collector: FakeCollector
 
         override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
             require(configuration is AppLifecycleConfiguration)
-            return emptySet()
+            return setOfNotNull(accessRequirement)
         }
 
         override fun create(
@@ -366,16 +682,21 @@ class ExperimentRuntimeTest {
             return collector
         }
 
-        suspend fun emit(type: String): EmitResult {
+        suspend fun emit(
+            type: String,
+            collectorId: String = descriptor.id,
+            schemaVersion: Int = descriptor.payloadSchemaVersion,
+            fields: Map<String, String> = mapOf("source" to "test"),
+        ): EmitResult {
             val token = context.eventSink.captureToken() ?: return EmitResult.RejectedByAdmissionGate
             return context.eventSink.emit(
                 token,
                 EventDraft(
-                    collectorId = descriptor.id,
-                    payloadSchemaVersion = descriptor.payloadSchemaVersion,
+                    collectorId = collectorId,
+                    payloadSchemaVersion = schemaVersion,
                     observedTime = clocks.now(),
                     payloadType = type,
-                    fields = mapOf("source" to "test"),
+                    fields = fields,
                 ),
             )
         }
@@ -384,13 +705,23 @@ class ExperimentRuntimeTest {
     private class FakeCollector : Collector {
         private val mutableHealth = MutableStateFlow(CollectorHealth(CollectorStatus.STOPPED))
         override val health: StateFlow<CollectorHealth> = mutableHealth
+        override var requiresStop = false
+            private set
         var startCount = 0
         var pauseCount = 0
         var resumeCount = 0
         var stopCount = 0
+        var failNextStartWithOwnedResources = false
+        var failNextStopWithOwnedResources = false
 
         override suspend fun start() {
             startCount += 1
+            requiresStop = true
+            if (failNextStartWithOwnedResources) {
+                failNextStartWithOwnedResources = false
+                mutableHealth.value = CollectorHealth(CollectorStatus.FAILED, "SOURCE_REGISTRATION_FAILED")
+                error("Start left collector resources requiring cleanup")
+            }
             mutableHealth.value = CollectorHealth(CollectorStatus.ACTIVE)
         }
 
@@ -406,6 +737,12 @@ class ExperimentRuntimeTest {
 
         override suspend fun stop() {
             stopCount += 1
+            if (failNextStopWithOwnedResources) {
+                failNextStopWithOwnedResources = false
+                mutableHealth.value = CollectorHealth(CollectorStatus.FAILED, "SOURCE_UNREGISTRATION_FAILED")
+                error("Stop left collector resources requiring cleanup")
+            }
+            requiresStop = false
             mutableHealth.value = CollectorHealth(CollectorStatus.STOPPED)
         }
     }
@@ -425,7 +762,8 @@ class ExperimentRuntimeTest {
             assignedParticipantId = null,
             issuedAt = Instant.parse("2026-01-01T00:00:00Z"),
             expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
-            minimumAppVersion = 1,
+            platform = StudyConfiguration.ANDROID_PLATFORM,
+            minimumClientVersion = 1,
             title = "Runtime test",
             researcherName = "Test researcher",
             researcherContact = "test@example.invalid",
@@ -437,10 +775,10 @@ class ExperimentRuntimeTest {
             surveys = surveys,
             interventions = interventions,
             maximumLocalBytes = 16_777_216,
-            signer = SignerIdentity("test-signer", TEST_SIGNER_PUBLIC_KEY),
+            signer = SignerIdentity("test-signer", RAW_PUBLIC_KEY),
             export = ExportConfiguration(
                 researcherKeyId = "test-key",
-                tinkHpkePublicKeysetJson = "{\"placeholder\":\"not-used-in-runtime-tests\"}",
+                hpkePublicKey = RAW_PUBLIC_KEY,
             ),
             upload = null,
         )
@@ -486,8 +824,28 @@ class ExperimentRuntimeTest {
             SurveyAction("Daily survey", "Your survey is ready.", "daily-survey"),
             listOf(InterventionTrigger("after-minute", OneTimeSchedule(1, RelativeClock.CALENDAR_TIME), 60)),
         )
+
+        fun validSurveyAnswers(): Map<String, SurveyAnswer> = mapOf(
+            "daily-note" to SurveyAnswer.Text("complete"),
+            "mood-scale" to SurveyAnswer.Integer(4),
+            "primary-place" to SurveyAnswer.Choices(listOf("place-home")),
+            "symptoms" to SurveyAnswer.Choices(listOf("symptom-none")),
+        )
+
+        fun surveyOccurrence(
+            prefix: String,
+            scheduledAtUtcMillis: Long = 100,
+            expiresAtUtcMillis: Long,
+        ) = InterventionOccurrence(
+            occurrenceId = prefix.repeat(64),
+            interventionId = "survey-notice",
+            triggerId = "after-minute",
+            scheduleKey = "relative:$prefix",
+            scheduledFor = ResearchTime(scheduledAtUtcMillis, scheduledAtUtcMillis, "boot-test"),
+            expiresAtUtcMillis = expiresAtUtcMillis,
+            state = OccurrenceState.SCHEDULED,
+        )
     }
 }
 
-private const val TEST_SIGNER_PUBLIC_KEY =
-    "MCowBQYDK2VwAyEAsRSaTpZmTSBL7eN6nS/HBsNmLM8n1hdRmIt1vtLZsC0="
+private const val RAW_PUBLIC_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"

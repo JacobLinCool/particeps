@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { flushSync } from 'svelte';
 import { createDraft } from '../src/routes/researcher/draft.svelte';
-import { canonicalize } from '$lib/adc/canonical';
+import { canonicalizeConfiguration } from '$lib/adc/canonical';
 import { decodeEnvelope } from '../src/routes/researcher/parse';
 import { verify } from '$lib/adc/crypto';
 
@@ -83,7 +83,7 @@ describe('draft', () => {
     expect(decoded.signerKeyId).toMatch(/^signer-[0-9a-z]{13}$/);
     expect(verify(decoded.configurationBytes, decoded.signature, draft.configuration.signer.public_key)).toBe(true);
     expect(new TextDecoder().decode(decoded.configurationBytes)).toBe(draft.canonical);
-    expect(draft.canonical).toBe(canonicalize(draft.document));
+    expect(draft.canonical).toBe(canonicalizeConfiguration(draft.document));
 
     draft.configuration.title = 'T2';
     flushSync();
@@ -126,7 +126,7 @@ describe('draft', () => {
     expect(draft.configuration.export.researcher_key_id).toBe('');
 
     const signerName = draft.signerKeyId;
-    const privateHalf = draft.signing.kind === 'held' ? draft.signing.material.privatePkcs8Base64 : '';
+    const privateHalf = draft.signing.kind === 'held' ? draft.signing.material.privateKey : '';
     draft.generateSigning();
     flushSync();
     expect(draft.signerKeyId).not.toBe(signerName);

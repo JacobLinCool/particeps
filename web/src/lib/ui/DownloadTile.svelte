@@ -19,7 +19,7 @@
     icon: IconRef;
     filename: string;
     bytes: number;
-    /** Everything after the byte count, e.g. `Ed25519 PKCS#8`. Already localised. */
+    /** Everything after the byte count, e.g. `Ed25519 raw key`. Already localised. */
     detail?: string;
     tone?: Tone;
     secret?: boolean;

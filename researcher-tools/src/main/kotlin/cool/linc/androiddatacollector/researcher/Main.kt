@@ -1,21 +1,26 @@
 package cool.linc.androiddatacollector.researcher
 
 import cool.linc.androiddatacollector.core.crypto.HpkeCrypto
+import cool.linc.androiddatacollector.core.definition.ProtocolBase64Url
+import cool.linc.androiddatacollector.core.definition.StudyConfigurationCodec
 import cool.linc.androiddatacollector.core.export.ResearchExport
+import cool.linc.androiddatacollector.core.export.ResearchBundleVerifier
 import cool.linc.androiddatacollector.core.protocol.ConfigurationVerifier
 import cool.linc.androiddatacollector.core.protocol.SignedConfigurationCodec
 import cool.linc.androiddatacollector.core.protocol.SignedConfigurationEnvelope
-import cool.linc.androiddatacollector.core.definition.StudyConfigurationCodec
+import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.attribute.PosixFilePermissions
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.Signature
 import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
 import java.time.Instant
-import java.util.Base64
 
 fun main(arguments: Array<String>) {
     require(arguments.isNotEmpty()) { usage() }
@@ -34,14 +39,14 @@ fun main(arguments: Array<String>) {
 
 private fun signingKeygen(args: Arguments) {
     val pair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
-    writeNew(args.path("--private"), Base64.getEncoder().encode(pair.private.encoded))
-    writeNew(args.path("--public"), Base64.getEncoder().encode(pair.public.encoded))
+    writeNew(args.path("--private"), ProtocolBase64Url.encode(pair.private.encoded.requirePrefix(ED25519_PKCS8_PREFIX)).toByteArray())
+    writeNew(args.path("--public"), ProtocolBase64Url.encode(pair.public.encoded.requirePrefix(ED25519_X509_PREFIX)).toByteArray())
 }
 
 private fun hpkeKeygen(args: Arguments) {
-    val pair = HpkeCrypto.generateKeyset()
-    writeNew(args.path("--private"), pair.privateKeysetJson.toByteArray(Charsets.UTF_8))
-    writeNew(args.path("--public"), pair.publicKeysetJson.toByteArray(Charsets.UTF_8))
+    val pair = HpkeCrypto.generateKeyPair()
+    writeNew(args.path("--private"), ProtocolBase64Url.encode(pair.privateKey).toByteArray())
+    writeNew(args.path("--public"), ProtocolBase64Url.encode(pair.publicKey).toByteArray())
 }
 
 private fun canonicalize(args: Arguments) {
@@ -124,7 +129,9 @@ private fun signEnvelope(
     privateKeyBase64: String,
 ): ByteArray {
     val privateKey = KeyFactory.getInstance("Ed25519").generatePrivate(
-        PKCS8EncodedKeySpec(Base64.getDecoder().decode(privateKeyBase64.trim())),
+        PKCS8EncodedKeySpec(
+            ED25519_PKCS8_PREFIX + ProtocolBase64Url.decodeExact(privateKeyBase64.trim(), 32, "Ed25519 private key"),
+        ),
     )
     val signature = Signature.getInstance("Ed25519").run {
         initSign(privateKey)
@@ -132,7 +139,9 @@ private fun signEnvelope(
         sign()
     }
     val declaredKey = KeyFactory.getInstance("Ed25519").generatePublic(
-        X509EncodedKeySpec(Base64.getDecoder().decode(declaredPublicKey)),
+        X509EncodedKeySpec(
+            ED25519_X509_PREFIX + ProtocolBase64Url.decodeExact(declaredPublicKey, 32, "Ed25519 public key"),
+        ),
     )
     require(Signature.getInstance("Ed25519").run {
         initVerify(declaredKey)
@@ -158,7 +167,7 @@ private fun checkConfig(args: Arguments) {
     } ?: emptyMap()
     val verified = ConfigurationVerifier(
         trustedSigningKeys = pinned,
-        appVersionCode = args.optionalValue("--app-version")?.toInt() ?: Int.MAX_VALUE,
+        clientVersion = args.optionalValue("--app-version")?.toLong() ?: Long.MAX_VALUE,
         now = { args.optionalValue("--now")?.let(Instant::parse) ?: Instant.now() },
     ).verify(Files.readAllBytes(args.path("--envelope")))
     val configuration = verified.configuration
@@ -171,17 +180,46 @@ private fun decrypt(args: Arguments) {
     val configuration = StudyConfigurationCodec.decode(Files.readAllBytes(args.path("--config")))
     val output = args.path("--output")
     require(!Files.exists(output)) { "Refusing to overwrite ${output.toAbsolutePath()}" }
-    // Staged, because the AES-GCM tag is only checked once the last byte has been read: a tampered
-    // bundle writes plausible-looking plaintext right up until it fails. Nothing appears at the
-    // destination unless verification succeeded.
-    val staging = Files.createTempFile(output.toAbsolutePath().parent, ".adc-decrypt", ".tmp")
+    val outputParent = requireNotNull(output.toAbsolutePath().parent) { "Output needs a parent directory" }
+    require(Files.isDirectory(outputParent)) { "Output parent does not exist: $outputParent" }
+    // AEAD authenticates only at EOF, and the authenticated plaintext still has a closed-world
+    // schema to prove. Keep both phases in a private staging file; publish only their joint result.
+    val staging = Files.createTempFile(
+        outputParent,
+        ".adc-decrypt",
+        ".tmp",
+        PosixFilePermissions.asFileAttribute(
+            setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
+        ),
+    )
     try {
-        Files.newInputStream(args.path("--bundle")).use { input ->
-            Files.newOutputStream(staging).use { plaintext ->
-                ResearchExport.decrypt(input, plaintext, Files.readString(args.path("--private")), configuration)
+        val header = Files.newInputStream(args.path("--bundle")).use { input ->
+            Files.newOutputStream(
+                staging,
+                StandardOpenOption.WRITE,
+                StandardOpenOption.TRUNCATE_EXISTING,
+            ).use { plaintext ->
+                ResearchExport.decrypt(
+                    input,
+                    plaintext,
+                    ProtocolBase64Url.decodeExact(
+                        Files.readString(args.path("--private")).trim(),
+                        HpkeCrypto.RAW_KEY_BYTES,
+                        "X25519 private key",
+                    ),
+                    configuration,
+                )
             }
         }
-        Files.move(staging, output)
+        val verified = Files.newInputStream(staging).use { plaintext ->
+            ResearchBundleVerifier.verify(plaintext, header, configuration)
+        }
+        FileChannel.open(staging, StandardOpenOption.WRITE).use { it.force(true) }
+        Files.move(staging, output, StandardCopyOption.ATOMIC_MOVE)
+        println(
+            "verified ${verified.header.bundleId} ${verified.experiment.firstSequenceNumber}-" +
+                "${verified.experiment.lastSequenceNumber}",
+        )
     } catch (failure: Throwable) {
         Files.deleteIfExists(staging)
         throw failure
@@ -225,3 +263,17 @@ private fun usage(): String = """
       check-config --envelope FILE [--public FILE --key-id ID] [--app-version N] [--now ISO_INSTANT]
       decrypt --bundle FILE --private FILE --config FILE --output FILE
 """.trimIndent()
+
+private fun ByteArray.requirePrefix(prefix: ByteArray): ByteArray {
+    require(size == prefix.size + 32 && copyOfRange(0, prefix.size).contentEquals(prefix)) {
+        "Unexpected JCA raw-key encoding"
+    }
+    return copyOfRange(prefix.size, size)
+}
+
+private val ED25519_X509_PREFIX = byteArrayOf(
+    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+)
+private val ED25519_PKCS8_PREFIX = byteArrayOf(
+    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+)

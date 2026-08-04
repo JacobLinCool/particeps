@@ -29,6 +29,10 @@
 hs_err_pid*
 replay_pid*
 
+# Python bytecode and interpreter caches
+__pycache__/
+*.py[cod]
+
 # Kotlin Gradle plugin data, see https://kotlinlang.org/docs/whatsnew20.html#new-directory-for-kotlin-data-in-gradle-projects
 .kotlin/
 
@@ -55,4 +59,4 @@ bin/
 *.keystore
 *.adcexp
 !researcher-tools/examples/INSECURE-demo-signing-private.key
-!researcher-tools/examples/INSECURE-demo-hpke-private.json
+!researcher-tools/examples/INSECURE-demo-hpke-private.key

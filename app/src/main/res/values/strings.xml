@@ -85,6 +85,24 @@
         <item quantity="other">Movement of the phone, about %1$d times per second or more</item>
     </plurals>
 
+    <string name="collector_battery_state_name">Battery context</string>
+    <string name="collector_battery_state_detail">Whole battery percentage, charging state and source, and power-save mode — not battery health, temperature, or hardware identity</string>
+
+    <string name="collector_temporal_context_name">Time context</string>
+    <string name="collector_temporal_context_detail">Time-zone setting, UTC offset, daylight-saving state, and clock changes — a setting, not a location or travel claim</string>
+
+    <string name="collector_gyroscope_name">Phone rotation</string>
+    <plurals name="collector_gyroscope_detail">
+        <item quantity="one">Raw rotation of the phone, about once a second or more; no orientation or activity is inferred</item>
+        <item quantity="other">Raw rotation of the phone, about %1$d times per second or more; no orientation or activity is inferred</item>
+    </plurals>
+
+    <string name="collector_ambient_light_name">Ambient light</string>
+    <string name="collector_ambient_light_detail">Raw light level at most every %1$s after a change of %2$d millilux; it does not record environmental content</string>
+
+    <string name="collector_proximity_name">Proximity sensor</string>
+    <string name="collector_proximity_detail">Raw near/distance state at most every %1$s after a %2$d mm change or any near/far transition. Many phones report only near or far; this is not a presence claim</string>
+
     <string name="collector_network_state_name">Connection type</string>
     <string name="collector_network_state_detail">Whether you are on Wi-Fi or mobile data, and whether it is metered</string>
 
@@ -102,6 +120,8 @@
 
     <!-- Units, used to fill the templates above -->
     <string name="unit_seconds">%1$d s</string>
+    <string name="unit_milliseconds">%1$d ms</string>
+    <string name="unit_microseconds">%1$d µs</string>
     <string name="unit_minutes">%1$d min</string>
     <string name="unit_hours">%1$d h</string>
     <plurals name="unit_days">
@@ -155,6 +175,9 @@
     <string name="access_research_keyboard_enabled">Enable the research keyboard</string>
     <string name="access_research_keyboard_selected">Select the research keyboard</string>
     <string name="access_accelerometer_hardware">Motion sensor</string>
+    <string name="access_gyroscope_hardware">Gyroscope</string>
+    <string name="access_ambient_light_hardware">Ambient-light sensor</string>
+    <string name="access_proximity_hardware">Proximity sensor</string>
 
     <!-- Collecting -->
     <plurals name="meter_events">

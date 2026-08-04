@@ -12,6 +12,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import cool.linc.androiddatacollector.platform.InterventionWorker
 import cool.linc.androiddatacollector.core.collector.AccessKind
+import cool.linc.androiddatacollector.core.protocol.JoinLink
+import cool.linc.androiddatacollector.core.protocol.SignedConfigurationCodec
 import java.time.Instant
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -27,7 +29,7 @@ class MainActivity : ComponentActivity() {
         if (uri == null) return@registerForActivityResult
         viewModel.importSignedConfiguration {
             requireNotNull(contentResolver.openInputStream(uri)) { "Cannot open signed configuration" }
-                .use { it.readNBytes(MAXIMUM_CONFIGURATION_ENVELOPE_BYTES + 1) }
+                .use { it.readNBytes(SignedConfigurationCodec.MAXIMUM_ENVELOPE_BYTES + 1) }
         }
     }
 
@@ -46,7 +48,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        openOccurrence(intent)
+        handleIntent(intent)
         enableEdgeToEdge()
         setContent {
             val state = viewModel.state.collectAsStateWithLifecycle().value
@@ -82,15 +84,39 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        openOccurrence(intent)
+        handleIntent(intent)
     }
 
-    private fun openOccurrence(intent: Intent) {
-        if (intent.action != InterventionWorker.ACTION_OPEN_OCCURRENCE) return
-        val occurrenceId = intent.getStringExtra(InterventionWorker.KEY_OCCURRENCE_ID) ?: return
-        lifecycleScope.launch {
-            val ready = collectorApplication.session.snapshot.first { it.initialized }
-            if (ready.configuration != null) collectorApplication.session.openOccurrence(occurrenceId)
+    private fun handleIntent(intent: Intent) {
+        when (intent.action) {
+            InterventionWorker.ACTION_OPEN_OCCURRENCE -> {
+                val occurrenceId = intent.getStringExtra(InterventionWorker.KEY_OCCURRENCE_ID) ?: return
+                lifecycleScope.launch {
+                    val ready = collectorApplication.session.snapshot.first { it.initialized }
+                    if (ready.configuration != null) collectorApplication.session.openOccurrence(occurrenceId)
+                }
+            }
+            Intent.ACTION_VIEW -> {
+                val encoded = intent.dataString ?: return
+                // Prevent an Activity recreation from starting a second download for the same URI.
+                intent.data = null
+                val link = try {
+                    JoinLink.parse(encoded)
+                } catch (_: IllegalArgumentException) {
+                    viewModel.reportMessage("JOIN_LINK_INVALID")
+                    return
+                }
+                lifecycleScope.launch {
+                    val ready = collectorApplication.session.snapshot.first { it.initialized }
+                    if (ready.configuration != null || ready.deletionPending) {
+                        viewModel.reportMessage("JOIN_ACTIVE_STUDY")
+                    } else {
+                        viewModel.importJoin(link) {
+                            collectorApplication.joinArtifactDownloader.download(link)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -117,11 +143,11 @@ class MainActivity : ComponentActivity() {
             AccessKind.USAGE_ACCESS,
             AccessKind.RESEARCH_KEYBOARD_ENABLED -> collectorApplication.accessManager.settingsIntent(kind)?.let(::startActivity)
                 ?: viewModel.reportMessage("ACCESS_SETTINGS_UNAVAILABLE")
-            AccessKind.ACCELEROMETER_HARDWARE -> Unit
+            AccessKind.ACCELEROMETER_HARDWARE,
+            AccessKind.GYROSCOPE_HARDWARE,
+            AccessKind.AMBIENT_LIGHT_HARDWARE,
+            AccessKind.PROXIMITY_HARDWARE -> Unit
         }
     }
 
-    private companion object {
-        const val MAXIMUM_CONFIGURATION_ENVELOPE_BYTES = 1_100_000
-    }
 }

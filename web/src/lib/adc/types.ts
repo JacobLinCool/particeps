@@ -18,10 +18,11 @@ export const MAXIMUM_INTERVENTION_OCCURRENCES = 512;
 /**
  * Pinned. The lowest `versionCode` the schema allows, and the only one this page authors — there is
  * no control for it, because a floor a researcher has no way to measure is a floor they cannot set
- * honestly. `BOUNDS.minimumAppVersion` stays: `validate` still has to judge documents written
+ * honestly. `BOUNDS.minimumClientVersion` stays: `validate` still has to judge documents written
  * elsewhere, and `researcher-tools` can raise the floor deliberately.
  */
-export const DEFAULT_MINIMUM_APP_VERSION = 1;
+export const PLATFORM = 'android' as const;
+export const DEFAULT_MINIMUM_CLIENT_VERSION = '1';
 
 /** `[a-z0-9][a-z0-9-]{2,63}` — stable schema IDs. */
 export const ID_PATTERN = /^[a-z0-9][a-z0-9-]{2,63}$/;
@@ -39,6 +40,11 @@ export type LocationPriority = 'BALANCED' | 'HIGH_ACCURACY';
 export type CollectorId =
   | 'app_lifecycle.v1'
   | 'accelerometer.v1'
+  | 'battery_state.v1'
+  | 'temporal_context.v1'
+  | 'gyroscope.v1'
+  | 'ambient_light.v1'
+  | 'proximity.v1'
   | 'network_state.v1'
   | 'network_usage.v1'
   | 'usage_events.v1'
@@ -53,6 +59,11 @@ export type CollectorId =
 export const COLLECTOR_ORDER: readonly CollectorId[] = [
   'app_lifecycle.v1',
   'accelerometer.v1',
+  'battery_state.v1',
+  'temporal_context.v1',
+  'gyroscope.v1',
+  'ambient_light.v1',
+  'proximity.v1',
   'network_state.v1',
   'network_usage.v1',
   'usage_events.v1',
@@ -83,6 +94,23 @@ export type CollectorConfig =
       required: boolean;
       config: { sampling_period_us: number; maximum_report_latency_us: number };
     }
+  | { id: 'battery_state.v1'; required: boolean; config: Record<string, never> }
+  | { id: 'temporal_context.v1'; required: boolean; config: Record<string, never> }
+  | {
+      id: 'gyroscope.v1';
+      required: boolean;
+      config: { sampling_period_us: number; maximum_report_latency_us: number };
+    }
+  | {
+      id: 'ambient_light.v1';
+      required: boolean;
+      config: { sampling_period_us: number; change_threshold_millilux: number };
+    }
+  | {
+      id: 'proximity.v1';
+      required: boolean;
+      config: { minimum_event_interval_ms: number; change_threshold_millimeters: number };
+    }
   | {
       id: 'network_state.v1';
       required: boolean;
@@ -101,8 +129,8 @@ export type CollectorConfig =
         interval_millis: number;
         minimum_interval_millis: number;
         maximum_batch_delay_millis: number;
-        /** A Kotlin Float. See `formatFloat` in canonical.ts — this does not round-trip as a JS number. */
-        minimum_displacement_meters: number;
+        /** Integer millimetres on the wire; the editor presents metres. */
+        minimum_displacement_millimeters: number;
         priority: LocationPriority;
       };
     }
@@ -141,7 +169,15 @@ export type RelativeClock = 'CALENDAR_TIME' | 'ACTIVE_RUNNING_TIME';
 export type InterventionSchedule =
   | { type: 'one_time'; offset_minutes: number; clock: RelativeClock }
   | { type: 'interval'; start_offset_minutes: number; interval_minutes: number; clock: RelativeClock }
-  | { type: 'daily_local'; local_time: string };
+  | { type: 'daily_local'; local_time: string }
+  | {
+      type: 'random_window';
+      local_windows: { start_local_time: string; end_local_time: string }[];
+      occurrences_per_window: number;
+      maximum_occurrences_per_day: number;
+      maximum_occurrences_total: number;
+      minimum_separation_minutes: number;
+    };
 
 export interface InterventionTrigger {
   id: string;
@@ -165,26 +201,17 @@ export interface UploadConfig {
   allow_metered: boolean;
 }
 
-/** A Tink keyset document, kept as parsed JSON so it can be re-emitted in its original key order. */
-export interface TinkKeyset {
-  primaryKeyId: number;
-  key: Array<{
-    keyData: { typeUrl: string; value: string; keyMaterialType: string };
-    status: string;
-    keyId: number;
-    outputPrefixType: string;
-  }>;
-}
-
 export interface StudyConfiguration {
   schema_version: number;
+  platform: typeof PLATFORM;
   experiment_id: string;
   configuration_id: string;
   assigned_participant_id: string | null;
   /** ISO-8601 instant, exactly as `Instant.toString()` renders it. */
   issued_at: string;
   expires_at: string;
-  minimum_app_version: number;
+  /** Positive build number, encoded as a canonical decimal string. */
+  minimum_client_version: string;
   title: string;
   researcher: { name: string; contact: string };
   purpose: string;
@@ -195,7 +222,7 @@ export interface StudyConfiguration {
   interventions: InterventionConfig[];
   storage: { maximum_local_bytes: number };
   signer: { key_id: string; public_key: string };
-  export: { researcher_key_id: string; tink_hpke_public_keyset: TinkKeyset };
+  export: { researcher_key_id: string; hpke_public_key: string };
   /** `null` means the study does not upload; the encoder writes `"upload":{}` for it. */
   upload: UploadConfig | null;
 }
@@ -209,23 +236,26 @@ export const BOUNDS = {
   durationHours: [1, 8_760],
   consentDocumentVersion: [1, 64],
   consentSummary: [1, 8_000],
-  // `require(minimumAppVersion > 0)` on a Kotlin `Int`, so the ceiling is the Int's, not "any
-  // positive number": `requireInt` throws above it and the file is refused before the bound is read.
-  minimumAppVersion: [1, 2_147_483_647],
+  // The Android build number must fit a positive Kotlin `Int`; the wire form is decimal text.
+  minimumClientVersion: [1, 2_147_483_647],
   notificationTitle: [1, 120],
   notificationMessage: [1, 500],
   availabilityMinutes: [1, 525_600],
   surveyText: [1, 2_000],
   shortTextMaximumLength: [1, 4_000],
-  signerPublicKey: [32, 1_024],
+  rawPublicKey: [43, 43],
   uploadEndpoint: [8, 2_048],
   samplingPeriodUs: [5_000, 1_000_000],
+  ambientLightSamplingPeriodUs: [200_000, 10_000_000],
   maximumReportLatencyUs: [0, 60_000_000],
+  changeThresholdMillilux: [0, 100_000_000],
+  minimumEventIntervalMs: [100, 60_000],
+  changeThresholdMillimeters: [0, 10_000],
   pollIntervalMinutes: [1, 1_440],
   intervalMillis: [1_000, 3_600_000],
   minimumIntervalMillis: [500, 3_600_000],
   maximumBatchDelayMillis: [0, 86_400_000],
-  minimumDisplacementMeters: [0, 10_000],
+  minimumDisplacementMillimeters: [0, 10_000_000],
   trajectorySamplingHz: [1, 120]
 } as const satisfies Record<string, readonly [number, number]>;
 

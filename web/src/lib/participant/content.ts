@@ -3,7 +3,7 @@
  *
  * Every section below section 1 is a loop over one of these tables. Keeping the glyph, the message
  * key, and the effect of a control in one row is what makes it possible to check the page against
- * the app by reading a table rather than by reading seven components — and what makes an omission
+ * the app by reading a table rather than by reading twelve components — and what makes an omission
  * visible as a missing row.
  */
 
@@ -37,6 +37,11 @@ export interface FingerprintCandidate {
 export const SOURCES: readonly SourceEntry[] = [
   { id: 'app_lifecycle.v1', glyph: 'app' },
   { id: 'accelerometer.v1', glyph: 'motion' },
+  { id: 'battery_state.v1', glyph: 'dataVolume' },
+  { id: 'temporal_context.v1', glyph: 'clock' },
+  { id: 'gyroscope.v1', glyph: 'motion' },
+  { id: 'ambient_light.v1', glyph: 'app' },
+  { id: 'proximity.v1', glyph: 'connection' },
   { id: 'network_state.v1', glyph: 'connection' },
   { id: 'network_usage.v1', glyph: 'dataVolume' },
   { id: 'usage_events.v1', glyph: 'screen' },
@@ -48,6 +53,11 @@ export const SOURCES: readonly SourceEntry[] = [
 const SOURCE_SLUG: Record<CollectorId, string> = {
   'app_lifecycle.v1': 'appLifecycle',
   'accelerometer.v1': 'accelerometer',
+  'battery_state.v1': 'batteryState',
+  'temporal_context.v1': 'temporalContext',
+  'gyroscope.v1': 'gyroscope',
+  'ambient_light.v1': 'ambientLight',
+  'proximity.v1': 'proximity',
   'network_state.v1': 'networkState',
   'network_usage.v1': 'networkUsage',
   'usage_events.v1': 'usageEvents',

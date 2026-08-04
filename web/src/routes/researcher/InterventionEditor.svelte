@@ -3,7 +3,7 @@
    * Surveys, and the notifications that deliver them: the one part of a study that is a list rather
    * than a document.
    *
-   * The kit has no repeated-block primitive and that absence is deliberate — the seven collector
+   * The kit has no repeated-block primitive and that absence is deliberate — the twelve collector
    * cards are a fixed set whose order is participant-visible. What a list needs and a document does
    * not is an identity that survives an edit, so every `{#each}` here is keyed on the block's own
    * object. Keying on `survey.id` re-keyed the block on the first keystroke, destroyed the input
@@ -45,6 +45,7 @@
   import type { UiIssue } from '$lib/ui/types';
   import type { Messages } from '$lib/i18n/types';
   import type { Draft } from './draft.svelte';
+  import { nextRandomWindow } from './random-window';
 
   let { draft, m }: { draft: Draft; m: Messages } = $props();
 
@@ -244,11 +245,7 @@
     });
   }
 
-  /**
-   * Both non-daily variants name a `clock`, and the offset means the same minutes from the study's
-   * start in both, so replacing the whole object reverted a deliberate choice about when the study
-   * fires relative to device uptime without anyone touching that control.
-   */
+  /** Preserve the relative clock and offset when switching between the two compatible variants. */
   function changeSchedule(
     interventionIndex: number,
     triggerIndex: number,
@@ -263,12 +260,26 @@
         : previous.type === 'interval'
           ? previous.start_offset_minutes
           : 60;
-    trigger.schedule =
-      type === 'daily_local'
-        ? { type, local_time: '08:00' }
-        : type === 'interval'
-          ? { type, start_offset_minutes: offset, interval_minutes: 1_440, clock }
-          : { type, offset_minutes: offset, clock };
+    if (type === 'daily_local') {
+      trigger.schedule = { type, local_time: '08:00' };
+    } else if (type === 'random_window') {
+      trigger.schedule = {
+        type,
+        local_windows: [{ start_local_time: '08:00', end_local_time: '12:00' }],
+        occurrences_per_window: 1,
+        maximum_occurrences_per_day: 1,
+        maximum_occurrences_total: 14,
+        minimum_separation_minutes: 60
+      };
+    } else if (type === 'interval') {
+      trigger.schedule = { type, start_offset_minutes: offset, interval_minutes: 1_440, clock };
+    } else {
+      trigger.schedule = { type, offset_minutes: offset, clock };
+    }
+  }
+
+  function randomMaximum(schedule: Extract<InterventionSchedule, { type: 'random_window' }>): number {
+    return schedule.maximum_occurrences_total;
   }
 
   const CLOCKS = $derived([
@@ -808,6 +819,7 @@
                   <option value="one_time">{copy.schedules.oneTime}</option>
                   <option value="interval">{copy.schedules.interval}</option>
                   <option value="daily_local">{copy.schedules.dailyLocal}</option>
+                  <option value="random_window">{copy.schedules.randomWindow}</option>
                 </select>
               {/snippet}
             </Field>
@@ -836,6 +848,103 @@
                   />
                 {/snippet}
               </Field>
+            {:else if schedule.type === 'random_window'}
+              <div class="stack" data-issue-host={`${tPath}.schedule.local_windows`}>
+                {#each schedule.local_windows as window, windowIndex (window)}
+                  {@const windowPath = `${tPath}.schedule.local_windows.${windowIndex}`}
+                  <div class="random-window">
+                    <Field label={copy.windowStart} path={`${windowPath}.start_local_time`}>
+                      {#snippet children({ id, describedby, invalid })}
+                        <input
+                          class="input input--mono clock"
+                          type="time"
+                          {id}
+                          aria-describedby={describedby}
+                          aria-invalid={invalid || undefined}
+                          value={window.start_local_time}
+                          oninput={(event) => (window.start_local_time = event.currentTarget.value)}
+                          onblur={() => source.touch?.(`${windowPath}.start_local_time`)}
+                        />
+                      {/snippet}
+                    </Field>
+                    <Field label={copy.windowEnd} path={`${windowPath}.end_local_time`}>
+                      {#snippet children({ id, describedby, invalid })}
+                        <input
+                          class="input input--mono clock"
+                          type="time"
+                          {id}
+                          aria-describedby={describedby}
+                          aria-invalid={invalid || undefined}
+                          value={window.end_local_time}
+                          oninput={(event) => (window.end_local_time = event.currentTarget.value)}
+                          onblur={() => source.touch?.(`${windowPath}.end_local_time`)}
+                        />
+                      {/snippet}
+                    </Field>
+                    {#if schedule.local_windows.length > 1}
+                      <IconButton
+                        icon="trash"
+                        variant="danger"
+                        size={18}
+                        label={`${m.control.remove} · ${copy.windowStart} ${windowIndex + 1}`}
+                        onclick={() => schedule.local_windows.splice(windowIndex, 1)}
+                      />
+                    {/if}
+                  </div>
+                {/each}
+                {#if schedule.local_windows.length < 8 && nextRandomWindow(schedule) !== null}
+                  <Button
+                    variant="quiet"
+                    icon="plus"
+                    label={copy.addWindow}
+                    onclick={() => {
+                      const next = nextRandomWindow(schedule);
+                      if (next) schedule.local_windows.push(next);
+                    }}
+                  />
+                {/if}
+              </div>
+
+              {@render numberBox({
+                label: copy.occurrencesPerWindow,
+                path: `${tPath}.schedule.occurrences_per_window`,
+                issueHost: [`${tPath}.schedule`],
+                value: schedule.occurrences_per_window,
+                min: 1,
+                max: 8,
+                apply: (value) => (schedule.occurrences_per_window = value)
+              })}
+              {@render numberBox({
+                label: copy.dailyMaximum,
+                path: `${tPath}.schedule.maximum_occurrences_per_day`,
+                issueHost: [`${tPath}.schedule`],
+                value: schedule.maximum_occurrences_per_day,
+                min: 1,
+                max: 64,
+                apply: (value) => (schedule.maximum_occurrences_per_day = value)
+              })}
+              {@render numberBox({
+                label: copy.totalMaximum,
+                path: `${tPath}.schedule.maximum_occurrences_total`,
+                value: schedule.maximum_occurrences_total,
+                min: 1,
+                max: 512,
+                apply: (value) => (schedule.maximum_occurrences_total = value)
+              })}
+              {@render numberBox({
+                label: copy.minimumSeparation,
+                path: `${tPath}.schedule.minimum_separation_minutes`,
+                issueHost: [`${tPath}.schedule`],
+                value: schedule.minimum_separation_minutes,
+                min: 1,
+                max: 1_440,
+                apply: (value) => (schedule.minimum_separation_minutes = value)
+              })}
+              <Note
+                icon="info"
+                tone="plain"
+                text={copy.randomWindowSummary({ minimum: 0, maximum: randomMaximum(schedule) })}
+              />
             {:else}
               <!-- Segments rather than a select: both names are sentences about what the clock does
                    with a pause, and a select drew them at a width that cut the closing bracket off. -->
@@ -968,5 +1077,19 @@
     align-self: flex-start;
     inline-size: auto;
     max-inline-size: 100%;
+  }
+
+  .random-window {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+    align-items: end;
+    gap: var(--sp-4);
+  }
+
+  @media (max-width: 36rem) {
+    .random-window {
+      grid-template-columns: 1fr;
+      align-items: start;
+    }
   }
 </style>

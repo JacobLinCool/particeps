@@ -15,7 +15,6 @@
  * entries are byte-identical to what `Intl` emitted, so no rendered string moved.
  */
 
-import { formatFloat } from '$lib/adc/canonical';
 import { binaryBytes } from '$lib/ui/format';
 import type { Locale, Messages } from '$lib/i18n/types';
 
@@ -27,6 +26,8 @@ export interface Units {
   hours(value: number): string;
   hertz(value: number): string;
   metres(value: number): string;
+  millimetres(value: number): string;
+  lux(value: number): string;
   bytes(value: number): string;
   /** One significant figure above ten, because the constants behind it are that good and no better. */
   count(value: number): string;
@@ -90,9 +91,9 @@ export function units(m: Messages, locale: Locale): Units {
     // The app shows a whole number of hertz because Android delivers at least that rate, never
     // less; a fractional rate would suggest a precision the sensor does not offer.
     hertz: (value) => `${value} ${m.unit.hertz}`,
-    // The float32 that will actually be written, not the double that was typed: `1234.5678`
-    // displays as `1234.5677`, and discovering that at diff time is worse than seeing it here.
-    metres: (value) => `${formatFloat(value)} ${m.unit.metres}`,
+    metres: (value) => `${number.format(value)} ${m.unit.metres}`,
+    millimetres: (value) => `${number.format(value)} ${m.unit.millimetres}`,
+    lux: (value) => `${number.format(value)} ${m.unit.lux}`,
     bytes: (value) => binaryBytes(value),
     count: (value) => number.format(coarse(value)),
     about: (value) => `≈ ${value}`

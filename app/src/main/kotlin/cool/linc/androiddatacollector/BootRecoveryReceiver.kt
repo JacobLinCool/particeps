@@ -3,6 +3,7 @@ package cool.linc.androiddatacollector
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import cool.linc.androiddatacollector.platform.InterventionDeliveryCoordinator
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -14,7 +15,13 @@ class BootRecoveryReceiver : BroadcastReceiver() {
         application.applicationScope.launch {
             try {
                 application.session.snapshot.first { it.initialized }
-                application.session.rescheduleInterventions()
+                if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+                    InterventionDeliveryCoordinator.recoverStalePosting {
+                        application.session.rescheduleInterventions(recoverStalePosting = true)
+                    }
+                } else {
+                    application.session.rescheduleInterventions()
+                }
             } finally {
                 pending.finish()
             }

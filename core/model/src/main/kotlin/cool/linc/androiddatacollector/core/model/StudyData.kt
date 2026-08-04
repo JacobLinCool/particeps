@@ -11,9 +11,9 @@ data class StudyMetadata(
     val nextSequenceNumber: Long,
     val lastEvents: Map<String, RecordedEvent>,
     /**
-     * Pseudonymous per-install identifier. A study that uploads has no other way to tell one
-     * participant's events from another's, because a manual export carries that information
-     * out of band. Unlike the assigned code, this UUID is also the cleartext upload routing key.
+     * Pseudonymous per-install identifier used only after authentication and decryption to keep
+     * event streams distinct. It remains inside ciphertext; upload URLs and headers carry no
+     * participant identifier.
      */
     val participantInstanceId: String,
     /** Optional researcher-assigned code; protected inside encrypted metadata and exports. */

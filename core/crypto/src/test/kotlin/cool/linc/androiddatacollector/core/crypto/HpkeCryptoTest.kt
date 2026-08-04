@@ -1,47 +1,59 @@
 package cool.linc.androiddatacollector.core.crypto
 
-import com.google.crypto.tink.KeysetHandle
-import com.google.crypto.tink.TinkJsonProtoKeysetFormat
-import com.google.crypto.tink.hybrid.HybridConfig
-import com.google.crypto.tink.hybrid.HpkeParameters
 import java.security.GeneralSecurityException
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class HpkeCryptoTest {
     @Test
-    fun generatedHpkeKeysetEncryptsOnlyForMatchingPrivateKeyAndContext() {
-        val keys = HpkeCrypto.generateKeyset()
-        val plaintext = "research content key".toByteArray()
-        val context = "experiment:config:key".toByteArray()
+    fun rawNoPrefixHpkeRoundTripsWithTheExactProtocolSuite() {
+        val keys = HpkeCrypto.generateKeyPair()
+        val plaintext = ByteArray(32) { it.toByte() }
+        val context = "adc protocol context".toByteArray()
 
-        HpkeCrypto.validatePublicKeyset(keys.publicKeysetJson)
-        val ciphertext = HpkeCrypto.encrypt(keys.publicKeysetJson, plaintext, context)
+        HpkeCrypto.validatePublicKey(keys.publicKey)
+        val ciphertext = HpkeCrypto.encrypt(keys.publicKey, plaintext, context)
 
-        assertArrayEquals(plaintext, HpkeCrypto.decrypt(keys.privateKeysetJson, ciphertext, context))
+        assertEquals(32, keys.privateKey.size)
+        assertEquals(32, keys.publicKey.size)
+        assertEquals(80, ciphertext.size)
+        assertArrayEquals(plaintext, HpkeCrypto.decrypt(keys.privateKey, ciphertext, context))
+    }
+
+    @Test
+    fun hpkeFailsClosedForWrongKeyContextAndCiphertext() {
+        val keys = HpkeCrypto.generateKeyPair()
+        val other = HpkeCrypto.generateKeyPair()
+        val context = "correct".toByteArray()
+        val ciphertext = HpkeCrypto.encrypt(keys.publicKey, ByteArray(32) { 7 }, context)
+
         assertThrows(GeneralSecurityException::class.java) {
-            HpkeCrypto.decrypt(keys.privateKeysetJson, ciphertext, "wrong-context".toByteArray())
+            HpkeCrypto.decrypt(keys.privateKey, ciphertext, "wrong".toByteArray())
+        }
+        assertThrows(GeneralSecurityException::class.java) {
+            HpkeCrypto.decrypt(other.privateKey, ciphertext, context)
+        }
+        assertThrows(GeneralSecurityException::class.java) {
+            HpkeCrypto.decrypt(keys.privateKey, ciphertext.copyOf().also { it[it.lastIndex]++ }, context)
         }
     }
 
     @Test
-    fun publicKeyValidationRejectsAValidHpkeKeyWithTheWrongAeadSuite() {
-        HybridConfig.register()
-        val privateHandle = KeysetHandle.generateNew(
-            HpkeParameters.builder()
-                .setKemId(HpkeParameters.KemId.DHKEM_X25519_HKDF_SHA256)
-                .setKdfId(HpkeParameters.KdfId.HKDF_SHA256)
-                .setAeadId(HpkeParameters.AeadId.AES_128_GCM)
-                .setVariant(HpkeParameters.Variant.TINK)
-                .build(),
-        )
-        val publicJson = TinkJsonProtoKeysetFormat.serializeKeysetWithoutSecret(
-            privateHandle.publicKeysetHandle,
-        )
-
+    fun rejectsLegacyKeysetsAndInvalidRawLengths() {
+        val legacyJson = "{\"primaryKeyId\":123,\"key\":[]}".toByteArray()
+        assertFalse(legacyJson.size == HpkeCrypto.RAW_KEY_BYTES)
+        assertThrows(IllegalArgumentException::class.java) { HpkeCrypto.validatePublicKey(legacyJson) }
         assertThrows(IllegalArgumentException::class.java) {
-            HpkeCrypto.validatePublicKeyset(publicJson)
+            HpkeCrypto.encrypt(ByteArray(31), ByteArray(32), ByteArray(0))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            HpkeCrypto.decrypt(ByteArray(33), ByteArray(80), ByteArray(0))
+        }
+        assertThrows(GeneralSecurityException::class.java) {
+            HpkeCrypto.validatePublicKey(ByteArray(32))
         }
     }
 }

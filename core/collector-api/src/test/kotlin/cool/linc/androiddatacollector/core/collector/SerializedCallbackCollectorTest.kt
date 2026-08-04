@@ -91,6 +91,90 @@ class SerializedCallbackCollectorTest {
         collector.stop()
     }
 
+    @Test
+    fun uncertainStopKeepsConsumerAliveUntilTeardownCanBeRetried() = runTest {
+        val sink = FakeSink()
+        val collector = TestCollector(context(sink), queueCapacity = 1)
+        collector.start()
+        collector.leaveNextUnregistrationUncertain = true
+
+        val firstFailure = runCatching { collector.stop() }.exceptionOrNull()
+        assertTrue(firstFailure is IllegalStateException)
+        assertEquals(CollectorHealth(CollectorStatus.FAILED, "SOURCE_UNREGISTRATION_FAILED"), collector.health.value)
+
+        collector.trigger()
+        collector.stop()
+
+        assertEquals(1, collector.registerCount)
+        assertEquals(2, collector.unregisterCount)
+        assertEquals(1, sink.events.size)
+        assertEquals(CollectorStatus.STOPPED, collector.health.value.status)
+    }
+
+    @Test
+    fun uncertainRegistrationBlocksAnotherGenerationUntilStopReleasesIt() = runTest {
+        val collector = TestCollector(context(FakeSink()), queueCapacity = 1)
+        collector.leaveNextRegistrationUncertain = true
+
+        val startFailure = runCatching { collector.start() }.exceptionOrNull()
+        assertTrue(startFailure is IllegalStateException)
+
+        val resumeFailure = runCatching { collector.resume() }.exceptionOrNull()
+        assertTrue(resumeFailure is IllegalStateException)
+        assertEquals(1, collector.registerCount)
+
+        collector.stop()
+        assertEquals(1, collector.unregisterCount)
+        assertEquals(CollectorStatus.STOPPED, collector.health.value.status)
+    }
+
+    @Test
+    fun failedPauseTeardownStillDrainsAndCanResumeWithAFreshSource() = runTest {
+        val sink = FakeSink()
+        val collector = TestCollector(context(sink), queueCapacity = 1)
+        collector.start()
+        collector.trigger()
+        collector.failNextUnregistration = true
+
+        val failure = runCatching { collector.pause() }.exceptionOrNull()
+
+        assertTrue(failure is IllegalStateException)
+        assertEquals(1, sink.events.size)
+        assertEquals(CollectorHealth(CollectorStatus.FAILED, "SOURCE_UNREGISTRATION_FAILED"), collector.health.value)
+
+        collector.resume()
+        collector.trigger()
+        collector.stop()
+
+        assertEquals(2, collector.registerCount)
+        assertEquals(2, collector.unregisterCount)
+        assertEquals(2, sink.events.size)
+        assertEquals(CollectorStatus.STOPPED, collector.health.value.status)
+    }
+
+    @Test
+    fun uncertainPauseTeardownDrainsButRefusesToRegisterOverTheSource() = runTest {
+        val sink = FakeSink()
+        val collector = TestCollector(context(sink), queueCapacity = 1)
+        collector.start()
+        collector.trigger()
+        collector.leaveNextUnregistrationUncertain = true
+
+        val pauseFailure = runCatching { collector.pause() }.exceptionOrNull()
+
+        assertTrue(pauseFailure is IllegalStateException)
+        assertEquals(1, sink.events.size)
+        assertEquals(CollectorHealth(CollectorStatus.FAILED, "SOURCE_UNREGISTRATION_FAILED"), collector.health.value)
+
+        val resumeFailure = runCatching { collector.resume() }.exceptionOrNull()
+        assertTrue(resumeFailure is IllegalStateException)
+        assertEquals(1, collector.registerCount)
+
+        // A later teardown retry may establish a known released state before final shutdown.
+        collector.stop()
+        assertEquals(2, collector.unregisterCount)
+    }
+
     private fun kotlinx.coroutines.test.TestScope.context(sink: FakeSink) = CollectorContext(
         scope = backgroundScope,
         eventSink = sink,
@@ -107,27 +191,43 @@ class SerializedCallbackCollectorTest {
         var unregisterCount = 0
         var draftConstructed = false
         var failNextRegistration = false
+        var leaveNextRegistrationUncertain = false
         var failNextUnregistration = false
+        var leaveNextUnregistrationUncertain = false
 
         fun trigger() = capture {
             draftConstructed = true
             EventDraft("test_collector.v1", 1, context.clocks.now(), "TEST", emptyMap())
         }
 
-        override suspend fun registerSource() {
+        override suspend fun registerSource(): SourceRegistrationResult {
             registerCount += 1
+            if (leaveNextRegistrationUncertain) {
+                leaveNextRegistrationUncertain = false
+                return SourceRegistrationResult.Uncertain(
+                    IllegalStateException("Registration rollback state is uncertain"),
+                )
+            }
             if (failNextRegistration) {
                 failNextRegistration = false
-                error("Registration failed")
+                return SourceRegistrationResult.Released(IllegalStateException("Registration failed"))
             }
+            return SourceRegistrationResult.Registered
         }
 
-        override suspend fun unregisterSource() {
+        override suspend fun unregisterSource(): SourceTeardownResult {
             unregisterCount += 1
+            if (leaveNextUnregistrationUncertain) {
+                leaveNextUnregistrationUncertain = false
+                error("Unregistration state is uncertain")
+            }
             if (failNextUnregistration) {
                 failNextUnregistration = false
-                error("Unregistration failed")
+                return SourceTeardownResult.ReleasedWithFailure(
+                    IllegalStateException("Unregistration reported a failure after release"),
+                )
             }
+            return SourceTeardownResult.Released
         }
     }
 

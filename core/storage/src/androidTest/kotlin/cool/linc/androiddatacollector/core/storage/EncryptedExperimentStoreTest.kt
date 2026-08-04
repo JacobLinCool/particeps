@@ -193,6 +193,21 @@ class EncryptedExperimentStoreTest {
         Unit
     }
 
+    @Test
+    fun corruptAppendJournalFailsClosedAndIsNotDeleted() = runBlocking {
+        store.initialize(runningMetadata())
+        val metadata = storageFiles().single { it.name.endsWith(".metadata.adc") }
+        val transaction = requireNotNull(metadata.parentFile).resolve(
+            metadata.name.replace(".metadata.adc", ".transaction.adc"),
+        )
+        transaction.writeBytes(byteArrayOf(0x01))
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { store.loadMetadata() }
+        }
+        assertTrue("a corrupt journal must remain available for diagnosis", transaction.exists())
+    }
+
     private fun runningMetadata() = StudyMetadata.initial(experimentId, "encrypted-store-config")
         .copy(state = ExperimentState.RUNNING)
 

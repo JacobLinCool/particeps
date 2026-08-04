@@ -16,6 +16,7 @@ dependencies {
     api(project(":core:model"))
     api(project(":core:study-definition"))
     api(libs.coroutines.core)
+    implementation(libs.gson)
     testImplementation(libs.coroutines.test)
     testImplementation(libs.junit4)
 }

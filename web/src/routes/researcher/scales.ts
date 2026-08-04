@@ -28,11 +28,9 @@
  *   1. Round-trip.  `toHuman(toStored(h)) === h`. A value does not change by passing through a box.
  *   2. Encodable.   `toStored(h)` is an integer inside `BOUNDS`, so the canonical encoder's
  *                   `-?(0|[1-9][0-9]*)` still matches. The one exception is
- *                   `minimum_displacement_meters`, a Kotlin `Float` written by `formatFloat`,
- *                   where `toStored` returns a float32 and must.
+ *                   Location displacement is presented in metres and stored as integer mm.
  */
 
-import { formatFloat } from '$lib/adc/canonical';
 import {
   BOUNDS,
   MAXIMUM_LOCAL_BYTES,
@@ -66,11 +64,15 @@ export type { Scale };
 
 export type ScaleKey =
   | 'sampling_period_us'
+  | 'ambient_sampling_period_us'
   | 'maximum_report_latency_us'
+  | 'change_threshold_millilux'
+  | 'minimum_event_interval_ms'
+  | 'change_threshold_millimeters'
   | 'poll_interval_minutes'
   | 'interval_millis'
   | 'maximum_batch_delay_millis'
-  | 'minimum_displacement_meters'
+  | 'minimum_displacement_millimeters'
   | 'trajectory_sampling_hz'
   | 'duration_hours'
   | 'maximum_local_bytes'
@@ -122,6 +124,19 @@ export function scales(m: Messages, u: Units): Record<ScaleKey, Scale> {
       format: u.hertz
     },
 
+    ambient_sampling_period_us: {
+      box: true,
+      affix: m.unit.seconds,
+      toHuman: (stored) => stored / 1_000_000,
+      toStored: (human) => Math.round(human * 1_000_000),
+      min: BOUNDS.ambientLightSamplingPeriodUs[0] / 1_000_000,
+      max: BOUNDS.ambientLightSamplingPeriodUs[1] / 1_000_000,
+      step: 0.1,
+      presets: PRESETS.ambient_sampling_period_us,
+      scale: 'log',
+      format: u.seconds
+    },
+
     /**
      * A box rather than a ladder, where its neighbour the batch delay is a ladder: the two are the
      * same kind of decision three orders of magnitude apart, and this one tops out at a minute, so
@@ -139,6 +154,45 @@ export function scales(m: Messages, u: Units): Record<ScaleKey, Scale> {
       presets: PRESETS.maximum_report_latency_us,
       scale: 'log',
       format: u.seconds
+    },
+
+    change_threshold_millilux: {
+      box: true,
+      affix: m.unit.lux,
+      toHuman: (stored) => stored / 1_000,
+      toStored: (human) => Math.round(human * 1_000),
+      min: BOUNDS.changeThresholdMillilux[0] / 1_000,
+      max: BOUNDS.changeThresholdMillilux[1] / 1_000,
+      step: 0.001,
+      presets: PRESETS.change_threshold_millilux,
+      scale: 'log',
+      format: u.lux
+    },
+
+    minimum_event_interval_ms: {
+      box: true,
+      affix: m.unit.seconds,
+      toHuman: (stored) => stored / 1_000,
+      toStored: (human) => Math.round(human * 1_000),
+      min: BOUNDS.minimumEventIntervalMs[0] / 1_000,
+      max: BOUNDS.minimumEventIntervalMs[1] / 1_000,
+      step: 0.1,
+      presets: PRESETS.minimum_event_interval_ms,
+      scale: 'log',
+      format: u.seconds
+    },
+
+    change_threshold_millimeters: {
+      box: true,
+      affix: m.unit.millimetres,
+      toHuman: (stored) => stored,
+      toStored: (human) => human,
+      min: BOUNDS.changeThresholdMillimeters[0],
+      max: BOUNDS.changeThresholdMillimeters[1],
+      step: 1,
+      presets: PRESETS.change_threshold_millimeters,
+      scale: 'log',
+      format: u.millimetres
     },
 
     // 1 min → 1 day. 2 hours is an ordinary poll interval and is on no chip.
@@ -159,22 +213,16 @@ export function scales(m: Messages, u: Units): Record<ScaleKey, Scale> {
       u.millis
     ),
 
-    /**
-     * The one non-integer, and the one field where the unit was never the problem: metres are
-     * metres. The gap is float32 — the box takes a double and the file gets a `Float`, so
-     * `1234.5678` is written `1234.5677`. `toHuman` is the shortest decimal that round-trips to the
-     * float32 that will actually be written, which is why the box never shows
-     * `50.099998474121094` and never shows a number the file will not contain.
-     */
-    minimum_displacement_meters: {
+    /** Metres in the control, exact integer millimetres in Protocol v1. */
+    minimum_displacement_millimeters: {
       box: true,
       affix: m.unit.metres,
-      toHuman: (stored) => Number(formatFloat(Math.fround(stored))),
-      toStored: (human) => Math.fround(human),
-      min: BOUNDS.minimumDisplacementMeters[0],
-      max: BOUNDS.minimumDisplacementMeters[1],
-      step: 0.1,
-      presets: PRESETS.minimum_displacement_meters,
+      toHuman: (stored) => stored / 1_000,
+      toStored: (human) => Math.round(human * 1_000),
+      min: BOUNDS.minimumDisplacementMillimeters[0] / 1_000,
+      max: BOUNDS.minimumDisplacementMillimeters[1] / 1_000,
+      step: 0.001,
+      presets: PRESETS.minimum_displacement_millimeters,
       scale: 'log',
       format: u.metres
     },
@@ -244,11 +292,15 @@ export function scales(m: Messages, u: Units): Record<ScaleKey, Scale> {
  */
 export const SCALE_BOUNDS: Record<ScaleKey, readonly [number, number]> = {
   sampling_period_us: BOUNDS.samplingPeriodUs,
+  ambient_sampling_period_us: BOUNDS.ambientLightSamplingPeriodUs,
   maximum_report_latency_us: BOUNDS.maximumReportLatencyUs,
+  change_threshold_millilux: BOUNDS.changeThresholdMillilux,
+  minimum_event_interval_ms: BOUNDS.minimumEventIntervalMs,
+  change_threshold_millimeters: BOUNDS.changeThresholdMillimeters,
   poll_interval_minutes: BOUNDS.pollIntervalMinutes,
   interval_millis: [BOUNDS.minimumIntervalMillis[0], BOUNDS.intervalMillis[1]],
   maximum_batch_delay_millis: BOUNDS.maximumBatchDelayMillis,
-  minimum_displacement_meters: BOUNDS.minimumDisplacementMeters,
+  minimum_displacement_millimeters: BOUNDS.minimumDisplacementMillimeters,
   trajectory_sampling_hz: BOUNDS.trajectorySamplingHz,
   duration_hours: BOUNDS.durationHours,
   maximum_local_bytes: [MINIMUM_LOCAL_BYTES, MAXIMUM_LOCAL_BYTES],

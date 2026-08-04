@@ -8,6 +8,7 @@ import cool.linc.androiddatacollector.core.collector.AccessKind
 import cool.linc.androiddatacollector.core.collector.AccessRequirement
 import cool.linc.androiddatacollector.core.definition.CollectorConfiguration
 import cool.linc.androiddatacollector.core.collector.PrivacyClass
+import cool.linc.androiddatacollector.core.collector.ProtocolEventContracts
 import cool.linc.androiddatacollector.core.definition.UsageEventsConfiguration
 import cool.linc.androiddatacollector.core.collector.Collector
 import cool.linc.androiddatacollector.core.collector.CollectorContext
@@ -35,10 +36,9 @@ class UsageEventsCollectorPlugin(
 
     override val descriptor = CollectorDescriptor(
         id = UsageEventsConfiguration.ID,
-        payloadSchemaVersion = 1,
         displayName = "App and screen usage events",
         privacyClass = PrivacyClass.SENSITIVE,
-        maximumEncodedEventBytes = 4_096,
+        eventContract = requireNotNull(ProtocolEventContracts[UsageEventsConfiguration.ID]),
     )
 
     override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
@@ -143,7 +143,7 @@ private class UsageEventsCollector(
                     put("source_time_utc_millis", source.timestamp.toString())
                     source.packageName?.takeIf(String::isNotBlank)?.let { put("package_name", it) }
                 }
-                if (
+                when (
                     collectorContext.eventSink.emit(
                         token,
                         EventDraft(
@@ -153,10 +153,17 @@ private class UsageEventsCollector(
                             payloadType = source.type,
                             fields = fields,
                         ),
-                    ) == EmitResult.StorageFailure
+                    )
                 ) {
-                    mutableHealth.value = CollectorHealth(CollectorStatus.FAILED, "STORAGE_WRITE_FAILED")
-                    return
+                    EmitResult.ContractViolation -> {
+                        mutableHealth.value = CollectorHealth(CollectorStatus.FAILED, "EVENT_CONTRACT_VIOLATION")
+                        return
+                    }
+                    EmitResult.StorageFailure -> {
+                        mutableHealth.value = CollectorHealth(CollectorStatus.FAILED, "STORAGE_WRITE_FAILED")
+                        return
+                    }
+                    else -> Unit
                 }
             }
             queryStartUtcMillis = end

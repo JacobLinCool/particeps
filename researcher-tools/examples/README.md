@@ -4,11 +4,16 @@
 
 | File | What it is |
 | --- | --- |
-| `INSECURE-demo-signing-private.key` | Ed25519 study signing private key — public fixture |
-| `INSECURE-demo-hpke-private.json` | Tink HPKE private keyset for export decryption — public fixture |
+| `INSECURE-demo-signing-private.key` | Raw Ed25519 study signing private key, unpadded base64url — public fixture |
+| `INSECURE-demo-hpke-private.key` | Raw X25519 HPKE private key, unpadded base64url — public fixture |
 | `demo-study.json` | An example study configuration, useful as a schema reference |
 
 These exist so a debug build can exercise signing and export decryption end to end, and so the example configuration in the [researcher guide](../../docs/researcher-guide.md) is runnable. That is their only purpose. The signing public key is not stored separately: it travels inside the configuration, as `demo-study.json`'s `signer.public_key`.
+
+`demo-study.json` is intentionally formatted for people to read. Run `canonicalize` before `sign`; only the resulting RFC 8785 bytes are valid Protocol v1 signing input.
+The signed result mirrored at `app/src/debug/res/raw/demo_study_envelope.txt` is verified by
+`DemoStudyAssetTest`; changing this configuration or its signing key requires regenerating that
+asset through the same `canonicalize` and `sign` commands.
 
 The example is an anonymous v1 configuration with one localized short-answer survey and one one-time survey intervention. It deliberately has no researcher-assigned participant code.
 

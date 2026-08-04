@@ -10,9 +10,12 @@ import cool.linc.androiddatacollector.core.collector.CollectorDescriptor
 import cool.linc.androiddatacollector.core.collector.CollectorPlugin
 import cool.linc.androiddatacollector.core.collector.AccessRequirement
 import cool.linc.androiddatacollector.core.collector.SerializedCallbackCollector
+import cool.linc.androiddatacollector.core.collector.SourceRegistrationResult
+import cool.linc.androiddatacollector.core.collector.SourceTeardownResult
 import cool.linc.androiddatacollector.core.definition.AppLifecycleConfiguration
 import cool.linc.androiddatacollector.core.definition.CollectorConfiguration
 import cool.linc.androiddatacollector.core.collector.PrivacyClass
+import cool.linc.androiddatacollector.core.collector.ProtocolEventContracts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -21,10 +24,9 @@ class AppLifecycleCollectorPlugin(
 ) : CollectorPlugin {
     override val descriptor = CollectorDescriptor(
         id = COLLECTOR_ID,
-        payloadSchemaVersion = PAYLOAD_SCHEMA_VERSION,
         displayName = "Own-app lifecycle",
         privacyClass = PrivacyClass.SENSITIVE,
-        maximumEncodedEventBytes = 2_048,
+        eventContract = requireNotNull(ProtocolEventContracts[COLLECTOR_ID]),
     )
 
     override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
@@ -86,12 +88,14 @@ private class AppLifecycleCollector(
         }
     }
 
-    override suspend fun registerSource() = withContext(Dispatchers.Main.immediate) {
+    override suspend fun registerSource(): SourceRegistrationResult = withContext(Dispatchers.Main.immediate) {
         application.registerActivityLifecycleCallbacks(this@AppLifecycleCollector)
+        SourceRegistrationResult.Registered
     }
 
-    override suspend fun unregisterSource() = withContext(Dispatchers.Main.immediate) {
+    override suspend fun unregisterSource(): SourceTeardownResult = withContext(Dispatchers.Main.immediate) {
         application.unregisterActivityLifecycleCallbacks(this@AppLifecycleCollector)
+        SourceTeardownResult.Released
     }
 
     private companion object {

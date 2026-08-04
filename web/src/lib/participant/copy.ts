@@ -10,9 +10,8 @@
  *
  *   - No claim that a signature shows who wrote a file. The whole of section 5 exists because it
  *     does not.
- *   - No claim that a source cannot see something. The app's data step is positive by design; the
- *     negative claims are the data dictionary's, written against the code. The one exception is
- *     the keyboard line, which withdraws reassurance rather than offering it.
+ *   - Collector limits shown by the app must be narrow guarantees grounded in the implementation,
+ *     not an exhaustive threat model. The data dictionary remains the complete field reference.
  *   - No "anonymous", no hardware-backed key, and nothing about a research team's intentions.
  *     The install code is pseudonymous, the app requests no StrongBox, and this page cannot know
  *     anything at all about the team that recruited its reader.
@@ -58,6 +57,11 @@ export interface ParticipantCopy {
     name: {
       appLifecycle: string;
       accelerometer: string;
+      batteryState: string;
+      temporalContext: string;
+      gyroscope: string;
+      ambientLight: string;
+      proximity: string;
       networkState: string;
       networkUsage: string;
       usageEvents: string;
@@ -67,6 +71,11 @@ export interface ParticipantCopy {
     detail: {
       appLifecycle: string;
       accelerometer: string;
+      batteryState: string;
+      temporalContext: string;
+      gyroscope: string;
+      ambientLight: string;
+      proximity: string;
       networkState: string;
       networkUsage: string;
       usageEvents: string;
@@ -201,14 +210,19 @@ export const en: ParticipantCopy = {
   },
 
   sources: {
-    title: 'Seven sources exist. Your study uses some of them.',
+    title: 'Twelve sources exist. Your study uses some of them.',
     lead: 'Before you agree, the app lists the ones your study switched on — in the app’s own words, not the research team’s.',
     tokens: 'N, T and D come from your study: how often, how long between, how far.',
-    more: 'What a source cannot see is not on that screen.',
-    moreLink: 'The guide has the full table.',
+    more: 'That screen also names selected limits the implementation guarantees.',
+    moreLink: 'The guide has the complete field table.',
     name: {
       appLifecycle: 'App activity',
       accelerometer: 'Motion',
+      batteryState: 'Battery state',
+      temporalContext: 'Time context',
+      gyroscope: 'Rotation',
+      ambientLight: 'Ambient light',
+      proximity: 'Proximity',
       networkState: 'Connection type',
       networkUsage: 'Data volume',
       usageEvents: 'App and screen use',
@@ -218,6 +232,11 @@ export const en: ParticipantCopy = {
     detail: {
       appLifecycle: 'When this app itself is opened and closed',
       accelerometer: 'Movement of the phone, about {n} times per second or more',
+      batteryState: 'Battery percentage, charging source, and power-save state',
+      temporalContext: 'Time zone, UTC offset, daylight-saving state, and clock changes',
+      gyroscope: 'Rotation of the phone around three axes, about {n} times per second or more',
+      ambientLight: 'Illuminance reported by the phone’s ambient-light sensor',
+      proximity: 'Raw distance, sensor range, and the phone’s near/far interpretation',
       networkState: 'Whether you are on Wi-Fi or mobile data, and whether it is metered',
       networkUsage: 'Total bytes your phone sent and received, every {t}',
       usageEvents: 'Which apps open and close, and when the screen turns on, every {t}',
@@ -243,11 +262,11 @@ export const en: ParticipantCopy = {
       sampleHost: 'study.example.org',
       sampleCadence: 'About every 6 hours',
       sampleNetwork: 'Wi-Fi only',
-      code: 'A randomly generated code travels with the data so the team can tell participants apart. It contains no name and no account.',
+      code: 'The encrypted content includes a randomly generated installation code so the research team can tell participants apart after decrypting it. It contains no name and no account.',
       mandatory: 'Automatic sending is part of the study and cannot be switched off on its own.',
       caption: 'The same phone. Your export, and a second arrow that repeats on a schedule.',
       metadata:
-        'A server that receives deliveries learns when each arrived and how large it was, plus the study’s identifiers and a random code for your install.'
+        'The receiving server sees when a delivery arrived and how large it was, plus bundle, configuration, digest, and claimed range metadata. It cannot see your installation code or collected content.'
     },
     // Sealing is a property of the key, and the receiving computer is where the other half of that
     // key may well live. The network claim is the one this software actually makes.
@@ -363,14 +382,19 @@ export const zhTW: ParticipantCopy = {
   },
 
   sources: {
-    title: 'App 支援七種資料來源，每項研究只會啟用其中幾種。',
+    title: 'App 支援十二種資料來源，每項研究只會啟用其中幾種。',
     lead: '取得你的同意前，App 會列出這項研究啟用的資料來源。這些說明由 App 提供，研究團隊無法修改。',
     tokens: 'N、T、D 分別代表取樣頻率、時間間隔與移動距離。',
-    more: '該畫面只會說明各來源記錄的內容。',
+    more: '該畫面也會列出部分由實作保證的限制。',
     moreLink: '完整的收集範圍請見參與者指南。',
     name: {
       appLifecycle: 'App 使用狀況',
       accelerometer: '手機移動',
+      batteryState: '電池狀態',
+      temporalContext: '時間脈絡',
+      gyroscope: '旋轉',
+      ambientLight: '環境光',
+      proximity: '距離感測',
       networkState: '連線類型',
       networkUsage: '流量',
       usageEvents: 'App 與螢幕使用',
@@ -380,6 +404,11 @@ export const zhTW: ParticipantCopy = {
     detail: {
       appLifecycle: '這個 App 本身開啟與關閉的時間',
       accelerometer: '手機的移動狀況，每秒約記錄 {n} 次以上',
+      batteryState: '電量百分比、充電來源與省電模式狀態',
+      temporalContext: '時區、UTC 偏移、日光節約時間狀態與系統時間變更',
+      gyroscope: '手機繞三軸旋轉的角速度，每秒約記錄 {n} 次以上',
+      ambientLight: '手機環境光感測器回報的照度',
+      proximity: '原始距離、感測器最大範圍與手機的遠近判定',
       networkState: '目前使用 Wi-Fi 或行動網路，以及連線是否按流量計費',
       networkUsage: '每隔 {t} 記錄手機傳送與接收的總位元組數',
       usageEvents: '每隔 {t} 記錄開啟或關閉了哪些 App，以及螢幕何時亮起',
@@ -404,11 +433,11 @@ export const zhTW: ParticipantCopy = {
       sampleHost: 'study.example.org',
       sampleCadence: '約每 6 小時',
       sampleNetwork: '只用 Wi-Fi',
-      code: '傳送的資料會附帶一組隨機產生的安裝代碼，讓研究團隊區分不同的 App 安裝。代碼不含你的姓名或帳號。',
+      code: '加密內容包含一組隨機產生的安裝代碼，研究團隊解密後可用它區分不同的 App 安裝。代碼不含你的姓名或帳號。',
       mandatory: '自動傳送是這個研究的一部分，無法單獨關閉。暫停或退出研究會停止收集新資料，但已收集且尚未傳送的資料仍會傳送給研究團隊。',
       caption: '一個箭頭代表你自行匯出，另一個代表 App 依排程自動傳送。',
       metadata:
-        '接收資料的伺服器會知道每次傳送的時間和大小，也會看到研究識別碼和這次安裝的隨機代碼。'
+        '接收伺服器會看到傳送抵達的時間與大小，以及 bundle、設定摘要、內容摘要和宣告的資料範圍；它看不到安裝代碼或收集內容。'
     },
     sealed: '資料離開手機時會加密，只有研究團隊持有的解密金鑰能開啟內容，傳輸途中無法讀取。',
     exportable: '無論採用哪種傳送方式，你都可以不限次數自行匯出資料。'

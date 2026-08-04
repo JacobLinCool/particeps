@@ -10,16 +10,15 @@
  * a pure function of the public half of the key they name — computed by the document rather than
  * typed into it. A researcher has no basis for choosing either, and the property that matters falls
  * out for free: the second configuration under the same signer gets the same `signer.key_id` by
- * construction, whether the key was generated here, imported from `signing-keygen`, or read back
- * out of a configuration file. The raw 32-byte key is what is hashed — not the DER, not the Tink
- * JSON — so the name is a property of the key itself rather than of an encoding of it.
+ * construction, whether the key was generated here, imported, or read back out of a configuration
+ * file. The canonical raw 32-byte public key is the hash input.
  *
  * Pure, and deliberately ignorant of `canonical.ts`: `deriveConfigurationId` takes the canonical
  * string as an argument, so the whole module is testable from plain strings.
  *
- * Six base-36 characters is 30 bits, 1.07×10⁹ values. The de-duplication key downstream is
- * `experiment_id + configuration_id + collector_id + sequence_number` (see `docs/researcher-guide`),
- * so a digest collision would silently merge two arms of a study; at ten configurations the chance
+ * Six base-36 characters is 30 bits, 1.07×10⁹ values. Analysis partitions by experiment and
+ * configuration before event-level `(participant_instance_id, sequence_number)` de-duplication,
+ * so a configuration digest collision could merge two arms of a study; at ten configurations the chance
  * of one is ≈4×10⁻⁸, and six characters is the shortest width where that number is negligible.
  *
  * A key namespace is not a ten-configuration namespace, which is why `keyTag` is a separate
@@ -40,7 +39,7 @@
  * published recruitment material; publishing a second string that shares its leading characters
  * would teach prefix comparison, which is exactly what the fingerprint has to resist — grinding
  * keypairs until SHA-256 of the SPKI opens with a chosen 32 bits is hours of one ordinary CPU. So:
- * a different hash input (a 21-byte ASCII domain label and the raw key, versus the unlabelled DER),
+ * a domain-separated hash input,
  * a different alphabet and case (lowercase base-36 versus uppercase hex), and a different shape
  * (one unbroken 13-character run behind a word stem, versus eight groups of four). The tag is never
  * grouped into quads; the visual difference is load-bearing. What a researcher actually needs from
@@ -55,9 +54,7 @@
  */
 
 import { sha256 } from '@noble/hashes/sha2.js';
-import { decodeBase64, decodeX509 } from './crypto';
-import { delimited, readMessage } from './tink';
-import type { TinkKeyset } from './types';
+import { decodeBase64Url } from './crypto';
 
 const ENCODER = new TextEncoder();
 
@@ -149,16 +146,16 @@ function keyTag(domain: string, publicKey: Uint8Array): string {
 }
 
 /**
- * `signer.key_id`. `''` when the argument is not a decodable X.509 Ed25519 public key.
+ * `signer.key_id`. `''` when the argument is not a canonical raw Ed25519 public key.
  *
  * Total, and the two outcomes are the only two: a legal ID exactly 20 characters long, or the empty
  * string a fresh document already carries — so `validate` reports the same `required` issue on the
  * same path it always did and nothing downstream changes shape.
  */
-export function deriveSignerKeyId(publicX509Base64: string): string {
+export function deriveSignerKeyId(publicKey: string): string {
   let raw: Uint8Array;
   try {
-    raw = decodeX509(publicX509Base64);
+    raw = decodeBase64Url(publicKey, KEY_BYTES);
   } catch {
     return '';
   }
@@ -166,21 +163,14 @@ export function deriveSignerKeyId(publicX509Base64: string): string {
 }
 
 /**
- * `export.researcher_key_id`. `''` when the keyset carries no readable HPKE public key.
- *
- * Field 3 of `HpkePublicKey` is the raw X25519 point, which is what gets hashed — not the keyset
- * JSON, and not the Tink `keyId`, which is 32 bits of randomness rather than key material and which
- * two distinct scalars may legitimately share.
+ * `export.researcher_key_id`. `''` when the argument is not a canonical raw X25519 public key.
  */
-export function deriveExportKeyId(keyset: TinkKeyset): string {
-  const value = keyset?.key?.[0]?.keyData?.value;
-  if (typeof value !== 'string') return '';
-  let raw: Uint8Array | null;
+export function deriveExportKeyId(publicKey: string): string {
+  let raw: Uint8Array;
   try {
-    raw = delimited(readMessage(decodeBase64(value)), 3);
+    raw = decodeBase64Url(publicKey, KEY_BYTES);
   } catch {
     return '';
   }
-  if (!raw || raw.length !== KEY_BYTES) return '';
   return `export-${keyTag(EXPORT_DOMAIN, raw)}`;
 }

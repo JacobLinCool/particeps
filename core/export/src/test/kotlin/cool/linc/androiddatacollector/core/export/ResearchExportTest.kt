@@ -1,19 +1,27 @@
 package cool.linc.androiddatacollector.core.export
 
+import com.google.gson.JsonParser
 import cool.linc.androiddatacollector.core.crypto.HpkeCrypto
-import cool.linc.androiddatacollector.core.model.StorageUsage
-import cool.linc.androiddatacollector.core.model.StudyMetadata
+import cool.linc.androiddatacollector.core.definition.AppLifecycleConfiguration
+import cool.linc.androiddatacollector.core.definition.ExportConfiguration
+import cool.linc.androiddatacollector.core.definition.ProtocolBase64Url
+import cool.linc.androiddatacollector.core.definition.SignerIdentity
+import cool.linc.androiddatacollector.core.definition.StudyConfiguration
+import cool.linc.androiddatacollector.core.definition.StudyConfigurationCodec
 import cool.linc.androiddatacollector.core.model.ExperimentState
 import cool.linc.androiddatacollector.core.model.RecordedEvent
 import cool.linc.androiddatacollector.core.model.ResearchTime
+import cool.linc.androiddatacollector.core.model.StorageUsage
+import cool.linc.androiddatacollector.core.model.StudyMetadata
 import cool.linc.androiddatacollector.core.model.StudyStore
-import cool.linc.androiddatacollector.core.definition.AppLifecycleConfiguration
-import cool.linc.androiddatacollector.core.definition.ExportConfiguration
-import cool.linc.androiddatacollector.core.definition.SignerIdentity
-import cool.linc.androiddatacollector.core.definition.StudyConfiguration
+import cool.linc.androiddatacollector.core.protocol.VerifiedConfiguration
 import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
 import java.time.Instant
+import java.util.UUID
+import javax.crypto.AEADBadTagException
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -23,153 +31,101 @@ import org.junit.Test
 
 class ResearchExportTest {
     @Test
-    fun personalizedExportEncryptsAssignedAndInstanceIdentifiersTogether() = runBlocking {
-        val keys = HpkeCrypto.generateKeyset()
-        val configuration = configuration(keys.publicKeysetJson).copy(assignedParticipantId = "arm-a-017")
-        val time = ResearchTime(1_000, 2_000, "boot-test")
-        val event = RecordedEvent(1, "app_lifecycle.v1", 1, time, "ACTIVITY_RESUMED", emptyMap())
-        val metadata = StudyMetadata.initial(
-            "export-test",
-            "export-config",
-            assignedParticipantId = "arm-a-017",
-            participantInstanceId = "00000000-0000-4000-8000-000000000017",
-        ).copy(
-            state = ExperimentState.RUNNING,
-            eventCount = 1,
-            nextSequenceNumber = 2,
-            lastEvents = mapOf(event.collectorId to event),
-        )
-        val encrypted = ByteArrayOutputStream()
-        ResearchExport.encrypt(ExportSnapshot(configuration, metadata, 10_000), SnapshotStore(metadata, listOf(event)), encrypted)
-
-        val plaintext = ResearchExport.decrypt(encrypted.toByteArray(), keys.privateKeysetJson, configuration)
-            .toString(Charsets.UTF_8)
-        assertTrue(plaintext.contains("\"assigned_participant_id\":\"arm-a-017\""))
-        assertTrue(plaintext.contains("\"participant_instance_id\":\"${metadata.participantInstanceId}\""))
-        assertFalse(encrypted.toByteArray().toString(Charsets.ISO_8859_1).contains("arm-a-017"))
-    }
-
-    @Test
-    fun repeatedExportsAreIndependentDecryptableSnapshotsWithoutAStateTransition() = runBlocking {
-        val keys = HpkeCrypto.generateKeyset()
-        val configuration = configuration(keys.publicKeysetJson)
-        val time = ResearchTime(1_000, 2_000, "boot-test")
-        val event = RecordedEvent(1, "app_lifecycle.v1", 1, time, "ACTIVITY_RESUMED", mapOf("source" to "test"))
-        val metadata = StudyMetadata.initial("export-test", "export-config").copy(
-            state = ExperimentState.RUNNING,
-            eventCount = 1,
-            nextSequenceNumber = 2,
-            lastEvents = mapOf(event.collectorId to event),
-        )
-        val snapshot = ExportSnapshot(configuration, metadata, 10_000)
-        val events = SnapshotStore(metadata, listOf(event))
-
-        val firstBytes = ByteArrayOutputStream()
-        val first = ResearchExport.encrypt(snapshot, events, firstBytes)
-        val secondBytes = ByteArrayOutputStream()
-        val second = ResearchExport.encrypt(snapshot.copy(exportedAtUtcMillis = 11_000), events, secondBytes)
-
-        assertNotEquals(first.sha256, second.sha256)
-        assertTrue(ResearchExport.decrypt(firstBytes.toByteArray(), keys.privateKeysetJson, configuration).toString(Charsets.UTF_8)
-            .contains("\"state\":\"RUNNING\""))
-        assertTrue(ResearchExport.decrypt(secondBytes.toByteArray(), keys.privateKeysetJson, configuration).toString(Charsets.UTF_8)
-            .contains("\"sequence_number\":1"))
-        assertEquals(ExperimentState.RUNNING, metadata.state)
-        assertFalse(ExperimentState.entries.any { it.name == "EXPORTED" })
-    }
-
-    @Test
-    fun exportReadsOnlyTheMetadataBoundaryWhenEventsAppendDuringStreaming() = runBlocking {
-        val keys = HpkeCrypto.generateKeyset()
-        val configuration = configuration(keys.publicKeysetJson)
-        val time = ResearchTime(1_000, 2_000, "boot-test")
-        val first = RecordedEvent(1, "app_lifecycle.v1", 1, time, "FIRST", emptyMap())
-        val second = RecordedEvent(2, "app_lifecycle.v1", 1, time, "SECOND", emptyMap())
-        val metadata = StudyMetadata.initial("export-test", "export-config").copy(
-            state = ExperimentState.RUNNING,
-            eventCount = 1,
-            nextSequenceNumber = 2,
-            lastEvents = mapOf(first.collectorId to first),
-        )
+    fun adcExpFrameAndAuthenticatedDocumentCarryExactProvenance() = runBlocking {
+        val fixture = fixture(assignedParticipantId = "arm-a-017")
+        val events = events(3)
+        val metadata = metadata(events, assignedParticipantId = "arm-a-017")
+        val bundleId = UUID.fromString("00000000-0000-4000-8000-000000000099")
         val destination = ByteArrayOutputStream()
-
         val receipt = ResearchExport.encrypt(
-            ExportSnapshot(configuration, metadata, 10_000),
-            SnapshotStore(metadata, listOf(first), appendDuringRead = second),
+            snapshot(fixture.verified, metadata, bundleId = bundleId),
+            SnapshotStore(metadata, events),
             destination,
         )
+        val encrypted = destination.toByteArray()
+        val header = ByteBuffer.wrap(encrypted)
+        assertEquals("ADCEXP01", ByteArray(8).also(header::get).toString(Charsets.US_ASCII))
+        assertEquals(bundleId.mostSignificantBits, header.long)
+        assertEquals(bundleId.leastSignificantBits, header.long)
+        assertEquals(fixture.verified.configurationSha256, ByteArray(32).also(header::get).toHex())
+        assertEquals("export-key".length, header.short.toInt())
+        header.position(header.position() + 12)
+        assertEquals("export-key", ByteArray("export-key".length).also(header::get).toString(Charsets.UTF_8))
+        header.position(header.position() + 80)
+        assertTrue(header.hasRemaining())
 
-        val plaintext = ResearchExport.decrypt(
-            destination.toByteArray(),
-            keys.privateKeysetJson,
-            configuration,
-        ).toString(Charsets.UTF_8)
-        assertEquals(1L, receipt.sequenceBoundary)
-        assertTrue(plaintext.contains("\"payload_type\":\"FIRST\""))
-        assertFalse(plaintext.contains("\"payload_type\":\"SECOND\""))
+        val plaintext = ResearchExport.decrypt(encrypted, fixture.hpke.privateKey, fixture.configuration)
+        val text = plaintext.toString(Charsets.UTF_8)
+        val root = JsonParser.parseString(text).asJsonObject
+        val experiment = root.getAsJsonObject("experiment")
+        assertTrue(text.startsWith("{\"bundle_id\":\"$bundleId\",\"bundle_kind\":\"manual_export\""))
+        assertEquals(BUNDLE_KEYS, root.keySet())
+        assertEquals(EXPERIMENT_KEYS, experiment.keySet())
+        assertEquals(fixture.verified.configurationSha256, root.get("configuration_sha256").asString)
+        assertEquals(ProtocolBase64Url.encode(fixture.verified.signature),
+            root.getAsJsonObject("configuration_signature").get("signature").asString)
+        assertEquals("3", experiment.get("event_count").asString)
+        assertEquals("3", experiment.get("last_sequence_number").asString)
+        assertEquals("1", experiment.getAsJsonArray("events")[0].asJsonObject.get("sequence_number").asString)
+        assertEquals("2000", experiment.getAsJsonArray("events")[0].asJsonObject
+            .getAsJsonObject("observed_time").get("monotonic_time_nanos").asString)
+        assertEquals(bundleId, receipt.bundleId)
+        assertEquals(3L, receipt.eventCount)
+        assertEquals(encrypted.size.toLong(), receipt.byteCount)
+        assertFalse(encrypted.toString(Charsets.ISO_8859_1).contains("arm-a-017"))
     }
 
     @Test
-    fun rangedBundleCarriesOnlyItsWindowAndDeclaresIt() = runBlocking {
-        val keys = HpkeCrypto.generateKeyset()
-        val configuration = configuration(keys.publicKeysetJson)
-        val time = ResearchTime(1_000, 2_000, "boot-test")
-        val events = (1..5).map {
-            RecordedEvent(it.toLong(), "app_lifecycle.v1", 1, time, "EVENT_$it", emptyMap())
+    fun rangedAndBudgetedBundlesDeclareOnlyRowsActuallyWritten() = runBlocking {
+        val fixture = fixture()
+        val events = (1..2_000).map {
+            event(it.toLong(), fields = mapOf("value" to "x".repeat(200)))
         }
-        val metadata = StudyMetadata.initial("export-test", "export-config").copy(
-            state = ExperimentState.RUNNING,
-            eventCount = 5,
-            nextSequenceNumber = 6,
-            lastEvents = mapOf(events.last().collectorId to events.last()),
-        )
+        val metadata = metadata(events)
         val destination = ByteArrayOutputStream()
-
         val receipt = ResearchExport.encrypt(
-            ExportSnapshot(configuration, metadata, 10_000, fromSequence = 3, toSequence = 4),
+            snapshot(
+                fixture.verified,
+                metadata,
+                fromSequence = 501,
+                toSequence = 2_000,
+                maximumPlaintextBytes = 64 * 1_024,
+                kind = BundleKind.AUTOMATIC_UPLOAD,
+            ),
             SnapshotStore(metadata, events),
             destination,
         )
 
-        val plaintext = ResearchExport.decrypt(
-            destination.toByteArray(),
-            keys.privateKeysetJson,
-            configuration,
-        ).toString(Charsets.UTF_8)
-
-        assertEquals(3L, receipt.firstSequence)
-        assertEquals(4L, receipt.sequenceBoundary)
-        assertEquals(2L, receipt.eventCount)
-        assertTrue(plaintext.contains("\"format\":\"research-bundle-v1\""))
-        assertTrue(plaintext.contains("\"first_sequence_number\":3"))
-        assertTrue(plaintext.contains("\"last_sequence_number\":4"))
-        // A chunk must identify which install it came from, or a study that uploads cannot tell
-        // one participant's events from another's.
-        assertTrue(plaintext.contains("\"participant_instance_id\":\"${metadata.participantInstanceId}\""))
-        assertTrue(plaintext.contains("\"payload_type\":\"EVENT_3\""))
-        assertTrue(plaintext.contains("\"payload_type\":\"EVENT_4\""))
-        assertFalse(plaintext.contains("\"payload_type\":\"EVENT_2\""))
-        assertFalse(plaintext.contains("\"payload_type\":\"EVENT_5\""))
+        assertEquals(501L, receipt.firstSequence)
+        assertTrue(receipt.lastSequence in 501..<2_000)
+        assertEquals(receipt.lastSequence - 500, receipt.eventCount)
+        val text = ResearchExport.decrypt(destination.toByteArray(), fixture.hpke.privateKey, fixture.configuration)
+            .toString(Charsets.UTF_8)
+        assertTrue(text.contains("\"bundle_kind\":\"automatic_upload\""))
+        assertTrue(text.contains("\"last_sequence_number\":\"${receipt.lastSequence}\""))
+        assertTrue(text.contains("\"sequence_number\":\"${receipt.lastSequence}\""))
+        assertFalse(text.contains("\"sequence_number\":\"${receipt.lastSequence + 1}\""))
     }
 
     @Test
-    fun rangedBundleRejectsAWindowBeyondTheDurableEventCount() = runBlocking {
-        val keys = HpkeCrypto.generateKeyset()
-        val configuration = configuration(keys.publicKeysetJson)
-        val time = ResearchTime(1_000, 2_000, "boot-test")
-        val event = RecordedEvent(1, "app_lifecycle.v1", 1, time, "ONLY", emptyMap())
-        val metadata = StudyMetadata.initial("export-test", "export-config").copy(
-            state = ExperimentState.RUNNING,
-            eventCount = 1,
-            nextSequenceNumber = 2,
-            lastEvents = mapOf(event.collectorId to event),
+    fun manualEmptyBundleIsValidButAutomaticUploadIsNot() = runBlocking {
+        val fixture = fixture()
+        val metadata = StudyMetadata.initial("export-test", "export-config")
+        val destination = ByteArrayOutputStream()
+        val receipt = ResearchExport.encrypt(
+            snapshot(fixture.verified, metadata),
+            SnapshotStore(metadata, emptyList()),
+            destination,
         )
 
+        assertEquals(1L, receipt.firstSequence)
+        assertEquals(0L, receipt.lastSequence)
+        assertEquals(0L, receipt.eventCount)
         assertThrows(IllegalArgumentException::class.java) {
             runBlocking {
                 ResearchExport.encrypt(
-                    ExportSnapshot(configuration, metadata, 10_000, fromSequence = 1, toSequence = 9),
-                    SnapshotStore(metadata, listOf(event)),
+                    snapshot(fixture.verified, metadata, kind = BundleKind.AUTOMATIC_UPLOAD),
+                    SnapshotStore(metadata, emptyList()),
                     ByteArrayOutputStream(),
                 )
             }
@@ -178,133 +134,127 @@ class ResearchExportTest {
     }
 
     @Test
-    fun aBudgetStopsAtAnEventBoundaryAndTheReceiptSaysWhere() = runBlocking {
-        val keys = HpkeCrypto.generateKeyset()
-        val configuration = configuration(keys.publicKeysetJson)
-        val time = ResearchTime(1_000, 2_000, "boot-test")
-        val events = (1..5_000).map {
-            RecordedEvent(it.toLong(), "app_lifecycle.v1", 1, time, "EVENT", mapOf("activity_class" to "x".repeat(200)))
-        }
-        val metadata = StudyMetadata.initial("export-test", "export-config").copy(
-            state = ExperimentState.RUNNING,
-            eventCount = 5_000,
-            nextSequenceNumber = 5_001,
-            lastEvents = mapOf(events.last().collectorId to events.last()),
-        )
+    fun wrongContextTamperingAndOldV1FramingFailClosed() = runBlocking {
+        val fixture = fixture()
+        val stored = events(1)
+        val metadata = metadata(stored)
         val destination = ByteArrayOutputStream()
+        ResearchExport.encrypt(snapshot(fixture.verified, metadata), SnapshotStore(metadata, stored), destination)
+        val encoded = destination.toByteArray()
 
-        // Ask for everything, with a budget far below what everything would need.
-        val receipt = ResearchExport.encrypt(
-            ExportSnapshot(configuration, metadata, 10_000, maximumPlaintextBytes = 64 * 1024),
-            SnapshotStore(metadata, events),
-            destination,
-        )
-
-        assertTrue("expected the budget to stop it short", receipt.sequenceBoundary < 5_000)
-        assertTrue("expected real progress", receipt.sequenceBoundary > 0)
-        // Stopping short must still produce a complete, decryptable bundle rather than a truncated
-        // one, and it must declare the window it actually holds.
-        val plaintext = ResearchExport.decrypt(destination.toByteArray(), keys.privateKeysetJson, configuration)
-            .toString(Charsets.UTF_8)
-        assertTrue(plaintext.contains("\"last_sequence_number\":${receipt.sequenceBoundary}"))
-        assertTrue(plaintext.contains("\"sequence_number\":${receipt.sequenceBoundary}"))
-        assertFalse(plaintext.contains("\"sequence_number\":${receipt.sequenceBoundary + 1}"))
-    }
-
-    @Test
-    fun noBudgetSendsEverythingAsked() = runBlocking {
-        val keys = HpkeCrypto.generateKeyset()
-        val configuration = configuration(keys.publicKeysetJson)
-        val time = ResearchTime(1_000, 2_000, "boot-test")
-        val events = (1..2_000).map {
-            RecordedEvent(it.toLong(), "app_lifecycle.v1", 1, time, "EVENT", mapOf("activity_class" to "x".repeat(200)))
+        assertThrows(Exception::class.java) {
+            ResearchExport.decrypt(encoded, HpkeCrypto.generateKeyPair().privateKey, fixture.configuration)
         }
-        val metadata = StudyMetadata.initial("export-test", "export-config").copy(
-            state = ExperimentState.RUNNING,
-            eventCount = 2_000,
-            nextSequenceNumber = 2_001,
-            lastEvents = mapOf(events.last().collectorId to events.last()),
-        )
-
-        // A participant export passes no budget, so their copy is complete however large it gets.
-        val receipt = ResearchExport.encrypt(
-            ExportSnapshot(configuration, metadata, 10_000),
-            SnapshotStore(metadata, events),
-            ByteArrayOutputStream(),
-        )
-
-        assertEquals(2_000L, receipt.sequenceBoundary)
-        assertEquals(2_000L, receipt.eventCount)
-    }
-
-    @Test
-    fun streamingDecryptStillRefusesATamperedBundle() = runBlocking {
-        val keys = HpkeCrypto.generateKeyset()
-        val configuration = configuration(keys.publicKeysetJson)
-        val time = ResearchTime(1_000, 2_000, "boot-test")
-        val event = RecordedEvent(1, "app_lifecycle.v1", 1, time, "ONLY", emptyMap())
-        val metadata = StudyMetadata.initial("export-test", "export-config").copy(
-            state = ExperimentState.RUNNING,
-            eventCount = 1,
-            nextSequenceNumber = 2,
-            lastEvents = mapOf(event.collectorId to event),
-        )
-        val destination = ByteArrayOutputStream()
-        ResearchExport.encrypt(
-            ExportSnapshot(configuration, metadata, 10_000),
-            SnapshotStore(metadata, listOf(event)),
-            destination,
-        )
-        // Reading in chunks must not turn an authentication failure into a silently short file.
-        val tampered = destination.toByteArray().also { it[it.lastIndex] = (it.last() + 1).toByte() }
-
-        assertThrows(javax.crypto.AEADBadTagException::class.java) {
-            ResearchExport.decrypt(tampered, keys.privateKeysetJson, configuration)
+        assertThrows(Exception::class.java) {
+            ResearchExport.decrypt(encoded.copyOf().also { it[it.lastIndex]++ }, fixture.hpke.privateKey, fixture.configuration)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ResearchExport.decrypt(encoded.copyOf().also { it[24]++ }, fixture.hpke.privateKey, fixture.configuration)
+        }
+        val oldV1 = "ADCEXP01".toByteArray() + ByteArray(128)
+        assertThrows(IllegalArgumentException::class.java) {
+            ResearchExport.decrypt(oldV1, fixture.hpke.privateKey, fixture.configuration)
         }
         Unit
     }
 
-    private class SnapshotStore(
-        private var metadata: StudyMetadata,
-        events: List<RecordedEvent>,
-        private val appendDuringRead: RecordedEvent? = null,
-    ) : StudyStore {
-        private val storedEvents = events.toMutableList()
+    @Test
+    fun uploadReceiptCodecIsExactCanonicalAndSelfConsistent() {
+        val receipt = ExportReceipt(
+            UUID.fromString("00000000-0000-4000-8000-000000000099"),
+            "11".repeat(32),
+            501,
+            750,
+            250,
+            "22".repeat(32),
+            16_777_216,
+        )
+        val encoded = UploadReceiptCodec.encode(receipt)
 
-        override suspend fun loadMetadata(): StudyMetadata = metadata
-        override suspend fun initialize(metadata: StudyMetadata) { this.metadata = metadata }
-        override suspend fun saveMetadata(metadata: StudyMetadata) { this.metadata = metadata }
-        override suspend fun appendEvent(event: RecordedEvent) { storedEvents += event }
-        override suspend fun appendEventAtomically(event: RecordedEvent, metadata: StudyMetadata) { storedEvents += event }
-        override suspend fun readEvents(
-            fromSequenceInclusive: Long,
-            upToSequenceInclusive: Long,
-            consume: (RecordedEvent) -> Unit,
-        ) {
-            storedEvents.takeWhile { it.sequenceNumber <= upToSequenceInclusive }
-                .filter { it.sequenceNumber >= fromSequenceInclusive }
-                .forEachIndexed { index, event ->
-                    consume(event)
-                    if (index == 0) appendDuringRead?.let(storedEvents::add)
-                }
+        assertEquals(receipt, UploadReceiptCodec.decode(encoded))
+        assertTrue(encoded.toString(Charsets.UTF_8).contains("\"byte_count\":\"16777216\""))
+        assertThrows(IllegalArgumentException::class.java) {
+            UploadReceiptCodec.decode((" " + encoded.toString(Charsets.UTF_8)).toByteArray())
         }
-        override suspend fun storageUsage() = StorageUsage(storedEvents.size.toLong(), 16_777_216)
-        override suspend fun evictThrough(metadata: StudyMetadata, targetBytes: Long) = metadata
-        override suspend fun clear() { storedEvents.clear() }
+        assertThrows(IllegalArgumentException::class.java) {
+            UploadReceiptCodec.decode(encoded.toString(Charsets.UTF_8)
+                .replace("\"501\"", "\"0501\"").toByteArray())
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            UploadReceiptCodec.decode(encoded.toString(Charsets.UTF_8)
+                .replace("\"event_count\":\"250\"", "\"event_count\":250").toByteArray())
+        }
     }
 
-    private fun configuration(publicKeyset: String) = StudyConfiguration(
-        schemaVersion = StudyConfiguration.CURRENT_SCHEMA_VERSION,
+    @Test
+    fun snapshotRejectsConfigurationProvenanceDrift() {
+        val fixture = fixture()
+        val metadata = StudyMetadata.initial("export-test", "export-config")
+        assertThrows(IllegalArgumentException::class.java) {
+            snapshot(
+                fixture.verified.copy(configurationSha256 = "00".repeat(32)),
+                metadata,
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            snapshot(
+                fixture.verified.copy(canonicalConfigurationBytes = fixture.verified.canonicalConfigurationBytes + 0),
+                metadata,
+            )
+        }
+    }
+
+    private fun snapshot(
+        verified: VerifiedConfiguration,
+        metadata: StudyMetadata,
+        bundleId: UUID = UUID.fromString("00000000-0000-4000-8000-000000000099"),
+        fromSequence: Long = metadata.retainedFromSequence,
+        toSequence: Long? = null,
+        maximumPlaintextBytes: Long? = null,
+        kind: BundleKind = BundleKind.MANUAL_EXPORT,
+    ) = ExportSnapshot(
+        verified,
+        metadata,
+        BundleProducer("android", "42"),
+        kind,
+        10_000,
+        bundleId,
+        fromSequence,
+        toSequence,
+        maximumPlaintextBytes,
+    )
+
+    private fun fixture(assignedParticipantId: String? = null): Fixture {
+        val hpke = HpkeCrypto.generateKeyPair()
+        val configuration = configuration(hpke.publicKey, assignedParticipantId)
+        val bytes = StudyConfigurationCodec.encode(configuration)
+        return Fixture(
+            hpke,
+            configuration,
+            VerifiedConfiguration(
+                configuration,
+                bytes,
+                configuration.signer.keyId,
+                ByteArray(64) { it.toByte() },
+                bytes.sha256Hex(),
+                false,
+            ),
+        )
+    }
+
+    private fun configuration(publicKey: ByteArray, assignedParticipantId: String?) = StudyConfiguration(
+        schemaVersion = 1,
         experimentId = "export-test",
         configurationId = "export-config",
-        assignedParticipantId = null,
+        assignedParticipantId = assignedParticipantId,
         issuedAt = Instant.parse("2026-01-01T00:00:00Z"),
         expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
-        minimumAppVersion = 1,
+        platform = "android",
+        minimumClientVersion = 1,
         title = "Export test",
         researcherName = "Export researcher",
         researcherContact = "export@example.invalid",
-        purpose = "Test export encryption.",
+        purpose = "Test Protocol v1 export encryption.",
         durationHours = 1,
         consentDocumentVersion = "v1",
         consentSummary = "Export test consent.",
@@ -312,11 +262,69 @@ class ResearchExportTest {
         surveys = emptyList(),
         interventions = emptyList(),
         maximumLocalBytes = 16_777_216,
-        signer = SignerIdentity("test-signer", TEST_SIGNER_PUBLIC_KEY),
-        export = ExportConfiguration("export-key", publicKeyset),
+        signer = SignerIdentity("test-signer", ProtocolBase64Url.encode(ByteArray(32) { 3 })),
+        export = ExportConfiguration("export-key", ProtocolBase64Url.encode(publicKey)),
         upload = null,
     )
-}
 
-private const val TEST_SIGNER_PUBLIC_KEY =
-    "MCowBQYDK2VwAyEAsRSaTpZmTSBL7eN6nS/HBsNmLM8n1hdRmIt1vtLZsC0="
+    private fun events(count: Int) = (1..count).map { event(it.toLong()) }
+
+    private fun event(sequence: Long, fields: Map<String, String> = emptyMap()) = RecordedEvent(
+        sequence,
+        "app_lifecycle.v1",
+        1,
+        ResearchTime(1_000, 2_000, "boot-test"),
+        "EVENT",
+        fields,
+    )
+
+    private fun metadata(events: List<RecordedEvent>, assignedParticipantId: String? = null) =
+        StudyMetadata.initial(
+            "export-test",
+            "export-config",
+            assignedParticipantId,
+            "00000000-0000-4000-8000-000000000017",
+        ).copy(
+            state = ExperimentState.RUNNING,
+            eventCount = events.size.toLong(),
+            nextSequenceNumber = events.size + 1L,
+            lastEvents = events.lastOrNull()?.let { mapOf(it.collectorId to it) } ?: emptyMap(),
+        )
+
+    private data class Fixture(
+        val hpke: cool.linc.androiddatacollector.core.crypto.HpkeKeyPair,
+        val configuration: StudyConfiguration,
+        val verified: VerifiedConfiguration,
+    )
+
+    private class SnapshotStore(
+        private var metadata: StudyMetadata,
+        private val events: List<RecordedEvent>,
+    ) : StudyStore {
+        override suspend fun loadMetadata() = metadata
+        override suspend fun initialize(metadata: StudyMetadata) { this.metadata = metadata }
+        override suspend fun saveMetadata(metadata: StudyMetadata) { this.metadata = metadata }
+        override suspend fun appendEvent(event: RecordedEvent) = error("Not supported")
+        override suspend fun appendEventAtomically(event: RecordedEvent, metadata: StudyMetadata) = error("Not supported")
+        override suspend fun readEvents(fromSequenceInclusive: Long, upToSequenceInclusive: Long,
+            consume: (RecordedEvent) -> Unit) {
+            events.filter { it.sequenceNumber in fromSequenceInclusive..upToSequenceInclusive }.forEach(consume)
+        }
+        override suspend fun storageUsage() = StorageUsage(events.size.toLong(), 16_777_216)
+        override suspend fun evictThrough(metadata: StudyMetadata, targetBytes: Long) = metadata
+        override suspend fun clear() = Unit
+    }
+
+    private companion object {
+        val BUNDLE_KEYS = setOf(
+            "bundle_id", "bundle_kind", "configuration", "configuration_sha256",
+            "configuration_signature", "experiment", "exported_at_utc_millis", "format", "producer",
+        )
+        val EXPERIMENT_KEYS = setOf(
+            "assigned_participant_id", "configuration_id", "durable_through_sequence", "event_count",
+            "events", "experiment_id", "first_sequence_number", "last_sequence_number",
+            "next_sequence_number", "participant_instance_id", "retained_from_sequence", "state",
+            "transitions", "uploaded_through_sequence",
+        )
+    }
+}

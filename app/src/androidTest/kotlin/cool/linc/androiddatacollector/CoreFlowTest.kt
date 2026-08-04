@@ -10,8 +10,9 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import cool.linc.androiddatacollector.core.model.ExperimentState
 import cool.linc.androiddatacollector.core.collector.CollectorStatus
+import cool.linc.androiddatacollector.core.model.ExperimentState
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -29,8 +30,15 @@ class CoreFlowTest {
         composeRule.waitUntil(TIMEOUT_MILLIS) { session.snapshot.value.initialized }
         composeRule.onNodeWithTag(UiTags.IMPORT_DEMO).performScrollTo().performClick()
         composeRule.waitUntil(TIMEOUT_MILLIS) {
-            session.snapshot.value.runtime.metadata?.state == ExperimentState.IMPORTED
+            val snapshot = session.snapshot.value
+            snapshot.runtime.metadata?.state == ExperimentState.IMPORTED || snapshot.incidentCode != null
         }
+        val imported = session.snapshot.value
+        assertEquals(
+            "Demo import failed: ${imported.incidentCode}",
+            ExperimentState.IMPORTED,
+            imported.runtime.metadata?.state,
+        )
         // Setup shows a position rather than a state name, so the assertion is that the first
         // step's control is the one on screen.
         composeRule.onNodeWithTag(UiTags.REVIEW).performScrollTo().performClick()
@@ -98,6 +106,7 @@ class CoreFlowTest {
         composeRule.onNodeWithTag(UiTags.STATE)
             .assertTextEquals(composeRule.activity.getString(R.string.state_completed))
         composeRule.onNodeWithTag(UiTags.EXPORT).performScrollTo()
+        runBlocking { session.deleteLocalData() }
     }
 
     private companion object {

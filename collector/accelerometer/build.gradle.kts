@@ -20,7 +20,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":collector:sensor-common"))
     implementation(project(":core:collector-api"))
     implementation(project(":core:study-definition"))
-    implementation(libs.coroutines.android)
 }

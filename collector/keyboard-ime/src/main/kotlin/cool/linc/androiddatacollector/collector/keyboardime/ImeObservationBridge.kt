@@ -1,6 +1,7 @@
 package cool.linc.androiddatacollector.collector.keyboardime
 
 import android.view.MotionEvent
+import cool.linc.androiddatacollector.core.collector.SourceCallbackBoundary
 
 internal data class ImeTouchObservation(
     val action: String,
@@ -17,7 +18,7 @@ internal data class ImeTouchObservation(
 )
 
 internal object ImeObservationBridge {
-    private val lock = Any()
+    private val callbackBoundary = SourceCallbackBoundary()
     private var listener: ((ImeTouchObservation) -> Unit)? = null
     private var minimumMoveIntervalMillis = Long.MAX_VALUE
     private var lastMoveUptimeMillis = Long.MIN_VALUE
@@ -25,14 +26,14 @@ internal object ImeObservationBridge {
     fun install(
         samplingHz: Int,
         listener: (ImeTouchObservation) -> Unit,
-    ) = synchronized(lock) {
+    ) = callbackBoundary.activate {
         check(this.listener == null) { "IME observation listener is already installed" }
         minimumMoveIntervalMillis = (1_000L / samplingHz).coerceAtLeast(1L)
         lastMoveUptimeMillis = Long.MIN_VALUE
         this.listener = listener
     }
 
-    fun uninstall() = synchronized(lock) {
+    fun uninstall() = callbackBoundary.deactivate {
         listener = null
         minimumMoveIntervalMillis = Long.MAX_VALUE
         lastMoveUptimeMillis = Long.MIN_VALUE
@@ -46,15 +47,7 @@ internal object ImeObservationBridge {
         keyCategory: String,
     ) {
         val action = event.actionMasked.toActionName() ?: return
-        val destination = synchronized(lock) {
-            val current = listener ?: return
-            if (event.actionMasked == MotionEvent.ACTION_MOVE) {
-                if (event.eventTime - lastMoveUptimeMillis < minimumMoveIntervalMillis) return
-                lastMoveUptimeMillis = event.eventTime
-            }
-            current
-        }
-        destination(
+        publishObservation(
             ImeTouchObservation(
                 action = action,
                 eventUptimeMillis = event.eventTime,
@@ -69,6 +62,22 @@ internal object ImeObservationBridge {
                 keyCategory = keyCategory,
             ),
         )
+    }
+
+    internal fun publishObservation(observation: ImeTouchObservation) {
+        callbackBoundary.runIfActive {
+            val destination = checkNotNull(listener) { "Active IME callback has no listener" }
+            if (observation.action == "MOVE") {
+                if (
+                    lastMoveUptimeMillis != Long.MIN_VALUE &&
+                    observation.eventUptimeMillis - lastMoveUptimeMillis < minimumMoveIntervalMillis
+                ) {
+                    return@runIfActive
+                }
+                lastMoveUptimeMillis = observation.eventUptimeMillis
+            }
+            destination(observation)
+        }
     }
 
     private fun Int.toActionName(): String? = when (this) {

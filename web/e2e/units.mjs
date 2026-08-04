@@ -14,7 +14,7 @@
  *
  * Exit code: non-zero if any control on `/researcher/` shows a storage-unit number.
  *
- * It drives the researcher page the way a person would — reach the Study step, switch on all seven
+ * It drives the researcher page the way a person would — reach the Study step, switch on all twelve
  * collectors, add an intervention, switch on delivery — so that every control the site has is mounted, and
  * then reads what is actually on screen. It does this in both locales, and it does it again after
  * clicking every preset chip on every control, so the assertions cover the values the page itself
@@ -156,7 +156,9 @@ function ceilings(m, locale) {
     [m.unit.hours, 24], // the humanisers roll into days here
     [day, 366], // a year is the longest study `BOUNDS.durationHours` allows
     [oneDay, 366],
-    [m.unit.metres, BOUNDS.minimumDisplacementMeters[1]], // the schema's own ceiling
+    [m.unit.metres, BOUNDS.minimumDisplacementMillimeters[1] / 1_000],
+    [m.unit.millimetres, BOUNDS.changeThresholdMillimeters[1]],
+    [m.unit.lux, BOUNDS.changeThresholdMillilux[1] / 1_000],
     // `binaryBytes` moves to the next prefix at 1024, so no prefix ever carries more.
     ['B', 1_024],
     ['KiB', 1_024],
