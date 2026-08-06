@@ -58,7 +58,7 @@
  *    schema's range: a box reading `100000` between `5000` and `1000000` with `Hz` beside it
  *    satisfies every one of them. That is the original defect, so one check has to know something
  *    the page cannot tell it. E is that check, and its knowledge comes from `BOUNDS` in
- *    `src/lib/adc/types.ts` and the unit words from the two catalogues — the schema and the
+ *    `src/lib/particeps/types.ts` and the unit words from the two catalogues — the schema and the
  *    vocabulary, not a list of magic numbers. A rate is at most 200 Hz because the schema's fastest
  *    period is 5000 µs; a displacement is at most 10 000 m because the schema says so; `sec`,
  *    `min`, `h` and the day word convert at 60, 24 and 365; a binary prefix carries at most 1023 of
@@ -108,7 +108,7 @@
  */
 
 import { chromium } from 'playwright';
-import { BOUNDS } from '../src/lib/adc/types.ts';
+import { BOUNDS } from '../src/lib/particeps/types.ts';
 import { en } from '../src/lib/i18n/en.ts';
 import { zhTW } from '../src/lib/i18n/zh-TW.ts';
 
@@ -442,7 +442,7 @@ for (const locale of LOCALES) {
   const context = await browser.newContext({ locale: locale.browser });
   // `app.html` reads this before first paint and `i18n.svelte.ts` after it, so setting it makes the
   // catalogue in force a fact rather than a guess about `navigator.languages`.
-  await context.addInitScript((value) => window.localStorage.setItem('adc.locale', value), locale.id);
+  await context.addInitScript((value) => window.localStorage.setItem('particeps.locale', value), locale.id);
 
   const page = await context.newPage();
   await page.setViewportSize({ width: 1440, height: 1400 });

@@ -5,9 +5,9 @@ import {
   deriveExportKeyId,
   deriveSignerKeyId,
   tag
-} from '../src/lib/adc/ids';
-import { ID_PATTERN } from '../src/lib/adc/types';
-import { generateHpkeKeyPair, generateSigningKeyPair } from '../src/lib/adc/crypto';
+} from '../src/lib/particeps/ids';
+import { ID_PATTERN } from '../src/lib/particeps/types';
+import { generateHpkeKeyPair, generateSigningKeyPair } from '../src/lib/particeps/crypto';
 import { hpkeKeyPairFromPrivate, signingKeyPairFromPrivate } from '../src/routes/researcher/keys';
 
 describe('study identifiers', () => {

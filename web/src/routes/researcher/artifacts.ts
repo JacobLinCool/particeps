@@ -2,7 +2,7 @@
  * The four files a researcher leaves with, and how each one reaches the disk.
  *
  * The canonical JSON is not a nicety. `researcher-tools decrypt --config` takes the canonical
- * configuration, not the envelope, and no CLI command extracts one from an `.adccfg`: a researcher
+ * configuration, not the envelope, and no CLI command extracts one from a `.partcfg`: a researcher
  * who downloads only the signed file cannot decrypt their own data.
  *
  * Filenames come from the catalogue, which holds them as identifiers rather than prose — they are
@@ -21,7 +21,7 @@ import type { Messages } from '$lib/i18n/types';
 import type { Destination, Secrecy } from '$lib/ui/types';
 import type { IconRef } from '$lib/ui/icons';
 
-export type ArtifactId = 'signing-private' | 'hpke-private' | 'canonical' | 'adccfg';
+export type ArtifactId = 'signing-private' | 'hpke-private' | 'canonical' | 'partcfg';
 
 /** The two derived key names, as the document carries them. `''` means no key is held. */
 export interface ArtifactNames {
@@ -66,7 +66,7 @@ export const ARTIFACTS: readonly ArtifactDefinition[] = [
     mime: 'application/json'
   },
   {
-    id: 'adccfg',
+    id: 'partcfg',
     destination: 'send',
     secrecy: 'distribute',
     icon: 'package',
@@ -118,7 +118,7 @@ export function artifactBytes(id: ArtifactId, source: ArtifactSource): Uint8Arra
       return source.hpkePrivate === null ? null : encoder.encode(source.hpkePrivate);
     case 'canonical':
       return source.envelope === null ? null : source.canonical;
-    case 'adccfg':
+    case 'partcfg':
       return source.envelope;
   }
 }

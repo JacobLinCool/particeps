@@ -9,3 +9,15 @@ describe('participant upload disclosure', () => {
     expect(zhTW.delivery.upload.metadata).toContain('看不到安裝代碼');
   });
 });
+
+// The naming note is the one piece of copy whose first half is flattering and whose second half is
+// not. Pinning the second half keeps a later edit from quietly dropping it and leaving a claim of
+// participant control the app does not provide.
+describe('participant naming note', () => {
+  it('states the limits alongside the name in both locales', () => {
+    expect(en.hero.naming.name).toContain('PAR-ti-keps');
+    expect(en.hero.naming.limits).toContain('Nothing that has already left your phone can be taken back');
+    expect(zhTW.hero.naming.name).toContain('PAR-ti-keps');
+    expect(zhTW.hero.naming.limits).toContain('無法收回');
+  });
+});

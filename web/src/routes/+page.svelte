@@ -14,7 +14,7 @@
   import SiteFooter from '$lib/ui/SiteFooter.svelte';
   import { i18n } from '$lib/ui/i18n.svelte';
 
-  const REPOSITORY = 'https://github.com/JacobLinCool/android-data-collector';
+  const REPOSITORY = 'https://github.com/JacobLinCool/particeps';
   const doc = (name: string) => `${REPOSITORY}/blob/main/docs/${name}.md`;
 
   const links = $derived([

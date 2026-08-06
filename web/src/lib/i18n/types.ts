@@ -12,7 +12,7 @@
  * flow told to the two audiences who need different halves of it.
  */
 
-import type { CollectorId } from '$lib/adc/types';
+import type { CollectorId } from '$lib/particeps/types';
 
 export const LOCALES = ['en', 'zh-TW'] as const;
 

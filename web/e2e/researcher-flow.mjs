@@ -41,7 +41,7 @@ const CLI = join(
   '../../researcher-tools/build/install/researcher-tools/bin/researcher-tools'
 );
 
-/** `[a-z0-9][a-z0-9-]{2,63}`, from `lib/adc/types.ts`. Both identifiers have to satisfy it. */
+/** `[a-z0-9][a-z0-9-]{2,63}`, from `lib/particeps/types.ts`. Both identifiers have to satisfy it. */
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{2,63}$/;
 
 /**
@@ -65,7 +65,7 @@ const fail = (message) => {
   process.exit(1);
 };
 
-const out = mkdtempSync(join(tmpdir(), 'adc-e2e-'));
+const out = mkdtempSync(join(tmpdir(), 'particeps-e2e-'));
 const browser = await chromium.launch();
 // Pinned, and deliberately not UTC: the two instants share one zone selector now, and a zone with a
 // non-zero offset is the only setting where "the picker shows the instant that got written" is a
@@ -197,9 +197,9 @@ const fingerprint = (
 ).join(' ');
 
 // Both artifacts. The canonical JSON is not a nicety — `decrypt --config` needs it, and no command
-// extracts one from the `.adccfg`.
+// extracts one from the `.partcfg`.
 await page.getByRole('button', { name: /study-canonical\.json/ }).first().click();
-await page.getByRole('button', { name: /study\.adccfg/ }).first().click();
+await page.getByRole('button', { name: /study\.partcfg/ }).first().click();
 await page.waitForTimeout(600);
 
 // ---------------------------------------------------------------------------------------------
@@ -243,7 +243,7 @@ for (const name of [
   `${signerKeyId}-private.key`,
   `${exportKeyId}-private.key`,
   'study-canonical.json',
-  'study.adccfg'
+  'study.partcfg'
 ]) {
   if (!saved.includes(name)) fail(`the page never offered ${name}`);
   if (!existsSync(join(out, name))) fail(`${name} was offered but did not arrive`);
@@ -337,10 +337,10 @@ for (const escaped of ['E2E Lab \\"Verification\\" \\\\ Group', 'app activity.\\
 // Everything above would still pass on a page that invented one string per key and printed the
 // same invention in the readout, in the filename and in the file. The property the Keys step now
 // rests on is stronger than agreement: each name is a function of the key it names, so a reader
-// holding only the `.adccfg` can recompute it, and the same key gets the same name in the second
+// holding only the `.partcfg` can recompute it, and the same key gets the same name in the second
 // arm of a study whether it was generated here, imported, or read back out of a configuration.
 //
-// `lib/adc/ids.ts` is re-implemented below from its own specification rather than imported — a
+// `lib/particeps/ids.ts` is re-implemented below from its own specification rather than imported — a
 // derivation checked against itself proves nothing. Sixty-four bits of SHA-256 over a
 // domain-separated raw public key, as thirteen base-36 characters behind a word stem.
 // ---------------------------------------------------------------------------------------------
@@ -363,11 +363,11 @@ claim(signerRaw.length === 32, 'the configuration carries no raw 32-byte Ed25519
 claim(exportRaw.length === 32, 'the configuration carries no raw 32-byte X25519 public key');
 
 claim(
-  document.signer.key_id === `signer-${keyTag('adc:signer-key-id:v1:', signerRaw)}`,
+  document.signer.key_id === `signer-${keyTag('particeps:signer-key-id:v1:', signerRaw)}`,
   `signer.key_id is not the digest of the key it names: ${document.signer.key_id}`
 );
 claim(
-  document.export.researcher_key_id === `export-${keyTag('adc:export-key-id:v1:', exportRaw)}`,
+  document.export.researcher_key_id === `export-${keyTag('particeps:export-key-id:v1:', exportRaw)}`,
   `export.researcher_key_id is not the digest of the key it names: ${document.export.researcher_key_id}`
 );
 // Two different keys, so the two names must differ even where the stems are stripped off. A
@@ -395,9 +395,9 @@ claim(
 
 // The envelope carries exactly the canonical bytes the page also handed over as a file. A
 // researcher who archives one and distributes the other is archiving the right thing.
-// `ADCCFG01`, uint16 key-id length, uint32 configuration length, key ID, JCS, signature64.
-const envelope = readFileSync(join(out, 'study.adccfg'));
-claim(envelope.subarray(0, 8).toString('latin1') === 'ADCCFG01', 'the envelope has no magic');
+// `PTCCFG01`, uint16 key-id length, uint32 configuration length, key ID, JCS, signature64.
+const envelope = readFileSync(join(out, 'study.partcfg'));
+claim(envelope.subarray(0, 8).toString('latin1') === 'PTCCFG01', 'the envelope has no magic');
 const keyIdLength = envelope.readUInt16BE(8);
 const configurationLength = envelope.readUInt32BE(10);
 claim(
@@ -412,7 +412,7 @@ claim(
   envelope
     .subarray(14 + keyIdLength, 14 + keyIdLength + configurationLength)
     .equals(canonical),
-  'the .adccfg does not carry the canonical JSON the page offered beside it'
+  'the .partcfg does not carry the canonical JSON the page offered beside it'
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -428,7 +428,7 @@ if (!readFileSync(roundtrip).equals(canonical)) {
   fail('the Kotlin codec re-canonicalises this file to different bytes');
 }
 
-const verdict = execFileSync(CLI, ['check-config', '--envelope', join(out, 'study.adccfg')], {
+const verdict = execFileSync(CLI, ['check-config', '--envelope', join(out, 'study.partcfg')], {
   encoding: 'utf8'
 });
 const [validLine, signerLine] = verdict.trim().split('\n');

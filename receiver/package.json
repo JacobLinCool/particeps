@@ -1,5 +1,5 @@
 {
-  "name": "@adc/ciphertext-receiver",
+  "name": "@particeps/ciphertext-receiver",
   "private": true,
   "type": "module",
   "scripts": {

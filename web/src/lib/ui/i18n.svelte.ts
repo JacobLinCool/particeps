@@ -21,7 +21,7 @@ export const messages: Record<Locale, Messages> = { en, 'zh-TW': zhTW };
 
 const HTML_LANG: Record<Locale, string> = { en: 'en', 'zh-TW': 'zh-Hant-TW' };
 
-const STORAGE_KEY = 'adc.locale';
+const STORAGE_KEY = 'particeps.locale';
 
 function isLocale(value: unknown): value is Locale {
   return value === 'en' || value === 'zh-TW';

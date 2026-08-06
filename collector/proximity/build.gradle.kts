@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "cool.linc.androiddatacollector.collector.proximity"
+    namespace = "cool.linc.particeps.collector.proximity"
     compileSdk = 37
     defaultConfig { minSdk = 34 }
     compileOptions {

@@ -1,4 +1,4 @@
-import type { InterventionSchedule } from '$lib/adc/types';
+import type { InterventionSchedule } from '$lib/particeps/types';
 
 type RandomWindowSchedule = Extract<InterventionSchedule, { type: 'random_window' }>;
 type RandomLocalWindow = RandomWindowSchedule['local_windows'][number];

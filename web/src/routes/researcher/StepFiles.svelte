@@ -6,7 +6,7 @@
    *
    * The canonical JSON gets its own column and is not a nicety. `researcher-tools decrypt --config`
    * takes the canonical configuration rather than the envelope, and no command extracts one from an
-   * `.adccfg`: a researcher who downloads only the signed file cannot decrypt their own data.
+   * `.partcfg`: a researcher who downloads only the signed file cannot decrypt their own data.
    *
    * No zip and no download-all. Browsers handle sequential downloads badly, the CLI refuses to
    * overwrite for the same reason, and two private keys are two decisions.
@@ -149,21 +149,21 @@
       destination="send"
       icon="send"
       title={m.researcher.files.distribute}
-      saved={draft.saved.adccfg ? 1 : 0}
+      saved={draft.saved.partcfg ? 1 : 0}
       total={1}
       empty={!signed}
     >
       <DownloadTile
         icon="package"
         filename={m.file.signed}
-        bytes={sizes.adccfg}
+        bytes={sizes.partcfg}
         tone="accent"
-        saved={draft.saved.adccfg}
+        saved={draft.saved.partcfg}
         disabled={!signed}
         label={`${m.action.download} ${m.file.signed}`}
         savedLabel={m.file.signed}
-        testid="download-adccfg"
-        ondownload={() => onsave('adccfg')}
+        testid="download-partcfg"
+        ondownload={() => onsave('partcfg')}
       />
     </ArtifactGroup>
   </div>

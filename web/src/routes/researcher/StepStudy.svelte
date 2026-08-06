@@ -5,7 +5,7 @@
    *
    * What is asked here is what only a person can answer. Nothing on this step names the study:
    * `experiment_id` and `configuration_id` are derived from the title and from the document's own
-   * bytes (`lib/adc/ids.ts`, shown on the sign step), and `minimum_client_version` is pinned, so three
+   * bytes (`lib/particeps/ids.ts`, shown on the sign step), and `minimum_client_version` is pinned, so three
    * controls that were arithmetic dressed as questions are gone.
    *
    * Two placements are deliberate. `storage.maximum_local_bytes` sits under the collectors even
@@ -29,7 +29,7 @@
   import WindowStrip from './WindowStrip.svelte';
   import { COLLECTOR_ORDER, type Draft } from './draft.svelte';
   import { scales } from './scales';
-  import { BOUNDS } from '$lib/adc/types';
+  import { BOUNDS } from '$lib/particeps/types';
   import type { Messages } from '$lib/i18n/types';
   import type { Units } from './units';
 

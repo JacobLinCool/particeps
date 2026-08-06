@@ -9,7 +9,7 @@
    * the field-level issue says, one beat earlier and without words.
    */
   import Icon from '$lib/ui/Icon.svelte';
-  import { parseInstant } from '$lib/adc/canonical';
+  import { parseInstant } from '$lib/particeps/canonical';
   import type { Units } from './units';
 
   interface Props {

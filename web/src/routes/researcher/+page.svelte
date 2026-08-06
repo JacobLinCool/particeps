@@ -44,7 +44,7 @@
   import { STEPS, stepForPath, type StepId } from './steps';
   import { units } from './units';
 
-  const REPOSITORY = 'https://github.com/JacobLinCool/android-data-collector';
+  const REPOSITORY = 'https://github.com/JacobLinCool/particeps';
   const GUIDES = `${REPOSITORY}/blob/main/docs`;
 
   const draft = createDraft();
@@ -278,7 +278,7 @@
       <span class="load">
         <DropTarget
           label={m.action.importDraft}
-          accept=".json,.adccfg,application/json"
+          accept=".json,.partcfg,application/json"
           onfile={open}
           testid="load-configuration"
         />

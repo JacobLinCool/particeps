@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-title: Android Data Collector
+title: Particeps
 message: If you use this software in published work, please cite it.
 type: software
 authors:
@@ -8,13 +8,13 @@ authors:
     family-names: Lin
     alias: JacobLinCool
     email: jacoblincool@gmail.com
-repository-code: https://github.com/JacobLinCool/android-data-collector
-url: https://github.com/JacobLinCool/android-data-collector
+repository-code: https://github.com/JacobLinCool/particeps
+url: https://github.com/JacobLinCool/particeps
 abstract: >-
-  A local-first, participant-controlled Android platform for research data
-  collection. Study content is fixed by an Ed25519-signed configuration that can
-  only select collectors already compiled into the application. Events are
-  encrypted on device with a non-exportable Android Keystore key. Data reaches
+  Particeps is a local-first, participant-first Android platform for research
+  data collection. Study content is fixed by an Ed25519-signed configuration
+  that can only select collectors already compiled into the application. Events
+  are encrypted on device with a non-exportable Android Keystore key. Data reaches
   the research team as a bundle encrypted to the researcher's HPKE public key,
   either through a participant-initiated export or, when the signed
   configuration declares an endpoint and the consent screen discloses it,
@@ -28,6 +28,10 @@ keywords:
   - participant control
   - android
 license: MIT
-# TODO: update version and date-released at each tagged release.
-version: 1.0.0-rc.3
-date-released: "2026-08-05"
+# No `version` or `date-released` here, on purpose. Every tag this repository has published
+# (v1.0.0-rc.1 through v1.0.0-rc.3) predates the rename: those builds carry the pre-rename
+# identity, a different applicationId, and different file formats, and the project does not
+# support them. Naming one of them as a version of Particeps would cite a release that does
+# not exist, so this file cites the repository instead and a citation of it carries no version.
+# TODO: when the first post-rename tag ships, add `version` and `date-released` back as part of
+# cutting it, and keep updating both at each tagged release thereafter.

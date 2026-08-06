@@ -27,6 +27,13 @@ export interface ParticipantCopy {
     lead: string;
     caption: string;
     disclaimer: string;
+    /**
+     * The product's name, said once, where a reader first meets it — and, in the second string,
+     * the half a name cannot be trusted to carry. Taking part is not the same as setting the
+     * terms: a note that gave only what the app holds for its reader would be an argument for
+     * the name rather than a description of the product.
+     */
+    naming: { name: string; limits: string };
   };
 
   glance: {
@@ -183,7 +190,12 @@ export const en: ParticipantCopy = {
     caption:
       'Sources feed into a phone, and what they record is encrypted inside it. Whether anything leaves on its own is stated on your consent screen, before you agree.',
     disclaimer:
-      'This page is not your consent document. Where they differ, your consent document and your research team’s answers come first.'
+      'This page is not your consent document. Where they differ, your consent document and your research team’s answers come first.',
+    naming: {
+      name: 'Particeps is Latin for one who takes part in something, and it is said PAR-ti-keps. What the app records is written to your phone and encrypted there, you see every source your study switched on before you agree, and nothing is collected until you press Start.',
+      limits:
+        'The name is not a promise that the study is yours to set. What a study may collect, and how long it runs, are fixed in the signed study file your research team gives you: you can decline the study, or leave it, but you cannot rewrite it. Inside a study you can hold back the sources it marks optional, by not granting the access they ask for; a source it marks required stops the study instead. Nothing that has already left your phone can be taken back.'
+    }
   },
 
   glance: {
@@ -355,7 +367,12 @@ export const zhTW: ParticipantCopy = {
     title: '手機裡的資料由你掌控',
     lead: '這個 App 只會記錄研究中列出的項目，並在資料寫入手機時立即加密。只有在你同意後，App 才會開始收集。',
     caption: 'App 會將各資料來源的紀錄加密儲存在手機中。同意畫面會在你同意前清楚說明資料是否會自動傳送。',
-    disclaimer: '本頁不是研究同意書。若內容不一致，請以同意書及研究團隊的說明為準。'
+    disclaimer: '本頁不是研究同意書。若內容不一致，請以同意書及研究團隊的說明為準。',
+    naming: {
+      name: 'Particeps 是拉丁文，意思是「參與其中的人」，讀作 PAR-ti-keps。App 記錄的資料會寫入你的手機並在當下加密；在你同意之前，App 會先列出這項研究啟用的每一項資料來源；按下「開始研究」之前不會收集任何資料。',
+      limits:
+        '這個名稱不代表研究內容由你決定。研究可以收集哪些資料、進行多久，都寫定在研究團隊交給你的那份已簽署設定檔裡：你可以拒絕參與，也可以中途離開，但無法改寫它。在一項研究裡，你能保留不給的只有標示為選用的資料來源——不授予它要求的權限，它就不會啟用；標示為必要的來源則會直接讓研究無法進行。已經離開手機的資料也無法收回。'
+    }
   },
 
   glance: {

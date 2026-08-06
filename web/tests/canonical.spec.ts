@@ -6,7 +6,7 @@ import {
   formatInstant,
   parseCanonicalJson,
   parseInstant
-} from '../src/lib/adc/canonical';
+} from '../src/lib/particeps/canonical';
 import { validConfiguration } from './fixture';
 
 describe('RFC 8785 JCS', () => {

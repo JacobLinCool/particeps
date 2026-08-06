@@ -114,9 +114,9 @@ jobs:
         run: |
           umask 077
           mkdir -p .signing
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > .signing/android-data-collector-release.jks
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > .signing/particeps-release.jks
           {
-            printf 'storeFile=.signing/android-data-collector-release.jks\n'
+            printf 'storeFile=.signing/particeps-release.jks\n'
             printf 'storePassword=%s\n' "$KEYSTORE_PASSWORD"
             printf 'keyAlias=%s\n' "$KEY_ALIAS"
             printf 'keyPassword=%s\n' "$KEY_PASSWORD"
@@ -134,11 +134,12 @@ jobs:
           python3 tools/catalog.py check
           python3 tools/catalog_parity.py
           python3 tools/validate_protocol_vectors.py
+          python3 tools/retired_identity_audit.py
           python3 tools/collector_assurance.py
           ./gradlew --no-daemon \
             -I tools/protocol-conformance.init.gradle \
             :core:export:test \
-            --tests adc.conformance.ProtocolConformanceTest
+            --tests particeps.conformance.ProtocolConformanceTest
 
       - name: Verify and package signed APK
         id: signed_apk
@@ -147,7 +148,7 @@ jobs:
           build_tools="$ANDROID_SDK_ROOT/build-tools/$ANDROID_BUILD_TOOLS_VERSION"
           signed_apk="app/build/outputs/apk/release/app-release.apk"
           release_dir="$RUNNER_TEMP/android-release"
-          release_apk="$release_dir/android-data-collector-$GITHUB_REF_NAME.apk"
+          release_apk="$release_dir/particeps-$GITHUB_REF_NAME.apk"
 
           test -f "$signed_apk"
           mkdir -p "$release_dir"
@@ -185,4 +186,4 @@ jobs:
 
       - name: Remove materialized signing files
         if: always()
-        run: rm -f .signing/android-data-collector-release.jks .signing/release-signing.properties
+        run: rm -f .signing/particeps-release.jks .signing/release-signing.properties

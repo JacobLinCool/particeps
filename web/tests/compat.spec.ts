@@ -6,10 +6,10 @@ import {
   canonicalConfigurationBytes,
   canonicalize,
   canonicalizeConfiguration
-} from '../src/lib/adc/canonical';
-import { decodeBase64Url, encodeBase64Url, sign, verify } from '../src/lib/adc/crypto';
-import { decodeEnvelope, encodeEnvelope } from '../src/lib/adc/envelope';
-import { openBundle } from '../src/lib/adc/bundle';
+} from '../src/lib/particeps/canonical';
+import { decodeBase64Url, encodeBase64Url, sign, verify } from '../src/lib/particeps/crypto';
+import { decodeEnvelope, encodeEnvelope } from '../src/lib/particeps/envelope';
+import { openBundle } from '../src/lib/particeps/bundle';
 import { parseConfiguration } from '../src/routes/researcher/parse';
 import { HPKE, SIGNING, validConfiguration } from './fixture';
 import { sealBundle } from './seal';
@@ -55,7 +55,7 @@ describe('Protocol v1 deterministic compatibility boundary', () => {
     expect(await openBundle(first, configuration, HPKE.privateKey)).toMatchObject({ ok: true });
   });
 
-  it('rejects the former Protocol v1 JSON and variable-length envelope', () => {
+  it('rejects the former Protocol v1 JSON, the retired ADCCFG01 magic, and a variable-length envelope', () => {
     const current = JSON.parse(canonicalizeConfiguration(validConfiguration())) as Record<string, unknown>;
     delete current.platform;
     delete current.minimum_client_version;
@@ -66,9 +66,21 @@ describe('Protocol v1 deterministic compatibility boundary', () => {
     };
     expect(() => parseConfiguration(canonicalBytes(current))).toThrow();
 
-    const payload = canonicalConfigurationBytes(validConfiguration());
+    const configuration = validConfiguration();
+    const payload = canonicalConfigurationBytes(configuration);
+    const retired = encodeEnvelope(
+      configuration.signer.key_id,
+      payload,
+      sign(payload, SIGNING.privateKey)
+    );
+    expect(() => decodeEnvelope(retired)).not.toThrow();
+    // Retired-identity rejection fixture. `ADCCFG01` is the old configuration magic and must stay
+    // spelled out here: a rename sweep that "fixes" it would leave this test proving nothing.
+    retired.set(new TextEncoder().encode('ADCCFG01'));
+    expect(() => decodeEnvelope(retired)).toThrow('envelope_magic');
+
     const old = new Uint8Array(16 + payload.length + 64);
-    old.set(new TextEncoder().encode('ADCCFG01'));
+    old.set(new TextEncoder().encode('PTCCFG01'));
     const view = new DataView(old.buffer);
     view.setUint16(8, 3);
     view.setUint32(10, payload.length);

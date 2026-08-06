@@ -5,13 +5,13 @@ import {
   bundleContext,
   configurationDigest,
   type ResearchDocument
-} from '../src/lib/adc/bundle';
+} from '../src/lib/particeps/bundle';
 import {
   canonicalBytes,
   canonicalizeConfiguration
-} from '../src/lib/adc/canonical';
-import { decodeBase64Url, encodeBase64Url, sign } from '../src/lib/adc/crypto';
-import type { StudyConfiguration } from '../src/lib/adc/types';
+} from '../src/lib/particeps/canonical';
+import { decodeBase64Url, encodeBase64Url, sign } from '../src/lib/particeps/crypto';
+import type { StudyConfiguration } from '../src/lib/particeps/types';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { expand, extract } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -128,7 +128,7 @@ export async function sealBundle(
   const body = await aesGcm(CONTENT_KEY, NONCE, context, plaintext);
   const keyIdBytes = UTF8.encode(keyId);
   const out = new Uint8Array(70 + keyIdBytes.length + wrapped.length + body.length);
-  out.set(UTF8.encode('ADCEXP01'));
+  out.set(UTF8.encode('PTCEXP01'));
   out.set(uuidBytes(bundleId), 8);
   out.set(digest, 24);
   new DataView(out.buffer).setUint16(56, keyIdBytes.length);

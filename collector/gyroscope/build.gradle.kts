@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "cool.linc.androiddatacollector.collector.gyroscope"
+    namespace = "cool.linc.particeps.collector.gyroscope"
     compileSdk = 37
     defaultConfig { minSdk = 34 }
     compileOptions {

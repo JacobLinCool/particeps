@@ -8,15 +8,15 @@ maps that protocol onto the Web source so a new contributor can find a behavior 
 
 | Concern | Source | Focused tests |
 | --- | --- | --- |
-| Configuration types and bounds | `src/lib/adc/types.ts` | `tests/hostile.spec.ts` |
-| RFC 8785 JCS and configuration projection | `src/lib/adc/canonical.ts` | `tests/canonical.spec.ts` |
-| Raw Ed25519/X25519 keys | `src/lib/adc/crypto.ts` | `tests/crypto.spec.ts` |
-| Signed configuration framing | `src/lib/adc/envelope.ts` | `tests/crypto.spec.ts` |
+| Configuration types and bounds | `src/lib/particeps/types.ts` | `tests/hostile.spec.ts` |
+| RFC 8785 JCS and configuration projection | `src/lib/particeps/canonical.ts` | `tests/canonical.spec.ts` |
+| Raw Ed25519/X25519 keys | `src/lib/particeps/crypto.ts` | `tests/crypto.spec.ts` |
+| Signed configuration framing | `src/lib/particeps/envelope.ts` | `tests/crypto.spec.ts` |
 | Configuration closed-world reader | `src/routes/researcher/parse.ts` | `tests/hostile.spec.ts` |
-| Encrypted bundle reader | `src/lib/adc/bundle.ts` | `tests/bundle.spec.ts` |
+| Encrypted bundle reader | `src/lib/particeps/bundle.ts` | `tests/bundle.spec.ts` |
 | Authoring state and stale-signature rule | `src/routes/researcher/draft.svelte.ts` | `tests/researcher-draft.spec.ts` |
 | Downloaded artifacts | `src/routes/researcher/artifacts.ts` | `tests/researcher.spec.ts` |
-| Immutable join URI and local QR | `src/lib/adc/join.ts`, `src/routes/researcher/JoinLinkPanel.svelte` | `tests/join.spec.ts`, shared `join-link-vectors.json` |
+| Immutable join URI and local QR | `src/lib/particeps/join.ts`, `src/routes/researcher/JoinLinkPanel.svelte` | `tests/join.spec.ts`, shared `join-link-vectors.json` |
 | Local deterministic protocol boundary | all of the above | `tests/compat.spec.ts` |
 
 There is no compatibility reader. Former Protocol v1 Tink keysets, protobuf prefixes, PKCS#8,
@@ -47,7 +47,7 @@ Configuration-specific Protocol v1 changes are:
 
 `parseConfiguration` first requires canonical, closed-world bytes, builds the typed value without
 defaults, re-encodes it to prove Android normalization equality, applies all schema validation, and,
-for `.adccfg`, verifies signer identity and Ed25519 signature. It never drops an unknown member or
+for `.partcfg`, verifies signer identity and Ed25519 signature. It never drops an unknown member or
 repairs an old shape.
 
 ## Keys and signed configuration
@@ -55,7 +55,7 @@ repairs an old shape.
 Both private artifacts are one unpadded base64url string containing exactly 32 raw bytes. Public
 halves are always derived locally. Nothing reads an accompanying public key or wrapper metadata.
 
-`ADCCFG01` is exactly:
+`PTCCFG01` is exactly:
 
 ```text
 magic[8] | signer_key_id_length u16 BE | configuration_length u32 BE |
@@ -68,7 +68,7 @@ container must end after byte 64 of the signature.
 ## Encrypted bundle reader
 
 The browser reader is a bounded convenience reader; large-study analysis belongs in the offline
-Python pipeline. `ADCEXP01` is exactly:
+Python pipeline. `PTCEXP01` is exactly:
 
 ```text
 magic[8] | bundle UUID[16] | configuration SHA-256[32] |
@@ -81,7 +81,7 @@ info and document AAD are the JCS bytes of:
 
 ```json
 {
-  "bundle_format": "research-bundle-v1",
+  "bundle_format": "particeps-research-bundle-v1",
   "bundle_id": "lowercase UUID",
   "configuration_sha256": "64 lowercase hex",
   "researcher_key_id": "key ID"
@@ -101,7 +101,7 @@ document derives experiment, configuration, signer, and export key IDs. A signat
 with one canonical string, and any edit immediately retires the signature and envelope.
 
 The four downloads are raw Ed25519 private key, raw X25519 private key, canonical configuration
-JSON, and signed `.adccfg`. The two configuration artifacts do not exist until signing succeeds.
+JSON, and signed `.partcfg`. The two configuration artifacts do not exist until signing succeeds.
 Private bytes stay in the tab and are never written to browser storage.
 
 ## Immutable join artifact

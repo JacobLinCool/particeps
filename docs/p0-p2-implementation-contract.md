@@ -23,9 +23,14 @@ exception; it does not permit changing an accepted app configuration.
 
 ## Non-negotiable invariants
 
-1. Protocol names remain `schema_version: 1`, `ADCCFG01`, `ADCEXP01`, and
-   `research-bundle-v1`. This is a destructive pre-1.0 replacement. No old-v1 reader, migration,
-   dual parser, compatibility flag, Tink wire keyset, or fallback is retained.
+1. `schema_version` remains the JSON number `1`. Nothing else does: the Protocol v1 identity
+   strings are `PTCCFG01`, `PTCEXP01`, `particeps-research-bundle-v1`, `particeps://join/v1`,
+   `application/vnd.particeps.research-bundle`, and `X-Particeps-*`. This is a destructive pre-1.0
+   replacement of the retired Android Data Collector identity, layered on the earlier destructive
+   replacement of the pre-v1 encodings. No reader, migration, dual parser, compatibility flag,
+   alias, forwarding module, Tink wire keyset, or fallback is retained for either. `ADCCFG01`,
+   `ADCEXP01`, `research-bundle-v1`, `adc://join/v1`, `application/vnd.adc.research-bundle`, and
+   `X-ADC-*` are rejected inputs with hostile-corpus coverage.
 2. Protocol input is closed-world and fail-closed. Unknown members, malformed UTF-8, duplicate
    JSON members, noncanonical JSON, invalid key encodings, unsupported collectors, wrong platform,
    wrong cryptographic context, malformed framing, and trailing bytes are rejected.
@@ -43,6 +48,14 @@ exception; it does not permit changing an accepted app configuration.
    authenticated decryption.
 7. Collector implementations remain compiled, closed-world modules. The catalog describes their
    contracts; it does not load code or turn unknown payloads into a generic runtime plugin.
+8. The rename moved `applicationId` and the Kotlin root package from `cool.linc.androiddatacollector`
+   to `cool.linc.particeps`. Android treats the result as a different application: no upgrade, no
+   migration, no data transfer, and no shared Keystore namespace. A pre-rename install is removed
+   separately, and its studies, keys, encrypted segments, and staged upload bodies go with it. That
+   is what made renaming the on-device names — Keystore aliases, WorkManager unique work names and
+   tags, no-backup staging file names, segment and metadata file suffixes — a safe mechanical change
+   in that commit and only in that commit. The same renames applied without the `applicationId`
+   change would orphan enqueued work and make already-written ciphertext permanently unreadable.
 
 ## Responsibility map
 
@@ -56,7 +69,7 @@ exception; it does not permit changing an accepted app configuration.
 | Upload planning/watermark | `:core:study-application` | Android session/runtime |
 | Durable body staging and HTTP | `:app` platform adapters | WorkManager upload worker |
 | Ciphertext ingress | `receiver/` | Cloudflare Worker and R2 only |
-| Offline validation and datasets | `adc-analysis/` | Local/R2 source, Parquet sink |
+| Offline validation and datasets | `particeps-analysis/` | Local/R2 source, Parquet sink |
 | Collector implementations | `:collector:*` | Android composition root |
 | Collector capability policy | `assurance/collector-policy.json` | CI |
 
@@ -71,8 +84,8 @@ No generic service/repository/controller hierarchy is introduced across these co
   files use the same raw encoding.
 - Floating-point configuration is removed. Location displacement becomes integer millimeters.
 - The configuration carries an explicit platform target and decimal minimum client build number.
-- `ADCCFG01` has fixed Ed25519 signature length and no legacy signature-length field.
-- `ADCEXP01` carries a UUID bundle ID, complete configuration SHA-256, fixed-suite RFC 9180
+- `PTCCFG01` has fixed Ed25519 signature length and no legacy signature-length field.
+- `PTCEXP01` carries a UUID bundle ID, complete configuration SHA-256, fixed-suite RFC 9180
   X25519/HKDF-SHA-256/AES-256-GCM wrapped content key, and an AES-256-GCM encrypted document.
 - HPKE context and content AAD bind the bundle format, bundle ID, configuration digest, and
   researcher key ID. The authenticated document repeats and verifies those identities.
@@ -102,7 +115,7 @@ The Worker exposes only the Protocol v1 upload POST and performs bounded streami
 immutable R2 object. It has no private key, decrypt path, list/download/delete/admin route, D1,
 Queue, KV, Durable Object, dashboard, or runtime configuration.
 
-`adc-analysis` uses one directional pipeline:
+`particeps-analysis` uses one directional pipeline:
 
 ```text
 BundleSource -> immutable ciphertext inventory -> full validation -> deterministic reassembly

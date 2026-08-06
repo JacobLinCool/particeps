@@ -10,7 +10,7 @@
   import Field from './Field.svelte';
   import Icon from './Icon.svelte';
   import { fieldSource } from './field-context';
-  import { deriveExperimentId } from '$lib/adc/ids';
+  import { deriveExperimentId } from '$lib/particeps/ids';
 
   interface Props {
     label: string;

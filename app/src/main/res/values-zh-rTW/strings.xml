@@ -18,7 +18,7 @@
     <string name="survey_expired">本次問卷已超過填寫期限，無法送出。</string>
     <string name="survey_invalid">請完成必填題目，並檢查每一項回答。</string>
     <string name="survey_unavailable">目前無法開啟這份問卷。</string>
-    <string name="header_no_study">研究資料收集器</string>
+    <!-- header_no_study is the product name Particeps and is not translated. -->
     <string name="header_starting">準備中</string>
     <string name="header_elapsed_minutes">%1$d 分</string>
     <string name="header_elapsed_hours">%1$d 小時 %2$d 分</string>

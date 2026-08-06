@@ -446,11 +446,11 @@ const pageErrors = [];
 
 for (const locale of LOCALES) {
   const context = await browser.newContext({ locale: locale.browser });
-  // The catalogue in force is `localStorage['adc.locale']`, read by `app.html` before first paint
+  // The catalogue in force is `localStorage['particeps.locale']`, read by `app.html` before first paint
   // and by `i18n.svelte.ts` after it. Setting it makes the locale deterministic rather than a
   // guess about what Chromium reports in `navigator.languages`.
   await context.addInitScript(
-    (value) => window.localStorage.setItem('adc.locale', value),
+    (value) => window.localStorage.setItem('particeps.locale', value),
     locale.id
   );
 

@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { openBundle } from '../../../web/src/lib/adc/bundle';
-import { parseCanonicalJson } from '../../../web/src/lib/adc/canonical';
-import { verify } from '../../../web/src/lib/adc/crypto';
-import { decodeEnvelope } from '../../../web/src/lib/adc/envelope';
-import { encodeJoinLink, parseJoinLink } from '../../../web/src/lib/adc/join';
+import { openBundle } from '../../../web/src/lib/particeps/bundle';
+import { parseCanonicalJson } from '../../../web/src/lib/particeps/canonical';
+import { verify } from '../../../web/src/lib/particeps/crypto';
+import { decodeEnvelope } from '../../../web/src/lib/particeps/envelope';
+import { encodeJoinLink, parseJoinLink } from '../../../web/src/lib/particeps/join';
 import { parseConfiguration } from '../../../web/src/routes/researcher/parse';
 
 type Vector = {

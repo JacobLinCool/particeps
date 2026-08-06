@@ -1,10 +1,10 @@
 <script lang="ts">
   /**
    * An optional transport wrapper for an already-signed artifact. The browser neither uploads the
-   * `.adccfg` nor contacts a QR service: it derives the immutable join URI and renders the QR
+   * `.partcfg` nor contacts a QR service: it derives the immutable join URI and renders the QR
    * locally. Consequently the hosting URL remains the researcher's explicit deployment decision.
    */
-  import { createJoinLink } from '$lib/adc/join';
+  import { createJoinLink } from '$lib/particeps/join';
   import CopyButton from '$lib/ui/CopyButton.svelte';
   import Note from '$lib/ui/Note.svelte';
   import TextField from '$lib/ui/TextField.svelte';
@@ -70,7 +70,7 @@
         autocomplete="url"
         placeholder={assignedParticipantId
           ? 'https://example.org/studies/dGhpcy1pcy1hLTEyOC1iaXQtdG9rZW4'
-          : 'https://example.org/studies/study.adccfg'}
+          : 'https://example.org/studies/study.partcfg'}
         hint={assignedParticipantId
           ? m.researcher.files.join.personalizedHint
           : m.researcher.files.join.artifactHint}

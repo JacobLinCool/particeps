@@ -14,7 +14,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "android-data-collector"
+rootProject.name = "particeps"
 
 include(
     ":app",

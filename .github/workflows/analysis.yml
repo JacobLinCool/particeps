@@ -5,14 +5,14 @@ on:
     branches:
       - main
     paths:
-      - "adc-analysis/**"
+      - "particeps-analysis/**"
       - "protocol/v1/**"
       - "tools/generate_protocol_vectors.mjs"
       - "tools/validate_protocol_vectors.py"
       - ".github/workflows/analysis.yml"
   pull_request:
     paths:
-      - "adc-analysis/**"
+      - "particeps-analysis/**"
       - "protocol/v1/**"
       - "tools/generate_protocol_vectors.mjs"
       - "tools/validate_protocol_vectors.py"
@@ -33,7 +33,7 @@ jobs:
     timeout-minutes: 20
     defaults:
       run:
-        working-directory: adc-analysis
+        working-directory: particeps-analysis
 
     steps:
       - name: Check out source
@@ -46,9 +46,9 @@ jobs:
         with:
           version: "0.11.26"
           python-version: "3.13"
-          working-directory: adc-analysis
+          working-directory: particeps-analysis
           enable-cache: true
-          cache-dependency-glob: adc-analysis/uv.lock
+          cache-dependency-glob: particeps-analysis/uv.lock
 
       - name: Install locked dependencies
         run: uv sync --locked

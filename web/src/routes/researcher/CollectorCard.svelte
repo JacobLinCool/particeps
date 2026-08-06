@@ -23,7 +23,7 @@
   import ChipSet from '$lib/ui/ChipSet.svelte';
   import RateBar from './RateBar.svelte';
   import { collectorRate, volumeOf } from './estimate';
-  import { BOUNDS, type CollectorConfig, type CollectorId, type LocationPriority, type NetworkTransport } from '$lib/adc/types';
+  import { BOUNDS, type CollectorConfig, type CollectorId, type LocationPriority, type NetworkTransport } from '$lib/particeps/types';
   import type { IconRef } from '$lib/ui/icons';
   import type { Messages } from '$lib/i18n/types';
   import type { Scale, ScaleKey } from './scales';

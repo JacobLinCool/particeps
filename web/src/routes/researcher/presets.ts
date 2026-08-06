@@ -19,7 +19,7 @@
  * Keyed by the schema path so a control, its presets and its ladder cannot drift apart.
  */
 
-import { DEFAULT_LOCAL_BYTES } from '$lib/adc/schema';
+import { DEFAULT_LOCAL_BYTES } from '$lib/particeps/schema';
 
 const KIB = 1_024;
 const MIB = 1_024 * KIB;

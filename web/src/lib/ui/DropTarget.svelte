@@ -3,7 +3,7 @@
    * A real button that opens a file picker. Drop is an enhancement layered on top, never the only
    * route in — a drag is not available to a keyboard, and on a phone it is not available at all.
    *
-   * The file is handed over unread: a private key wants text, an `.adccfg` wants bytes, and this
+   * The file is handed over unread: a private key wants text, a `.partcfg` wants bytes, and this
    * component has no business deciding which.
    */
   import Icon from './Icon.svelte';

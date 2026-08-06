@@ -1,16 +1,16 @@
-package adc.conformance
+package particeps.conformance
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import cool.linc.androiddatacollector.core.crypto.HpkeCrypto
-import cool.linc.androiddatacollector.core.definition.ProtocolCanonicalJson
-import cool.linc.androiddatacollector.core.definition.StudyConfigurationCodec
-import cool.linc.androiddatacollector.core.export.ResearchBundleVerifier
-import cool.linc.androiddatacollector.core.export.ResearchExport
-import cool.linc.androiddatacollector.core.export.UploadReceiptCodec
-import cool.linc.androiddatacollector.core.protocol.ConfigurationVerifier
-import cool.linc.androiddatacollector.core.protocol.JoinLink
-import cool.linc.androiddatacollector.core.protocol.SignedConfigurationCodec
+import cool.linc.particeps.core.crypto.HpkeCrypto
+import cool.linc.particeps.core.definition.ProtocolCanonicalJson
+import cool.linc.particeps.core.definition.StudyConfigurationCodec
+import cool.linc.particeps.core.export.ResearchBundleVerifier
+import cool.linc.particeps.core.export.ResearchExport
+import cool.linc.particeps.core.export.UploadReceiptCodec
+import cool.linc.particeps.core.protocol.ConfigurationVerifier
+import cool.linc.particeps.core.protocol.JoinLink
+import cool.linc.particeps.core.protocol.SignedConfigurationCodec
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
@@ -23,11 +23,11 @@ import org.junit.Test
 
 class ProtocolConformanceTest {
     private val corpus: JsonObject by lazy {
-        val root = requireNotNull(System.getProperty("adc.repository.root"))
+        val root = requireNotNull(System.getProperty("particeps.repository.root"))
         JsonParser.parseString(File(root, "protocol/v1/conformance-vectors.json").readText()).asJsonObject
     }
     private val joinCorpus: JsonObject by lazy {
-        val root = requireNotNull(System.getProperty("adc.repository.root"))
+        val root = requireNotNull(System.getProperty("particeps.repository.root"))
         JsonParser.parseString(File(root, "protocol/v1/join-link-vectors.json").readText()).asJsonObject
     }
 

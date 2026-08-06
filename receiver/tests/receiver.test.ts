@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
+import corpus from "../../protocol/v1/conformance-vectors.json";
 import {
+  BUNDLE_FORMAT,
   BUNDLE_MEDIA_TYPE,
+  PARTICEPS_HEADERS,
   CUSTOM_METADATA_KEYS,
   MAXIMUM_BODY_BYTES,
   bytesToHex,
+  parseDeployment,
+  parseUploadRequest,
   type ReceiverEnv,
 } from "../src/contract";
 import { handleRequest, type ReceiverDependencies } from "../src/index";
@@ -31,7 +36,18 @@ const DEPENDENCIES: ReceiverDependencies = {
   now: () => new Date(RECEIVED_AT),
 };
 
-describe("ADC Protocol v1 ciphertext receiver", () => {
+describe("Particeps Protocol v1 ciphertext receiver", () => {
+  it("accepts exactly the request vocabulary the shared corpus fixes", () => {
+    // The producer is Kotlin. Asserting against this Worker's own constants would pass however
+    // either side were spelled, so both sides assert against the corpus instead.
+    const request = corpus.valid.upload_request;
+    expect(BUNDLE_MEDIA_TYPE).toBe(request.media_type);
+    expect(BUNDLE_FORMAT).toBe(request.bundle_format);
+    expect([...PARTICEPS_HEADERS].sort()).toEqual(
+      request.routing_headers.map((name) => name.toLowerCase()).sort(),
+    );
+  });
+
   it("streams a new bundle into a create-only R2 object and returns the canonical receipt", async () => {
     const bucket = new FakeR2Bucket();
     const fixture = await requestFixture();
@@ -175,8 +191,8 @@ describe("ADC Protocol v1 ciphertext receiver", () => {
     expect((await handleRequest(original.request, environment(bucket), DEPENDENCIES)).status).toBe(201);
     const replay = await requestFixture({
       headers: {
-        "X-ADC-Sequence-From": "2",
-        "X-ADC-Sequence-To": "2",
+        "X-Particeps-Sequence-From": "2",
+        "X-Particeps-Sequence-To": "2",
       },
     });
 
@@ -254,7 +270,7 @@ describe("ADC Protocol v1 ciphertext receiver", () => {
 
     const duplicateBucket = new FakeR2Bucket();
     const duplicate = await requestFixture();
-    duplicate.request.headers.append("x-adc-event-count", "1");
+    duplicate.request.headers.append("x-particeps-event-count", "1");
     expect((await handleRequest(
       duplicate.request,
       environment(duplicateBucket),
@@ -279,19 +295,30 @@ describe("ADC Protocol v1 ciphertext receiver", () => {
   it.each([
     ["media type parameter", { headers: { "Content-Type": `${BUNDLE_MEDIA_TYPE}; charset=binary` } }],
     ["transfer encoding", { headers: { "Transfer-Encoding": "chunked" } }],
-    ["unknown ADC header", { headers: { "X-ADC-Extra": "value" } }],
+    ["unknown Particeps header", { headers: { "X-Particeps-Extra": "value" } }],
+    // Retired-identity rejection fixtures. The pre-rename Android Data Collector vocabulary is not
+    // an older dialect of Protocol v1; an X-ADC-* name is absent from the closed-world header set
+    // and is refused by the header check before any value is looked at.
+    ["retired X-ADC-Extra header", { headers: { "X-ADC-Extra": "value" } }],
+    ["retired X-ADC-Bundle-Format header", { headers: { "X-ADC-Bundle-Format": "research-bundle-v1" } }],
     ["unknown content header", { headers: { "Content-Language": "en" } }],
     ["authorization header", { headers: { Authorization: "Bearer ignored-is-not-allowed" } }],
     ["noncanonical byte count", { headers: { "Content-Length": "0256" } }],
-    ["unknown bundle format", { headers: { "X-ADC-Bundle-Format": "research-bundle-v2" } }],
-    ["non-v4 bundle UUID", { headers: { "X-ADC-Bundle-Id": "550e8400-e29b-11d4-a716-446655440000" } }],
-    ["uppercase digest", { headers: { "X-ADC-Configuration-SHA256": CONFIGURATION_SHA256.toUpperCase() } }],
-    ["invalid researcher key", { headers: { "X-ADC-Researcher-Key-Id": "Researcher_Key" } }],
-    ["leading-zero sequence", { headers: { "X-ADC-Sequence-From": "01" } }],
-    ["empty event range", { headers: { "X-ADC-Event-Count": "0" } }],
-    ["range/count mismatch", { headers: { "X-ADC-Sequence-To": "2" } }],
-    ["configuration not allowed", { headers: { "X-ADC-Configuration-SHA256": OTHER_CONFIGURATION_SHA256 } }],
-    ["key not allowed", { headers: { "X-ADC-Researcher-Key-Id": "different-key" } }],
+    // Retired-identity rejection fixture: the current header name carrying the retired format
+    // value, refused by the exact format comparison rather than accepted as a legacy spelling.
+    ["retired bundle format value", { headers: { "X-Particeps-Bundle-Format": "research-bundle-v1" } }],
+    ["unknown bundle format", { headers: { "X-Particeps-Bundle-Format": "research-bundle-v2" } }],
+    // Retired-identity rejection fixture: the retired upload media type, refused by the exact
+    // Content-Type comparison.
+    ["retired bundle media type", { headers: { "Content-Type": "application/vnd.adc.research-bundle" } }],
+    ["non-v4 bundle UUID", { headers: { "X-Particeps-Bundle-Id": "550e8400-e29b-11d4-a716-446655440000" } }],
+    ["uppercase digest", { headers: { "X-Particeps-Configuration-SHA256": CONFIGURATION_SHA256.toUpperCase() } }],
+    ["invalid researcher key", { headers: { "X-Particeps-Researcher-Key-Id": "Researcher_Key" } }],
+    ["leading-zero sequence", { headers: { "X-Particeps-Sequence-From": "01" } }],
+    ["empty event range", { headers: { "X-Particeps-Event-Count": "0" } }],
+    ["range/count mismatch", { headers: { "X-Particeps-Sequence-To": "2" } }],
+    ["configuration not allowed", { headers: { "X-Particeps-Configuration-SHA256": OTHER_CONFIGURATION_SHA256 } }],
+    ["key not allowed", { headers: { "X-Particeps-Researcher-Key-Id": "different-key" } }],
     ["malformed content digest", { headers: { "Content-Digest": `SHA-256=:${"A".repeat(43)}=:` } }],
   ])("rejects %s before writing", async (_name, options) => {
     const bucket = new FakeR2Bucket();
@@ -301,6 +328,21 @@ describe("ADC Protocol v1 ciphertext receiver", () => {
 
     expect(response.status).toBe(400);
     expect(bucket.putCalls).toBe(0);
+  });
+
+  // A retired header name and a retired header value are both `invalid_request` over HTTP, so the
+  // table above cannot show that they fail different checks. Pin the reasons at the parser.
+  it("refuses a retired header name and a retired header value on separate checks", async () => {
+    const deployment = parseDeployment(environment(new FakeR2Bucket()));
+    const retiredName = (await requestFixture({
+      headers: { "X-ADC-Bundle-Format": "research-bundle-v1" },
+    })).request;
+    const retiredValue = (await requestFixture({
+      headers: { "X-Particeps-Bundle-Format": "research-bundle-v1" },
+    })).request;
+
+    expect(() => parseUploadRequest(retiredName, deployment)).toThrow("Unknown request header");
+    expect(() => parseUploadRequest(retiredValue, deployment)).toThrow("Bundle format is invalid");
   });
 
   it.each([
@@ -365,13 +407,13 @@ async function requestFixture(options: FixtureOptions = {}): Promise<RequestFixt
     "Content-Type": BUNDLE_MEDIA_TYPE,
     "Content-Length": String(body.length),
     "Content-Digest": `sha-256=:${toBase64(digest)}:`,
-    "X-ADC-Bundle-Format": "research-bundle-v1",
-    "X-ADC-Bundle-Id": BUNDLE_ID,
-    "X-ADC-Configuration-SHA256": CONFIGURATION_SHA256,
-    "X-ADC-Researcher-Key-Id": RESEARCHER_KEY_ID,
-    "X-ADC-Sequence-From": "1",
-    "X-ADC-Sequence-To": "1",
-    "X-ADC-Event-Count": "1",
+    "X-Particeps-Bundle-Format": "particeps-research-bundle-v1",
+    "X-Particeps-Bundle-Id": BUNDLE_ID,
+    "X-Particeps-Configuration-SHA256": CONFIGURATION_SHA256,
+    "X-Particeps-Researcher-Key-Id": RESEARCHER_KEY_ID,
+    "X-Particeps-Sequence-From": "1",
+    "X-Particeps-Sequence-To": "1",
+    "X-Particeps-Event-Count": "1",
     ...options.headers,
   });
   const method = options.method ?? "POST";
@@ -385,9 +427,9 @@ async function requestFixture(options: FixtureOptions = {}): Promise<RequestFixt
     body,
     sha256,
     byteCountText: headers.get("content-length")!,
-    firstSequenceNumber: headers.get("x-adc-sequence-from")!,
-    lastSequenceNumber: headers.get("x-adc-sequence-to")!,
-    eventCount: headers.get("x-adc-event-count")!,
+    firstSequenceNumber: headers.get("x-particeps-sequence-from")!,
+    lastSequenceNumber: headers.get("x-particeps-sequence-to")!,
+    eventCount: headers.get("x-particeps-event-count")!,
   };
 }
 
@@ -395,7 +437,7 @@ function makeBundle(): Uint8Array {
   const keyId = new TextEncoder().encode(RESEARCHER_KEY_ID);
   const body = new Uint8Array(256);
   for (let index = 0; index < body.length; index += 1) body[index] = index & 0xff;
-  body.set(new TextEncoder().encode("ADCEXP01"), 0);
+  body.set(new TextEncoder().encode("PTCEXP01"), 0);
   writeUuid(body, 8, BUNDLE_ID);
   writeHex(body, 24, CONFIGURATION_SHA256);
   body[56] = 0;

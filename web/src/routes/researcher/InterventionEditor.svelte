@@ -32,7 +32,7 @@
   import TextField from '$lib/ui/TextField.svelte';
   import ToggleField from '$lib/ui/ToggleField.svelte';
   import { fieldSource } from '$lib/ui/field-context';
-  import { BOUNDS } from '$lib/adc/types';
+  import { BOUNDS } from '$lib/particeps/types';
   import { tick } from 'svelte';
   import type {
     ChoiceOption,
@@ -41,7 +41,7 @@
     LocalizedText,
     RelativeClock,
     SurveyQuestion
-  } from '$lib/adc/types';
+  } from '$lib/particeps/types';
   import type { UiIssue } from '$lib/ui/types';
   import type { Messages } from '$lib/i18n/types';
   import type { Draft } from './draft.svelte';

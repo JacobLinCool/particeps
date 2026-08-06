@@ -16,11 +16,11 @@ fun Properties.requireSigningValue(name: String): String =
         ?: error("Missing $name in ${releaseSigningPropertiesFile.path}")
 
 android {
-    namespace = "cool.linc.androiddatacollector"
+    namespace = "cool.linc.particeps"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "cool.linc.androiddatacollector"
+        applicationId = "cool.linc.particeps"
         minSdk = 34
         targetSdk = 37
         versionCode = providers.gradleProperty("releaseVersionCode").map(String::toInt).getOrElse(1)
@@ -76,7 +76,7 @@ kotlin {
 }
 
 tasks.withType<Test>().configureEach {
-    systemProperty("adc.appProjectDir", projectDir.absolutePath)
+    systemProperty("particeps.appProjectDir", projectDir.absolutePath)
 }
 
 dependencies {
@@ -116,6 +116,8 @@ dependencies {
     debugImplementation(libs.compose.ui.test.manifest)
 
     testImplementation(libs.junit4)
+    // Only to read the shared Protocol v1 corpus in a test; no production code parses JSON this way.
+    testImplementation(libs.gson)
 
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.androidx.test.junit)

@@ -10,7 +10,7 @@
   import Fingerprint from '$lib/ui/Fingerprint.svelte';
   import Mark from '$lib/ui/Mark.svelte';
   import type { Messages } from '$lib/i18n/types';
-  import type { StudyConfiguration } from '$lib/adc/types';
+  import type { StudyConfiguration } from '$lib/particeps/types';
 
   interface Props {
     configuration: StudyConfiguration;

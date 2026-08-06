@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { canonicalBytes, canonicalConfigurationBytes, configurationValue } from '../../../web/src/lib/adc/canonical';
-import { defaultCollector, validate } from '../../../web/src/lib/adc/schema';
-import { COLLECTOR_ORDER, type CollectorConfig, type CollectorId } from '../../../web/src/lib/adc/types';
+import { canonicalBytes, canonicalConfigurationBytes, configurationValue } from '../../../web/src/lib/particeps/canonical';
+import { defaultCollector, validate } from '../../../web/src/lib/particeps/schema';
+import { COLLECTOR_ORDER, type CollectorConfig, type CollectorId } from '../../../web/src/lib/particeps/types';
 import { parseConfiguration } from '../../../web/src/routes/researcher/parse';
 import { validConfiguration } from '../../../web/tests/fixture';
 

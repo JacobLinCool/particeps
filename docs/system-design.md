@@ -1,4 +1,4 @@
-# Android Data Collector system design
+# Particeps system design
 
 This document describes the system as it exists in this repository today, not a roadmap. The
 platform is a local-first, single-study, participant-controlled Android data collection app. A
@@ -131,7 +131,7 @@ non-integral or out-of-range numbers, and trailing bytes are rejected. Sequence/
 are canonical decimal strings. Protocol v1 is a destructive pre-1.0 definition: artifacts from the
 former v1 implementation have no fallback reader.
 
-The configuration is wrapped in an `ADCCFG01` binary envelope. All multi-byte integers in the binary
+The configuration is wrapped in a `PTCCFG01` binary envelope. All multi-byte integers in the binary
 layouts in this document are big-endian.
 
 ```text
@@ -181,13 +181,13 @@ it pins a signer; it contains no study private key.
 
 ### Immutable join import
 
-`adc://join/v1` is an immutable transport pointer, not remote configuration. Its fixed query binds
+`particeps://join/v1` is an immutable transport pointer, not remote configuration. Its fixed query binds
 one canonical HTTPS artifact URL, the full envelope SHA-256, and the signer fingerprint. Kotlin and
 TypeScript consume one shared corpus and enforce a narrow ASCII URL profile instead of accepting
 different normalization from `URI` and WHATWG `URL`. Android handles only the exact exported
 `VIEW` filter, rejects an active study before network I/O, performs one bounded non-redirecting GET,
 and removes no-backup staging on startup and every outcome. The session then checks digest,
-ordinary `ADCCFG01` signature / configuration rules, and fingerprint in that order. The host can
+ordinary `PTCCFG01` signature / configuration rules, and fingerprint in that order. The host can
 withhold bytes but cannot replace an accepted artifact, schedule a refresh, change collectors, or
 assign a participant ID through the link.
 
@@ -288,31 +288,31 @@ The manifest disables backup, and the cloud-backup and device-transfer rules exc
 The app neither requests StrongBox nor verifies hardware backing, so this is a Keystore isolation
 claim, not an absolute hardware-protection claim.
 
-- Metadata: an `AtomicFile` in the format `ADCMET01 | random 96-bit IV | ciphertext+tag`. `ADCMET01`
+- Metadata: an `AtomicFile` in the format `PTCMET01 | random 96-bit IV | ciphertext+tag`. `PTCMET01`
   carries the fresh-per-import instance ID, optional researcher-assigned ID, upload watermark,
   retained floor, and durable intervention occurrence states. It also holds
   `last_events`, the most recent event per collector, which is why opening a study needs no scan of
-  the log to rebuild it. There is no fallback reader, so an `ADCMET01` file is refused rather than
+  the log to rebuild it. There is no fallback reader, so a `PTCMET01` file is refused rather than
   migrated.
-- Events: `events-00000001.adcs` segments capped at 4 MiB. A segment is appended to and never
+- Events: `events-00000001.ptcs` segments capped at 4 MiB. A segment is appended to and never
   rewritten; whole leading segments can be reclaimed once delivery is confirmed. At most
   `MAXIMUM_LIVE_SEGMENTS = 2048` are resident at once, which at 4 MiB each covers the largest
   permitted quota, so the quota is what binds in practice and the segment count stays a backstop.
   The index is monotone and never reused, bounded by `MAXIMUM_SEGMENT_INDEX = 1_000_000_000`.
-- Each segment opens with a 12-byte header, `ADCEVT01 | segmentIndex(int32)`, which the reader
+- Each segment opens with a 12-byte header, `PTCEVT01 | segmentIndex(int32)`, which the reader
   checks against the index in the filename.
 - Each frame: `sequence(u64) | ciphertextLength(u32) | random IV(12) | ciphertext+tag`.
 - The AAD binds the event format, the opaque study locator, and the sequence number.
 - Every event append is followed by an `fsync`; metadata is committed through `AtomicFile`.
 - An event plus its resulting metadata is one recoverable commit. Before appending, the store writes
-  an encrypted `ADCTXN01` journal containing the resulting metadata before the event append.
+  an encrypted `PTCTXN01` journal containing the resulting metadata before the event append.
   If the journal is one boundary ahead and its event is durable, recovery authenticates that exact
   tail event and commits the journal metadata; if the event is absent, it discards the prepared
   journal. A same-boundary leftover is discarded with main metadata authoritative. Any other
   boundary, malformed journal, or event mismatch fails closed. This is the one write path used for
   occurrence lifecycle events and survey submissions; there is no independent draft store.
 - The active signed configuration is held separately, under its own Keystore key, as
-  `ADCACT01 | random 96-bit IV | ciphertext+tag`.
+  `PTCACT01 | random 96-bit IV | ciphertext+tag`.
 - The local quota comes from the configuration and is bounded to 8 MiB-8 GiB. Encoded metadata is
   capped at `MAXIMUM_METADATA_BYTES` = 1 MiB, and an append must leave `METADATA_RESERVE_BYTES` =
   2 MiB of the quota free, so the metadata that names the last event that fits can always be
@@ -416,7 +416,7 @@ in memory. It drives the cipher directly rather than through `CipherInputStream`
 AEAD failure as a normal end of stream and would turn a tampered bundle into a silently truncated
 file. Plaintext therefore reaches only a mode-`0600` staging file before the tag is verified.
 `researcher-tools decrypt` then streams that file through
-[`ResearchBundleVerifier`](../core/export/src/main/kotlin/cool/linc/androiddatacollector/core/export/ResearchBundleVerifier.kt)
+[`ResearchBundleVerifier`](../core/export/src/main/kotlin/cool/linc/particeps/core/export/ResearchBundleVerifier.kt)
 and publishes it
 with an atomic move only after the authenticated document, signature, identities, ranges,
 transitions, and catalog payloads all pass.
@@ -424,11 +424,11 @@ transitions, and catalog payloads all pass.
 Export format:
 
 ```text
-ADCEXP01 | bundleId(16) | configurationSha256(32) | keyIdLength(u16) |
+PTCEXP01 | bundleId(16) | configurationSha256(32) | keyIdLength(u16) |
 contentNonce(12) | researcherKeyId | HPKEWrappedContentKey(80) | AES-GCMCiphertext
 ```
 
-- Content: one closed-world JCS `research-bundle-v1` document containing the outer bundle identity,
+- Content: one closed-world JCS `particeps-research-bundle-v1` document containing the outer bundle identity,
   manual/automatic kind, exact embedded configuration, configuration digest and original signature,
   producer platform/build, snapshot time, full study metadata, transitions, and the exact contiguous
   event window. Sequence, count, time, and client-build values are decimal strings.
@@ -452,7 +452,7 @@ undecryptable.
 
 Upload advances a durable watermark rather than repeating history. `StudyMetadata.uploadedThroughSequence`
 holds the highest sequence an endpoint confirmed; it starts at 0, advances only after a successful
-receipt, and never moves backwards. Requests use `application/vnd.adc.research-bundle` plus bundle
+receipt, and never moves backwards. Requests use `application/vnd.particeps.research-bundle` plus bundle
 UUID, format, configuration SHA-256, researcher key ID, exact from/to/count, length, and digest
 headers. There are no clear participant, assigned, experiment, or configuration IDs; routing
 metadata is explicitly untrusted.
@@ -579,8 +579,8 @@ the same way.
 
 Protocol behavior is executable in the shared valid/hostile
 [conformance corpus](../protocol/v1/conformance-vectors.json). The neighbouring Kotlin
-[configuration](../core/protocol/src/test/kotlin/cool/linc/androiddatacollector/core/protocol/ConfigurationProtocolTest.kt)
-and [bundle](../core/export/src/test/kotlin/cool/linc/androiddatacollector/core/export/ResearchExportTest.kt)
+[configuration](../core/protocol/src/test/kotlin/cool/linc/particeps/core/protocol/ConfigurationProtocolTest.kt)
+and [bundle](../core/export/src/test/kotlin/cool/linc/particeps/core/export/ResearchExportTest.kt)
 tests cover JCS, raw keys, fixed framing, signature provenance, RFC 9180 context, exact ranges, and
 wrong-key/context/tamper rejection; TypeScript consumes the same corpus. Runtime tests cover the
 state machine, admission barrier, repeated export, watermark commit, and encrypted segmented
@@ -595,8 +595,8 @@ instance IDs, assigned-ID persistence/export, upload-header exclusion, CLI bulk 
 cross-language canonical bytes.
 
 Upload reliability has focused tests for the
-[single-entry outbox](../app/src/test/kotlin/cool/linc/androiddatacollector/platform/FileUploadOutboxTest.kt)
-and [HTTP adapter](../app/src/test/kotlin/cool/linc/androiddatacollector/platform/OkHttpStudyUploaderTest.kt):
+[single-entry outbox](../app/src/test/kotlin/cool/linc/particeps/platform/FileUploadOutboxTest.kt)
+and [HTTP adapter](../app/src/test/kotlin/cool/linc/particeps/platform/OkHttpStudyUploaderTest.kt):
 recovery, exact byte replay, digest/length/range identity, redirect refusal, retry classification,
 `201`/exact-replay `200`, generic-`2xx` rejection, and exact seven-field receipt matching. Export
 tests separately verify streaming manual decryption publishes no successful output after AEAD
