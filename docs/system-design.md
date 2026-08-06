@@ -87,7 +87,7 @@ flowchart LR
 | `:core:export` | Authenticated JCS/AES-GCM bundle construction over an exact sequence window, HPKE wrapping, closed-world streaming bundle verification, provenance, and strict receipt parsing |
 | `:collector:*` | One independent module per data source |
 | `:collector:sensor-common` | Listener-thread ownership shared only by raw Android hardware-sensor collectors; no schema, inference, or storage policy |
-| `:researcher-tools` | CLI for Ed25519/HPKE key generation, canonicalization, signing, configuration checking, and decryption (`signing-keygen`, `hpke-keygen`, `canonicalize`, `sign`, `check-config`, `decrypt`) |
+| `:researcher-tools` | CLI for Ed25519/HPKE key generation, canonicalization, signing, configuration checking, and decryption (`signing-keygen`, `hpke-keygen`, `canonicalize`, `sign`, `personalize`, `check-config`, `decrypt`) |
 
 A collector feature depends on `collector-api`, `study-definition`, and, for raw hardware listener
 ownership only, `collector:sensor-common`. This is the sole collector-to-collector dependency and

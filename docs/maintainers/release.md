@@ -39,13 +39,22 @@ Two unrelated keys are involved, and they must never be interchanged.
 
 Losing the Android signing private key means no future build can update a directly installed app under the same identity. Keep an offline, encrypted backup.
 
-### The rename is not an upgrade path
+### No release so far can be updated in place
 
-Nothing published before `cool.jacoblin.particeps` can be updated in place, and two independent things guarantee that. The `applicationId` moved twice — `cool.linc.androiddatacollector`, then `cool.linc.particeps`, now `cool.jacoblin.particeps` — and a device identifies an installed application by that value, so Android treats each as unrelated to the others. The release signing key was then rotated as well, which changes the certificate a device compares on update. Either alone would be enough; both together mean there is no version of this app on anyone's phone that the current build can replace.
+[CHANGELOG.md](../../CHANGELOG.md) lists which release carries which application ID. Two independent
+things put every one of them out of reach of the current build: the application ID moved twice, and
+a device identifies an installed application by that value; and the release signing key was rotated,
+which changes the certificate a device compares on update.
 
-The key was rotated to correct the certificate's subject, which named the pre-rename product and cannot be edited in place — a certificate is signed over its own subject, so changing it means issuing a new one. That was affordable only because every tag published to that point was a pre-1.0 release candidate and Developer Verification had not yet been registered. It stops being affordable the moment a real participant is running a released build, so it does not happen again.
+The key was rotated to correct the certificate's subject, which named the pre-rename product. A
+certificate is signed over its own subject, so changing it means issuing a new one. That was
+affordable only because every tag published to that point was a pre-1.0 release candidate and
+Developer Verification had not yet been registered. It stops being affordable the moment a
+participant is running a released build, so it does not happen again.
 
-Every tester installs the new APK fresh and uninstalls the old one themselves. Uninstalling takes the old app's encrypted storage with it, and there is no migration: the storage key is non-exportable, so data written by the pre-rename build can leave only through that build's own export, in the pre-rename formats, which current tooling does not read. A tester holding data worth keeping should export it before uninstalling and analyse it with the pre-rename tooling. State this in the release notes for the first post-rename tag; a tester expecting an in-place update will otherwise read a correct install as a failed one. The notes for `v1.0.0-rc.4` do not state it, so it still has to reach testers another way.
+Say this in the release notes. A tester expecting an in-place update reads a correct install as a
+failed one, and the notes for `v1.0.0-rc.4` do not say it, so it still has to reach testers another
+way.
 
 ## Android Developer Verification
 

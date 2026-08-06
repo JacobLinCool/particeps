@@ -177,7 +177,7 @@ flowchart LR
 | `:researcher-tools` | Ed25519 and HPKE keys, canonicalise, sign, verify, decrypt CLI |
 | `receiver/` | One bounded Protocol v1 upload POST, immutable ciphertext writes, and canonical receipts |
 
-Platform-independent modules contain no `android.*` imports, which keeps the domain logic testable on the JVM. [Component boundaries](docs/component-boundaries.md) documents the contracts.
+Platform-independent modules contain no `android.*` imports, which keeps the domain logic testable on the JVM. [System design](docs/system-design.md) documents the module contracts.
 
 New contributors should treat [`protocol/v1`](protocol/v1/README.md) as the normative wire contract, the [collector catalog](protocol/v1/collector-catalog.json) as the schema source, and [`docs/system-design.md`](docs/system-design.md) for how the modules fit together. Trace one path through the [configuration codec](core/study-definition/src/main/kotlin/cool/jacoblin/particeps/core/definition/StudyConfigurationCodec.kt), [signed envelope](core/protocol/src/main/kotlin/cool/jacoblin/particeps/core/protocol/SignedConfiguration.kt), [bundle exporter](core/export/src/main/kotlin/cool/jacoblin/particeps/core/export/ResearchExport.kt), [bundle verifier](core/export/src/main/kotlin/cool/jacoblin/particeps/core/export/ResearchBundleVerifier.kt), [single-entry outbox](app/src/main/kotlin/cool/jacoblin/particeps/platform/FileUploadOutbox.kt), [HTTP adapter](app/src/main/kotlin/cool/jacoblin/particeps/platform/OkHttpStudyUploader.kt), [receiver handler](receiver/src/index.ts), and the offline [`particeps-analysis`](particeps-analysis/README.md) pipeline. The join path is similarly short: [Web authoring](web/src/lib/particeps/join.ts), [shared parser](core/protocol/src/main/kotlin/cool/jacoblin/particeps/core/protocol/JoinLink.kt), [Android staging](app/src/main/kotlin/cool/jacoblin/particeps/platform/JoinArtifactDownloader.kt), [intent entry](app/src/main/kotlin/cool/jacoblin/particeps/MainActivity.kt), then the existing [session import](core/study-application/src/main/kotlin/cool/jacoblin/particeps/core/application/StudyApplication.kt). The [outbox](app/src/test/kotlin/cool/jacoblin/particeps/platform/FileUploadOutboxTest.kt), [uploader](app/src/test/kotlin/cool/jacoblin/particeps/platform/OkHttpStudyUploaderTest.kt), and [receiver](receiver/tests/receiver.test.ts) tests make crash/replay and receipt semantics executable. Receiver deployment and R2 operations start at [`receiver/README.md`](receiver/README.md), and the Collector capability policy lives under [`assurance`](assurance/README.md).
 
@@ -197,12 +197,12 @@ runtime, session, and app policy tests make each boundary executable.
 
 | Document | For |
 | --- | --- |
+| [Changelog](CHANGELOG.md) | What changed between releases, and what it asks of an existing install |
 | [Researcher guide](docs/researcher-guide.md) | Designing, signing, deploying, and analysing a study |
 | [Data dictionary](docs/data-dictionary.md) | Every field on every event, per collector |
 | [Participant guide](docs/participant-guide.md) | People taking part in a study |
 | [Collector implementation guide](docs/data-collector-implementation-guide.md) | Writing a new collector |
 | [System design](docs/system-design.md) | The implemented v1 architecture in full |
-| [Component boundaries](docs/component-boundaries.md) | Module contracts and invariants |
 | [Threat model](docs/threat-model.md) | Trust assumptions and limitations, for ethics review |
 | [Normative Protocol v1](protocol/v1/README.md) | JCS, keys, join URI, binary framing, bundle document, upload, receipt, and conformance corpora |
 | [Collector capability policy](assurance/README.md) | Static source, bytecode, and dependency boundaries for collectors |
@@ -214,11 +214,19 @@ runtime, session, and app policy tests make each boundary executable.
 
 New collectors are the main contribution path — see [CONTRIBUTING.md](CONTRIBUTING.md) and the [implementation guide](docs/data-collector-implementation-guide.md). To report a security or privacy issue, see [SECURITY.md](SECURITY.md) rather than opening a public issue.
 
-## Coming from a pre-rename release candidate
+## Coming from an earlier release candidate
 
-This project was called Android Data Collector through its early 1.0 release candidates; every tag published so far carries an identity the current build no longer uses. The Android `applicationId` has moved twice since — `cool.linc.androiddatacollector`, then `cool.linc.particeps`, now `cool.jacoblin.particeps` — and the release signing key has been rotated. Android treats each of those as a different application, and the new certificate would refuse the update even if it did not. There is no upgrade and no migration: installing Particeps does not see, move, or convert anything belonging to an installed pre-rename build, which keeps running under its own name until it is removed. Uninstalling it takes its Keystore keys with it, and every study, encrypted event segment, undelivered outbox bundle, and imported configuration on that install becomes unrecoverable — cloud backup and device transfer were already disabled for this app, so nothing is held anywhere else. Export whatever is still wanted before uninstalling, and re-enable the research keyboard under the new app if a study uses it.
+Every release candidate published so far runs under a different application ID from the current
+build, and the release signing key has since been rotated. Android treats each as an unrelated
+application, so there is no upgrade and no migration: the older build keeps running under its own
+name until it is removed, and uninstalling it destroys its Keystore key and everything encrypted
+under it. Export whatever is still wanted first.
 
-Artifacts produced before the rename are unsupported for final Protocol v1. A `.adccfg` configuration, a `.adcexp` export, an `ADCCFG01` or `ADCEXP01` container, a `research-bundle-v1` document, an `adc://join/v1` link, and an upload carrying `application/vnd.adc.research-bundle` or any `X-ADC-*` header are invalid input to every current implementation and are rejected exactly as random bytes are. Re-sign configurations with the current tooling and re-run any pilot; there is no converter, and none will be added.
+Artifacts from before the rename are unsupported. A `.adccfg`, a `.adcexp`, an `ADCCFG01` or
+`ADCEXP01` container, a `research-bundle-v1` document, an `adc://join/v1` link, and an upload
+carrying `application/vnd.adc.research-bundle` or an `X-ADC-*` header are all invalid input to every
+current implementation. There is no converter. [CHANGELOG.md](CHANGELOG.md) says which release
+carries which identity.
 
 ## Status
 

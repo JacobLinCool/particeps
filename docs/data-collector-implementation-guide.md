@@ -5,7 +5,7 @@ a new collector without breaking the pause, privacy, and storage invariants that
 of the system depends on.
 
 Read [System design](system-design.md) first for the module map, and
-[Component boundaries](component-boundaries.md) for the responsibility split. This document
+[System design](system-design.md) for the responsibility split. This document
 covers only the collector side of that boundary. The [normative Protocol v1 contract](../protocol/v1/README.md)
 defines the enclosing configuration and bundle. Its machine-readable schema source is the
 [Protocol v1 collector catalog](../protocol/v1/collector-catalog.json); the generated Kotlin

@@ -1052,4 +1052,3 @@ substitute for any of this.
 - [`data-dictionary.md`](data-dictionary.md) — field-level reference for every collector.
 - [`threat-model.md`](threat-model.md) — trust assumptions, current protections, and their limitations. Written to be attached to an ethics submission.
 - [`system-design.md`](system-design.md) — architecture and data flow.
-- [`component-boundaries.md`](component-boundaries.md) — module responsibilities.
