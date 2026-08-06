@@ -38,6 +38,8 @@
     <string name="header_starting">Starting up</string>
     <string name="header_elapsed_minutes">%1$dm</string>
     <string name="header_elapsed_hours">%1$dh %2$dm</string>
+    <!-- %1$s is a locale-formatted date and time; %2$s is a duration such as "2h 15m". -->
+    <string name="status_paused_since">Paused since %1$s, %2$s ago</string>
     <string name="header_elapsed_days">%1$dd %2$dh</string>
 
     <!-- Setup steps, in order -->

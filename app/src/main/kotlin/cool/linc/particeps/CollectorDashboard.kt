@@ -1,5 +1,6 @@
 package cool.linc.particeps
 
+import android.text.format.DateUtils
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -77,6 +78,7 @@ object UiTags {
     const val WITHDRAW = "withdraw"
     const val EXPORT = "export"
     const val EVENT_COUNT = "event_count"
+    const val PAUSED_SINCE = "paused_since"
 }
 
 data class StudyUiActions(
@@ -307,18 +309,51 @@ private fun StatusLine(state: ExperimentState, metadata: StudyMetadata?) {
             value = System.currentTimeMillis()
         }
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(10.dp).background(stateTint(state), CircleShape))
-        Text(
-            stringResource(state.labelRes()),
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.testTag(UiTags.STATE),
-        )
-        started?.let {
-            Text(elapsedLabel((ended ?: now) - it), color = MaterialTheme.colorScheme.onSurfaceVariant)
+    // A pause is the one state a participant can leave the study in by accident, so it reports both
+    // halves: when it started, and how long ago that was. The elapsed figure beside the state name
+    // is the study's own age and keeps running through a pause, which is why it cannot carry this.
+    val pausedAt = state.takeIf { it == ExperimentState.PAUSED }?.let {
+        metadata?.transitions?.lastOrNull { transition -> transition.to == ExperimentState.PAUSED }
+            ?.time?.wallTimeUtcMillis
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(10.dp).background(stateTint(state), CircleShape))
+            Text(
+                stringResource(state.labelRes()),
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.testTag(UiTags.STATE),
+            )
+            started?.let {
+                Text(elapsedLabel((ended ?: now) - it), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        pausedAt?.let {
+            Text(
+                stringResource(R.string.status_paused_since, wallClockLabel(it), elapsedLabel(now - it)),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag(UiTags.PAUSED_SINCE),
+            )
         }
     }
+}
+
+/**
+ * Android's own date/time rendering, so the participant sees their locale and their 12/24-hour
+ * setting rather than a format this app invented. The date is always shown: a pause that reads
+ * "2:32" is indistinguishable from one three days old, and that is exactly the case the line exists
+ * to catch.
+ */
+@Composable
+private fun wallClockLabel(millis: Long): String {
+    val context = LocalContext.current
+    return DateUtils.formatDateTime(
+        context,
+        millis,
+        DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_ALL,
+    )
 }
 
 @Composable
