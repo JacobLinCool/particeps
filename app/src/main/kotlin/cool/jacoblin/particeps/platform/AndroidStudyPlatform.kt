@@ -45,10 +45,27 @@ class AndroidStudyCollectionHost(
 ) : StudyCollectionHost {
     override fun start(studyTitle: String, usesLocation: Boolean) {
         CollectionService.start(context, studyTitle, usesLocation)
+        retractStaleDailyReminder()
     }
 
     override fun stop() {
         CollectionService.stop(context)
+        retractStaleDailyReminder()
+    }
+
+    /**
+     * Drops a standing daily reminder whenever collection starts or stops.
+     *
+     * The reminder is posted once a day and states which state the study is in, so the moment that
+     * changes the notification sitting on the lock screen is a false statement — and the worst
+     * direction to be wrong in is a paused study still asserting "Still collecting", which is the
+     * exact opposite of what the reminder exists to say. Retracting is enough: the next daily run
+     * posts the truth, whereas re-posting here would turn a daily reminder into a notification on
+     * every pause and resume.
+     */
+    private fun retractStaleDailyReminder() {
+        context.getSystemService(NotificationManager::class.java)
+            ?.cancel(DailyStatusWorker.NOTIFICATION_TAG, 0)
     }
 }
 
@@ -92,8 +109,10 @@ class AndroidStudyWorkScheduler(
      * re-entering a study — a resume, a process restart — does not push the next reminder a full
      * day away each time.
      *
-     * Deliberately not cancelled on pause. A paused study is exactly the case the reminder exists
-     * for; [cancelCollectionWork] retires it when the study actually ends.
+     * The schedule is deliberately not cancelled on pause — a paused study is exactly the case the
+     * reminder exists for — and [cancelCollectionWork] retires it when the study actually ends. The
+     * already-posted notification is a separate matter: pausing retracts it, because it states a
+     * state that has just stopped being true. See [AndroidStudyCollectionHost].
      */
     private fun scheduleDailyStatus() {
         workManager.enqueueUniquePeriodicWork(

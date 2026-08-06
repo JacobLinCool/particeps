@@ -40,6 +40,9 @@ PATTERNS: dict[str, str] = {
     "routing_header": r"[Xx]-[Aa][Dd][Cc]-",
     "python_package": r"adc[-_]analysis",
     "bare_token": r"(?<![0-9A-Za-z_])[Aa][Dd][Cc](?![0-9A-Za-z_])",
+    # The second retired namespace contains no ADC spelling, so without its own pattern it
+    # would be enforced only on the six suffixes the boundary check reads.
+    "retired_namespace": r"cool[./]linc[./]particeps",
 }
 
 # path -> why the retired spelling belongs there. Nothing else may carry one.

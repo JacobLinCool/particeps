@@ -22,8 +22,12 @@ import kotlinx.coroutines.flow.first
  * — a study that collects for weeks should keep saying so rather than becoming invisible, because
  * consent that nobody is reminded of is consent in name only.
  *
- * It reports state and nothing else. No counts, no collector names, no study content: a
- * notification is readable on a lock screen by whoever is holding the phone.
+ * It reports state and nothing else. No counts, no collector names, and deliberately not the study
+ * title either: this arrives every day for the study's whole duration, including while paused, and
+ * a lock screen is readable by whoever is holding the phone. The title line is the app's own name,
+ * which the launcher and Android's own settings already show. The ongoing collection notification
+ * does carry the study title, but only while collection is actually running and only as its
+ * secondary line; a daily reminder that repeated it would be a standing disclosure instead.
  */
 class DailyStatusWorker(
     context: Context,
@@ -33,9 +37,10 @@ class DailyStatusWorker(
         val application = applicationContext as CollectorApplication
         val snapshot = application.session.snapshot.first { it.initialized }
         val metadata = snapshot.runtime.metadata
-        val title = snapshot.configuration?.title
         val state = metadata?.state
-        if (title == null || (state != ExperimentState.RUNNING && state != ExperimentState.PAUSED)) {
+        if (snapshot.configuration == null ||
+            (state != ExperimentState.RUNNING && state != ExperimentState.PAUSED)
+        ) {
             // Finished, withdrawn, deleted, or never started. Nothing to remind anyone about, and
             // the periodic request outlives the study unless it retires itself here.
             return Result.success()
@@ -87,7 +92,7 @@ class DailyStatusWorker(
             0,
             android.app.Notification.Builder(applicationContext, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle(title)
+                .setContentTitle(applicationContext.getString(R.string.app_name))
                 .setContentText(text)
                 .setStyle(android.app.Notification.BigTextStyle().bigText(text))
                 .setContentIntent(

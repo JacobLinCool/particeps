@@ -213,7 +213,9 @@ Tap anywhere on a row that is not granted yet and the app sends you straight to 
 
 ### Notifications (通知)
 
-Used for scheduled study activities and for the notification that stays visible while collection is running. Activities use Android's background work system, which is not an exact alarm: battery saving, Doze, or system scheduling can delay them.
+Used for three things: scheduled study activities, the notification that stays visible while collection is running, and a once-a-day reminder of where the study stands. Activities use Android's background work system, which is not an exact alarm: battery saving, Doze, or system scheduling can delay them.
+
+The daily reminder says either that the study is still collecting, or that it is paused and since when. It exists for the second case: a pause changes nothing else on the phone, so a study you meant to resume can sit stopped for weeks without anything saying so. It is a quiet notification — no sound — and it names only the app and the state, never the study, so it discloses nothing to someone glancing at your lock screen. It stops when the study finishes or you withdraw.
 
 ### Sensor hardware (感測器硬體) and basic network state
 
@@ -363,7 +365,7 @@ Finishing or withdrawing does not strand data the research team was already owed
 
 ### Pause and resume
 
-When you press Pause (暫停), the app writes a pause boundary, stops the sources, and flushes events that were already queued before that boundary. Once the status line shows Paused (已暫停), no new study events are accepted for the period you are paused. Data already collected stays on your phone, encrypted. The ongoing notification and any visible scheduled-activity notification go away. A survey cannot be opened or submitted while paused.
+When you press Pause (暫停), the app writes a pause boundary, stops the sources, and flushes events that were already queued before that boundary. Once the status line shows Paused (已暫停), no new study events are accepted for the period you are paused. The line under it tells you when the pause started and how long it has lasted. Data already collected stays on your phone, encrypted. The ongoing notification and any visible scheduled-activity notification go away, and the daily reminder starts saying you are paused instead. A survey cannot be opened or submitted while paused.
 
 Pressing Resume (繼續收集) starts a new collection interval. Data volume and app and screen use are not backfilled: the app does not go back and collect what happened while you were paused. Calendar time and scheduled-activity availability still pass during a pause, so the app expires missed activities and reconciles any remaining ones when you resume.
 
