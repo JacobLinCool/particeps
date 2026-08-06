@@ -4,7 +4,7 @@ A reference description of the protections in the current release, the limitatio
 
 The [normative Protocol v1 contract](../protocol/v1/README.md), its
 [collector catalog](../protocol/v1/collector-catalog.json), the
-[implementation decision record](p0-p2-implementation-contract.md), and
+[system design](system-design.md), and
 [Collector capability policy](../assurance/README.md) are the implementation sources behind the
 claims in this document.
 

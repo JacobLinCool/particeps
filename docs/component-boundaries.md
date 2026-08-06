@@ -7,7 +7,6 @@ enforcement mechanism.
 
 New contributors should read this with the [normative Protocol v1 contract](../protocol/v1/README.md),
 the [collector catalog](../protocol/v1/collector-catalog.json), the
-[P0–P2 implementation contract](p0-p2-implementation-contract.md), and
 [`assurance`](../assurance/README.md). The concrete upload seam is deliberately short:
 [StudyUploader](../core/study-application/src/main/kotlin/cool/jacoblin/particeps/core/application/StudyApplication.kt),
 [FileUploadOutbox](../app/src/main/kotlin/cool/jacoblin/particeps/platform/FileUploadOutbox.kt),

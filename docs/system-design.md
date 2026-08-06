@@ -8,7 +8,7 @@ a researcher endpoint is an option a study configuration turns on.
 
 The [normative Protocol v1 contract](../protocol/v1/README.md) and its
 [collector catalog](../protocol/v1/collector-catalog.json) define the wire and event schemas. The
-[P0–P2 implementation contract](p0-p2-implementation-contract.md) records the locked decisions, and
+the [protocol specification](../protocol/v1/README.md) is normative for the wire format, and
 [`assurance`](../assurance/README.md) defines the static Collector capability policy. This document
 explains how the current modules realize those contracts.
 

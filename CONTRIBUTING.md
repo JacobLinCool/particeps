@@ -20,7 +20,7 @@ Collectors observe a source and emit events. They do not write files, change stu
 
 That boundary is what keeps a new data source cheap to add and cheap to review. It also means the answer to "how do I persist this myself?" is that you do not — everything goes through the `EventSink` in your `CollectorContext`, which is what makes sequence numbers contiguous and monotone, quota accounting correct, and a bundle able to declare the exact window it carries.
 
-Note that the boundary is enforced by the dependency graph and by review, not by a sandbox. There is currently no architecture test asserting it.
+The boundary is checked, not merely reviewed. `tools/collector_assurance.py` reads `assurance/collector-policy.json` and fails CI on a forbidden import, a forbidden Gradle dependency, or a forbidden symbol in a compiled class. What it does not read is the manifest, so a collector module can still declare a permission or a component that nothing stops — that gap is tracked in issue #11.
 
 ### What review will look at
 
@@ -72,6 +72,16 @@ Two conventions worth knowing:
 ## Pull requests
 
 Keep them focused — one collector, or one fix. Explain what changed and why, and say explicitly if the change affects what data can be collected or what a participant sees.
+
+A change is finished when all five of these hold:
+
+1. the targeted tests and the full build checks pass;
+2. a review has checked the failure paths, not only the success path;
+3. nothing was added that a simpler version would not need — no duplicate implementation, no legacy path, no unused code, no avoidable dependency;
+4. the code you touched is clearer than you found it; and
+5. a reader who has never seen the change can find its specification, its source, its tests, and its operational documentation starting from the root documentation.
+
+The fifth is the one people skip. It is also the one that decides whether anyone can maintain this after you.
 
 By contributing you agree that your contribution is licensed under the [MIT License](LICENSE).
 

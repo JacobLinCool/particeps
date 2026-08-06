@@ -4,7 +4,7 @@ This directory contains the complete server-side surface for automatic uploads. 
 Cloudflare Worker, one deployment-fixed `POST` path, and one R2 binding. The normative request,
 bundle, and receipt contract is [`../protocol/v1/README.md`](../protocol/v1/README.md); the phase
 boundaries are in
-[`../docs/p0-p2-implementation-contract.md`](../docs/p0-p2-implementation-contract.md).
+[`../protocol/v1/README.md`](../protocol/v1/README.md).
 
 The Worker accepts a bounded `PTCEXP01` ciphertext stream and stores it under its bundle UUID. It
 checks the Protocol v1 content headers, untrusted routing claims, visible outer bundle identities,

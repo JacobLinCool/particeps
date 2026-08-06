@@ -32,7 +32,7 @@ support, and how the two key pairs must be handled.
 
 For implementation work, start with the [normative Protocol v1 contract](../protocol/v1/README.md),
 its [collector catalog](../protocol/v1/collector-catalog.json), the
-[P0–P2 decision record](p0-p2-implementation-contract.md), and the
+[system design](system-design.md), and the
 [Collector capability policy](../assurance/README.md). Configuration, envelope, export, outbox, and
 HTTP behavior live beside their tests in `core/study-definition`, `core/protocol`, `core/export`,
 and `app/src/{main,test}/…/platform`; those links are indexed in the repository README.
