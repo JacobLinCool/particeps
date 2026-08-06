@@ -47,11 +47,9 @@ PATTERNS: dict[str, str] = {
 
 # path -> why the retired spelling belongs there. Nothing else may carry one.
 ALLOWED: dict[str, str] = {
-    "README.md": "documents that pre-rename artifacts and installs are unsupported",
+    "CHANGELOG.md": "the release history; naming the identity each release carried is its job",
     "app/src/androidTest/kotlin/cool/jacoblin/particeps/AndroidConfigurationImportTest.kt":
         "retired-identity rejection fixture: import must fail closed on the old magic",
-    "docs/maintainers/release.md": "records the cutover a maintainer still has to finish",
-    "docs/p0-p2-implementation-contract.md": "invariant naming exactly which inputs are rejected",
     "docs/participant-guide.md": "tells a participant what the app they already installed was called",
     "docs/researcher-guide.md": "states that a pre-rename configuration or export is refused",
     "protocol/v1/README.md": "normative statement of the retired identity's rejection",

@@ -2,23 +2,23 @@
 
 This directory contains the complete server-side surface for automatic uploads. It is one
 Cloudflare Worker, one deployment-fixed `POST` path, and one R2 binding. The normative request,
-bundle, and receipt contract is [`../protocol/v1/README.md`](../protocol/v1/README.md); the phase
-boundaries are in
+bundle, and receipt contract, including the phase boundaries, is
 [`../protocol/v1/README.md`](../protocol/v1/README.md).
 
 The Worker accepts a bounded `PTCEXP01` ciphertext stream and stores it under its bundle UUID. It
 checks the Protocol v1 content headers, untrusted routing claims, visible outer bundle identities,
-actual byte count, and SHA-256. It never buffers a complete bundle. A create-only R2 write returns
-`201`; an exact replay returns the same canonical receipt with `200`; reuse of a bundle UUID with
-different bytes or metadata returns `409`. No success response is produced before the R2 operation
-has completed. The verifier feeds R2 through a `FixedLengthStream`, preserving backpressure while
-meeting R2's requirement that streamed uploads have a known length.
+actual byte count, and SHA-256. It never buffers a complete bundle. A bundle UUID is written once
+and never overwritten: an exact replay returns the original receipt, and reuse with different bytes
+or metadata is refused. The exact status codes and receipt fields are in
+[`../protocol/v1/README.md`](../protocol/v1/README.md). No success response is produced before the
+R2 operation has completed. The verifier feeds R2 through a `FixedLengthStream`, preserving
+backpressure while meeting R2's requirement that streamed uploads have a known length.
 
 The application-header vocabulary is closed-world. The ten Protocol v1 headers are `Content-Type`,
-`Content-Length`, `Content-Digest`, and the seven `X-Particeps-*` routing claims; `Content-Type`
-must be exactly `application/vnd.particeps.research-bundle` and `X-Particeps-Bundle-Format` exactly
-`particeps-research-bundle-v1`. Apart from those ten, the Worker ignores only the ordinary OkHttp
-transport headers and headers in Cloudflare's
+`Content-Length`, `Content-Digest`, and the seven `X-Particeps-*` routing claims. `Content-Type`
+must be exactly `application/vnd.particeps.research-bundle`, and `X-Particeps-Bundle-Format`
+exactly `particeps-research-bundle-v1`. Apart from those ten, the Worker ignores only the ordinary
+OkHttp transport headers and headers in Cloudflare's
 [edge HTTP header reference](https://developers.cloudflare.com/fundamentals/reference/http-headers/).
 Local Wrangler/Miniflare's `MF-Original-Hostname` transport header is also ignored.
 Every other client-controlled header is rejected. In particular, credentials, cookies, alternate
@@ -62,8 +62,8 @@ received_at_utc
 ```
 
 All eight values are untrusted. `received_at_utc` is assigned by the Worker on the first successful
-write and remains unchanged on replay. The seven-field receipt omits receive time and researcher
-key ID, as required by Protocol v1.
+write and remains unchanged on replay. The receipt returned to the client is narrower than this
+metadata; [`../protocol/v1/README.md`](../protocol/v1/README.md) defines its exact fields.
 
 ## Code map
 
@@ -101,7 +101,8 @@ pnpm dev
 ```
 
 When manually posting a fixture with `curl`, add `--header 'Accept:'` to suppress curl's default
-`Accept: */*`; it is not one of the exact Protocol v1 request headers and is intentionally rejected.
+`Accept: */*`. That header is not one of the exact Protocol v1 request headers and is intentionally
+rejected.
 
 ## Deploy and operate
 
@@ -121,8 +122,8 @@ Application logs contain no request headers, bundle IDs, participant identifiers
 Cloudflare aggregate request/R2 metrics and WAF controls for operations; consent and governance
 documents must still name the endpoint operator, jurisdiction, retention, and authorized analysts.
 
-The implementation relies only on documented Cloudflare behavior: R2 `put()` accepts streams,
-custom metadata, SHA-256 verification, and conditional writes; a failed condition returns `null`;
-successful writes are strongly consistent once the promise resolves. See the
+The implementation relies only on documented Cloudflare behavior. R2 `put()` accepts streams,
+custom metadata, SHA-256 verification, and conditional writes. A failed condition returns `null`,
+and successful writes are strongly consistent once the promise resolves. See the
 [R2 Workers API reference](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
 and [R2 consistency model](https://developers.cloudflare.com/r2/reference/consistency/).

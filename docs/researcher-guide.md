@@ -1,16 +1,16 @@
 # Researcher guide
 
 Particeps runs a study from a signed configuration file, so a new study does
-not need a new app. You describe the study in JSON — which collectors run and with what
+not need a new app. You describe the study in JSON: which collectors run and with what
 sampling parameters, how long it lasts, what the consent summary says, which interventions and surveys are
 scheduled, how much local storage it may use, which public key its bundles are encrypted to,
-and whether it delivers them to an endpoint on a schedule — sign that file with your study
-key, and hand it to participants. The participant app verifies the signature, presents the
+and whether it delivers them to an endpoint on a schedule. Then you sign that file with your
+study key and hand it to participants. The participant app verifies the signature, presents the
 study, and runs exactly what the configuration specifies.
 
-v1 ships twelve selectable collectors — app lifecycle, accelerometer, battery state, temporal
+v1 ships twelve selectable collectors: app lifecycle, accelerometer, battery state, temporal
 context, gyroscope, ambient light, proximity, network state, network usage, usage events,
-location, and research-keyboard touch dynamics — and runs the complete
+location, and research-keyboard touch dynamics. It runs the complete
 on-device loop on Android 14–17 (`minSdk 34`, `compileSdk`/`targetSdk 37`). Changing which
 of them a study uses, how often they sample, or how long the study lasts is a configuration
 change. Adding a collector that does not exist yet is a code change; see
@@ -67,7 +67,7 @@ written up.
 | `gyroscope.v1` | Raw x/y/z angular velocity in rad/s, sensor time, and accuracy | Orientation, posture, activity, or gesture labels. No inference is performed. |
 | `ambient_light.v1` | Raw illuminance in lux, sensor time, and accuracy | Image content, a calibrated environment across devices, or whether a person is present. |
 | `proximity.v1` | Raw sensor distance/range and the device's near/far interpretation | Comparable physical distance across devices or presence; many sensors are binary. |
-| `network_state.v1` | Transport flags for the default network (`wifi`, `mobile`, `ethernet`, `vpn`), `validated`/`metered`/`roaming`, and optional link bandwidth estimates | SSID, BSSID, IP address, hostname, URL, packet contents, or who the device communicated with. None of it is read. |
+| `network_state.v1` | Transport flags for the default network (`wifi`, `mobile`, `ethernet`, `vpn`), `validated`/`metered`/`roaming`, and optional link bandwidth estimates | Who the device communicated with, or anything that identifies the network itself or its traffic. None of it is read; [`data-dictionary.md`](data-dictionary.md) lists the fields exactly. |
 | `network_usage.v1` | Device-total `rx_bytes`/`tx_bytes`/`rx_packets`/`tx_packets` per transport, over an explicit `[coverage_start_utc_millis, coverage_end_utc_millis]` window | An instantaneous throughput, a per-app attribution, or the precise time traffic occurred. The coverage window is the finest resolution that exists in the data. |
 | `usage_events.v1` | Raw platform events — activity resumed/paused/stopped, screen interactive/non-interactive, keyguard shown/hidden, device startup/shutdown — with the reporting package name where the platform supplies one | A complete or real-time session stream. The platform delays events, omits events, and does not guarantee that resume and pause pair up. |
 | `location.v1` | Fused Location fixes with latitude/longitude, per-fix accuracy fields, the fix's own source time, and the platform `mock` flag | That the participant was at that coordinate, or that the track is continuous. Fixes are estimates, sampled and batched, with gaps you did not choose. |
@@ -86,8 +86,8 @@ design constraint, not an afterthought:
 - **Smallest local quota.** `storage.maximum_local_bytes` bounds how much of a
   participant's data can accumulate on their device before the store refuses writes.
 
-A field-level reference for every collector's payload is in
-[`data-dictionary.md`](data-dictionary.md). The adversary model, and what the design does
+A field-level reference for every collector's payload, including the fields each collector does
+not record, is in [`data-dictionary.md`](data-dictionary.md). The adversary model, and what the design does
 and does not defend against, is in [`threat-model.md`](threat-model.md).
 
 ## 2. Key responsibilities
@@ -100,19 +100,21 @@ v1 uses two key pairs with different purposes. They are not interchangeable.
 | Raw X25519/HPKE key | Decrypts every bundle, exported or uploaded | The signed study configuration, as `export.hpke_public_key` |
 
 Both public halves therefore travel inside the configuration, and neither requires an app
-build. A configuration certifies itself: the app verifies the signature with the key the
-file carries. What that buys you is one published app running any study; what it costs is
-that a valid signature proves the configuration is unchanged since signing, not who wrote
-it. Section 6 covers the fingerprint you publish so participants can close that gap.
+build. A configuration certifies itself. What that buys you is one published app running any
+study; what it costs is that a valid signature proves the configuration is unchanged since
+signing, not who wrote it. [`threat-model.md`](threat-model.md) describes how the key travels
+inside the signed bytes and what the signature does and does not establish. Section 6 covers
+the fingerprint you publish so participants can close that gap.
 
 The consequences differ, so track them separately.
 
 - **Signing private key lost.** You cannot issue or reissue configurations under that key
   ID. Existing `.partcfg` files already in participants' hands keep working until they
-  expire. That is true of current-format files only. An `.adccfg` from before the rename to
-  Particeps does not keep working: Particeps rejects it outright, as does every current tool,
-  so a configuration signed under the old identity has to be re-signed with the current
-  tooling regardless of how much of its validity window is left. Recovery means generating a
+  expire. That is true of current-format files only. A pre-rename `.adccfg` is a rejected
+  input rather than an old one, so a configuration signed under the retired identity has to be
+  re-signed with current tooling regardless of how much of its validity window is left.
+  [`CHANGELOG.md`](../CHANGELOG.md) records which release retired which format, and what each
+  one asks of someone who already installed a build. Recovery means generating a
   new key, putting it in the `signer` block of a new configuration, and re-signing — no app
   release is involved.
 - **Signing private key leaked.** Anyone holding it can mint a configuration that verifies
@@ -136,25 +138,18 @@ revocation and disclosure procedure, and the destruction date.
 Note that the Android APK signing key is a third, separate key. It is not either of the
 above.
 
-The private keys under [`researcher-tools/examples`](../researcher-tools/examples) carry an
-`INSECURE-` filename prefix because they are committed to a public repository. They exist so
-a debug build can exercise the whole loop, and they are equivalent to fully disclosed keys:
-anyone can sign a configuration under the `demo-signer-2026` key ID, and anyone can decrypt
-an export encrypted to that HPKE key. They must never be used for a study involving real
-participants.
-
-A release build ships no demonstration study — the signed envelope and the code that loads
-it are in the app's `debug` source set only — so a participant who installs a release can
-run nothing but a configuration you signed and gave them. That is a packaging boundary, not
-a trust one: the build pins no signers, so a configuration signed with the demo key would
-still verify if someone handed one over. What the participant has to work with in that case
-is the consent screen's signer fingerprint and your published copy of it.
+The private keys under [`researcher-tools/examples`](../researcher-tools/examples) are
+committed to a public repository and are therefore fully disclosed, so they must never be used
+for a study involving real participants. A release build ships no demonstration study. That is a
+packaging boundary and not a trust one: the build pins no signers, so a configuration signed with
+the demo key would still verify if someone handed one over. Both points are set out
+in [`researcher-tools/examples/README.md`](../researcher-tools/examples/README.md).
 
 ## 3. Use the researcher CLI
 
 Requirement: JDK 17. No command overwrites an existing output path. The key, canonicalisation,
-and signing commands open their output with `CREATE_NEW`; `decrypt` checks the destination
-first and then stages its plaintext through a temporary file, for the reason given in
+and signing commands open their output with `CREATE_NEW`. `decrypt` checks the destination
+first, then stages its plaintext through a temporary file, for the reason given in
 section 9.
 
 Generate a production signing key:
@@ -286,12 +281,12 @@ never placed in filenames or printed. `canonicalize` and `sign` also accept
 An action is defined once and reused by all of an intervention's triggers. Calendar-relative
 schedules include pauses; active-running schedules exclude them. Daily local schedules follow the
 phone's current time zone and are recomputed after time or zone changes. For both daily-local and
-random-window schedules, a local minute that does not exist during a DST gap is skipped instead of
-shifted outside the signed time; if a minute occurs twice during a DST overlap, the first
+random-window schedules, a local minute that does not exist during a DST gap is skipped rather
+than shifted outside the signed time. If a minute occurs twice during a DST overlap, the first
 chronological occurrence is used. Each planned firing has a
-SHA-256 `occurrence_id` derived from its configuration, intervention, trigger, and schedule key, so
-reboot, process recovery, WorkManager retry, or duplicate execution cannot create a second firing.
-Occurrences stop at the study lifetime and expire after their availability window.
+SHA-256 `occurrence_id`, derived from its configuration, intervention, trigger, and schedule key.
+Reboot, process recovery, WorkManager retry, and duplicate execution therefore cannot create a
+second firing. Occurrences stop at the study lifetime and expire after their availability window.
 While a study is paused, the app removes pending prompt work and visible intervention
 notifications, and it rejects prompt claims, opens, expiries, and survey submissions. Calendar
 time and signed availability windows still advance; on resume the app reconciles the durable
@@ -302,7 +297,7 @@ A `random_window` trigger fixes one to eight sorted, non-overlapping local-time 
 configuration. The phone uses a CSPRNG to choose each instant and persists the occurrence before
 WorkManager is scheduled. Process death, retry, and reboot therefore reuse the same choice.
 If a daily or total cap is smaller than the signed slots, the planner considers local dates in
-planning order, then windows in their signed array order, then occurrence ordinals; the first
+planning order, then windows in their signed array order, then occurrence ordinals. The first
 eligible slots consume capacity. A past or DST-nonexistent slot consumes nothing. The CSPRNG
 chooses the minute inside a selected slot, not which window survives the cap.
 Already materialized occurrences are never moved after a clock or time-zone change; only future
@@ -345,22 +340,22 @@ Per-collector configuration:
 | `keyboard_touch.v1` | `trajectory_sampling_hz` 1–120 |
 
 Both polling collectors, and scheduled delivery, accept a one-minute floor. That floor exists
-for piloting: it lets you confirm within a minute that a collector produces events and that a
+for piloting. It lets you confirm within a minute that a collector produces events and that a
 bundle reaches your endpoint, rather than waiting out a quarter of an hour to find out that
 neither does. Treat a minute as a diagnostic setting rather than a study setting. It costs
-battery, and for `network_usage.v1` it does not buy resolution — Android's own accounting is
+battery, and for `network_usage.v1` it does not buy resolution: Android's own accounting is
 coarse and lags, so a one-minute poll gives you finer windows without giving you finer truth.
 
 `required: true` means the study cannot start until that access is granted. An optional
 collector still appears in the data step described below, marked *Optional*, and on the
-participant dashboard; when its access is missing it is shown as blocked. The app does not
+participant dashboard. When its access is missing it is shown as blocked. The app does not
 substitute, interpolate, or synthesise data for a blocked collector.
 
 ### What the app tells participants each collector does
 
 Setup is five steps, one screen each: study, data, consent, access, start. The second of
 them is not yours. Before the consent text is shown, the app lists every collector the
-signed configuration enables and describes each one from its own template — text compiled
+signed configuration enables. It describes each one from its own template — text compiled
 into the app, in the participant's app language, that you can neither write nor edit.
 
 Each entry is a name and a description filled in from that study's parameters, so a study
@@ -368,12 +363,8 @@ sampling location every ten seconds and one sampling it every ten minutes do not
 The description states what each source records and selected limits the implementation can
 guarantee, such as omitted battery identity, text, inference, or presence claims. It is not an
 exhaustive threat model, so study-specific risks and every additional participant commitment still
-belong in your consent document. The parameters that
-reach the screen include the accelerometer and gyroscope `sampling_period_us` (as a rate in hertz,
-stated as "or more" because Android treats the period as a hint), the ambient-light interval and
-threshold, the proximity interval and threshold, the `poll_interval_minutes` of
-`network_usage.v1` and `usage_events.v1`, and
-`location.v1`'s `interval_millis` and `minimum_displacement_millimeters` (displayed in metres).
+belong in your consent document. Which signed parameters reach the screen, and why the
+accelerometer entry hedges its rate, are set out in [`threat-model.md`](threat-model.md).
 Collectors without configuration fields read the same in every study. The exact wording is in
 [`app/src/main/res/values/strings.xml`](../app/src/main/res/values/strings.xml) and its
 `values-zh-rTW` counterpart; read it before you write your consent summary, because your
@@ -387,7 +378,7 @@ are, what happens to their data if they withdraw, and how to contact you. `conse
 is where all of that lives; the constraint list above says what it has to cover, and no code
 can check that it does.
 
-The direction of the constraint is worth noting when you write that summary: because the
+The direction of the constraint is worth noting when you write that summary. Because the
 collector descriptions are the app's and not yours, you cannot phrase a source more mildly
 than it is. A summary that understates a collector is contradicted by the screen the
 participant reads immediately before it. Write the summary to agree with the data step, and
@@ -396,9 +387,9 @@ check the two against each other while piloting (section 7).
 ### The app's language, and yours
 
 The app's own screens ship in English and Traditional Chinese. They follow the phone's system
-language by default, and a picker in the header changes the language for this app alone; it
-writes through Android's `LocaleManager`, so it is the same setting as the system's per-app
-language screen rather than a second one that can disagree with it. Everything the app
+language by default, and a picker in the header changes the language for this app alone. The
+picker writes through Android's `LocaleManager`, so it is the same setting as the system's
+per-app language screen rather than a second one that can disagree with it. Everything the app
 authors is translated: the step names, the collector descriptions, the signature and upload
 disclosures, the dashboard, and the confirmation dialogs.
 
@@ -409,10 +400,11 @@ explicit BCP 47 overrides in the signed localized-text objects. The app selects 
 compatible signed language tag, then the signed default; it never invents a translation.
 
 The deployment consequence is real and worth planning for. **A study recruiting across
-languages may still need one signed configuration per language for study and consent prose — same collectors, same parameters,
-its own consent document version, its own `configuration_id`, and its own signature — with
-each participant given the one written in theirs. Keep `experiment_id` shared across them so
-the arms are recognisable as one study, and remember that events are de-duplicated on
+languages may still need one signed configuration per language for study and consent prose.**
+Each carries the same collectors and the same parameters, with its own consent document
+version, its own `configuration_id`, and its own signature. Each participant is given the
+one written in theirs. Keep `experiment_id` shared across them so the arms are recognisable as
+one study. Remember too that events are de-duplicated on
 `experiment_id` + `configuration_id` + `participant_instance_id` + `sequence_number` (section 10), so
 the split reaches your analysis. Telling a participant to switch the app's language does not
 change a single word you wrote.
@@ -424,9 +416,9 @@ participant exports a bundle and sends it to you. A populated block adds schedul
 of the same encrypted bundles to an endpoint you run. It answers two problems that manual
 export does not:
 
-- **Timeliness.** You see data during the study rather than after it, so a misconfigured
+- **Timeliness.** You see data during the study rather than after it. A misconfigured
   collector, an access grant that was never completed, or a device that stopped reporting is
-  visible while you can still act on it.
+  therefore visible while you can still act on it.
 - **Resilience.** Data that has been delivered survives a lost, broken, wiped, or
   never-returned phone. Nothing on the device is recoverable once its Keystore key is gone,
   and a participant who stops responding takes an un-exported dataset with them.
@@ -453,21 +445,21 @@ battery that is not low. Those constraints are why `interval_minutes` is a floor
 promise: a phone on mobile data all week delivers nothing until it reaches Wi-Fi.
 
 Delivery continues while the study is `PAUSED`, for data collected before the pause, and it
-continues after the study ends: finishing, completing on the duration deadline, and withdrawing
-cancel future interventions and the study deadline but leave delivery running, so an undelivered tail still
-reaches you. The chain stops renewing once the study is `COMPLETED` or `WITHDRAWN` and
+continues after the study ends. Finishing, completing on the duration deadline, and withdrawing
+cancel future interventions and the study deadline, but they leave delivery running, so an
+undelivered tail still reaches you. The chain stops renewing once the study is `COMPLETED` or `WITHDRAWN` and
 everything it collected has been delivered. Deleting local data cancels delivery outright, so
 plan for a tail you may never receive and keep manual export in your protocol as the fallback.
 
-**How much each run sends.** Before opening HTTP, the app selects an exact event boundary, creates
-one complete `PTCEXP01` bundle under its no-backup directory, flushes it to durable storage, and
-records a manifest containing its bundle UUID, exact range/count, byte count, and SHA-256. One
-outbox entry exists at a time. Its target plaintext budget is about 16 MiB and its hard wire limit
+**How much each run sends.** Before opening HTTP, the app selects an exact event boundary and
+creates one complete `PTCEXP01` bundle under its no-backup directory. It flushes that bundle to
+durable storage and records a manifest containing its bundle UUID, exact range/count, byte count,
+and SHA-256. One outbox entry exists at a time. Its target plaintext budget is about 16 MiB and its hard wire limit
 is 32 MiB. Process death, reboot, timeout, and response loss reuse the same bytes; the app never
 regenerates ciphertext for a retry. Chunk boundaries are therefore read from the bundle or
 receipt, not derived from cadence or an expected event count.
 
-**What upload does not do.** It does not gate collection: a study whose endpoint is down,
+**What upload does not do.** It does not gate collection. A study whose endpoint is down,
 misconfigured, or never deployed keeps recording, and a delivery failure is not treated as a
 collection incident on the participant's screen.
 
@@ -475,8 +467,8 @@ collection incident on the participant's screen.
 redirect, `202`, every other `4xx`, malformed receipt, or receipt mismatch is a terminal failure
 for that staged bundle. It remains explicit and collection continues; the app does not silently
 drop the staged bytes or advance the watermark. The dashboard's fixed incident code is derived
-from transport state rather than response content, so support can distinguish DNS, connection,
-TLS, timeout, I/O, and HTTP failures without logging a participant identifier.
+from transport state rather than response content. Support can therefore distinguish DNS,
+connection, TLS, timeout, I/O, and HTTP failures without logging a participant identifier.
 
 **What confirmed delivery does to local storage.** A study that comfortably fits its quota
 keeps every event on the phone. Once storage passes 80% of `storage.maximum_local_bytes`, a
@@ -487,7 +479,7 @@ would without an endpoint. Size the quota for the study you are running, not on 
 assumption that delivery keeps it clear — a phone that spends a month off Wi-Fi delivers
 nothing and reclaims nothing.
 
-The research consequence is in section 10: once a participant's device has reclaimed a
+The research consequence is in section 10. Once a participant's device has reclaimed a
 prefix, their manual export covers a window rather than the whole study, so an uploading
 study's dataset is the reassembled chunks plus that final export.
 
@@ -506,19 +498,18 @@ These are the only Particeps routing headers:
 | `X-Particeps-Event-Count` | Exact claimed event count |
 
 `Content-Length` and `Content-Digest` are also required. The `X-Particeps-*` headers are untrusted
-routing claims: the receiver can check their syntax, arithmetic, body digest, and the identities
-exposed by the outer framing, but cannot authenticate the encrypted participant or sequence claims.
+routing claims. The receiver can check their syntax, arithmetic, body digest, and the identities
+exposed by the outer framing; it cannot authenticate the encrypted participant or sequence claims.
 No `participant_instance_id`, `assigned_participant_id`, `experiment_id`, or `configuration_id`
 appears in the URL or headers. Do not invent such a header or deduplicate ingestion by a
 participant/range pair. Receiver replay identity is the bundle UUID plus exact stored bytes and
 metadata.
 
-After durable storage, a new object returns `201 Created`; an exact replay returns `200 OK` with
-the original response bytes. Both carry compact canonical JSON containing exactly `bundle_id`,
-`byte_count`, `configuration_sha256`, `event_count`, `first_sequence_number`,
-`last_sequence_number`, and `sha256`, with counts and sequence values as decimal strings. Only a
-receipt that matches every outbox value advances the watermark. A reused bundle ID with different
-content is `409 Conflict`; `202` is never success.
+Your endpoint has to answer with the receipt Protocol v1 defines, because the device advances
+its delivery watermark only when every value in that receipt matches the bundle it staged. An
+endpoint that improvises a response stalls delivery rather than losing data. The status codes,
+the exact receipt fields, and the replay and conflict rules are in the
+[Protocol v1 contract](../protocol/v1/README.md).
 
 **The participant instance ID.** A fresh random UUID generated on the device for every import,
 stored in that study's encrypted metadata, and included in every decrypted bundle. It is
@@ -529,11 +520,11 @@ Treat it as personal data because it links every event one import produced, but 
 receiver authentication.
 
 **You must disclose upload in your consent text.** The app renders the endpoint host, the
-cadence, the network condition, the fact that only your key can open the payload, and the
-fact that a random installation code travels inside the encrypted data so datasets can be
+cadence, and the network condition. It also states that only your key can open the payload, and
+that a random installation code travels inside the encrypted data so datasets can be
 distinguished. This block sits directly below your summary and is derived from signed state rather
-than your prose. That is a floor, not a substitute — the
-same relationship the data step has to your summary: your consent document has
+than your prose. That is a floor, not a substitute, in the
+same relationship the data step has to your summary. Your consent document has
 to say who operates the endpoint, where it is hosted, what jurisdiction it sits in, how long
 chunks are retained there, and who can reach them. A participant cannot decline upload while
 accepting the study, so the decision to participate is the decision to be uploaded — write
@@ -555,8 +546,8 @@ Canonicalise first:
 ```
 
 Canonicalisation emits RFC 8785 JCS bytes. The signing step parses the file again and refuses it
-unless re-encoding produces exactly the same bytes, so duplicate members, noncanonical numbers,
-unknown fields, and hand-edited near-canonical drafts fail closed.
+unless re-encoding produces exactly the same bytes. Duplicate members, noncanonical numbers,
+unknown fields, and hand-edited near-canonical drafts therefore fail closed.
 
 Sign the canonical bytes:
 
@@ -571,13 +562,13 @@ Sign the canonical bytes:
 `--key-id` must equal the configuration's `signer.key_id`, and the private key you pass must
 be the one whose public half the configuration declares. Both are checked before anything is
 written, because a mismatch would produce a file that signs cleanly and then fails on every
-device: the second failure reads `signer.public_key in the configuration does not match
+device. The second failure reads `signer.public_key in the configuration does not match
 --private`.
 
-The result is a signed study configuration: a `PTCCFG01` envelope containing magic, a two-byte
-signer-key-ID length, a four-byte configuration length, the key ID, exact JCS configuration bytes,
-and a fixed 64-byte Ed25519 signature over only those configuration bytes. No signature-length
-field or alternate framing is accepted.
+The result is a signed study configuration: a `PTCCFG01` envelope carrying the signer key ID,
+the exact JCS configuration bytes, and an Ed25519 signature over only those bytes. The
+[Protocol v1 contract](../protocol/v1/README.md) gives the exact framing, and no other framing
+is accepted.
 On success the command prints the IDs it signed and the fingerprint of the signing key, for
 example:
 
@@ -586,9 +577,9 @@ signed my-study-2026 my-study-config-01
 fingerprint 9D0D AE5A 0D20 B29F D642 942A 0E17 4AAE
 ```
 
-That fingerprint is SHA-256 over the raw 32-byte public key, truncated to 16 bytes and rendered
-as eight groups of four hex characters. It is what the consent screen shows the participant,
-and what you publish in your recruitment material — section 6.
+That fingerprint is what the consent screen shows the participant, and what you publish in your
+recruitment material — section 6. How it is derived from the signing key is in
+[`threat-model.md`](threat-model.md).
 
 Verify independently — envelope structure, signature, client build floor, platform, and validity
 window — before anything reaches a participant:
@@ -624,9 +615,8 @@ already been distributed.
 
 ## 6. Build and distribute
 
-```bash
-./gradlew test testDebugUnitTest lintDebug assembleDebug assembleRelease
-```
+Build and check the app with the command block in
+[`CONTRIBUTING.md`](../CONTRIBUTING.md), which is the same one CI runs.
 
 Debug APKs are for internal testing only. For real deployment use the tag-triggered GitHub
 Actions release workflow; the required secrets and setup are described in the repository
@@ -636,10 +626,10 @@ Google Play distribution uses the corresponding AAB and track process. Building 
 not part of issuing a study: the same build verifies any correctly signed `.partcfg`.
 
 Participants can import the `.partcfg` through the system file picker, or open an immutable
-`particeps://join/v1` link / QR generated by the Web authoring surface. Join hosting is transport only:
-the link fixes the artifact's complete SHA-256 and signer fingerprint, and the app downloads once,
-verifies the digest before the ordinary signature flow, and never polls for replacement. Getting
-data back is manual unless the study declares an upload endpoint, in which case delivery is
+`particeps://join/v1` link / QR generated by the Web authoring surface. Join hosting is transport
+only. The link fixes the artifact's complete SHA-256 and signer fingerprint, and the app downloads
+once, verifies the digest before the ordinary signature flow, and never polls for replacement.
+Getting data back is manual unless the study declares an upload endpoint, in which case delivery is
 automatic and manual export remains available alongside it. Plan both directions separately.
 
 The app declares `android.permission.INTERNET` and sets `usesCleartextTraffic="false"`, so
@@ -663,10 +653,11 @@ you are about to sign, and against what your consent document tells participants
 
 After signing in the Web authoring flow, enter the HTTPS location where the exact `.partcfg` bytes
 will be served. The browser creates the join URI and QR locally; it does not call a QR service. The
-artifact URL must use the narrow Protocol v1 profile: lowercase DNS-style HTTPS host, no credentials,
-explicit default port, query, fragment, percent escape, dot segment, or repeated slash, followed by one or
-more ASCII filename / token path segments. This restriction keeps Kotlin and browser URL handling
-byte-for-byte identical rather than relying on either platform's silent normalization.
+artifact URL must use the narrow Protocol v1 profile: a lowercase DNS-style HTTPS host, followed by
+one or more ASCII filename / token path segments. That profile excludes credentials, an explicit
+default port, a query, a fragment, a percent escape, a dot segment, and a repeated slash. This
+restriction keeps Kotlin and browser URL handling byte-for-byte identical rather than relying on
+either platform's silent normalization.
 
 For a personalized configuration, publish each file at a unique path whose final segment is at
 least 22 random base64url characters (128 bits or more). Never put the roster code in the path,
@@ -686,16 +677,17 @@ second consent path.
 The consent step shows the key fingerprint under the heading *Configuration signature*
 (設定檔簽章 when the app is in Traditional Chinese), in a block the app asserts itself below
 your consent summary. The signer key ID is not on that screen; the fingerprint is what a
-participant compares. When the build pins no signer — the shipped default — the block asks the participant to check
-the fingerprint against the one their research team published, and notes underneath, quietly,
-that a signature shows a file is unaltered rather than who wrote it. None of it is in the error
-colour: an unpinned signer is the deployment model rather than a fault, and a screen that cries
-wolf on the ordinary case teaches participants to skip the one line you need them to act on.
+participant compares. When the build pins no signer — the shipped default — the block asks the
+participant to check the fingerprint against the one their research team published. Underneath,
+quietly, it notes that a signature shows a file is unaltered rather than who wrote it. None of it
+is in the error colour, because an unpinned signer is the deployment model rather than a fault;
+[`threat-model.md`](threat-model.md) sets out why that block is written as an instruction rather
+than a warning.
 
 That last instruction is only actionable if you have published it. Put the fingerprint
 `sign` printed into the material that recruits participants — the study information sheet,
 the consent document, the lab page participants were sent to — through the same channel that
-reached them, and keep it identical for every configuration signed with that key. A
+reached them. Keep it identical for every configuration signed with that key. A
 participant comparing eight groups of four hex characters is the check that a researcher
 name and contact in the configuration cannot provide, because those are free text the signer
 chose.
@@ -749,11 +741,11 @@ OEM hardware:
 - Two exports and two successful decryptions from each of `RUNNING`, `PAUSED`,
   `COMPLETED`, and `WITHDRAWN`.
 - If the study uploads: the consent step's upload block against your consent document, a
-  first successful delivery, decryption of a stored chunk, an endpoint that returns 5xx and
-  then recovers, an endpoint that returns 400, a phone kept off Wi-Fi for the interval, an
-  unreachable host so you can see the failure code a participant would report, a backlog large
-  enough that one run does not clear it and the next resumes where it stopped, and what your
-  endpoint holds after the participant withdraws.
+  first successful delivery, and decryption of a stored chunk. Then the failure paths — an
+  endpoint that returns 5xx and then recovers, an endpoint that returns 400, a phone kept off
+  Wi-Fi for the interval, an unreachable host so you can see the failure code a participant
+  would report, a backlog large enough that one run does not clear it and the next resumes
+  where it stopped, and what your endpoint holds after the participant withdraws.
 - Fail-closed behaviour with the wrong private key, the wrong configuration, and truncated
   or modified ciphertext.
 - Reboot, force stop, low storage, wall-clock changes, Doze, long uptime, and the OEM's
@@ -776,7 +768,7 @@ a row of dots showing how far along they are:
 2. **Data** — every enabled collector, described by the app from your parameters.
 3. **Consent** — your `consent.summary`, then the signature and upload blocks the app
    asserts itself, then the agreement checkbox.
-4. **Access** — the Android access the configured collectors need, one row each; tapping an
+4. **Access** — the Android access the configured collectors need, one row each. Tapping an
    outstanding row opens the screen that grants it, except the motion-sensor check, which is
    hardware and nothing to grant. Optional ones are labelled, and only the required ones
    block the next step.
@@ -789,24 +781,24 @@ for confirmation. See [`participant-guide.md`](participant-guide.md) for what th
 
 From the start press onward the app posts one status reminder a day, for as long as the study is
 `RUNNING` or `PAUSED`. It is a low-importance notification — no sound — whose title is the
-application's own name rather than your study's, and whose single line says either that collection
-is still running or that the study is paused and since when. It carries no collector names, no
+application's own name rather than your study's. Its single line says either that collection
+is still running, or that the study is paused and since when. It carries no collector names, no
 counts, and nothing you wrote: it arrives every day for the study's whole duration, on a lock
 screen anyone holding the phone can read. The paused half is why it exists — a pause changes
 nothing else on the phone, so a study a participant meant to resume can sit collecting nothing for
 weeks with nothing saying so.
 
-Plan participant contact around it. It is not one of your interventions — the app posts it on its
-own, and no configuration field switches it off, rewords it, or adds to it — and the first one
+Plan participant contact around it. It is not one of your interventions: the app posts it on its
+own, and no configuration field switches it off, rewords it, or adds to it. The first one
 arrives about a day after the start press. Starting or stopping collection retracts a reminder
 already on screen rather than posting a replacement, so a paused study is never left asserting that
-it is still collecting; finishing, completing on the duration deadline, and withdrawing cancel the
+it is still collecting. Finishing, completing on the duration deadline, and withdrawing cancel the
 schedule and clear the standing notification. It needs notification access, which the access step
-requires only when your study schedules interventions, so in a study without them it reaches only
-the participants who granted notifications for some other reason. None of that makes the reminder
-a guarantee that a participant has been reminded: its timing is best effort rather than an exact
-alarm, a force stop blocks it until the app is opened again, and a participant can turn its
-channel off in Android's notification settings or revoke notification access, either of which
+requires only when your study schedules interventions. In a study without them it therefore reaches
+only the participants who granted notifications for some other reason. None of that makes the
+reminder a guarantee that a participant has been reminded. Its timing is best effort rather than an
+exact alarm, and a force stop blocks it until the app is opened again. A participant can also turn
+its channel off in Android's notification settings or revoke notification access, either of which
 stops the reminder without stopping the study.
 
 Researchers must not:
@@ -860,9 +852,9 @@ transition history, and every catalog event contract pass does it flush and atom
 file into place. The AES-GCM tag is verified only at EOF, so failed decryption or semantic
 verification deletes staging and publishes no partial plaintext.
 
-The bundle is a `PTCEXP01` container: a per-bundle AES-256-GCM content key wrapped with RFC 9180
-base-mode X25519/HKDF-SHA256/AES-256-GCM HPKE, over one authenticated JCS document with this
-shape:
+The bundle is a `PTCEXP01` container. Its framing and its cryptographic suite are specified in
+the [Protocol v1 contract](../protocol/v1/README.md). What `decrypt` writes out is one
+authenticated JCS document with this shape:
 
 ```text
 bundle_id, bundle_kind, format  outer UUID, manual_export/automatic_upload, particeps-research-bundle-v1
@@ -894,18 +886,19 @@ pseudonymous per-import identifier described in section 4. A personalized export
 carries `assigned_participant_id`; use it only as the researcher's opaque join key.
 
 All sequence, count, wall-time, monotonic-time, byte-count, and client-version values are
-canonical decimal strings. Every value inside `fields` is also a JSON string, but its exact field
+canonical decimal strings. Every value inside `fields` is also a JSON string. Its exact field
 set, type interpretation, units, clock basis, and bound come from
 [`protocol/v1/collector-catalog.json`](../protocol/v1/collector-catalog.json); do not infer a
 schema from observed data. The embedded configuration, its digest, its original signature,
 producer, outer identities, range/count contiguity, and every catalog payload are verified before
 plaintext is published.
 
-The JCS context binds `particeps-research-bundle-v1`, bundle UUID, full configuration SHA-256, and
-researcher key ID into HPKE `info` and document AES-GCM AAD. A wrong key, context, framing byte,
-embedded identity, or artifact predating this definition — a pre-rename `.adcexp` among them —
-fails closed. This Protocol v1 definition is a destructive pre-1.0 replacement; there is no
-former-v1 fallback.
+Both cryptographic layers are bound to the bundle's own identity, so a wrong key, context,
+framing byte, or embedded identity fails closed; the
+[Protocol v1 contract](../protocol/v1/README.md) gives the exact binding. An artifact predating
+this definition fails closed too — a pre-rename `.adcexp` among them — because Protocol v1 is a
+destructive pre-1.0 replacement with no former-v1 fallback, as
+[`CHANGELOG.md`](../CHANGELOG.md) records.
 
 Successful validation proves encryption to the configured researcher key, document integrity,
 and the provenance of the exact embedded signed configuration. It proves nothing about the
@@ -935,8 +928,8 @@ An export is a snapshot, not a state change:
 - A later export contains the earlier events plus newer ones. Overlap between bundles from
   the same participant is expected, not an error. Uploaded chunks are the exception: each one
   starts after the sequence the previous delivery confirmed, so consecutive chunks abut
-  rather than overlap. Where they abut is selected before the immutable outbox bundle is staged,
-  so chunk sizes vary and are not derivable from the configuration — take the window
+  rather than overlap. Where they abut is selected before the immutable outbox bundle is staged.
+  Chunk sizes therefore vary and are not derivable from the configuration; take the window
   from `first_sequence_number` and `last_sequence_number`.
 - In a study that does not upload, every export is a whole history and the last one is the
   dataset. In an uploading study it need not be: once a device has reclaimed a delivered
@@ -952,8 +945,8 @@ An export is a snapshot, not a state change:
   they are stable across exports and uploads alike, and reclaiming never reissues one. In an
   uploading study, `participant_instance_id` is what separates repeated imports and devices.
 - A gap in the delivered sequence range is not proof of data loss. A chunk may not have been
-  delivered yet, or may have been cut short when the study ended, and events below a
-  participant's retained floor were released only because your endpoint confirmed them — look
+  delivered yet, or may have been cut short when the study ended. Events below a
+  participant's retained floor were released only because your endpoint confirmed them, so look
   for them in the chunks you already hold. Ask for a manual export before treating a gap as
   missing data.
 - Reconstruct running and paused windows from `transitions` together with
@@ -1032,7 +1025,7 @@ data.
 `COMPLETED` means collection has stopped and the data can still be exported. `WITHDRAWN`
 means the participant has permanently ended participation; they may still export first, or
 delete local data directly. Both cancel reminders and the study deadline but leave scheduled
-delivery running, so a study that ends with an undelivered backlog still sends it; the job
+delivery running, so a study that ends with an undelivered backlog still sends it. The job
 retires itself once the backlog is gone. Deleting local data cancels delivery outright — a
 participant who deletes before the backlog clears keeps whatever had not yet been sent off
 your endpoint entirely. Local deletion is only

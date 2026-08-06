@@ -4,9 +4,8 @@ This guide describes the v1 collector API as it exists in this repository, and h
 a new collector without breaking the pause, privacy, and storage invariants that the rest
 of the system depends on.
 
-Read [System design](system-design.md) first for the module map, and
-[System design](system-design.md) for the responsibility split. This document
-covers only the collector side of that boundary. The [normative Protocol v1 contract](../protocol/v1/README.md)
+Read [System design](system-design.md) first for the module map and the responsibility split.
+This document covers only the collector side of that boundary. The [normative Protocol v1 contract](../protocol/v1/README.md)
 defines the enclosing configuration and bundle. Its machine-readable schema source is the
 [Protocol v1 collector catalog](../protocol/v1/collector-catalog.json); the generated Kotlin
 projection is
@@ -33,10 +32,10 @@ codec's `when` over collector IDs is the allowlist.
 
 Every type below is declared in one file:
 [`core/collector-api/.../CollectorContracts.kt`](../core/collector-api/src/main/kotlin/cool/jacoblin/particeps/core/collector/CollectorContracts.kt).
-The other four files in `:core:collector-api` are `SerializedCallbackCollector.kt` and
-`SourceLifecycle.kt`, the shared base class and the source registration/teardown result types
-covered in [section 6](#6-lifecycle); the generated `ProtocolEventContracts.kt`; and
-`LatestValueRateGate.kt`, the tested rate gate that on-change collectors use.
+There are four other files in `:core:collector-api`. `SerializedCallbackCollector.kt` and
+`SourceLifecycle.kt` hold the shared base class and the source registration/teardown result
+types, both covered in [section 6](#6-lifecycle). `ProtocolEventContracts.kt` is the generated
+projection. `LatestValueRateGate.kt` is the tested rate gate that on-change collectors use.
 
 ### Plugin and instance
 
@@ -161,17 +160,17 @@ interface EventSink {
 `AdmissionToken` is a marker interface with no members. The only implementation is
 `EventAdmissionGate.EpochToken`, which is `private` inside
 [`core/experiment-runtime/.../EventAdmissionGate.kt`](../core/experiment-runtime/src/main/kotlin/cool/jacoblin/particeps/core/runtime/EventAdmissionGate.kt).
-A collector can write `object : AdmissionToken {}`, but the gate's `epoch()` extension maps
-any foreign implementation to `Long.MIN_VALUE`, which never equals a live epoch, so the
-event is rejected. Forging a token is possible; forging an accepted token is not.
+A collector can write `object : AdmissionToken {}`. The gate's `epoch()` extension maps any
+foreign implementation to `Long.MIN_VALUE`, which never equals a live epoch, so the event is
+rejected. Forging a token is possible; forging an accepted token is not.
 
 `latestEvent` returns the last event this collector persisted, from bounded metadata that
 survives process death. Polling collectors use it to resume a coverage window instead of
 re-querying an interval they already recorded. It exposes only this collector's own last
-event, not the event history and not another collector's data. Reclaiming local space does
-not take it away: these are stored in the study metadata rather than recovered by scanning the
-event log, so a collector that has been quiet for a long time still finds the timestamp it
-resumes from even after the segment holding that event is gone.
+event, not the event history and not another collector's data. Reclaiming local space does not
+take it away. These records are stored in the study metadata rather than recovered by scanning
+the event log. A collector that has been quiet for a long time therefore still finds the
+timestamp it resumes from, even after the segment holding that event is gone.
 
 ### Access requirements
 
@@ -198,7 +197,7 @@ data class AccessRequirement(
 `AccessKind` deliberately mixes Android runtime permissions, special access grants, an
 input-method selection state, and hardware capabilities. They are all preconditions the
 participant can see and, except for hardware, revoke. `required` is not a property of the
-collector; it is copied from the `required` flag the researcher set on that collector in the
+collector. It is copied from the `required` flag the researcher set on that collector in the
 study configuration.
 
 | `required` | Missing access at preflight | Missing access at start |
@@ -212,19 +211,19 @@ placeholder events.
 ## 3. Invariants a collector must hold
 
 These are structural rules of the current design. Breaking one does not produce a bug to fix
-later; it invalidates what the participant guide and the deployed consent texts describe, which
-is a coordination problem with live studies rather than a code change. If you have a reason to
-change one of these, raise it as a design discussion first.
+later. It invalidates what the participant guide and the deployed consent texts describe, and
+that is a coordination problem with live studies rather than a code change. If you have a
+reason to change one of these, raise it as a design discussion first.
 
 | A collector does not | Why | Boundary that enforces it |
 | --- | --- | --- |
-| Write files, databases, or preferences | Every research byte must go through the encrypted store so that sequence numbers stay contiguous and export, upload, and reclaiming can all reason about one window. A side file is invisible to export, to the storage quota, and to deletion. | Feature modules depend on `:core:collector-api`, `:core:study-definition`, and optionally `:collector:sensor-common`; `:core:storage` is not on the classpath, and `CollectorContext` carries no `StudyStore`. |
+| Write files, databases, or preferences | Every research byte must go through the encrypted store. That is what keeps sequence numbers contiguous, so export, upload, and reclaiming can all reason about one window. A side file is invisible to export, to the storage quota, and to deletion. | Feature modules depend on `:core:collector-api`, `:core:study-definition`, and optionally `:collector:sensor-common`; `:core:storage` is not on the classpath, and `CollectorContext` carries no `StudyStore`. |
 | Change study state | `IMPORTED` → … → `WITHDRAWN` is the participant's control surface. A collector that could move it could un-pause a study the participant paused. | `ExperimentStateMachine.transition` is called only from `ExperimentRuntime` in `:core:experiment-runtime`, which no collector module depends on. |
 | Start an `Activity` or drive UI | The app must never interrupt the participant on a collector's schedule. | Collector modules do not depend on `:app`. Plugins are constructed with `context.applicationContext`. |
 | Schedule interventions or notifications | Intervention timing and occurrence identity come from the signed configuration and are reconciled by the session manager. | The `StudyWorkScheduler` port is declared in `:core:study-application`; the WorkManager adapter is in `:app`. Neither is on a collector's classpath. |
-| Export, encrypt, or package data | Export is a participant-initiated act over a bounded sequence window, encrypted to a researcher HPKE key. | `:core:export` and `:core:crypto` are not on any collector's classpath. |
+| Export, encrypt, or package data | Export is a participant-initiated act over a bounded sequence window, encrypted to a researcher HPKE key. [Protocol v1](../protocol/v1/README.md) defines that container. | `:core:export` and `:core:crypto` are not on any collector's classpath. |
 | Open a socket or upload | Network transport lives in the study application layer, where the `StudyUploader` sends only a staged encrypted bundle to the signed endpoint. A collector reaching the network would bypass signed scope and consent. | `CollectorContext` exposes no network client, and forbidden network classes, imports, and dependencies fail the Collector capability check. |
-| Record text, characters, or content typed on the research keyboard | The consent text tells participants the keyboard never sees what they write. Touch dynamics research does not need the characters, so the characters are never carried across the boundary. | `ResearchKeyboardView.onTouchEvent` passes `key.category.name` to `ImeObservationBridge.publish`, never `key.text`. `ImeTouchObservation` has no field that could hold a character. The committed text goes to `InputConnection` and stops there. |
+| Record text, characters, or content typed on the research keyboard | The consent text tells participants the keyboard never sees what they write. Touch dynamics research does not need the characters, so the characters are never carried across the boundary. | `ResearchKeyboardView.onTouchEvent` passes `key.category.name` to `ImeObservationBridge.publish`, never `key.text`. `ImeTouchObservation` has no field that could hold a character. The committed text goes to `InputConnection` through `commitKey` and stops there. |
 | Log payload values, paths, package names, or exception messages | A logcat line is readable by anyone with adb access and is not covered by the encrypted store. | `CollectorHealth.reasonCode` is constrained to `[A-Z][A-Z0-9_]{2,63}`, which cannot hold free text. There is no other diagnostic channel in the API. |
 
 ### Static policy is not a sandbox
@@ -258,8 +257,8 @@ POST_NOTIFICATIONS           RECEIVE_BOOT_COMPLETED   WAKE_LOCK
 ```
 
 plus the signature-level `cool.jacoblin.particeps.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`
-that AndroidX contributes. `INTERNET` belongs to the study application layer's upload worker;
-its presence no longer tells you whether any given study transmits, which is why bytecode and
+that AndroidX contributes. `INTERNET` belongs to the study application layer's upload worker.
+Its presence no longer tells you whether any given study transmits. That is why bytecode and
 dependency policy are required in addition to a permission diff.
 
 ## 4. Module layout and dependency direction
@@ -336,14 +335,15 @@ protected abstract suspend fun unregisterSource(): SourceTeardownResult
 Both return an explicit outcome rather than `Unit`, because a failure has to say whether the
 Android source was left attached. `SourceRegistrationResult` is `Registered`, `Released(failure)`
 when rollback proved nothing is attached, or `Uncertain(failure)` when it did not.
-`SourceTeardownResult` is `Released` or `ReleasedWithFailure(failure)`, both of which promise the
-callbacks are physically released or independently isolated; throwing instead leaves the source
-uncertain, and the base class then refuses to register a second generation over it. Both types are
-declared in
-[`SourceLifecycle.kt`](../core/collector-api/src/main/kotlin/cool/jacoblin/particeps/core/collector/SourceLifecycle.kt),
-alongside `registerSourceWithRollback`, which returns the registration result, and
-`completeSourceTeardown`, which runs every teardown operation before rethrowing the first failure so
-the collector can return a teardown result of its own.
+`SourceTeardownResult` is `Released` or `ReleasedWithFailure(failure)`. Both promise the callbacks
+are physically released or independently isolated. Throwing instead leaves the source uncertain,
+and the base class then refuses to register a second generation over it.
+
+Both types are declared in
+[`SourceLifecycle.kt`](../core/collector-api/src/main/kotlin/cool/jacoblin/particeps/core/collector/SourceLifecycle.kt).
+That file also holds `registerSourceWithRollback`, which returns the registration result, and
+`completeSourceTeardown`, which runs every teardown operation before rethrowing the first failure.
+The collector can then return a teardown result of its own.
 
 Use it unless your source is a periodic query. What the base class does with each call:
 
@@ -356,8 +356,8 @@ Use it unless your source is a periodic query. What the base class does with eac
    a failure rather than a silent second listener.
 4. On success sets `ACTIVE`. On failure it sets `FAILED` / `SOURCE_REGISTRATION_FAILED` and
    rethrows so the runtime can record `COLLECTOR_START_FAILED`. It drains the consumer and clears
-   the job only when the source is proven released, which is also the only case in which the
-   collector can be started again afterwards; an `Uncertain` registration leaves the consumer
+   the job only when the source is proven released. That is also the only case in which the
+   collector can be started again afterwards: an `Uncertain` registration leaves the consumer
    running and blocks a restart.
 
 ### `pause()`
@@ -381,7 +381,7 @@ in the queue.
 
 The runtime calls `admissionGate.open()` on resume, which increments the epoch. Tokens
 captured before the pause are dead. A retrospective-query collector must start a new coverage
-window at resume time and must not backfill the paused interval — see `network_usage.v1` and
+window at resume time, and must not backfill the paused interval. See `network_usage.v1` and
 `usage_events.v1`, both of which reset their query start to the resume wall time.
 
 ### `stop()`
@@ -459,8 +459,8 @@ it. When the platform gives you its own timestamp, record it as a payload field 
 - `usage_events.v1` stores `UsageEvents.Event.timeStamp` as `source_time_utc_millis`.
 
 Never overwrite a source time with a write time. A batched sensor delivery can hand you
-samples that were taken seconds earlier, and an analyst who cannot tell the difference will
-draw a wrong conclusion about timing.
+samples that were taken seconds earlier. An analyst who cannot tell the difference will draw
+a wrong conclusion about timing.
 
 ### Emit results
 
@@ -471,10 +471,10 @@ draw a wrong conclusion about timing.
 | `ContractViolation` | the draft is not this collector's ID, or it fails the catalog-derived event contract | set `FAILED` with a fixed reason code |
 | `StorageFailure` | the append failed | set `FAILED` with a fixed reason code |
 
-`ContractViolation` is a defect in the collector, not a runtime condition: the runtime checks the
+`ContractViolation` is a defect in the collector, not a runtime condition. The runtime checks the
 declared ID, payload schema, payload type, field set, field values, and worst-case encoded size
-before it consults the admission gate, and returns without recording an incident or closing the
-gate. Nothing about it improves on a retry.
+before it consults the admission gate. It then returns without recording an incident or closing
+the gate. Nothing about it improves on a retry.
 
 `StorageFailure` is not recoverable by retrying. On the runtime side, `emit` force-closes the
 admission gate, records the `STORAGE_WRITE_FAILED` incident, and launches a fail-closed
@@ -563,10 +563,10 @@ whichever wrote last. Runtime-level incidents (`COMMAND_REJECTED`, `RUNTIME_FAIL
 
 ## 10. The twelve built-in collectors
 
-Twelve is the number a study configuration can choose from. The catalog holds thirteen entries:
-the thirteenth, `interventions.v1`, is marked `"selectable": false` because the runtime rather
-than a collector emits those events, and a study cannot select it. It is documented in the
-[data dictionary](data-dictionary.md) instead.
+Twelve is the number a study configuration can choose from. The catalog holds thirteen entries.
+The thirteenth, `interventions.v1`, is marked `"selectable": false`, because the runtime rather
+than a collector emits those events. A study cannot select it, and it is documented in the
+[data dictionary](data-dictionary.md#intervention-and-survey-events-interventionsv1) instead.
 
 Each entry states what the collector records and, as importantly, what its data cannot be
 used to claim.
@@ -627,9 +627,10 @@ analyst's claims to make and defend.
 
 Empty exact config, no access, 64-event callback queue. A runtime-registered, non-exported
 receiver snapshots whole percentage, charging state/source, and power-save mode. It deliberately
-does not request serial, health, temperature, current, voltage, or capacity. Exact duplicates are
-suppressed and rapid changes retain the newest state under a one-minute bound through the tested
-`core:collector-api/LatestValueRateGate`.
+asks the platform for nothing beyond that snapshot; the
+[data dictionary](data-dictionary.md#battery_statev1) lists what it does not record. Exact
+duplicates are suppressed, and rapid changes retain the newest state under a one-minute bound
+through the tested `core:collector-api/LatestValueRateGate`.
 
 ### `temporal_context.v1`
 
@@ -675,8 +676,8 @@ cross-device precision or presence claim is made.
 ```
 
 Uses `ConnectivityManager.registerDefaultNetworkCallback`. Every `registerSource()` — so at
-both start and resume — also writes one `NETWORK_SNAPSHOT` describing the current state, so a
-segment never begins with an unknown connection state.
+both start and resume — also writes one `NETWORK_SNAPSHOT` describing the current state. A
+segment therefore never begins with an unknown connection state.
 
 Payload types: `NETWORK_AVAILABLE`, `NETWORK_LOST`, `NETWORK_CAPABILITIES`,
 `NETWORK_SNAPSHOT`.
@@ -690,10 +691,10 @@ fields.
 `NOT_ROAMING` capabilities. The bandwidth values are the platform's link estimates, not
 measurements.
 
-Do not add SSID, BSSID, IP address, DNS server, URL, packet content, active socket probing, or
-any network identifier without raising it as a design discussion first. Those turn a
-connection-state record into something materially different, with consequences for consent text
-and ethics review that go well beyond the code.
+Do not widen this collector past connection shape without raising it as a design discussion
+first. Such an addition turns a connection-state record into something materially different,
+with consequences for consent text and ethics review that go well beyond the code. The
+[data dictionary](data-dictionary.md#network_statev1) lists what this collector does not record.
 
 ### `network_usage.v1`
 
@@ -713,8 +714,8 @@ and ethics review that go well beyond the code.
 ```
 
 - `poll_interval_minutes`: 1–1,440. The floor is a minute so a pilot does not have to wait for
-  a result; note that a shorter window buys finer sampling of the platform's counters, not finer
-  truth, since `NetworkStatsManager`'s own accounting granularity is coarser than that.
+  a result. Note that a shorter window buys finer sampling of the platform's counters, not finer
+  truth: `NetworkStatsManager`'s own accounting granularity is coarser than that.
 - `transports`: non-empty set of `mobile` and/or `wifi`; canonical encoding sorts them by
   enum name and lowercases them.
 
@@ -850,12 +851,10 @@ Three separate gates must all be open before a single touch is recorded:
 `IME_FLAG_NO_PERSONALIZED_LEARNING`. Typing still works in those fields; only the research
 capture is suppressed, and the keyboard says so on screen.
 
-The keyboard never records key identity or text. `ResearchKeyboardView.onTouchEvent` passes
-`key.category.name` into the bridge and nothing else about the key. The character travels a
-separate path — `commitKey` writes it to `InputConnection` — and never enters an
-`ImeTouchObservation`, which has no field capable of holding it. The consent text makes this
-promise to participants; it is kept by the shape of the data type, not by discipline at the
-call site.
+The keyboard never records key identity or text. The consent text makes this promise to
+participants, and it is kept by the shape of the data type rather than by discipline at the
+call site. The code path that enforces it is named in
+[section 3](#3-invariants-a-collector-must-hold).
 
 `pressure` and `size` are device-specific normalized values. They are not calibrated
 newtons or square millimetres and are not comparable across device models.
@@ -967,8 +966,9 @@ allowlist, and catalog parity checks must all land together.
 - Add the collector to
   [`researcher-tools/examples/demo-study.json`](../researcher-tools/examples/demo-study.json)
   if it should be part of the demo study, then re-canonicalise and re-sign that file into
-  `app/src/debug/res/raw/demo_study_envelope.txt`. That envelope is a debug-only resource; the
-  release variant ships no demonstration study.
+  `app/src/debug/res/raw/demo_study_envelope.txt`. That envelope is a debug-only resource, so
+  the release variant ships no demonstration study — see
+  [Demonstration keys and study](../researcher-tools/examples/README.md).
 - Update the participant guide, the researcher guide's capability table, and this document.
   A collector whose data is not described to participants must not ship.
 - Add lifecycle/access-revocation and rate/size-bound tests, document power and storage estimates,
@@ -992,8 +992,8 @@ allowlist, and catalog parity checks must all land together.
 - [ ] The catalog validates, generated Kotlin is current, schema-invalid and over-size events are
       rejected before append, and deterministic decoder fixtures exist.
 - [ ] Collector capability checks pass for source, compiled bytecode, and dependencies.
-- [ ] `./gradlew test testDebugUnitTest lintDebug assembleDebug assembleRelease` passes —
-      the same command CI runs.
+- [ ] The build and test commands in [CONTRIBUTING](../CONTRIBUTING.md#development) pass —
+      the same checks CI runs.
 - [ ] Disclosure plus power/storage estimates are complete, and relevant target-device behavior
       has been exercised before deployment.
 

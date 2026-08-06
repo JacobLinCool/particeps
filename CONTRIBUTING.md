@@ -16,9 +16,9 @@ A collector is three pieces:
 
 ### Design constraints
 
-Collectors observe a source and emit events. They do not write files, change study state, start activities, schedule interventions, render surveys, export, or request permissions. This is not a rule imposed on collector authors so much as a consequence of the module graph: a `collector:*` module depends only on `core:collector-api` and `core:study-definition`, so storage, the runtime, and the protocol layer are not on its classpath.
+Collectors observe a source and emit events. They do not write files, change study state, start activities, schedule interventions, render surveys, export, or request permissions. This is not a rule imposed on collector authors so much as a consequence of the module graph. A `collector:*` module depends only on `core:collector-api` and `core:study-definition`, so storage, the runtime, and the protocol layer are not on its classpath.
 
-That boundary is what keeps a new data source cheap to add and cheap to review. It also means the answer to "how do I persist this myself?" is that you do not — everything goes through the `EventSink` in your `CollectorContext`, which is what makes sequence numbers contiguous and monotone, quota accounting correct, and a bundle able to declare the exact window it carries.
+That boundary is what keeps a new data source cheap to add and cheap to review. It also means the answer to "how do I persist this myself?" is that you do not. Everything goes through the `EventSink` in your `CollectorContext`. That is what makes sequence numbers contiguous and monotone, quota accounting correct, and a bundle able to declare the exact window it carries.
 
 The boundary is checked, not merely reviewed. `tools/collector_assurance.py` reads `assurance/collector-policy.json` and fails CI on a forbidden import, a forbidden Gradle dependency, or a forbidden symbol in a compiled class. What it does not read is the manifest, so a collector module can still declare a permission or a component that nothing stops — that gap is tracked in issue #11.
 
@@ -46,10 +46,33 @@ Requirements: JDK 17, Android SDK platform and build tools for API 37.
 ./gradlew test testDebugUnitTest lintDebug assembleDebug assembleRelease
 ```
 
+The debug APK lands at `app/build/outputs/apk/debug/app-debug.apk`. A clean checkout has no signing material, so `assembleRelease` produces an unsigned release APK.
+
 With an emulator or device attached:
 
 ```bash
 ./gradlew :core:storage:connectedDebugAndroidTest :app:connectedDebugAndroidTest
+```
+
+The app suite separates the Android signed-configuration regression
+([`AndroidConfigurationImportTest`](app/src/androidTest/kotlin/cool/jacoblin/particeps/AndroidConfigurationImportTest.kt)),
+the full participant UI flow ([`CoreFlowTest`](app/src/androidTest/kotlin/cool/jacoblin/particeps/CoreFlowTest.kt)),
+and the five-collector Android integration
+([`P2CollectorEmulatorTest`](app/src/androidTest/kotlin/cool/jacoblin/particeps/P2CollectorEmulatorTest.kt)).
+The last test skips when gyro, light, or proximity hardware is absent. Its optional exact-value mode
+expects a sensor-capable emulator that the host has already configured; the test does not fake
+Android's sensor APIs:
+
+```bash
+adb -s emulator-5554 emu power ac on
+adb -s emulator-5554 emu power status charging
+adb -s emulator-5554 emu power capacity 73
+adb -s emulator-5554 emu sensor set gyroscope 1.25:-2.5:0.5
+adb -s emulator-5554 emu sensor set light 123
+adb -s emulator-5554 emu sensor set proximity 1
+./gradlew :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=cool.jacoblin.particeps.P2CollectorEmulatorTest \
+  -Pandroid.testInstrumentationRunnerArguments.p2SyntheticInputs=true
 ```
 
 CI runs unit tests, Android lint, and debug and release builds on every pull request. Please check those pass locally first. Note that `allWarningsAsErrors` is on, so an unhandled branch in an exhaustive `when` is a build failure rather than a warning.

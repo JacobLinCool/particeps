@@ -1,6 +1,6 @@
 # Particeps
 
-**Participant-first sensing for research.** Run a mobile data collection study without building an app. A study is a signed configuration file: choose which collectors to run, set their parameters and the study duration, sign it, and hand it to participants. Data is collected on the device and encrypted as it is written; it reaches you as an encrypted export the participant sends, or on a schedule if the study names an upload endpoint.
+**Participant-first sensing for research.** Run a mobile data collection study without building an app. A study is a signed configuration file: choose which collectors to run, set their parameters and the study duration, sign it, and hand it to participants. Data is collected on the device and encrypted as it is written. It reaches you as an encrypted export the participant sends, or on a schedule if the study names an upload endpoint.
 
 [![Android CI](https://github.com/JacobLinCool/particeps/actions/workflows/ci.yml/badge.svg)](https://github.com/JacobLinCool/particeps/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -12,14 +12,16 @@ Standing up a mobile sensing study normally means writing an Android app, gettin
 
 *Particeps* is Latin for one who takes part or shares in something, and it is the root of *participant*.
 
-The name describes where the design puts the participant, and it is worth being exact about what that does and does not mean. Events are written and encrypted on the participant's own phone; every collector a study enables is shown to them, with what it records and what it cannot establish, before they are asked to consent; and nothing is collected until they press Start. Those are defaults the implementation actually provides. What the name does not grant is authorship of the study: the collector set, the duration, and whether the study uploads on a schedule are fixed in the signed configuration, and a participant cannot change them, add to them, or recall a bundle once it has been delivered. Their leverage over a running study is bounded and real — decline it outright, withhold the Android access an *optional* collector needs so that collector stays off, pause, finish early, withdraw, and delete the local data. A collector the configuration marks required is not optional in that sense: withholding its access stops the study rather than trimming it.
+The name describes where the design puts the participant, and it is worth being exact about what that does and does not mean. Events are written and encrypted on the participant's own phone. Every collector a study enables is shown to them before they are asked to consent, with what it records and what it cannot establish. Nothing is collected until they press Start. Those are defaults the implementation actually provides.
+
+What the name does not grant is authorship of the study. The collector set, the duration, and whether the study uploads on a schedule are fixed in the signed configuration. A participant cannot change them, add to them, or recall a bundle once it has been delivered. Their leverage over a running study is bounded and real — decline it outright, withhold the Android access an *optional* collector needs so that collector stays off, pause, finish early, withdraw, and delete the local data. A collector the configuration marks required is not optional in that sense: withholding its access stops the study rather than trimming it.
 
 ## How a study works
 
 1. **Generate your keys.** One Ed25519 pair to sign study configurations, one X25519 HPKE pair to decrypt bundles. `researcher-tools` writes raw 32-byte keys as unpadded base64url.
 2. **Write the study.** A strict Protocol v1 RFC 8785 JSON file naming collectors, reusable surveys, scheduled interventions, anonymous or assigned-code identity mode, duration, storage quota, consent text, and signing/export public keys.
-3. **Sign it.** `researcher-tools sign` produces a `.partcfg` file. Because the signing public key travels inside the signed bytes, any build of the app can verify it.
-4. **Distribute.** Participants install the app and import your `.partcfg`, or open a `particeps://join/v1` link that names where those exact bytes are served and pins their SHA-256. Setup is five steps, one screen each — the study details, what each enabled collector records and does not record, the consent text with the signer's key fingerprint, the Android access your collectors need, and the start button — and collection begins only when they press it.
+3. **Sign it.** `researcher-tools sign` produces a `.partcfg` file that any build of the app can verify, with no change to the app.
+4. **Distribute.** Participants install the app and import your `.partcfg`, or open a `particeps://join/v1` link that names where those exact bytes are served and pins their SHA-256. Setup is five steps, one screen each: the study details, what each enabled collector records and does not record, the consent text with the signer's key fingerprint, the Android access your collectors need, and the start button. Collection begins only when they press the start button.
 5. **Collect.** Events are written to encrypted on-device storage. Participants can pause, resume, finish early, or withdraw.
 6. **Export and analyse.** The participant exports an encrypted bundle and sends it to you. If the study declares an upload endpoint, the app also delivers immutable ciphertext bundles to an R2 receiver on a schedule. `particeps-analysis` inventories, verifies, decrypts, reassembles, and writes typed Parquet offline.
 
@@ -61,18 +63,18 @@ source does not touch storage, the runtime, or protocol/export code. The
 
 Studies collect from people's personal phones, so the platform is built to support a defensible ethics submission and honest commitments to participants.
 
-- **Encrypted on the device.** Each study's events and metadata are encrypted with a per-study AES-256-GCM key from the Android Keystore, marked non-exportable, in 4 MiB event segments under the app's no-backup storage, up to the quota the configuration set. An event is appended once and never rewritten; the only thing that removes a segment is confirmed delivery to the study's endpoint, and then only under storage pressure.
+- **Encrypted on the device.** Each study's events and metadata are encrypted with a per-study AES-256-GCM key from the Android Keystore, marked non-exportable. They are written in 4 MiB event segments under the app's no-backup storage, up to the quota the configuration set. An event is appended once and never rewritten. The only thing that removes a segment is confirmed delivery to the study's endpoint, and then only under storage pressure.
 - **Signed, tamper-evident studies.** A configuration is Ed25519-signed and strictly validated: RFC 8785 bytes, exact schema, known collectors, Android platform, validity window, and minimum client build. Verification failures are fail-closed — an unverifiable configuration collects nothing. A signature proves the configuration is unchanged since it was signed; it does not prove who wrote it unless the build pins that signer, and the consent screen states which of the two applies.
-- **Durable interventions and native surveys.** Notification actions can use one-time, recurring, daily-local, or signed random-local-window triggers. Random instants are selected with a CSPRNG and persisted before scheduling, so retries and reboot do not redraw them; clock/time-zone changes do not rewrite already materialized occurrences. Native surveys support short text, integer scales, single choice, and multiple choice; only a confirmed, complete submission enters the encrypted event stream.
+- **Durable interventions and native surveys.** Notification actions can use one-time, recurring, daily-local, or signed random-local-window triggers. Random instants are selected with a CSPRNG and persisted before scheduling, so retries and reboot do not redraw them. Clock and time-zone changes do not rewrite already materialized occurrences. Native surveys support short text, integer scales, single choice, and multiple choice; only a confirmed, complete submission enters the encrypted event stream.
 - **Separated participant identities.** Every import gets a fresh random instance UUID. A configuration may additionally carry an opaque researcher-assigned code; both appear in the encrypted document. Upload URLs and headers contain no participant, assigned, experiment, or configuration ID. Their bundle UUID, configuration digest, researcher key ID, exact range/count, size, and digest are untrusted routing claims, not participant authentication.
 - **Encrypted, participant-directed export.** Getting data to the research team is an export the participant performs and directs, encrypted with a fresh key per export and wrapped to your HPKE public key. The app never holds your private key.
-- **Scheduled upload, when the study asks for it.** A configuration may name an HTTPS endpoint, interval, and metered-network policy. The endpoint host, cadence, and network condition are shown before consent. Before HTTP starts, the app durably stages one immutable ciphertext bundle in no-backup storage: about 16 MiB of plaintext and at most 32 MiB on the wire. Retries send those exact bytes with fixed length and digest. Only a matching seven-field receipt on `201 Created` or exact-replay `200 OK` advances the watermark; redirects, `202`, malformed receipts, and other terminal responses do not. Finishing or withdrawing leaves delivery running until the tail arrives. Undelivered events are never reclaimed to make room.
+- **Scheduled upload, when the study asks for it.** A configuration may name an HTTPS endpoint, interval, and metered-network policy. The endpoint host, cadence, and network condition are shown before consent. Before HTTP starts, the app durably stages one immutable ciphertext bundle in no-backup storage: about 16 MiB of plaintext and at most 32 MiB on the wire. Retries send those exact bytes with fixed length and digest. A bundle counts as delivered only when the receiver returns a receipt that matches the staged bundle exactly, so any other response leaves those events undelivered. [Protocol v1](protocol/v1/README.md) defines the receipt and which responses may advance the watermark. Finishing or withdrawing leaves delivery running until the tail arrives. Undelivered events are never reclaimed to make room.
 - **Participant control over the lifecycle.** Collection starts only on an explicit action and can be paused, finished, or withdrawn. Pausing takes a monotonic boundary, so delayed callbacks cannot leak post-pause data into the dataset.
 - **Storage failures stop collection.** Quota exhaustion or a write failure fail-closes the study to `PAUSED` rather than silently dropping events, so a dataset is complete over the window it declares or absent.
 
 ### Who published the study
 
-A configuration carries its own signing public key in a mandatory `signer` block, so one published app can verify any researcher's study without a rebuild. The cost is that a signature alone says nothing about origin: the researcher name and contact shown on the consent screen are text the signer chose. The mitigation is the key fingerprint — the first 16 bytes of SHA-256 over the signing public key, rendered as eight groups of four hex characters — which the consent step shows under the heading *Configuration signature*. Publish your fingerprint in the material that recruits participants so they can compare the two, and note that a participant reaches a study through your recruitment channel rather than an anonymous download.
+One published app can verify and run any researcher's study. The cost is that a signature alone says nothing about origin: the researcher name and contact shown on the consent screen are text the signer chose. The mitigation is the signing key fingerprint, which the consent step shows under the heading *Configuration signature*. Publish your fingerprint in the material that recruits participants so they can compare the two. Note also that a participant reaches a study through your recruitment channel rather than an anonymous download. How the signing key travels inside the signed bytes, and how its fingerprint is derived, is in the [threat model](docs/threat-model.md).
 
 The shipped build pins no signer, so it accepts any correctly signed configuration and tells the participant that the publisher is unverified. An institution that wants one build to run only its own studies adds its key to `TRUSTED_SIGNING_KEYS` in `CollectorApplication` and ships that build; every other signer is then refused outright.
 
@@ -86,44 +88,11 @@ JDK 17, and Android SDK platform and build tools for API 37. The app targets And
 
 ### Build and test
 
-```bash
-./gradlew test testDebugUnitTest lintDebug assembleDebug assembleRelease
-```
-
-With an emulator or device attached:
-
-```bash
-./gradlew :core:storage:connectedDebugAndroidTest :app:connectedDebugAndroidTest
-```
-
-The app suite separates the Android signed-configuration regression
-([`AndroidConfigurationImportTest`](app/src/androidTest/kotlin/cool/jacoblin/particeps/AndroidConfigurationImportTest.kt)),
-the full participant UI flow ([`CoreFlowTest`](app/src/androidTest/kotlin/cool/jacoblin/particeps/CoreFlowTest.kt)),
-and the five-collector Android integration
-([`P2CollectorEmulatorTest`](app/src/androidTest/kotlin/cool/jacoblin/particeps/P2CollectorEmulatorTest.kt)).
-The last test skips when gyro, light, or proximity hardware is absent. Its optional exact-value mode
-expects a sensor-capable emulator that the host has already configured; the test does not fake
-Android's sensor APIs:
-
-```bash
-adb -s emulator-5554 emu power ac on
-adb -s emulator-5554 emu power status charging
-adb -s emulator-5554 emu power capacity 73
-adb -s emulator-5554 emu sensor set gyroscope 1.25:-2.5:0.5
-adb -s emulator-5554 emu sensor set light 123
-adb -s emulator-5554 emu sensor set proximity 1
-./gradlew :app:connectedDebugAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.class=cool.jacoblin.particeps.P2CollectorEmulatorTest \
-  -Pandroid.testInstrumentationRunnerArguments.p2SyntheticInputs=true
-```
-
-The debug APK lands at `app/build/outputs/apk/debug/app-debug.apk`. A clean checkout has no signing material, so `assembleRelease` produces an unsigned release APK.
+The build and test command block, the emulator-attached suites, and the sensor setup the collector integration test expects are in [CONTRIBUTING.md](CONTRIBUTING.md#development).
 
 ### Try it without a real study
 
-`researcher-tools/examples` contains a demonstration study and its key pair. Those keys are public fixtures committed to this repository: anyone can sign a configuration that presents itself as the demo study, and anyone can decrypt an export encrypted to the demo HPKE key. They are fine for development and emulator testing, never for real participants.
-
-For that reason a **release build ships no demonstration study** — the signed envelope and its loader are in the app's `debug` source set only, so a released app runs nothing but a study a research team signed and handed out. Build the debug variant if you want to try the participant flow without a configuration of your own.
+`researcher-tools/examples` contains a demonstration study and its key pair. Those keys are public fixtures committed to this repository, fine for development and emulator testing but never for real participants, and a release build ships no demonstration study at all — see [`researcher-tools/examples/README.md`](researcher-tools/examples/README.md). Build the debug variant if you want to try the participant flow without a configuration of your own.
 
 ### Researcher CLI
 
@@ -187,7 +156,7 @@ its codec and [Web editor](web/src/routes/researcher/InterventionEditor.svelte),
 materialization in
 [`InterventionSchedulePlanner.kt`](core/study-application/src/main/kotlin/cool/jacoblin/particeps/core/application/InterventionSchedulePlanner.kt).
 The [session](core/study-application/src/main/kotlin/cool/jacoblin/particeps/core/application/StudyApplication.kt)
-persists the occurrence before scheduling; the Android delivery/expiry workers in
+persists the occurrence before scheduling. The Android delivery and expiry workers in
 [`AndroidStudyPlatform.kt`](app/src/main/kotlin/cool/jacoblin/particeps/platform/AndroidStudyPlatform.kt)
 and [`BootRecoveryReceiver`](app/src/main/kotlin/cool/jacoblin/particeps/BootRecoveryReceiver.kt)
 reconcile the same ID after retries, reboot, clock, or time-zone changes. The adjacent planner,
@@ -218,23 +187,20 @@ New collectors are the main contribution path — see [CONTRIBUTING.md](CONTRIBU
 
 Every release candidate published so far runs under a different application ID from the current
 build, and the release signing key has since been rotated. Android treats each as an unrelated
-application, so there is no upgrade and no migration: the older build keeps running under its own
-name until it is removed, and uninstalling it destroys its Keystore key and everything encrypted
-under it. Export whatever is still wanted first.
-
-Artifacts from before the rename are unsupported. A `.adccfg`, a `.adcexp`, an `ADCCFG01` or
-`ADCEXP01` container, a `research-bundle-v1` document, an `adc://join/v1` link, and an upload
-carrying `application/vnd.adc.research-bundle` or an `X-ADC-*` header are all invalid input to every
-current implementation. There is no converter. [CHANGELOG.md](CHANGELOG.md) says which release
-carries which identity.
+application, so there is no upgrade and no migration. The older build keeps running under its own
+name until it is removed. Uninstalling it destroys its Keystore key and everything encrypted under
+it, so export whatever is still wanted first. Artifacts from before the rename are unsupported
+input to every current implementation, and there is no converter.
+[CHANGELOG.md](CHANGELOG.md) says which release carries which identity, which spellings it retired,
+and what each release asks of an existing install.
 
 ## Status
 
 This repository implements and tests the full local participant flow on Android 14–17.
 
-**The app's own screens ship in English and Traditional Chinese.** The interface follows the phone's system language, and a picker in the app's header changes it for this app alone; that picker writes through Android's `LocaleManager`, so it is the same setting as the system's per-app language screen rather than a second one beside it. Adding a language is a `values-*` directory and one line in `res/xml/locales_config.xml`.
+**The app's own screens ship in English and Traditional Chinese.** The interface follows the phone's system language, and a picker in the app's header changes it for this app alone. That picker writes through Android's `LocaleManager`, so it is the same setting as the system's per-app language screen rather than a second one beside it. Adding a language is a `values-*` directory and one line in `res/xml/locales_config.xml`.
 
-Researcher-supplied text is a separate matter: the study title, purpose, researcher name, contact, and consent summary are rendered exactly as they were signed, in whatever language they were written, whatever language the app is in. Recruiting across languages therefore means one signed configuration per language.
+Researcher-supplied text is a separate matter. The study title, purpose, researcher name, contact, and consent summary are rendered exactly as they were signed, in whatever language they were written, whatever language the app is in. Recruiting across languages therefore means one signed configuration per language.
 
 Running a real study also needs work this repository cannot do for you: ethics and legal approval, your own study signing key and a published fingerprint for it, a data governance plan, and validation on the physical devices and OEM builds you intend to support. Emulator tests passing is not ethics approval, Play policy compliance, or scientific validity.
 

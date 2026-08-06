@@ -4,7 +4,7 @@ For maintainers of this repository. Participants and researchers do not need thi
 
 ## Workflows
 
-All workflows live in [`.github/workflows`](../../.github/workflows). The two that decide what ships are below; `Pages` has its own section, and `Analysis CI` and `Receiver CI` verify their own directories on the pull requests that touch them.
+All workflows live in [`.github/workflows`](../../.github/workflows). The two that decide what ships are below, and `Pages` has its own section. `Analysis CI` and `Receiver CI` verify their own directories on the pull requests that touch them.
 
 **`Android CI`** (`ci.yml`) runs on pushes to `main`, on pull requests, and on manual dispatch. It
 runs unit tests, Android lint, Protocol/catalog conformance, Collector capability checks, and debug
@@ -12,21 +12,21 @@ and release builds. Successful runs retain the debug APK as an artifact for 14 d
 
 **`Android Release`** (`release.yml`) accepts only `v<SemVer>` tags that are reachable from `main` — for example `v0.1.0`. A tag with a prerelease suffix produces a GitHub prerelease.
 
-The release workflow reconstructs the same `.signing` configuration used locally, re-runs tests and lint, writes the tag into `versionName` and the workflow run number into `versionCode`, then verifies the APK that Gradle signed with `apksigner verify`. The GitHub release carries both the APK and its SHA-256 checksum. Any test, signing, or verification failure stops the release; nothing is published.
+The release workflow reconstructs the same `.signing` configuration used locally and re-runs tests and lint. It writes the tag into `versionName` and the workflow run number into `versionCode`, then verifies the APK that Gradle signed with `apksigner verify`. The GitHub release carries both the APK and its SHA-256 checksum. Any test, signing, or verification failure stops the release; nothing is published.
 
 ## The published site
 
 **`Pages`** (`pages.yml`) deploys the web authoring surface on pushes to `main` that touch it, not on a tag. It builds a project site, and `BASE_PATH` comes from the repository name at build time, so the published path follows whatever the repository is called. No path is pinned in the source, which is why renaming the repository is enough on its own — and why it was not optional. The repository has been renamed from `android-data-collector` to `particeps`, and the site publishes at `https://jacoblincool.github.io/particeps/`; the old path serves nothing.
 
-`BASE_PATH` is read at build time from the event payload, and that payload carries the repository name as it was when the event was created. A run queued before a rename therefore keeps building the old path however many times it is retried, because re-running replays the same event and redeploys the same artifact.
+`BASE_PATH` is read at build time from the event payload, and that payload carries the repository name as it was when the event was created. A run queued before a rename therefore keeps building the old path however many times it is retried. Re-running replays the same event and redeploys the same artifact.
 
-The Particeps rename hit this. The deploy that followed the merge timed out — for an unrelated reason, a GitHub Pages deployment-lag incident that day — and re-running only the failed job republished a build whose HTML still pointed at `/android-data-collector/_app/…`. The title and the routes were right and the workflow was green; every asset was a 404. That is the failure mode least likely to be noticed, and the retry is what caused it, not the timeout.
+The Particeps rename hit this. The deploy that followed the merge timed out, for an unrelated reason: a GitHub Pages deployment-lag incident that day. Re-running only the failed job then republished a build whose HTML still pointed at `/android-data-collector/_app/…`. The title and the routes were right and the workflow was green; every asset was a 404. That is the failure mode least likely to be noticed, and the retry is what caused it, not the timeout.
 
-So after renaming the repository, trigger Pages fresh rather than re-running anything: `gh workflow run pages.yml --ref main`. A `workflow_dispatch` event is created at dispatch time and carries the current name. Then check the published HTML rather than the workflow's green tick — `curl -s <url> | grep -c '<old-repo-name>'` must be zero, and one asset URL taken from that HTML must return 200. A deploy can also simply be slow or stuck on GitHub's side; check <https://www.githubstatus.com> before assuming the rename broke something.
+So after renaming the repository, trigger Pages fresh rather than re-running anything: `gh workflow run pages.yml --ref main`. A `workflow_dispatch` event is created at dispatch time and carries the current name. Then check the published HTML rather than the workflow's green tick. `curl -s <url> | grep -c '<old-repo-name>'` must be zero, and one asset URL taken from that HTML must return 200. A deploy can also simply be slow or stuck on GitHub's side; check <https://www.githubstatus.com> before assuming the rename broke something.
 
 GitHub will redirect the old repository URL to the new one, but only until some other repository claims the old name. Treat that as a courtesy to stale links rather than an address the project still publishes.
 
-What a redirect cannot fix is anything already in a participant's hands. A join link is a `particeps://join/v1` URI carrying the hosting URL of the signed `.partcfg`, its SHA-256, and the signer fingerprint, and a QR code is that URI rendered; both are immutable by design. An issued link or a printed QR cannot be repointed at a new address. So if a study's artifact was served from the old Pages path, or if a poster, an email, or a consent appendix sent participants there, reissue the join link and the QR at the new URL and redistribute them. The configuration itself does not need re-signing — the envelope bytes and their digest are unchanged, only the URL that serves them.
+What a redirect cannot fix is anything already in a participant's hands. A join link is a `particeps://join/v1` URI carrying the hosting URL of the signed `.partcfg`, its SHA-256, and the signer fingerprint, and a QR code is that URI rendered. Both are immutable by design, so an issued link or a printed QR cannot be repointed at a new address. If a study's artifact was served from the old Pages path, reissue the join link and the QR at the new URL and redistribute them. The same applies if a poster, an email, or a consent appendix sent participants there. The configuration itself does not need re-signing — the envelope bytes and their digest are unchanged, only the URL that serves them.
 
 ## Signing keys
 
@@ -41,10 +41,10 @@ Losing the Android signing private key means no future build can update a direct
 
 ### No release so far can be updated in place
 
-[CHANGELOG.md](../../CHANGELOG.md) lists which release carries which application ID. Two independent
-things put every one of them out of reach of the current build: the application ID moved twice, and
-a device identifies an installed application by that value; and the release signing key was rotated,
-which changes the certificate a device compares on update.
+No release published so far can be updated in place. The application ID moved twice and the release
+signing key was rotated, and a device accepts an update only when both are unchanged.
+[CHANGELOG.md](../../CHANGELOG.md) records which release carries which application ID, and states
+that consequence once for every reader.
 
 The key was rotated to correct the certificate's subject, which named the pre-rename product. A
 certificate is signed over its own subject, so changing it means issuing a new one. That was
@@ -53,12 +53,12 @@ Developer Verification had not yet been registered. It stops being affordable th
 participant is running a released build, so it does not happen again.
 
 Say this in the release notes. A tester expecting an in-place update reads a correct install as a
-failed one, and the notes for `v1.0.0-rc.4` do not say it, so it still has to reach testers another
+failed one. The notes for `v1.0.0-rc.4` do not say it, so it still has to reach testers another
 way.
 
 ## Android Developer Verification
 
-Google's Developer Verification binds a verified developer identity to the package names that developer distributes and the certificates those packages are signed with. Registration is per package name, and no name this project has used was ever registered, so `cool.jacoblin.particeps` needs its own entry from scratch. Register it against the fingerprint of the **current** keystore — the rotation above means any fingerprint recorded before it is wrong.
+Google's Developer Verification binds a verified developer identity to the package names that developer distributes and the certificates those packages are signed with. Registration is per package name, and no name this project has used was ever registered. `cool.jacoblin.particeps` therefore needs its own entry from scratch. Register it against the fingerprint of the **current** keystore — the rotation above means any fingerprint recorded before it is wrong.
 
 ```bash
 apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk
@@ -96,7 +96,7 @@ git tag -a v0.1.0 -m "v0.1.0"
 git push origin v0.1.0
 ```
 
-Before tagging, update `version` and `date-released` in [`CITATION.cff`](../../CITATION.cff). Both fields are present again and name `1.0.0-rc.4`, the first post-rename tag. They were absent before it because every tag up to `v1.0.0-rc.3` carries the old identity, and the file named no version rather than attributing one of those releases to Particeps. Keep both fields in step with the tag at every release.
+Before tagging, update `version` and `date-released` in [`CITATION.cff`](../../CITATION.cff). Both fields are present again and name `1.0.0-rc.4`, the first post-rename tag. They were absent before it because every tag up to `v1.0.0-rc.3` carries the old identity. The file named no version rather than attributing one of those releases to Particeps. Keep both fields in step with the tag at every release.
 
 ### One-off: the Particeps cutover
 
@@ -108,13 +108,13 @@ The rename is not a recurring step, and it is not finished when the code lands e
 
 What remains:
 
-- Register `cool.jacoblin.particeps` under Developer Verification against the current keystore fingerprint, as above. No package name this project has used was ever registered.
+- Register `cool.jacoblin.particeps` under Developer Verification against the current keystore fingerprint, as above.
 - The release notes for `v1.0.0-rc.4` are the generated changelog and do not say that it is a fresh install rather than an update. Say it to testers by some other route, and in the notes of the next tag.
 - Reissue any join link or QR that pointed at the old Pages path, as the section above describes. This is per study rather than a single step: it is finished only when no issued link and no printed QR still points there.
 
 ## Pinned signers
 
-A study configuration carries its own Ed25519 signing public key, so issuing a study needs no release. `CollectorApplication.TRUSTED_SIGNING_KEYS` is empty in the shipped build, and a release should keep it that way: the published app then verifies any correctly signed configuration and tells the participant that the publisher is unverified.
+A study configuration carries its own signing key, so issuing a study needs no release; the [threat model](../../docs/threat-model.md) covers how that trust works. `CollectorApplication.TRUSTED_SIGNING_KEYS` is empty in the shipped build, and a release should keep it that way: the published app then verifies any correctly signed configuration and tells the participant that the publisher is unverified.
 
 Populating that map is for an institution building its own APK to run only its own studies. It is strictly exclusive — every signer not listed is refused — so it is not a hardening step to apply to a general release. It is also a source change, and therefore a new build and a new release, with no revocation path short of another one.
 

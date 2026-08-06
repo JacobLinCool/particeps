@@ -45,10 +45,10 @@ Configuration-specific Protocol v1 changes are:
 - both keys use canonical unpadded base64url;
 - `location.v1.minimum_displacement_millimeters` is an integer JSON number.
 
-`parseConfiguration` first requires canonical, closed-world bytes, builds the typed value without
-defaults, re-encodes it to prove Android normalization equality, applies all schema validation, and,
-for `.partcfg`, verifies signer identity and Ed25519 signature. It never drops an unknown member or
-repairs an old shape.
+`parseConfiguration` first requires canonical, closed-world bytes. It builds the typed value
+without defaults, re-encodes it to prove Android normalization equality, and applies all schema
+validation. For `.partcfg` it then verifies signer identity and the Ed25519 signature. It never
+drops an unknown member or repairs an old shape.
 
 ## Keys and signed configuration
 
@@ -68,25 +68,9 @@ container must end after byte 64 of the signature.
 ## Encrypted bundle reader
 
 The browser reader is a bounded convenience reader; large-study analysis belongs in the offline
-Python pipeline. `PTCEXP01` is exactly:
-
-```text
-magic[8] | bundle UUID[16] | configuration SHA-256[32] |
-researcher_key_id_length u16 BE | content nonce[12] | researcher_key_id UTF-8 |
-RFC 9180 wrapped content key[80] | AES-256-GCM encrypted JCS document and tag
-```
-
-The wrapped key is raw RFC 9180 output (`enc[32] + ciphertext[48]`) with no Tink prefix. The HPKE
-info and document AAD are the JCS bytes of:
-
-```json
-{
-  "bundle_format": "particeps-research-bundle-v1",
-  "bundle_id": "lowercase UUID",
-  "configuration_sha256": "64 lowercase hex",
-  "researcher_key_id": "key ID"
-}
-```
+Python pipeline. `bundle.ts` implements the `PTCEXP01` container, its HPKE layer, and the exact
+context bytes that bind both cryptographic layers as
+[`../protocol/v1/README.md`](../protocol/v1/README.md) specifies them.
 
 The authenticated document uses exact root objects for producer, signature provenance, and
 experiment state. Every sequence, counter, wall time, and monotonic time is a canonical decimal
@@ -106,8 +90,8 @@ Private bytes stay in the tab and are never written to browser storage.
 
 ## Immutable join artifact
 
-After an envelope exists, `JoinLinkPanel.svelte` accepts one artifact URL, delegates the exact
-Protocol v1 URL / URI bytes to `join.ts`, and renders the resulting QR locally with the bundled
+After an envelope exists, `JoinLinkPanel.svelte` accepts one artifact URL and delegates the exact
+Protocol v1 URL / URI bytes to `join.ts`. It renders the resulting QR locally with the bundled
 `qrcode` library. There is no QR service, fetch, upload, polling, or browser persistence. The URI
 binds the envelope's complete SHA-256 and signing fingerprint; editing the study retires the
 envelope and therefore the join artifact.
