@@ -29,22 +29,22 @@ The full procedure, including key handling and study design guidance, is in the 
 
 Twelve selectable collectors ship in v1. A study enables the ones it names and configures each one's parameters within validated ranges.
 
-| Collector | Records | Cannot establish |
-| --- | --- | --- |
-| `app_lifecycle.v1` | Lifecycle of this app's own activities | Use of any other app |
-| `accelerometer.v1` | Raw x/y/z acceleration, sensor time, accuracy | Recognised motion, posture, or activity |
-| `battery_state.v1` | Battery percentage, charging state/source, power-save state | Battery health, temperature, or hardware identity |
-| `temporal_context.v1` | Time-zone ID, UTC offset, DST state, clock-change reason | Location or travel |
-| `gyroscope.v1` | Raw x/y/z angular velocity, sensor time, accuracy | Orientation, posture, or activity |
-| `ambient_light.v1` | Raw illuminance, sensor time, accuracy | Environmental content or presence |
-| `proximity.v1` | Raw distance, sensor range, near/far interpretation | Comparable physical distance across devices or presence |
-| `network_state.v1` | Default network transport, validated/metered/roaming/VPN flags, bandwidth estimates | Addresses, destinations, or content |
-| `network_usage.v1` | Device-total Wi-Fi and mobile rx/tx bytes and packets per interval | Instantaneous throughput, per-app attribution, exact timing |
-| `usage_events.v1` | Raw app, screen, keyguard, and boot events | A complete or real-time session stream |
-| `location.v1` | Fused Location fixes with accuracy, speed, altitude, bearing | Correct or gap-free position |
-| `keyboard_touch.v1` | Within-key touch position, timing, pressure, size, key category | System-wide touch, or the text that was typed |
+| Collector | Records |
+| --- | --- |
+| `app_lifecycle.v1` | Lifecycle of this app's own activities |
+| `accelerometer.v1` | Raw x/y/z acceleration, sensor time, accuracy |
+| `battery_state.v1` | Battery percentage, charging state/source, power-save state |
+| `temporal_context.v1` | Time-zone ID, UTC offset, DST state, clock-change reason |
+| `gyroscope.v1` | Raw x/y/z angular velocity, sensor time, accuracy |
+| `ambient_light.v1` | Raw illuminance, sensor time, accuracy |
+| `proximity.v1` | Raw distance, sensor range, near/far interpretation |
+| `network_state.v1` | Default network transport, validated/metered/roaming/VPN flags, bandwidth estimates |
+| `network_usage.v1` | Device-total Wi-Fi and mobile rx/tx bytes and packets per interval |
+| `usage_events.v1` | Raw app, screen, keyguard, and boot events |
+| `location.v1` | Fused Location fixes with accuracy, speed, altitude, bearing |
+| `keyboard_touch.v1` | Within-key touch position, timing, pressure, size, key category |
 
-The right-hand column is there because it saves work later: it is the set of claims the data cannot carry into a paper, no matter how the analysis is written. Field-level definitions of every event, including units and timestamp semantics, are in the [data dictionary](docs/data-dictionary.md).
+What each collector cannot establish is set out per collector in the [researcher guide](docs/researcher-guide.md), which is where a study is designed; field-level definitions of every event, including units and timestamp semantics, are in the [data dictionary](docs/data-dictionary.md).
 
 Some practical notes: package names, location, fine-grained timing, acceleration, and keyboard dynamics can all be identifying, and ethics review will ask about that. Choosing the fewest collectors, the lowest usable rate, and the shortest duration that answers your question makes both the review and the analysis easier.
 
