@@ -211,7 +211,7 @@ The decoder rejects unknown keys, missing keys, and wrong JSON types outright. T
 lenient mode. `upload` is mandatory as a key: a study that does not upload writes `"upload": {}`.
 
 Constraints enforced by
-[`core/study-definition`](../core/study-definition/src/main/kotlin/cool/linc/particeps/core/definition/StudyConfiguration.kt):
+[`core/study-definition`](../core/study-definition/src/main/kotlin/cool/jacoblin/particeps/core/definition/StudyConfiguration.kt):
 
 - `schema_version` is always `1`. There is no fallback reader and no migration path: a
   configuration either matches the current schema exactly or is refused.
@@ -708,7 +708,7 @@ fingerprint is what turns that relationship into something checkable on the devi
 
 An organisation that wants one build to run only its own studies adds its key ID and public
 key to `TRUSTED_SIGNING_KEYS` in the `CollectorApplication` composition root
-([`app/src/main/kotlin/cool/linc/particeps/CollectorApplication.kt`](../app/src/main/kotlin/cool/linc/particeps/CollectorApplication.kt))
+([`app/src/main/kotlin/cool/jacoblin/particeps/CollectorApplication.kt`](../app/src/main/kotlin/cool/jacoblin/particeps/CollectorApplication.kt))
 and ships that build. The map is empty in the shipped build; populating it is strictly
 exclusive, so that build refuses every signer not listed, including studies from other
 teams. The pinned key also overrides whatever the configuration declares, so a configuration

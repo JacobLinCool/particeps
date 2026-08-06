@@ -48,8 +48,9 @@ exception; it does not permit changing an accepted app configuration.
    authenticated decryption.
 7. Collector implementations remain compiled, closed-world modules. The catalog describes their
    contracts; it does not load code or turn unknown payloads into a generic runtime plugin.
-8. The rename moved `applicationId` and the Kotlin root package from `cool.linc.androiddatacollector`
-   to `cool.linc.particeps`. Android treats the result as a different application: no upgrade, no
+8. The `applicationId` and Kotlin root package have moved twice — `cool.linc.androiddatacollector`,
+   then `cool.linc.particeps`, now `cool.jacoblin.particeps` — and the release signing key was
+   rotated with the second move. Android treats the result as a different application: no upgrade, no
    migration, no data transfer, and no shared Keystore namespace. A pre-rename install is removed
    separately, and its studies, keys, encrypted segments, and staged upload bodies go with it. That
    is what made renaming the on-device names — Keystore aliases, WorkManager unique work names and

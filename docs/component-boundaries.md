@@ -9,9 +9,9 @@ New contributors should read this with the [normative Protocol v1 contract](../p
 the [collector catalog](../protocol/v1/collector-catalog.json), the
 [P0–P2 implementation contract](p0-p2-implementation-contract.md), and
 [`assurance`](../assurance/README.md). The concrete upload seam is deliberately short:
-[StudyUploader](../core/study-application/src/main/kotlin/cool/linc/particeps/core/application/StudyApplication.kt),
-[FileUploadOutbox](../app/src/main/kotlin/cool/linc/particeps/platform/FileUploadOutbox.kt),
-[OkHttpStudyUploader](../app/src/main/kotlin/cool/linc/particeps/platform/OkHttpStudyUploader.kt),
+[StudyUploader](../core/study-application/src/main/kotlin/cool/jacoblin/particeps/core/application/StudyApplication.kt),
+[FileUploadOutbox](../app/src/main/kotlin/cool/jacoblin/particeps/platform/FileUploadOutbox.kt),
+[OkHttpStudyUploader](../app/src/main/kotlin/cool/jacoblin/particeps/platform/OkHttpStudyUploader.kt),
 and their neighbouring tests.
 
 ```text

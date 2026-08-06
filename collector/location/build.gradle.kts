@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "cool.linc.particeps.collector.location"
+    namespace = "cool.jacoblin.particeps.collector.location"
     compileSdk = 37
     defaultConfig { minSdk = 34 }
     compileOptions {

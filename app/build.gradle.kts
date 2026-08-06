@@ -16,11 +16,11 @@ fun Properties.requireSigningValue(name: String): String =
         ?: error("Missing $name in ${releaseSigningPropertiesFile.path}")
 
 android {
-    namespace = "cool.linc.particeps"
+    namespace = "cool.jacoblin.particeps"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "cool.linc.particeps"
+        applicationId = "cool.jacoblin.particeps"
         minSdk = 34
         targetSdk = 37
         versionCode = providers.gradleProperty("releaseVersionCode").map(String::toInt).getOrElse(1)

@@ -416,7 +416,7 @@ in memory. It drives the cipher directly rather than through `CipherInputStream`
 AEAD failure as a normal end of stream and would turn a tampered bundle into a silently truncated
 file. Plaintext therefore reaches only a mode-`0600` staging file before the tag is verified.
 `researcher-tools decrypt` then streams that file through
-[`ResearchBundleVerifier`](../core/export/src/main/kotlin/cool/linc/particeps/core/export/ResearchBundleVerifier.kt)
+[`ResearchBundleVerifier`](../core/export/src/main/kotlin/cool/jacoblin/particeps/core/export/ResearchBundleVerifier.kt)
 and publishes it
 with an atomic move only after the authenticated document, signature, identities, ranges,
 transitions, and catalog payloads all pass.
@@ -579,8 +579,8 @@ the same way.
 
 Protocol behavior is executable in the shared valid/hostile
 [conformance corpus](../protocol/v1/conformance-vectors.json). The neighbouring Kotlin
-[configuration](../core/protocol/src/test/kotlin/cool/linc/particeps/core/protocol/ConfigurationProtocolTest.kt)
-and [bundle](../core/export/src/test/kotlin/cool/linc/particeps/core/export/ResearchExportTest.kt)
+[configuration](../core/protocol/src/test/kotlin/cool/jacoblin/particeps/core/protocol/ConfigurationProtocolTest.kt)
+and [bundle](../core/export/src/test/kotlin/cool/jacoblin/particeps/core/export/ResearchExportTest.kt)
 tests cover JCS, raw keys, fixed framing, signature provenance, RFC 9180 context, exact ranges, and
 wrong-key/context/tamper rejection; TypeScript consumes the same corpus. Runtime tests cover the
 state machine, admission barrier, repeated export, watermark commit, and encrypted segmented
@@ -595,8 +595,8 @@ instance IDs, assigned-ID persistence/export, upload-header exclusion, CLI bulk 
 cross-language canonical bytes.
 
 Upload reliability has focused tests for the
-[single-entry outbox](../app/src/test/kotlin/cool/linc/particeps/platform/FileUploadOutboxTest.kt)
-and [HTTP adapter](../app/src/test/kotlin/cool/linc/particeps/platform/OkHttpStudyUploaderTest.kt):
+[single-entry outbox](../app/src/test/kotlin/cool/jacoblin/particeps/platform/FileUploadOutboxTest.kt)
+and [HTTP adapter](../app/src/test/kotlin/cool/jacoblin/particeps/platform/OkHttpStudyUploaderTest.kt):
 recovery, exact byte replay, digest/length/range identity, redirect refusal, retry classification,
 `201`/exact-replay `200`, generic-`2xx` rejection, and exact seven-field receipt matching. Export
 tests separately verify streaming manual decryption publishes no successful output after AEAD

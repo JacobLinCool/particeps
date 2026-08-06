@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "cool.linc.particeps.core.storage"
+    namespace = "cool.jacoblin.particeps.core.storage"
     compileSdk = 37
 
     defaultConfig {

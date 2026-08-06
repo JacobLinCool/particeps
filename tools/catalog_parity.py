@@ -15,14 +15,14 @@ else:
 
 
 ROOT = Path(__file__).resolve().parents[1]
-KOTLIN_MODEL = ROOT / "core/study-definition/src/main/kotlin/cool/linc/particeps/core/definition/StudyConfiguration.kt"
-KOTLIN_CODEC = ROOT / "core/study-definition/src/main/kotlin/cool/linc/particeps/core/definition/StudyConfigurationCodec.kt"
+KOTLIN_MODEL = ROOT / "core/study-definition/src/main/kotlin/cool/jacoblin/particeps/core/definition/StudyConfiguration.kt"
+KOTLIN_CODEC = ROOT / "core/study-definition/src/main/kotlin/cool/jacoblin/particeps/core/definition/StudyConfigurationCodec.kt"
 WEB_TYPES = ROOT / "web/src/lib/particeps/types.ts"
 WEB_PARSE = ROOT / "web/src/routes/researcher/parse.ts"
-RUNTIME = ROOT / "core/experiment-runtime/src/main/kotlin/cool/linc/particeps/core/runtime/ExperimentRuntime.kt"
+RUNTIME = ROOT / "core/experiment-runtime/src/main/kotlin/cool/jacoblin/particeps/core/runtime/ExperimentRuntime.kt"
 KOTLIN_EVENT_CONTRACT = (
     ROOT
-    / "core/collector-api/src/main/kotlin/cool/linc/particeps/core/collector/ProtocolEventContracts.kt"
+    / "core/collector-api/src/main/kotlin/cool/jacoblin/particeps/core/collector/ProtocolEventContracts.kt"
 )
 
 
@@ -333,7 +333,7 @@ def _check_interventions(catalog: dict[str, Any], root: Path) -> None:
     )
     if not definition or definition.group(1) != "interventions.v1":
         raise ParityError("intervention runtime uses the wrong generated event contract")
-    contract = (root / "core/collector-api/src/main/kotlin/cool/linc/particeps/core/collector/CollectorContracts.kt").read_text(encoding="utf-8")
+    contract = (root / "core/collector-api/src/main/kotlin/cool/jacoblin/particeps/core/collector/CollectorContracts.kt").read_text(encoding="utf-8")
     if "maximumEncodedEventBytes in 128..65_536" not in contract:
         raise ParityError("CollectorEventContract maximumEncodedEventBytes bounds drifted")
 

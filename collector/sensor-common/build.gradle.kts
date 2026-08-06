@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "cool.linc.particeps.collector.sensorcommon"
+    namespace = "cool.jacoblin.particeps.collector.sensorcommon"
     compileSdk = 37
     defaultConfig { minSdk = 34 }
     compileOptions {

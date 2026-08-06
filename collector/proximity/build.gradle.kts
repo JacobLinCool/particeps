@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "cool.linc.particeps.collector.proximity"
+    namespace = "cool.jacoblin.particeps.collector.proximity"
     compileSdk = 37
     defaultConfig { minSdk = 34 }
     compileOptions {

@@ -97,10 +97,10 @@ With an emulator or device attached:
 ```
 
 The app suite separates the Android signed-configuration regression
-([`AndroidConfigurationImportTest`](app/src/androidTest/kotlin/cool/linc/particeps/AndroidConfigurationImportTest.kt)),
-the full participant UI flow ([`CoreFlowTest`](app/src/androidTest/kotlin/cool/linc/particeps/CoreFlowTest.kt)),
+([`AndroidConfigurationImportTest`](app/src/androidTest/kotlin/cool/jacoblin/particeps/AndroidConfigurationImportTest.kt)),
+the full participant UI flow ([`CoreFlowTest`](app/src/androidTest/kotlin/cool/jacoblin/particeps/CoreFlowTest.kt)),
 and the five-collector Android integration
-([`P2CollectorEmulatorTest`](app/src/androidTest/kotlin/cool/linc/particeps/P2CollectorEmulatorTest.kt)).
+([`P2CollectorEmulatorTest`](app/src/androidTest/kotlin/cool/jacoblin/particeps/P2CollectorEmulatorTest.kt)).
 The last test skips when gyro, light, or proximity hardware is absent. Its optional exact-value mode
 expects a sensor-capable emulator that the host has already configured; the test does not fake
 Android's sensor APIs:
@@ -113,7 +113,7 @@ adb -s emulator-5554 emu sensor set gyroscope 1.25:-2.5:0.5
 adb -s emulator-5554 emu sensor set light 123
 adb -s emulator-5554 emu sensor set proximity 1
 ./gradlew :app:connectedDebugAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.class=cool.linc.particeps.P2CollectorEmulatorTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=cool.jacoblin.particeps.P2CollectorEmulatorTest \
   -Pandroid.testInstrumentationRunnerArguments.p2SyntheticInputs=true
 ```
 
@@ -178,17 +178,17 @@ flowchart LR
 
 Platform-independent modules contain no `android.*` imports, which keeps the domain logic testable on the JVM. [Component boundaries](docs/component-boundaries.md) documents the contracts.
 
-New contributors should treat [`protocol/v1`](protocol/v1/README.md) as the normative wire contract, the [collector catalog](protocol/v1/collector-catalog.json) as the schema source, and [`docs/p0-p2-implementation-contract.md`](docs/p0-p2-implementation-contract.md) as the implementation decision record. Trace one path through the [configuration codec](core/study-definition/src/main/kotlin/cool/linc/particeps/core/definition/StudyConfigurationCodec.kt), [signed envelope](core/protocol/src/main/kotlin/cool/linc/particeps/core/protocol/SignedConfiguration.kt), [bundle exporter](core/export/src/main/kotlin/cool/linc/particeps/core/export/ResearchExport.kt), [bundle verifier](core/export/src/main/kotlin/cool/linc/particeps/core/export/ResearchBundleVerifier.kt), [single-entry outbox](app/src/main/kotlin/cool/linc/particeps/platform/FileUploadOutbox.kt), [HTTP adapter](app/src/main/kotlin/cool/linc/particeps/platform/OkHttpStudyUploader.kt), [receiver handler](receiver/src/index.ts), and the offline [`particeps-analysis`](particeps-analysis/README.md) pipeline. The join path is similarly short: [Web authoring](web/src/lib/particeps/join.ts), [shared parser](core/protocol/src/main/kotlin/cool/linc/particeps/core/protocol/JoinLink.kt), [Android staging](app/src/main/kotlin/cool/linc/particeps/platform/JoinArtifactDownloader.kt), [intent entry](app/src/main/kotlin/cool/linc/particeps/MainActivity.kt), then the existing [session import](core/study-application/src/main/kotlin/cool/linc/particeps/core/application/StudyApplication.kt). The [outbox](app/src/test/kotlin/cool/linc/particeps/platform/FileUploadOutboxTest.kt), [uploader](app/src/test/kotlin/cool/linc/particeps/platform/OkHttpStudyUploaderTest.kt), and [receiver](receiver/tests/receiver.test.ts) tests make crash/replay and receipt semantics executable. Receiver deployment and R2 operations start at [`receiver/README.md`](receiver/README.md), and the Collector capability policy lives under [`assurance`](assurance/README.md).
+New contributors should treat [`protocol/v1`](protocol/v1/README.md) as the normative wire contract, the [collector catalog](protocol/v1/collector-catalog.json) as the schema source, and [`docs/p0-p2-implementation-contract.md`](docs/p0-p2-implementation-contract.md) as the implementation decision record. Trace one path through the [configuration codec](core/study-definition/src/main/kotlin/cool/jacoblin/particeps/core/definition/StudyConfigurationCodec.kt), [signed envelope](core/protocol/src/main/kotlin/cool/jacoblin/particeps/core/protocol/SignedConfiguration.kt), [bundle exporter](core/export/src/main/kotlin/cool/jacoblin/particeps/core/export/ResearchExport.kt), [bundle verifier](core/export/src/main/kotlin/cool/jacoblin/particeps/core/export/ResearchBundleVerifier.kt), [single-entry outbox](app/src/main/kotlin/cool/jacoblin/particeps/platform/FileUploadOutbox.kt), [HTTP adapter](app/src/main/kotlin/cool/jacoblin/particeps/platform/OkHttpStudyUploader.kt), [receiver handler](receiver/src/index.ts), and the offline [`particeps-analysis`](particeps-analysis/README.md) pipeline. The join path is similarly short: [Web authoring](web/src/lib/particeps/join.ts), [shared parser](core/protocol/src/main/kotlin/cool/jacoblin/particeps/core/protocol/JoinLink.kt), [Android staging](app/src/main/kotlin/cool/jacoblin/particeps/platform/JoinArtifactDownloader.kt), [intent entry](app/src/main/kotlin/cool/jacoblin/particeps/MainActivity.kt), then the existing [session import](core/study-application/src/main/kotlin/cool/jacoblin/particeps/core/application/StudyApplication.kt). The [outbox](app/src/test/kotlin/cool/jacoblin/particeps/platform/FileUploadOutboxTest.kt), [uploader](app/src/test/kotlin/cool/jacoblin/particeps/platform/OkHttpStudyUploaderTest.kt), and [receiver](receiver/tests/receiver.test.ts) tests make crash/replay and receipt semantics executable. Receiver deployment and R2 operations start at [`receiver/README.md`](receiver/README.md), and the Collector capability policy lives under [`assurance`](assurance/README.md).
 
 For `random_window`, trace the signed model and bounds in
-[`StudyConfiguration.kt`](core/study-definition/src/main/kotlin/cool/linc/particeps/core/definition/StudyConfiguration.kt),
+[`StudyConfiguration.kt`](core/study-definition/src/main/kotlin/cool/jacoblin/particeps/core/definition/StudyConfiguration.kt),
 its codec and [Web editor](web/src/routes/researcher/InterventionEditor.svelte), then the CSPRNG
 materialization in
-[`InterventionSchedulePlanner.kt`](core/study-application/src/main/kotlin/cool/linc/particeps/core/application/InterventionSchedulePlanner.kt).
-The [session](core/study-application/src/main/kotlin/cool/linc/particeps/core/application/StudyApplication.kt)
+[`InterventionSchedulePlanner.kt`](core/study-application/src/main/kotlin/cool/jacoblin/particeps/core/application/InterventionSchedulePlanner.kt).
+The [session](core/study-application/src/main/kotlin/cool/jacoblin/particeps/core/application/StudyApplication.kt)
 persists the occurrence before scheduling; the Android delivery/expiry workers in
-[`AndroidStudyPlatform.kt`](app/src/main/kotlin/cool/linc/particeps/platform/AndroidStudyPlatform.kt)
-and [`BootRecoveryReceiver`](app/src/main/kotlin/cool/linc/particeps/BootRecoveryReceiver.kt)
+[`AndroidStudyPlatform.kt`](app/src/main/kotlin/cool/jacoblin/particeps/platform/AndroidStudyPlatform.kt)
+and [`BootRecoveryReceiver`](app/src/main/kotlin/cool/jacoblin/particeps/BootRecoveryReceiver.kt)
 reconcile the same ID after retries, reboot, clock, or time-zone changes. The adjacent planner,
 runtime, session, and app policy tests make each boundary executable.
 
@@ -216,7 +216,7 @@ New collectors are the main contribution path — see [CONTRIBUTING.md](CONTRIBU
 
 ## Coming from a pre-rename release candidate
 
-This project was called Android Data Collector through its 1.0 release candidates; every tag published so far carries that identity. The rename to Particeps moved the Android `applicationId` from `cool.linc.androiddatacollector` to `cool.linc.particeps`, and Android treats those as two different applications. There is no upgrade and no migration: installing Particeps does not see, move, or convert anything belonging to an installed pre-rename build, which keeps running under its own name until it is removed. Uninstalling it takes its Keystore keys with it, and every study, encrypted event segment, undelivered outbox bundle, and imported configuration on that install becomes unrecoverable — cloud backup and device transfer were already disabled for this app, so nothing is held anywhere else. Export whatever is still wanted before uninstalling, and re-enable the research keyboard under the new app if a study uses it.
+This project was called Android Data Collector through its early 1.0 release candidates; every tag published so far carries an identity the current build no longer uses. The Android `applicationId` has moved twice since — `cool.linc.androiddatacollector`, then `cool.linc.particeps`, now `cool.jacoblin.particeps` — and the release signing key has been rotated. Android treats each of those as a different application, and the new certificate would refuse the update even if it did not. There is no upgrade and no migration: installing Particeps does not see, move, or convert anything belonging to an installed pre-rename build, which keeps running under its own name until it is removed. Uninstalling it takes its Keystore keys with it, and every study, encrypted event segment, undelivered outbox bundle, and imported configuration on that install becomes unrecoverable — cloud backup and device transfer were already disabled for this app, so nothing is held anywhere else. Export whatever is still wanted before uninstalling, and re-enable the research keyboard under the new app if a study uses it.
 
 Artifacts produced before the rename are unsupported for final Protocol v1. A `.adccfg` configuration, a `.adcexp` export, an `ADCCFG01` or `ADCEXP01` container, a `research-bundle-v1` document, an `adc://join/v1` link, and an upload carrying `application/vnd.adc.research-bundle` or any `X-ADC-*` header are invalid input to every current implementation and are rejected exactly as random bytes are. Re-sign configurations with the current tooling and re-run any pilot; there is no converter, and none will be added.
 

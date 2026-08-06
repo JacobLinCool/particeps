@@ -41,13 +41,15 @@ Losing the Android signing private key means no future build can update a direct
 
 ### The rename is not an upgrade path
 
-The rename deliberately left the release signing key alone; rotating it would strand every build already installed under the old certificate. That does not make the first post-rename APK an update to an installed pre-rename one. A device identifies an installed application by its `applicationId`, and that moved from `cool.linc.androiddatacollector` to `cool.linc.particeps`, so Android treats the two as unrelated applications: they install side by side, share nothing, and neither can update the other. The shared signing key means only that both builds came from the same maintainer.
+Nothing published before `cool.jacoblin.particeps` can be updated in place, and two independent things guarantee that. The `applicationId` moved twice — `cool.linc.androiddatacollector`, then `cool.linc.particeps`, now `cool.jacoblin.particeps` — and a device identifies an installed application by that value, so Android treats each as unrelated to the others. The release signing key was then rotated as well, which changes the certificate a device compares on update. Either alone would be enough; both together mean there is no version of this app on anyone's phone that the current build can replace.
+
+The key was rotated to correct the certificate's subject, which named the pre-rename product and cannot be edited in place — a certificate is signed over its own subject, so changing it means issuing a new one. That was affordable only because every tag published to that point was a pre-1.0 release candidate and Developer Verification had not yet been registered. It stops being affordable the moment a real participant is running a released build, so it does not happen again.
 
 Every tester installs the new APK fresh and uninstalls the old one themselves. Uninstalling takes the old app's encrypted storage with it, and there is no migration: the storage key is non-exportable, so data written by the pre-rename build can leave only through that build's own export, in the pre-rename formats, which current tooling does not read. A tester holding data worth keeping should export it before uninstalling and analyse it with the pre-rename tooling. State this in the release notes for the first post-rename tag; a tester expecting an in-place update will otherwise read a correct install as a failed one.
 
 ## Android Developer Verification
 
-Google's Developer Verification binds a verified developer identity to the package names that developer distributes and the certificates those packages are signed with. Registration is per package name. `cool.linc.particeps` has never been registered, so it needs its own entry, and an entry for `cool.linc.androiddatacollector` does not cover it. The certificate is the part that carries over unchanged: register the new `applicationId` with the same SHA-256 fingerprint the release keystore has always produced.
+Google's Developer Verification binds a verified developer identity to the package names that developer distributes and the certificates those packages are signed with. Registration is per package name, and no name this project has used was ever registered, so `cool.jacoblin.particeps` needs its own entry from scratch. Register it against the fingerprint of the **current** keystore — the rotation above means any fingerprint recorded before it is wrong.
 
 ```bash
 apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk
@@ -93,7 +95,7 @@ The rename is not a recurring step, but it is not finished when the code lands e
 
 1. Rename the GitHub repository from `android-data-collector` to `particeps`, and update its description, topics, and homepage. Do this only once `main` carries the renamed tree, because the badges, documentation links, and `BASE_PATH` in it all assume the new name. Repository secrets survive a rename and need nothing.
 2. Dispatch Pages fresh (`gh workflow run pages.yml --ref main`) rather than re-running the run that straddled the rename, verify the published HTML carries no old-name asset paths, and reissue any join link or QR that pointed at the old one.
-3. Register `cool.linc.particeps` under Developer Verification with the existing certificate fingerprint, as above.
+3. Register `cool.jacoblin.particeps` under Developer Verification with the existing certificate fingerprint, as above.
 4. Cut the first post-rename tag, restore `version` and `date-released` in `CITATION.cff` as part of it, and say plainly in its release notes that it is a fresh install rather than an update.
 
 ## Pinned signers
