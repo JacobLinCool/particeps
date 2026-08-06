@@ -28,10 +28,9 @@ keywords:
   - participant control
   - android
 license: MIT
-# No `version` or `date-released` here, on purpose. Every tag this repository has published
-# (v1.0.0-rc.1 through v1.0.0-rc.3) predates the rename: those builds carry the pre-rename
-# identity, a different applicationId, and different file formats, and the project does not
-# support them. Naming one of them as a version of Particeps would cite a release that does
-# not exist, so this file cites the repository instead and a citation of it carries no version.
-# TODO: when the first post-rename tag ships, add `version` and `date-released` back as part of
-# cutting it, and keep updating both at each tagged release thereafter.
+# v1.0.0-rc.4 is the first release candidate that is Particeps. The three before it
+# (v1.0.0-rc.1 through v1.0.0-rc.3) carry the pre-rename identity, a different applicationId, and
+# different file formats; they are unsupported and are not versions of this software. Keep both
+# fields in step with the tag at every release.
+version: 1.0.0-rc.4
+date-released: "2026-08-06"
