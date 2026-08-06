@@ -11,13 +11,16 @@ import android.net.Uri
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.Data
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import cool.linc.particeps.CollectionService
+import cool.linc.particeps.DailyStatusWorker
 import cool.linc.particeps.ExperimentDeadlineWorker
 import cool.linc.particeps.MainActivity
 import cool.linc.particeps.R
@@ -77,6 +80,29 @@ class AndroidStudyWorkScheduler(
                 ExistingWorkPolicy.REPLACE,
             )
         }
+        scheduleDailyStatus()
+    }
+
+    /**
+     * The daily reminder, which runs for as long as the study is either collecting or paused.
+     *
+     * Periodic rather than a self-renewing chain, unlike delivery: a day is far above WorkManager's
+     * fifteen-minute floor, so nothing is silently clamped, and periodic work is re-established by
+     * the platform across reboots without this app having to remember to do it. KEEP so that
+     * re-entering a study — a resume, a process restart — does not push the next reminder a full
+     * day away each time.
+     *
+     * Deliberately not cancelled on pause. A paused study is exactly the case the reminder exists
+     * for; [cancelCollectionWork] retires it when the study actually ends.
+     */
+    private fun scheduleDailyStatus() {
+        workManager.enqueueUniquePeriodicWork(
+            DAILY_STATUS_WORK_NAME,
+            ExistingPeriodicWorkPolicy.KEEP,
+            PeriodicWorkRequestBuilder<DailyStatusWorker>(1, TimeUnit.DAYS)
+                .setInitialDelay(1, TimeUnit.DAYS)
+                .build(),
+        )
     }
 
     override fun replaceInterventionWork(
@@ -184,6 +210,9 @@ class AndroidStudyWorkScheduler(
      * is left alone rather than having its delay reset on every app start.
      */
     fun reschedulePendingWork(configuration: StudyConfiguration) {
+        // Also covers a study that was already under way before the reminder existed, and one
+        // whose periodic work a force stop cleared.
+        scheduleDailyStatus()
         configuration.upload?.let {
             scheduleUpload(
                 configuration.experimentId,
@@ -207,6 +236,10 @@ class AndroidStudyWorkScheduler(
     override fun cancelCollectionWork(experimentId: String, occurrenceIds: Set<String>) {
         cancelInterventionWork(experimentId, occurrenceIds)
         workManager.cancelUniqueWork(deadlineWorkName(experimentId))
+        // Finished or withdrawn: the reminder has nothing left to remind anyone of, and today's
+        // notification would otherwise sit in the shade after the study it describes has ended.
+        workManager.cancelUniqueWork(DAILY_STATUS_WORK_NAME)
+        notificationManager.cancel(DailyStatusWorker.NOTIFICATION_TAG, 0)
     }
 
     override fun cancel(experimentId: String) {
@@ -215,6 +248,7 @@ class AndroidStudyWorkScheduler(
     }
 
     private fun deadlineWorkName(experimentId: String) = "particeps-deadline-$experimentId"
+    private val DAILY_STATUS_WORK_NAME = "particeps-daily-status"
     private fun uploadTag(experimentId: String) = "particeps-upload-$experimentId"
     companion object {
         fun uploadWorkName(experimentId: String, configurationId: String) =

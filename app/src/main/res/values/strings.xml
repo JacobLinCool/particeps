@@ -14,6 +14,11 @@
     -->
     <string name="app_name" translatable="false">Particeps</string>
     <string name="intervention_channel">Research activities</string>
+    <string name="daily_channel">Daily study reminder</string>
+    <string name="daily_running">Still collecting. Open the app to pause, export, or finish early.</string>
+    <!-- %1$s is a locale-formatted date and time. -->
+    <string name="daily_paused_since">Paused since %1$s. Nothing is being collected until you resume.</string>
+    <string name="daily_paused_unknown">Paused. Nothing is being collected until you resume.</string>
     <string name="survey_title">Survey</string>
     <string name="survey_loading">Opening survey…</string>
     <string name="survey_required">Required</string>
