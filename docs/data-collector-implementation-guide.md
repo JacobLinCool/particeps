@@ -10,7 +10,7 @@ covers only the collector side of that boundary. The [normative Protocol v1 cont
 defines the enclosing configuration and bundle. Its machine-readable schema source is the
 [Protocol v1 collector catalog](../protocol/v1/collector-catalog.json); the generated Kotlin
 projection is
-[`ProtocolEventContracts.kt`](../core/collector-api/src/main/kotlin/cool/linc/androiddatacollector/core/collector/ProtocolEventContracts.kt).
+[`ProtocolEventContracts.kt`](../core/collector-api/src/main/kotlin/cool/linc/particeps/core/collector/ProtocolEventContracts.kt).
 Read the [Collector capability policy](../assurance/README.md) before adding a module; CI enforces
 its source, bytecode, and dependency boundaries.
 
@@ -32,7 +32,7 @@ codec's `when` over collector IDs is the allowlist.
 ## 2. The contract
 
 Every type below is declared in one file:
-[`core/collector-api/.../CollectorContracts.kt`](../core/collector-api/src/main/kotlin/cool/linc/androiddatacollector/core/collector/CollectorContracts.kt).
+[`core/collector-api/.../CollectorContracts.kt`](../core/collector-api/src/main/kotlin/cool/linc/particeps/core/collector/CollectorContracts.kt).
 The only other file in `:core:collector-api` is the shared base class covered in
 [section 6](#6-lifecycle).
 
@@ -115,7 +115,7 @@ machine, no scheduler, no exporter, and no `Activity`. That narrowness is the bo
 see [section 3](#3-invariants-a-collector-must-hold).
 
 `ResearchTime` carries three readings taken together
-([`core/model/.../ExperimentModels.kt`](../core/model/src/main/kotlin/cool/linc/androiddatacollector/core/model/ExperimentModels.kt)):
+([`core/model/.../ExperimentModels.kt`](../core/model/src/main/kotlin/cool/linc/particeps/core/model/ExperimentModels.kt)):
 
 ```kotlin
 data class ResearchTime(
@@ -155,7 +155,7 @@ interface EventSink {
 
 `AdmissionToken` is a marker interface with no members. The only implementation is
 `EventAdmissionGate.EpochToken`, which is `private` inside
-[`core/experiment-runtime/.../EventAdmissionGate.kt`](../core/experiment-runtime/src/main/kotlin/cool/linc/androiddatacollector/core/runtime/EventAdmissionGate.kt).
+[`core/experiment-runtime/.../EventAdmissionGate.kt`](../core/experiment-runtime/src/main/kotlin/cool/linc/particeps/core/runtime/EventAdmissionGate.kt).
 A collector can write `object : AdmissionToken {}`, but the gate's `epoch()` extension maps
 any foreign implementation to `Long.MIN_VALUE`, which never equals a live epoch, so the
 event is rejected. Forging a token is possible; forging an accepted token is not.
@@ -249,7 +249,7 @@ FOREGROUND_SERVICE_SPECIAL_USE  INTERNET              PACKAGE_USAGE_STATS
 POST_NOTIFICATIONS           RECEIVE_BOOT_COMPLETED   WAKE_LOCK
 ```
 
-plus the signature-level `cool.linc.androiddatacollector.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`
+plus the signature-level `cool.linc.particeps.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`
 that AndroidX contributes. `INTERNET` belongs to the study application layer's upload worker;
 its presence no longer tells you whether any given study transmits, which is why bytecode and
 dependency policy are required in addition to a permission diff.
@@ -301,7 +301,7 @@ fun pluginFor(configuration: CollectorConfiguration): CollectorPlugin =
 ### Strict configuration decoding
 
 Configuration decoding lives in
-[`StudyConfigurationCodec`](../core/study-definition/src/main/kotlin/cool/linc/androiddatacollector/core/definition/StudyConfigurationCodec.kt).
+[`StudyConfigurationCodec`](../core/study-definition/src/main/kotlin/cool/linc/particeps/core/definition/StudyConfigurationCodec.kt).
 It is strict in a specific, checkable way:
 
 - `requireExactKeys` demands the exact key set. Unknown keys, missing keys, and renamed keys
@@ -317,7 +317,7 @@ equally to a configuration built in a test.
 ## 6. Lifecycle
 
 The base class for callback-driven collectors is
-[`SerializedCallbackCollector`](../core/collector-api/src/main/kotlin/cool/linc/androiddatacollector/core/collector/SerializedCallbackCollector.kt).
+[`SerializedCallbackCollector`](../core/collector-api/src/main/kotlin/cool/linc/particeps/core/collector/SerializedCallbackCollector.kt).
 It marks all four lifecycle methods `final` and leaves you two:
 
 ```kotlin
@@ -412,7 +412,7 @@ capture {
 
 ### What `EventDraft` allows
 
-From [`core/model/.../ExperimentModels.kt`](../core/model/src/main/kotlin/cool/linc/androiddatacollector/core/model/ExperimentModels.kt):
+From [`core/model/.../ExperimentModels.kt`](../core/model/src/main/kotlin/cool/linc/particeps/core/model/ExperimentModels.kt):
 
 | Constraint | Value |
 | --- | --- |
@@ -555,7 +555,7 @@ Payload types: `ACTIVITY_CREATED`, `ACTIVITY_STARTED`, `ACTIVITY_RESUMED`, `ACTI
 Field: `activity_class`. Registration goes through `Application.registerActivityLifecycleCallbacks`
 on `Dispatchers.Main.immediate`, so it observes only this app's own activities.
 
-This is not app usage. It says when the participant looked at the collector app itself.
+This is not app usage. It says when the participant looked at Particeps itself.
 
 ### `accelerometer.v1`
 
@@ -584,7 +584,7 @@ contain samples taken up to the report latency earlier.
 `x_meters_per_second_squared`, `y_meters_per_second_squared`,
 `z_meters_per_second_squared`, `accuracy`.
 
-The listener runs on a dedicated `HandlerThread` named `adc-accelerometer`. Axes and units
+The listener runs on a dedicated `HandlerThread` named `particeps-accelerometer`. Axes and units
 are Android's, unmodified. The collector performs no filtering, no gravity removal, and no
 inference. It does not produce step counts, postures, or activity labels; those are the
 analyst's claims to make and defend.
@@ -608,20 +608,20 @@ a zone setting is never labelled as location or travel.
 
 The configuration and Android listener/batching semantics mirror `accelerometer.v1`.
 `GYROSCOPE_SAMPLE` carries source elapsed-realtime nanoseconds, raw x/y/z rad/s, and accuracy.
-`AndroidSensorCollector` owns its `adc-gyroscope` handler thread and pause/stop cleanup. No
+`AndroidSensorCollector` owns its `particeps-gyroscope` handler thread and pause/stop cleanup. No
 orientation or activity inference is present.
 
 ### `ambient_light.v1`
 
 `sampling_period_us` is 200,000–10,000,000 and `change_threshold_millilux` is
-0–100,000,000. `AndroidSensorCollector` owns a 256-event queue and the `adc-ambient-light`
+0–100,000,000. `AndroidSensorCollector` owns a 256-event queue and the `particeps-ambient-light`
 thread. Non-finite/negative readings are refused; the collector emits raw lux and accuracy only
 after both monotonic period and change gates.
 
 ### `proximity.v1`
 
 `minimum_event_interval_ms` is 100–60,000 and `change_threshold_millimeters` is 0–10,000.
-`AndroidSensorCollector` owns a 256-event queue and the `adc-proximity` thread. A tested
+`AndroidSensorCollector` owns a 256-event queue and the `particeps-proximity` thread. A tested
 latest-value gate retains the newest meaningful sample inside the interval. Payload is raw distance,
 declared maximum range, and `distance < maximumRange`; many devices expose binary behavior, so no
 cross-device precision or presence claim is made.
@@ -770,7 +770,7 @@ after the study started.
 `speed_accuracy_meters_per_second`, `bearing_degrees`, and `bearing_accuracy_degrees` when
 the platform reports each as present.
 
-The callback runs on a dedicated `HandlerThread` named `adc-location`; pause and stop remove
+The callback runs on a dedicated `HandlerThread` named `particeps-location`; pause and stop remove
 updates and flush.
 
 A fix is a fused estimate with a stated accuracy radius, not ground truth. The `mock` field
@@ -848,23 +848,23 @@ directly; the Collector capability policy does not inspect app manifests.
 
 ### Step 2 — typed configuration
 
-[`StudyConfiguration.kt`](../core/study-definition/src/main/kotlin/cool/linc/androiddatacollector/core/definition/StudyConfiguration.kt)
+[`StudyConfiguration.kt`](../core/study-definition/src/main/kotlin/cool/linc/particeps/core/definition/StudyConfiguration.kt)
 owns `AmbientLightConfiguration`: `sampling_period_us` is bounded to 200,000–10,000,000 and
 `change_threshold_millilux` to 0–100,000,000. Constructor validation is the one range authority;
 the catalog and Web editor must match it exactly.
 
 ### Step 3 — strict codec
 
-[`StudyConfigurationCodec.kt`](../core/study-definition/src/main/kotlin/cool/linc/androiddatacollector/core/definition/StudyConfigurationCodec.kt)
+[`StudyConfigurationCodec.kt`](../core/study-definition/src/main/kotlin/cool/linc/particeps/core/definition/StudyConfigurationCodec.kt)
 requires exactly both integer keys and encodes them through the exhaustive sealed-interface
 branch. Decode then re-encodes and byte-compares canonical JSON. The compact
-[`P2ConfigurationTest`](../core/study-definition/src/test/kotlin/cool/linc/androiddatacollector/core/definition/P2ConfigurationTest.kt)
+[`P2ConfigurationTest`](../core/study-definition/src/test/kotlin/cool/linc/particeps/core/definition/P2ConfigurationTest.kt)
 covers both boundaries, values just outside them, missing/unknown keys, wrong JSON types, and
 canonical round-trip.
 
 ### Step 4 — access kind
 
-`AMBIENT_LIGHT_HARDWARE` is a closed [`AccessKind`](../core/collector-api/src/main/kotlin/cool/linc/androiddatacollector/core/collector/CollectorContracts.kt).
+`AMBIENT_LIGHT_HARDWARE` is a closed [`AccessKind`](../core/collector-api/src/main/kotlin/cool/linc/particeps/core/collector/CollectorContracts.kt).
 Every exhaustive `when` and the app build fail until the following participant-facing surfaces
 agree:
 
@@ -894,8 +894,8 @@ Never hand-edit the generated Kotlin projection. CI proves that it and the catal
 
 ### Step 6 — the collector
 
-Use the production [ambient-light collector](../collector/ambient-light/src/main/kotlin/cool/linc/androiddatacollector/collector/ambientlight/AmbientLightCollector.kt)
-as the compact reference and the shared [sensor lifecycle owner](../collector/sensor-common/src/main/kotlin/cool/linc/androiddatacollector/collector/sensorcommon/AndroidSensorCollector.kt)
+Use the production [ambient-light collector](../collector/ambient-light/src/main/kotlin/cool/linc/particeps/collector/ambientlight/AmbientLightCollector.kt)
+as the compact reference and the shared [sensor lifecycle owner](../collector/sensor-common/src/main/kotlin/cool/linc/particeps/collector/sensorcommon/AndroidSensorCollector.kt)
 for listener-thread ownership. Keeping the example as links instead of a copied implementation
 prevents this guide from becoming a second, stale collector.
 
@@ -909,14 +909,14 @@ The boundaries worth preserving are:
   independently trigger one.
 - Units remain in field names and the catalog. There is no smoothing or derived indoor/presence
   inference.
-- The focused [collector test](../collector/ambient-light/src/test/kotlin/cool/linc/androiddatacollector/collector/ambientlight/AmbientLightCollectorTest.kt)
-  proves coalescing and capture-time behavior; the shared [lifecycle test](../collector/sensor-common/src/test/kotlin/cool/linc/androiddatacollector/collector/sensorcommon/SensorSourceLifecycleTest.kt)
+- The focused [collector test](../collector/ambient-light/src/test/kotlin/cool/linc/particeps/collector/ambientlight/AmbientLightCollectorTest.kt)
+  proves coalescing and capture-time behavior; the shared [lifecycle test](../collector/sensor-common/src/test/kotlin/cool/linc/particeps/collector/sensorcommon/SensorSourceLifecycleTest.kt)
   proves failure cleanup.
 
 ### Step 7 — register in the app
 
 [`app/build.gradle.kts`](../app/build.gradle.kts) takes the module, and
-[`CollectorApplication.kt`](../app/src/main/kotlin/cool/linc/androiddatacollector/CollectorApplication.kt)
+[`CollectorApplication.kt`](../app/src/main/kotlin/cool/linc/particeps/CollectorApplication.kt)
 constructs `AmbientLightCollectorPlugin` in the compiled allowlist. `CollectorRegistry` rejects an
 unknown configured ID; the catalog is not runtime plugin loading. The Web control, codec, app
 allowlist, and catalog parity checks must all land together.
@@ -926,9 +926,9 @@ allowlist, and catalog parity checks must all land together.
 - Configuration tests in `core/study-definition/src/test/...` covering nominal values, both
   range boundaries, values outside both bounds, unknown/missing keys, a wrong JSON type, and
   canonical round-trip. Follow
-  [`NetworkUsageConfigurationTest`](../core/study-definition/src/test/kotlin/cool/linc/androiddatacollector/core/definition/NetworkUsageConfigurationTest.kt).
+  [`NetworkUsageConfigurationTest`](../core/study-definition/src/test/kotlin/cool/linc/particeps/core/definition/NetworkUsageConfigurationTest.kt).
 - Collector tests using the fake sink pattern in
-  [`SerializedCallbackCollectorTest`](../core/collector-api/src/test/kotlin/cool/linc/androiddatacollector/core/collector/SerializedCallbackCollectorTest.kt):
+  [`SerializedCallbackCollectorTest`](../core/collector-api/src/test/kotlin/cool/linc/particeps/core/collector/SerializedCallbackCollectorTest.kt):
   admission refusal, storage failure, failed registration, failed unregistration.
 - Add the collector to
   [`researcher-tools/examples/demo-study.json`](../researcher-tools/examples/demo-study.json)

@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "cool.linc.androiddatacollector.collector.keyboardime"
+    namespace = "cool.linc.particeps.collector.keyboardime"
     compileSdk = 37
     defaultConfig { minSdk = 34 }
     compileOptions {

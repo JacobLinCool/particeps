@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { bundleContext, openBundle, type ResearchDocument } from '../src/lib/adc/bundle';
-import { canonicalize } from '../src/lib/adc/canonical';
-import { generateHpkeKeyPair } from '../src/lib/adc/crypto';
+import { bundleContext, openBundle, type ResearchDocument } from '../src/lib/particeps/bundle';
+import { canonicalize } from '../src/lib/particeps/canonical';
+import { generateHpkeKeyPair } from '../src/lib/particeps/crypto';
 import { HPKE, SIGNING, validConfiguration } from './fixture';
 import { sealBundle } from './seal';
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
-describe('ADCEXP01 Protocol v1 reader', () => {
+describe('PTCEXP01 Protocol v1 reader', () => {
   it('opens the fixed RFC 9180 framing and preserves decimal 64-bit values', async () => {
     const configuration = validConfiguration();
     const bytes = await sealBundle(configuration, SIGNING.privateKey);
-    expect(new TextDecoder().decode(bytes.subarray(0, 8))).toBe('ADCEXP01');
+    expect(new TextDecoder().decode(bytes.subarray(0, 8))).toBe('PTCEXP01');
     expect(new DataView(bytes.buffer).getUint16(56)).toBe(
       new TextEncoder().encode(configuration.export.researcher_key_id).length
     );
@@ -37,7 +37,7 @@ describe('ADCEXP01 Protocol v1 reader', () => {
         )
       )
     ).toBe(
-      '{"bundle_format":"research-bundle-v1","bundle_id":"00112233-4455-4677-8899-aabbccddeeff","configuration_sha256":"' +
+      '{"bundle_format":"particeps-research-bundle-v1","bundle_id":"00112233-4455-4677-8899-aabbccddeeff","configuration_sha256":"' +
         '00'.repeat(32) +
         '","researcher_key_id":"protocol-export"}'
     );
@@ -179,10 +179,22 @@ describe('ADCEXP01 Protocol v1 reader', () => {
     });
   });
 
-  it('rejects old or truncated v1 framing rather than sniffing a fallback', async () => {
-    const oldHeader = new Uint8Array(64);
-    oldHeader.set(new TextEncoder().encode('ADCEXP01'));
-    expect(await openBundle(oldHeader, validConfiguration(), HPKE.privateKey)).toEqual({
+  it('rejects a truncated PTCEXP01 header and the retired ADCEXP01 magic on an otherwise valid bundle', async () => {
+    const configuration = validConfiguration();
+    const truncated = new Uint8Array(64);
+    truncated.set(new TextEncoder().encode('PTCEXP01'));
+    expect(await openBundle(truncated, configuration, HPKE.privateKey)).toEqual({
+      ok: false,
+      failure: 'not_a_bundle'
+    });
+
+    const valid = await sealBundle(configuration, SIGNING.privateKey);
+    expect(await openBundle(valid, configuration, HPKE.privateKey)).toMatchObject({ ok: true });
+    const retired = valid.slice();
+    // Retired-identity rejection fixture. `ADCEXP01` is the old export magic and must stay spelled
+    // out here: a rename sweep that "fixes" it would leave this test proving nothing.
+    retired.set(new TextEncoder().encode('ADCEXP01'));
+    expect(await openBundle(retired, configuration, HPKE.privateKey)).toEqual({
       ok: false,
       failure: 'not_a_bundle'
     });

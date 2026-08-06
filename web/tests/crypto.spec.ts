@@ -8,8 +8,8 @@ import {
   sign,
   signingKeyPairFromPrivate,
   verify
-} from '../src/lib/adc/crypto';
-import { decodeEnvelope, encodeEnvelope } from '../src/lib/adc/envelope';
+} from '../src/lib/particeps/crypto';
+import { decodeEnvelope, encodeEnvelope } from '../src/lib/particeps/envelope';
 
 describe('raw Protocol v1 keys', () => {
   it('generates and reopens raw 32-byte Ed25519 and X25519 artifacts', () => {
@@ -41,12 +41,12 @@ describe('raw Protocol v1 keys', () => {
   });
 });
 
-describe('fixed ADCCFG01 envelope', () => {
+describe('fixed PTCCFG01 envelope', () => {
   it('has no signature-length field and round-trips exactly 64 signature bytes', () => {
     const configuration = new TextEncoder().encode('{"a":1}');
     const signature = new Uint8Array(64).fill(9);
     const bytes = encodeEnvelope('protocol-signer', configuration, signature);
-    expect(new TextDecoder().decode(bytes.subarray(0, 8))).toBe('ADCCFG01');
+    expect(new TextDecoder().decode(bytes.subarray(0, 8))).toBe('PTCCFG01');
     expect(new DataView(bytes.buffer).getUint16(8)).toBe(15);
     expect(new DataView(bytes.buffer).getUint32(10)).toBe(configuration.length);
     expect(bytes).toHaveLength(14 + 15 + configuration.length + 64);

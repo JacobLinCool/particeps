@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "adc-ciphertext-receiver",
+  "name": "particeps-ciphertext-receiver",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-30",
   "workers_dev": false,
@@ -13,7 +13,7 @@
   "r2_buckets": [
     {
       "binding": "BUNDLES",
-      "bucket_name": "adc-ciphertext-replace-me"
+      "bucket_name": "particeps-ciphertext-replace-me"
     }
   ],
   "vars": {

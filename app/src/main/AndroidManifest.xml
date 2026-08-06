@@ -27,7 +27,7 @@
         android:label="@string/app_name"
         android:localeConfig="@xml/locales_config"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AndroidDataCollector"
+        android:theme="@style/Theme.Particeps"
         android:usesCleartextTraffic="false">
         <activity
             android:name=".MainActivity"
@@ -41,7 +41,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
-                    android:scheme="adc"
+                    android:scheme="particeps"
                     android:host="join"
                     android:path="/v1" />
             </intent-filter>

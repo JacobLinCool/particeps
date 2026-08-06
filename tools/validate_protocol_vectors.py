@@ -61,10 +61,16 @@ def validate(path: Path = VECTORS) -> None:
     )
     if set(value) != {"corpus_format", "hostile", "schema_version", "valid"}:
         fail("corpus root is not closed-world")
-    if value["corpus_format"] != "adc-protocol-conformance-v1" or value["schema_version"] != 1:
+    if value["corpus_format"] != "particeps-protocol-conformance-v1" or value["schema_version"] != 1:
         fail("corpus identity is wrong")
     valid = value["valid"]
-    if set(valid) != {"bundle", "canonical_json", "signed_configuration", "upload_receipt"}:
+    if set(valid) != {
+        "bundle",
+        "canonical_json",
+        "signed_configuration",
+        "upload_request",
+        "upload_receipt",
+    }:
         fail("valid corpus is incomplete")
     if set(valid["canonical_json"]) != {"canonical_jcs_utf8_hex"}:
         fail("valid canonical JSON fixture is not closed-world")
@@ -88,7 +94,7 @@ def validate(path: Path = VECTORS) -> None:
     if hashlib.sha256(canonical).hexdigest() != config["canonical_jcs_sha256"]:
         fail("configuration digest mismatch")
     envelope = raw(config["envelope_hex"], "configuration envelope")
-    if envelope[:8] != b"ADCCFG01":
+    if envelope[:8] != b"PTCCFG01":
         fail("configuration magic mismatch")
     key_length, config_length = struct.unpack(">HI", envelope[8:14])
     if envelope[14 : 14 + key_length].decode() != config["signer_key_id"]:
@@ -113,7 +119,7 @@ def validate(path: Path = VECTORS) -> None:
     }:
         fail("valid bundle fixture is not closed-world")
     container = raw(bundle["container_hex"], "bundle")
-    if container[:8] != b"ADCEXP01" or hashlib.sha256(container).hexdigest() != bundle["sha256"]:
+    if container[:8] != b"PTCEXP01" or hashlib.sha256(container).hexdigest() != bundle["sha256"]:
         fail("bundle framing or digest mismatch")
     key_length = struct.unpack(">H", container[56:58])[0]
     key_id = container[70 : 70 + key_length].decode()
@@ -125,6 +131,19 @@ def validate(path: Path = VECTORS) -> None:
         fail("bundle context does not match framing")
     if len(raw(bundle["hpke_wrapped_content_key_hex"], "wrapped key")) != 80:
         fail("HPKE wrapped key must be 80 bytes")
+    request = valid["upload_request"]
+    if set(request) != {"bundle_format", "media_type", "routing_headers"}:
+        fail("valid upload request fixture is not closed-world")
+    headers = request["routing_headers"]
+    if (
+        not isinstance(headers, list)
+        or len(headers) != 7
+        or len(set(headers)) != 7
+        or sorted(headers) != headers
+    ):
+        fail("upload routing headers must be seven sorted distinct names")
+    if not all(isinstance(name, str) and name.startswith("X-Particeps-") for name in headers):
+        fail("upload routing headers must all be X-Particeps-* names")
     receipt = valid["upload_receipt"]
     if set(receipt) != {"canonical_jcs_utf8_hex", "value"} or set(receipt["value"]) != {
         "bundle_id",
@@ -192,7 +211,7 @@ def validate_join(path: Path = JOIN_VECTORS) -> None:
     )
     if set(value) != {"corpus_format", "hostile", "schema_version", "valid"}:
         fail("join corpus root is not closed-world")
-    if value["corpus_format"] != "adc-join-link-conformance-v1" or value["schema_version"] != 1:
+    if value["corpus_format"] != "particeps-join-link-conformance-v1" or value["schema_version"] != 1:
         fail("join corpus identity is wrong")
     valid = value["valid"]
     if set(valid) != {"artifact_sha256", "artifact_url", "encoded", "signer_fingerprint"}:

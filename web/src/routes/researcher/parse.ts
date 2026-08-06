@@ -1,7 +1,7 @@
 /**
- * Reading a study back in: a canonical `.json`, a draft `.json`, or a signed `.adccfg`.
+ * Reading a study back in: a canonical `.json`, a draft `.json`, or a signed `.partcfg`.
  *
- * `lib/adc` writes these three and never reads them, because the app and the CLI are the readers.
+ * `lib/particeps` writes these three and never reads them, because the app and the CLI are the readers.
  * The editor is the fourth, and the cross-language workflow depends on it — one signed
  * configuration variant means opening the first one, changing the signed content, and issuing a
  * new `configuration_id` under the same signer.
@@ -30,14 +30,14 @@ import {
   type SurveyDefinition,
   type SurveyQuestion,
   type StudyConfiguration
-} from '$lib/adc/types';
-import { canonicalConfigurationBytes, parseCanonicalJson } from '$lib/adc/canonical';
-import { decodeEnvelope, isEnvelope } from '$lib/adc/envelope';
-import { verify } from '$lib/adc/crypto';
-import { validate } from '$lib/adc/schema';
-import { PLATFORM } from '$lib/adc/types';
+} from '$lib/particeps/types';
+import { canonicalConfigurationBytes, parseCanonicalJson } from '$lib/particeps/canonical';
+import { decodeEnvelope, isEnvelope } from '$lib/particeps/envelope';
+import { verify } from '$lib/particeps/crypto';
+import { validate } from '$lib/particeps/schema';
+import { PLATFORM } from '$lib/particeps/types';
 
-export { decodeEnvelope, isEnvelope } from '$lib/adc/envelope';
+export { decodeEnvelope, isEnvelope } from '$lib/particeps/envelope';
 
 /**
  * A closed-world structural read, field by field. Unknown, absent, or mistyped fields are refused

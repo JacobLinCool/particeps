@@ -13,7 +13,7 @@
  * The constants are order-of-magnitude and live in one place so they can be argued with as a set.
  */
 
-import type { CollectorConfig, StudyConfiguration } from '$lib/adc/types';
+import type { CollectorConfig, StudyConfiguration } from '$lib/particeps/types';
 
 export interface Rate {
   events: number;

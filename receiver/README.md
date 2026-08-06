@@ -1,4 +1,4 @@
-# ADC ciphertext receiver
+# Particeps ciphertext receiver
 
 This directory contains the complete server-side surface for automatic uploads. It is one
 Cloudflare Worker, one deployment-fixed `POST` path, and one R2 binding. The normative request,
@@ -6,7 +6,7 @@ bundle, and receipt contract is [`../protocol/v1/README.md`](../protocol/v1/READ
 boundaries are in
 [`../docs/p0-p2-implementation-contract.md`](../docs/p0-p2-implementation-contract.md).
 
-The Worker accepts a bounded `ADCEXP01` ciphertext stream and stores it under its bundle UUID. It
+The Worker accepts a bounded `PTCEXP01` ciphertext stream and stores it under its bundle UUID. It
 checks the Protocol v1 content headers, untrusted routing claims, visible outer bundle identities,
 actual byte count, and SHA-256. It never buffers a complete bundle. A create-only R2 write returns
 `201`; an exact replay returns the same canonical receipt with `200`; reuse of a bundle UUID with
@@ -14,12 +14,20 @@ different bytes or metadata returns `409`. No success response is produced befor
 has completed. The verifier feeds R2 through a `FixedLengthStream`, preserving backpressure while
 meeting R2's requirement that streamed uploads have a known length.
 
-The application-header vocabulary is closed-world. Apart from the ten Protocol v1 headers, the
-Worker ignores only the ordinary OkHttp transport headers and headers in Cloudflare's
+The application-header vocabulary is closed-world. The ten Protocol v1 headers are `Content-Type`,
+`Content-Length`, `Content-Digest`, and the seven `X-Particeps-*` routing claims; `Content-Type`
+must be exactly `application/vnd.particeps.research-bundle` and `X-Particeps-Bundle-Format` exactly
+`particeps-research-bundle-v1`. Apart from those ten, the Worker ignores only the ordinary OkHttp
+transport headers and headers in Cloudflare's
 [edge HTTP header reference](https://developers.cloudflare.com/fundamentals/reference/http-headers/).
 Local Wrangler/Miniflare's `MF-Original-Hostname` transport header is also ignored.
 Every other client-controlled header is rejected. In particular, credentials, cookies, alternate
 content encodings, and extra routing headers cannot silently acquire meaning.
+
+The retired Android Data Collector vocabulary has no standing here. An `X-ADC-*` name is an unknown
+header, `research-bundle-v1` is an unknown bundle format, and `application/vnd.adc.research-bundle`
+is an unknown media type. Each is rejected with `400 invalid_request` exactly as random input is,
+and the Worker carries no alias, sniffing heuristic, or fallback that would accept them.
 
 This is deliberately not an application server. It has no participant or device authentication,
 private key, decryption, listing, download, deletion, administration, dashboard, remote control,
@@ -64,7 +72,7 @@ key ID, as required by Protocol v1.
 | `src/contract.ts` | Closed-world request/outer-header parsing, R2 metadata identity, receipt bytes |
 | `src/verified-body.ts` | Backpressured length, prefix, and streaming SHA-256 verification |
 | `src/index.ts` | Single-route HTTP flow and create-only R2 transaction |
-| `tests/receiver.test.ts` | Fake-R2 replay, race, conflict, bound, and failure-path coverage |
+| `tests/receiver.test.ts` | Fake-R2 replay, race, conflict, bound, retired-identity, and failure-path coverage |
 | `tests/receiver.workerd.test.ts` | Real workerd/R2 upload and replay against the shared Protocol corpus |
 | `wrangler.example.jsonc` | The complete production binding and deployment template |
 

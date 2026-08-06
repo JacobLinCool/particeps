@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "cool.linc.androiddatacollector.core.storage"
+    namespace = "cool.linc.particeps.core.storage"
     compileSdk = 37
 
     defaultConfig {

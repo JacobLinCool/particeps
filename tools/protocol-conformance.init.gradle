@@ -7,7 +7,7 @@ gradle.beforeProject { project ->
                 .sourceSets.getByName("test")
                 .kotlin.srcDir(project.rootProject.file("tools/conformance/kotlin"))
             project.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
-                systemProperty("adc.repository.root", project.rootProject.projectDir.absolutePath)
+                systemProperty("particeps.repository.root", project.rootProject.projectDir.absolutePath)
             }
         }
     }

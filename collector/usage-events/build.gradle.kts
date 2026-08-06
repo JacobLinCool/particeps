@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "cool.linc.androiddatacollector.collector.usageevents"
+    namespace = "cool.linc.particeps.collector.usageevents"
     compileSdk = 37
     defaultConfig { minSdk = 34 }
     compileOptions {

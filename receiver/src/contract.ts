@@ -1,9 +1,9 @@
-export const BUNDLE_FORMAT = "research-bundle-v1";
-export const BUNDLE_MEDIA_TYPE = "application/vnd.adc.research-bundle";
+export const BUNDLE_FORMAT = "particeps-research-bundle-v1";
+export const BUNDLE_MEDIA_TYPE = "application/vnd.particeps.research-bundle";
 export const MAXIMUM_BODY_BYTES = 32 * 1024 * 1024;
 const MINIMUM_BODY_BYTES = 170;
 
-const MAGIC = new TextEncoder().encode("ADCEXP01");
+const MAGIC = new TextEncoder().encode("PTCEXP01");
 const MAXIMUM_SIGNED_64 = 9_223_372_036_854_775_807n;
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const LOWER_HEX_256 = /^[0-9a-f]{64}$/;
@@ -12,14 +12,17 @@ const DEPLOYMENT_PATH = /^\/(?:[A-Za-z0-9._~-]+\/)*[A-Za-z0-9._~-]+$/;
 const CANONICAL_DECIMAL = /^(?:0|[1-9][0-9]*)$/;
 const BASE64_SHA256 = /^[A-Za-z0-9+/]{43}=$/;
 
-const ADC_HEADERS = new Set([
-  "x-adc-bundle-format",
-  "x-adc-bundle-id",
-  "x-adc-configuration-sha256",
-  "x-adc-researcher-key-id",
-  "x-adc-sequence-from",
-  "x-adc-sequence-to",
-  "x-adc-event-count",
+// Exported only so a test can compare it against the shared Protocol v1 corpus. The Kotlin
+// uploader is the sole producer of these names and lives in another language and another
+// repository directory, so this set and that emitter can only be kept in step by a shared fixture.
+export const PARTICEPS_HEADERS = new Set([
+  "x-particeps-bundle-format",
+  "x-particeps-bundle-id",
+  "x-particeps-configuration-sha256",
+  "x-particeps-researcher-key-id",
+  "x-particeps-sequence-from",
+  "x-particeps-sequence-to",
+  "x-particeps-event-count",
 ]);
 const CONTENT_HEADERS = new Set(["content-type", "content-length", "content-digest"]);
 // These are transport headers supplied by OkHttp or documented Cloudflare edge transforms. They
@@ -137,13 +140,13 @@ export function parseUploadRequest(request: Request, deployment: Deployment): Up
     MAXIMUM_BODY_BYTES,
   );
   const digest = parseContentDigest(requiredHeader(request.headers, "content-digest"));
-  const bundleFormat = requiredHeader(request.headers, "x-adc-bundle-format");
-  const bundleId = requiredHeader(request.headers, "x-adc-bundle-id");
-  const configurationSha256 = requiredHeader(request.headers, "x-adc-configuration-sha256");
-  const researcherKeyId = requiredHeader(request.headers, "x-adc-researcher-key-id");
-  const firstSequenceNumber = requiredHeader(request.headers, "x-adc-sequence-from");
-  const lastSequenceNumber = requiredHeader(request.headers, "x-adc-sequence-to");
-  const eventCount = requiredHeader(request.headers, "x-adc-event-count");
+  const bundleFormat = requiredHeader(request.headers, "x-particeps-bundle-format");
+  const bundleId = requiredHeader(request.headers, "x-particeps-bundle-id");
+  const configurationSha256 = requiredHeader(request.headers, "x-particeps-configuration-sha256");
+  const researcherKeyId = requiredHeader(request.headers, "x-particeps-researcher-key-id");
+  const firstSequenceNumber = requiredHeader(request.headers, "x-particeps-sequence-from");
+  const lastSequenceNumber = requiredHeader(request.headers, "x-particeps-sequence-to");
+  const eventCount = requiredHeader(request.headers, "x-particeps-event-count");
 
   if (bundleFormat !== BUNDLE_FORMAT) throw new RequestViolation("Bundle format is invalid");
   if (!UUID_V4.test(bundleId)) throw new RequestViolation("Bundle ID is invalid");
@@ -152,9 +155,9 @@ export function parseUploadRequest(request: Request, deployment: Deployment): Up
   }
   if (!KEY_ID.test(researcherKeyId)) throw new RequestViolation("Researcher key ID is invalid");
 
-  const first = parsePositiveInt64("X-ADC-Sequence-From", firstSequenceNumber);
-  const last = parsePositiveInt64("X-ADC-Sequence-To", lastSequenceNumber);
-  const count = parsePositiveInt64("X-ADC-Event-Count", eventCount);
+  const first = parsePositiveInt64("X-Particeps-Sequence-From", firstSequenceNumber);
+  const last = parsePositiveInt64("X-Particeps-Sequence-To", lastSequenceNumber);
+  const count = parsePositiveInt64("X-Particeps-Event-Count", eventCount);
   if (last < first || last - first + 1n !== count) {
     throw new RequestViolation("Sequence range and event count do not agree");
   }
@@ -182,7 +185,7 @@ export function parseUploadRequest(request: Request, deployment: Deployment): Up
 function rejectUnknownProtocolHeaders(headers: Headers): void {
   for (const [rawName] of headers) {
     const name = rawName.toLowerCase();
-    if (ADC_HEADERS.has(name) || CONTENT_HEADERS.has(name)) continue;
+    if (PARTICEPS_HEADERS.has(name) || CONTENT_HEADERS.has(name)) continue;
     if (INFRASTRUCTURE_HEADERS.has(name)) continue;
     throw new RequestViolation("Unknown request header");
   }

@@ -17,6 +17,10 @@
     <h1>{m('hero.title')}</h1>
     <p class="lede">{m('hero.lead')}</p>
     <GlanceRow items={GLANCE} />
+    <!-- The name and its limits stay together: the first paragraph alone would read as a claim
+         about who is in charge, which is the one thing the second paragraph exists to deny. -->
+    <p class="fine">{m('hero.naming.name')}</p>
+    <p class="fine">{m('hero.naming.limits')}</p>
     <p class="fine faint">{m('hero.disclaimer')}</p>
   </div>
 

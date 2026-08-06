@@ -1,13 +1,23 @@
-# ADC Protocol v1
+# Particeps Protocol v1
 
-This directory is the normative, language-neutral contract for ADC Protocol v1. Kotlin,
+This directory is the normative, language-neutral contract for Particeps Protocol v1. Kotlin,
 TypeScript, Python, and future Swift implementations are conforming implementations; none of
 them is the specification.
 
-Protocol v1 is a destructive pre-1.0 replacement. The names `schema_version: 1`, `ADCCFG01`,
-`ADCEXP01`, and `research-bundle-v1` remain, but artifacts made by the former implementation are
-invalid. Readers MUST NOT retain an old-v1 parser, migration path, dual interpretation, or
-fallback.
+Protocol v1 is a destructive pre-1.0 replacement, and this document carries its second and final
+identity. `schema_version` stays the JSON number `1`. Every identity string is new: the signed
+configuration magic is `PTCCFG01`, the encrypted export magic is `PTCEXP01`, the bundle format is
+`particeps-research-bundle-v1`, the join scheme is `particeps://join/v1`, the upload media type is
+`application/vnd.particeps.research-bundle`, and the routing headers are `X-Particeps-*`.
+
+Two classes of input are therefore invalid rather than old. Artifacts made by the pre-v1
+implementation are invalid, as they always were. Artifacts bearing the retired Android Data
+Collector identity — `ADCCFG01`, `ADCEXP01`, `research-bundle-v1`, `adc://join/v1`,
+`application/vnd.adc.research-bundle`, or any `X-ADC-*` header — are invalid too. Neither class is
+an earlier dialect of this protocol. Readers MUST NOT retain a parser, migration path, dual
+interpretation, alias, sniffing heuristic, or fallback for either, and MUST fail closed on them
+exactly as on random bytes. The hostile corpus in this directory carries executable coverage for
+both.
 
 The companion [`collector-catalog.json`](collector-catalog.json) is the closed-world collector and
 event schema. [`conformance-vectors.json`](conformance-vectors.json) and
@@ -27,16 +37,16 @@ interpreted as described by RFC 2119 and RFC 8174.
   canonical decimal strings matching `0|[1-9][0-9]*`.
 - UUIDs use lowercase RFC 4122 text in JSON and headers, and their 16 network-order bytes in binary
   framing. Producers generate cryptographically random version-4 bundle IDs.
-- SHA-256 values use 64 lowercase hexadecimal characters in JSON and ADC headers.
+- SHA-256 values use 64 lowercase hexadecimal characters in JSON and in `X-Particeps-*` headers.
 - Ed25519 and X25519 keys are raw 32-byte values encoded as unpadded base64url. Signatures are raw
   64-byte Ed25519 signatures encoded the same way in JSON. Tink JSON, protobuf keysets, X.509,
   PKCS#8, padded base64, and standard-base64 wire keys are invalid.
 - Every decoder is closed-world. An unknown member, enum, collector, payload type, platform, key
   context, or framing byte fails the whole artifact.
 - Implementations MUST reject values before allocating from a claimed length. A complete
-  `ADCEXP01` upload body is limited to 33,554,432 bytes (32 MiB).
+  `PTCEXP01` upload body is limited to 33,554,432 bytes (32 MiB).
 
-## Signed configuration (`ADCCFG01`)
+## Signed configuration (`PTCCFG01`)
 
 The configuration is an Android-targeted, closed-world JCS object with `schema_version` equal to
 the JSON number `1`, `platform` equal to `"android"`, and `minimum_client_version` encoded as a
@@ -53,7 +63,7 @@ The envelope is exactly:
 
 ```text
 offset    size  value
-0         8     ASCII "ADCCFG01"
+0         8     ASCII "PTCCFG01"
 8         2     signer_key_id_length (u16)
 10        4     configuration_length (u32)
 14        K     signer_key_id UTF-8
@@ -71,12 +81,12 @@ pinning policy. A valid self-contained signature proves integrity, not publisher
 The configuration SHA-256 used everywhere below is SHA-256 over `configuration_jcs`, not over the
 envelope.
 
-## Immutable join link (`adc://join/v1`)
+## Immutable join link (`particeps://join/v1`)
 
-A join link is a transport pointer to one immutable `ADCCFG01` artifact. Its exact ASCII form is:
+A join link is a transport pointer to one immutable `PTCCFG01` artifact. Its exact ASCII form is:
 
 ```text
-adc://join/v1?artifact=<percent-encoded-url>&sha256=<64-lowercase-hex>&signer_fingerprint=<32-uppercase-hex>
+particeps://join/v1?artifact=<percent-encoded-url>&sha256=<64-lowercase-hex>&signer_fingerprint=<32-uppercase-hex>
 ```
 
 The query order is fixed. RFC 3986 unreserved bytes are literal; every other artifact-URL byte is
@@ -108,7 +118,7 @@ verification. Staging is cleared on process startup, before each attempt, and af
 failure. There is no polling, refresh, replacement, background update, or assigned participant ID
 in the join URI.
 
-## Encrypted bundle (`ADCEXP01`)
+## Encrypted bundle (`PTCEXP01`)
 
 The only cryptographic suite is RFC 9180 base mode (`mode = 0x00`) with:
 
@@ -127,7 +137,7 @@ The container is exactly; document ciphertext consumes the remainder of the file
 
 ```text
 offset     size  value
-0          8     ASCII "ADCEXP01"
+0          8     ASCII "PTCEXP01"
 8          16    bundle_id UUID bytes
 24         32    configuration_sha256
 56         2     researcher_key_id_length (u16)
@@ -149,7 +159,7 @@ validation.
 The following exact JCS bytes bind both cryptographic layers (`bundle_id` is lowercase UUID text):
 
 ```text
-context = UTF8({"bundle_format":"research-bundle-v1","bundle_id":"<bundle-id>","configuration_sha256":"<lowercase-hex>","researcher_key_id":"<key-id>"})
+context = UTF8({"bundle_format":"particeps-research-bundle-v1","bundle_id":"<bundle-id>","configuration_sha256":"<lowercase-hex>","researcher_key_id":"<key-id>"})
 ```
 
 The context is RFC 9180 `info` when sealing the content key; HPKE base-mode `aad` is empty. The
@@ -157,13 +167,20 @@ context bytes are separately used as AES-256-GCM associated data for the documen
 configuration digest, researcher key ID, HPKE suite, `enc`, sealed key, or content nonce fails
 authentication.
 
+Note what this makes of the rename to Particeps. `ADCCFG01` → `PTCCFG01` and `ADCEXP01` →
+`PTCEXP01` are length-preserving, so every binary offset in this document is unchanged. The bundle
+format is not: `particeps-research-bundle-v1` is ten bytes longer than the name it replaces, and
+it is authenticated here. Every deterministic vector, sealed fixture, and assertion on a sealed
+bundle's exact byte count was regenerated rather than edited, and a bundle sealed under the
+retired context fails authentication rather than decoding into anything.
+
 ### Authenticated document
 
-The decrypted bytes are one JCS `research-bundle-v1` object with exactly these root members:
+The decrypted bytes are one JCS `particeps-research-bundle-v1` object with exactly these root members:
 
 | Member | Type and rule |
 | --- | --- |
-| `format` | exactly `"research-bundle-v1"` |
+| `format` | exactly `"particeps-research-bundle-v1"` |
 | `bundle_id` | the outer UUID as lowercase text |
 | `bundle_kind` | `"manual_export"` or `"automatic_upload"` |
 | `configuration_sha256` | the outer digest |
@@ -206,21 +223,27 @@ all checks succeed.
 ## Automatic upload request
 
 The receiver exposes one endpoint chosen at deployment. The request is `POST`; redirects are
-forbidden. It has a fixed `Content-Length`, no `Transfer-Encoding`, and an immutable `ADCEXP01`
+forbidden. It has a fixed `Content-Length`, no `Transfer-Encoding`, and an immutable `PTCEXP01`
 body staged before HTTP starts. The exact request headers are:
 
 | Header | Value |
 | --- | --- |
-| `Content-Type` | `application/vnd.adc.research-bundle` |
+| `Content-Type` | `application/vnd.particeps.research-bundle` |
 | `Content-Length` | canonical decimal body byte count, at most 33,554,432 |
 | `Content-Digest` | RFC 9530 `sha-256=:<padded standard-base64 digest>:` |
-| `X-ADC-Bundle-Format` | `research-bundle-v1` |
-| `X-ADC-Bundle-Id` | lowercase bundle UUID |
-| `X-ADC-Configuration-SHA256` | 64 lowercase hex characters |
-| `X-ADC-Researcher-Key-Id` | researcher key ID |
-| `X-ADC-Sequence-From` | canonical decimal exact first sequence |
-| `X-ADC-Sequence-To` | canonical decimal exact last sequence |
-| `X-ADC-Event-Count` | canonical decimal count |
+| `X-Particeps-Bundle-Format` | `particeps-research-bundle-v1` |
+| `X-Particeps-Bundle-Id` | lowercase bundle UUID |
+| `X-Particeps-Configuration-SHA256` | 64 lowercase hex characters |
+| `X-Particeps-Researcher-Key-Id` | researcher key ID |
+| `X-Particeps-Sequence-From` | canonical decimal exact first sequence |
+| `X-Particeps-Sequence-To` | canonical decimal exact last sequence |
+| `X-Particeps-Event-Count` | canonical decimal count |
+
+This vocabulary — the media type, the bundle format, and the seven routing header names — is the
+one part of Protocol v1 with a producer in one language and its only reader in another. It is
+therefore also in `conformance-vectors.json` as `valid.upload_request`, and both sides assert
+against that fixture rather than against their own constants. Asserting against your own constant
+proves only that you are self-consistent, which is exactly what a half-applied rename is.
 
 The routing headers are untrusted claims. The receiver checks their syntax, internal range/count
 arithmetic, body length/digest, and equality to the parseable outer bundle ID, configuration
@@ -273,8 +296,12 @@ extensions.
 Every implementation must consume the shared valid and hostile corpus in this directory. The
 corpus must cover Unicode JCS ordering, integral bounds, raw-key encodings, signature input, HPKE
 labels and wrong contexts, malformed lengths, wrong outer/inner identities, body tampering,
-range/count mismatch, old-v1 rejection, unknown fields and payloads, non-finite sensor values, and
-trailing bytes. Absence of a vector is not permission to accept an unspecified encoding.
+range/count mismatch, rejection of the pre-v1 encodings, rejection of the retired Android Data
+Collector identity (the `ADCCFG01` and `ADCEXP01` magics, the `research-bundle-v1` bundle format,
+and the `adc://join/v1` scheme), unknown fields and payloads, non-finite sensor values, and
+trailing bytes. The two legacy classes are named separately because an implementation can reject
+one while accepting the other. Absence of a vector is not permission to accept an unspecified
+encoding.
 
 The join-link corpus is consumed by Kotlin and TypeScript, the two implementations that create or
 open join links. Python analysis has no join-link entrypoint and does not interpret that corpus.
@@ -284,7 +311,15 @@ Validate the checked-in sources with:
 ```sh
 python3 tools/catalog.py check
 python3 tools/validate_protocol_vectors.py
+python3 tools/retired_identity_audit.py
 ```
+
+The last of those is what keeps the retirement above from decaying into a convention. It searches
+every tracked file for the retired spellings and fails on any that is not in its reviewed
+allow-list, so a hostile fixture cannot quietly become a live constant and a new one cannot be
+added without saying in writing why it must carry an old name. It also pins the Android
+`applicationId`, because that single value is what makes a pre-rename install a different
+application rather than something Android would offer to upgrade.
 
 After deliberately changing a wire rule, regenerate the deterministic corpus with
 `node tools/generate_protocol_vectors.mjs` and make every language consumer pass the new bytes in
@@ -292,10 +327,10 @@ the same change.
 
 ## Implementation map
 
-For the join path, Web authoring is in `web/src/lib/adc/join.ts` and
+For the join path, Web authoring is in `web/src/lib/particeps/join.ts` and
 `web/src/routes/researcher/JoinLinkPanel.svelte`; the shared parser is
 `core/protocol/.../JoinLink.kt`; Android staging is
-`app/.../platform/JoinArtifactDownloader.kt`; the `adc://join/v1` intent enters through
+`app/.../platform/JoinArtifactDownloader.kt`; the `particeps://join/v1` intent enters through
 `app/.../MainActivity.kt`; and digest → signature → fingerprint binding is enforced by
 `core/study-application/.../StudyApplication.kt`. The adjacent tests and shared
 `join-link-vectors.json` are the executable map. Automatic upload instead follows the outbox and

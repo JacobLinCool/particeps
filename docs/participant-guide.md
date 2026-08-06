@@ -1,6 +1,12 @@
 # Participant guide
 
-Android Data Collector is a research data collection app for Android. It collects and stores everything on your own phone. Every study you import shows you its title, research team, purpose, duration, contact details, data sources, whether it sends data to the research team automatically, and consent text — all before anything is collected.
+Particeps is a research data collection app for Android. It collects and stores everything on your own phone. Every study you import shows you its title, research team, purpose, duration, contact details, data sources, whether it sends data to the research team automatically, and consent text — all before anything is collected.
+
+The name is a Latin word, said PAR-ti-keps. It means someone who takes part. That is meant concretely here: your data stays on the phone, every source a study uses is shown to you before you are asked to consent, and nothing at all is collected until you press Start study.
+
+It does not mean the study is yours to design. Which sources it may use, how long it runs, and whether it sends data to the research team automatically are fixed in the signed file you import, and nothing you do in the app changes them. You can read all of that before you agree, and you can say no to the whole study. Within a study, the only sources you can hold back are the ones it marks optional: declining the Android access an optional source needs, or not enabling the research keyboard, leaves that source off and the study runs without it. Section 4 covers what each source asks for and section 5 covers the keyboard; a source the study marks required stops the study instead of running without it. Data that has already reached the research team cannot be taken back.
+
+What you can always do is decline, pause, finish early, withdraw, and — once you have finished or withdrawn — permanently delete the study data on your phone. The app never asks why.
 
 This guide describes what the app does on your phone. It does not replace the consent document approved for your study. Where this guide and that document disagree, the consent document and your research team's answers come first. If anything is unclear, do not start. Ask first.
 
@@ -12,7 +18,7 @@ The app ships in **English and Traditional Chinese**, and English is the default
 
 You can change it at any time, before or after you import a study. At the top right of the header there is a **globe** — a circle with a horizontal line across it and a curved meridian from top to bottom. Tap it and a picker opens, headed Language (語言). It lists **System default** (跟隨系統) first, then each language this build ships, each one written in its own language, so you can find yours without being able to read the language currently on screen. A check mark sits beside the one in use. Tapping a language applies it immediately and closes the picker; Cancel (取消) closes it without changing anything.
 
-That picker is not a private setting inside the app. It writes Android's own per-app language setting, the same one under Android Settings → Apps → Android Data Collector → Language, so changing it in either place changes both. System default (跟隨系統) hands the choice back to your phone.
+That picker is not a private setting inside the app. It writes Android's own per-app language setting, the same one under Android Settings → Apps → Particeps → Language, so changing it in either place changes both. System default (跟隨系統) hands the choice back to your phone.
 
 Because English is the default, this guide quotes the screen in English and gives the Traditional Chinese in parentheses where you might be running it: Start study (開始研究).
 
@@ -46,7 +52,7 @@ Every word of the interface lives in [`app/src/main/res/values/strings.xml`](../
 
 Use only the official installation source your research team gives you, and check that the app name and study description match what they told you. Do not install an APK from an unknown source, one that asks you to turn off Android security features, or one that asks for account passwords. This app does not ask for your passwords.
 
-A study configuration file usually ends in `.adccfg`. When you import one, the app checks the signature on the file, its Android platform target, the validity period, the minimum client build, and the full structure of the file. If any check fails, the app stops. It does not fall back to a permissive mode and it does not collect anything. If that happens, ask your research team for a correct file rather than trying to work around it.
+A study configuration file usually ends in `.partcfg`. When you import one, the app checks the signature on the file, its Android platform target, the validity period, the minimum client build, and the full structure of the file. If any check fails, the app stops. It does not fall back to a permissive mode and it does not collect anything. If that happens, ask your research team for a correct file rather than trying to work around it.
 
 That signature check tells you the file has not been altered since it was signed. It does not, on its own, tell you who wrote it — the next section explains what the app shows you instead, and what you can do about it.
 
@@ -56,8 +62,8 @@ That signature check tells you the file has not been altered since it was signed
 
 The setup is five steps, and the screen shows **one** of them at a time. The header holds the study title and, underneath it, a row of five dots telling you which step you are on. Everything else on screen belongs to the step you are reading.
 
-1. Open the app. Before any study is imported the header shows the app's own name, Research Data Collector (研究資料收集器), and the panel below has one button: Choose a study file (選擇設定檔).
-2. Pick the `.adccfg` file your research team gave you, using Android's file picker. The header title changes to the study's own title.
+1. Open the app. Before any study is imported the header shows the app's own name, Particeps, and the panel below has one button: Choose a study file (選擇設定檔).
+2. Pick the `.partcfg` file your research team gave you, using Android's file picker. The header title changes to the study's own title.
 3. **Study.** The panel shows the study's purpose in the research team's own words, then three rows, each an icon and a value with no label: a head and shoulders for the research team's name, an envelope for their contact details, a clock for how long the study runs. Read all four before you go on. Press Continue (繼續).
 4. **Data.** Every source this study switched on, one row each, with a sentence saying what it records and a second line saying what it does not. Section 3 goes through them. Press Continue (繼續).
 5. **Consent.** The research team's consent text, then two blocks the app writes itself: who signed the study, and whether it sends data automatically. Read all of it: the data, the purpose, the risks, the export, the withdrawal, and the deletion terms. Only if you understand it and want to take part, tick "I have read and agree to the data collection and export described above." (我已閱讀並同意上述資料收集與匯出方式。) and press Agree (同意).
@@ -378,9 +384,9 @@ Withdrawing does not automatically delete your data, so that you keep the choice
 Whenever the status is Collecting (收集中), Paused (已暫停), Completed (已完成), or Withdrawn (已退出), the screen shows Export encrypted data (匯出加密資料). The file it writes is encrypted with your research team's public key.
 
 1. Press Export encrypted data (匯出加密資料).
-2. Choose a location and file name in Android's file picker. The app suggests a name ending in `.adcexp`.
+2. Choose a location and file name in Android's file picker. The app suggests a name ending in `.partexp`.
 3. Wait for the app to report completion. It shows the code `EXPORT_COMPLETE` in a band under the header. The export's own record is behind the chevron at the bottom of the screen, as Last export (上次匯出) followed by the number of events and the first twelve characters of the file's SHA-256 digest — a fingerprint of the file's exact contents, which the research team can compare against the file they receive to confirm nothing was altered or truncated in transit.
-4. Share the `.adcexp` file only in the way your study's consent document approves.
+4. Share the `.partexp` file only in the way your study's consent document approves.
 
 The export file is encrypted with the researcher public key contained in that study's signed configuration. An ordinary file manager cannot show you its contents, and neither can anyone else who does not hold the matching private key. Each export uses a fresh random encryption key.
 
@@ -409,7 +415,7 @@ Confirming deletes:
 
 **This cannot be undone.** There is no recovery, no undo, and no backup inside the app. After deleting, you cannot export that study's data again, because the data no longer exists on your phone. If you want the research team to have your data, export and send it before you delete.
 
-Deletion does not touch `.adcexp` files you already saved through Android's file picker. Those are ordinary files in whatever location you chose, and you have to delete them yourself. It also does not reach copies you already sent to anyone.
+Deletion does not touch `.partexp` files you already saved through Android's file picker. Those are ordinary files in whatever location you chose, and you have to delete them yourself. It also does not reach copies you already sent to anyone.
 
 Uninstalling the app or clearing its app data also destroys the local keys and data. If your intention is to formally withdraw from the study, use the app's withdrawal flow first, so the withdrawal is recorded, and tell your research team.
 
@@ -417,8 +423,8 @@ Uninstalling the app or clearing its app data also destroys the local keys and d
 
 | Screen or situation | What to do |
 | --- | --- |
-| The interface is in a language you cannot read | Tap the globe at the top right of the header and pick a language; it is the same setting as Android Settings → Apps → Android Data Collector → Language |
-| The configuration file will not import | Check the file, the client build/platform, and the study's validity period; do not modify the `.adccfg`, and contact the research team |
+| The interface is in a language you cannot read | Tap the globe at the top right of the header and pick a language; it is the same setting as Android Settings → Apps → Particeps → Language |
+| The configuration file will not import | Check the file, the client build/platform, and the study's validity period; do not modify the `.partcfg`, and contact the research team |
 | Check this against the fingerprint your research team published (請與研究團隊公佈的金鑰指紋核對) | Ordinary for most studies; compare the fingerprint on the Configuration signature (設定檔簽章) block with the one your research team published, and if you do not have one, ask before consenting |
 | The fingerprint does not match the one you were given | Do not consent. Contact your research team through details you already had, not details taken from the study screen |
 | A required item in the access list is not granted | Tap that row, finish on the Android screen it opens, and return to the app; if you do not want to grant it, do not start |
@@ -459,6 +465,14 @@ While the app is still loading, that same place shows Starting up (準備中). I
 There is no "exported" state. Your export history and the study's lifecycle are two separate things, and nothing you export changes where the study stands.
 
 If you need to describe your situation to your research team, the internal names in the left-hand column above are exactly the ones recorded inside an export file.
+
+## 12. If you tested an earlier version of this app
+
+This app used to be called Android Data Collector. As far as your phone is concerned, that app and Particeps are two completely separate apps. They sit side by side, and installing Particeps brings nothing across: no study, no consent, no collected events, and no export record moves from one to the other. The older app keeps running on your phone, with everything it already holds, until you remove it. What it can no longer do is deliver: it writes files in the older format, and if its study sends data automatically, the research team's server no longer accepts what it sends.
+
+**Ask your research team before you uninstall the older app.** Uninstalling it destroys the key it keeps on your phone, and after that the encrypted data it collected cannot be read by anyone — not by you, not by them. There is no recovery and no backup. If they want what the older app collected, export it from that app while it is still installed and send them the file; tell them it came from the older version, because they need the older tools to open it. Only then uninstall.
+
+If your study uses the research keyboard, you have to enable it and select it again for Particeps. Android treats it as a different keyboard, so the setting you made for the older app does not carry over. Section 4 describes the two steps.
 
 ---
 

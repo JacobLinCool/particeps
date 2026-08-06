@@ -2,7 +2,7 @@
   /**
    * The last step, and the only one that reads.
    *
-   * Everything before this composes a file and hands it out. This takes one back: the `.adcexp` a
+   * Everything before this composes a file and hands it out. This takes one back: the `.partexp` a
    * participant exported, opened here, in the tab, with nothing sent anywhere. The site's footer
    * promises exactly that of every other step, and this is the step where the promise is worth the
    * most, because what is on screen is somebody's data rather than the researcher's own draft.
@@ -29,9 +29,9 @@
   import Note from '$lib/ui/Note.svelte';
   import { groupDigits } from '$lib/ui/format';
   import type { IconRef } from '$lib/ui/icons';
-  import { openBundle } from '$lib/adc/bundle';
-  import { MAXIMUM_CONFIGURATION_BYTES, isCollectorId, COLLECTOR_ORDER } from '$lib/adc/types';
-  import type { CollectorId, StudyConfiguration } from '$lib/adc/types';
+  import { openBundle } from '$lib/particeps/bundle';
+  import { MAXIMUM_CONFIGURATION_BYTES, isCollectorId, COLLECTOR_ORDER } from '$lib/particeps/types';
+  import type { CollectorId, StudyConfiguration } from '$lib/particeps/types';
   import { download } from './artifacts';
   import { hpkeKeyPairFromPrivate } from './keys';
   import { parseConfiguration } from './parse';
@@ -91,7 +91,7 @@
     }
   }
 
-  /** `.adccfg`, canonical JSON, or a draft — `parseConfiguration` unwraps the envelope itself. */
+  /** `.partcfg`, canonical JSON, or a draft — `parseConfiguration` unwraps the envelope itself. */
   async function takeConfiguration(file: File) {
     try {
       configuration = parseConfiguration(new Uint8Array(await file.arrayBuffer()));
@@ -252,7 +252,7 @@
       <div class="row row--tight">
         <DropTarget
           label={m.researcher.read.bundle}
-          accept=".adcexp"
+          accept=".partexp"
           icon="package"
           onfile={takeBundle}
           testid="read-bundle"
@@ -268,7 +268,7 @@
         <DropTarget
           label={m.researcher.sign.canonical}
           filename={m.file.canonical}
-          accept=".json,.adccfg,application/json"
+          accept=".json,.partcfg,application/json"
           icon="json"
           onfile={takeConfiguration}
           testid="read-configuration"

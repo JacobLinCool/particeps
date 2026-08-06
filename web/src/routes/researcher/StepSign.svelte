@@ -26,8 +26,8 @@
   import SignatureReceipt from './SignatureReceipt.svelte';
   import { fieldLabel } from './labels';
   import { STEPS, stepForPath } from './steps';
-  import { parseInstant } from '$lib/adc/canonical';
-  import { verify } from '$lib/adc/crypto';
+  import { parseInstant } from '$lib/particeps/canonical';
+  import { verify } from '$lib/particeps/crypto';
   import { decodeEnvelope } from './parse';
   import type { Draft } from './draft.svelte';
   import type { Messages } from '$lib/i18n/types';

@@ -53,11 +53,11 @@ substitute what is signed. High-risk deployments should use the CLI in a control
 archive the canonical configuration beside the key material, and verify the resulting signer
 fingerprint through an independent recruitment channel.
 
-A configuration is Ed25519-signed inside an `ADCCFG01` envelope. The signing public key travels inside the signed bytes, in a mandatory `signer` block, so a configuration certifies itself and one published app can verify any researcher's study without a rebuild.
+A configuration is Ed25519-signed inside a `PTCCFG01` envelope. The signing public key travels inside the signed bytes, in a mandatory `signer` block, so a configuration certifies itself and one published app can verify any researcher's study without a rebuild.
 
 **What a signature proves is that the configuration is unchanged since it was signed.** It does not prove who wrote it. A verified configuration establishes that identity mode, collectors, localized surveys, intervention actions and triggers, duration, consent, export key, and `upload` block are exactly the bytes the signer produced. It establishes nothing about the identity behind that key unless the build pins that signer.
 
-On import the app bounds the fixed `ADCCFG01` framing, strictly decodes and byte-for-byte rechecks RFC 8785 JCS, requires the declared `signer.key_id` to equal the envelope key ID, verifies the fixed 64-byte signature over the exact configuration bytes, and checks validity, Android platform, and the decimal-string client build floor. Ed25519 and X25519 wire keys must be raw 32-byte values encoded as unpadded base64url; X.509, PKCS#8, padded base64, and library keysets are rejected. Nothing decoded is acted on until the signature verifies. Every object has an exact key set and an unknown collector fails even when optional. Protocol v1 is a destructive pre-1.0 replacement: former-v1 artifacts fail rather than entering a compatibility branch.
+On import the app bounds the fixed `PTCCFG01` framing, strictly decodes and byte-for-byte rechecks RFC 8785 JCS, requires the declared `signer.key_id` to equal the envelope key ID, verifies the fixed 64-byte signature over the exact configuration bytes, and checks validity, Android platform, and the decimal-string client build floor. Ed25519 and X25519 wire keys must be raw 32-byte values encoded as unpadded base64url; X.509, PKCS#8, padded base64, and library keysets are rejected. Nothing decoded is acted on until the signature verifies. Every object has an exact key set and an unknown collector fails even when optional. Protocol v1 is a destructive pre-1.0 replacement: former-v1 artifacts fail rather than entering a compatibility branch.
 
 A build may additionally pin signers, as `CollectorApplication.TRUSTED_SIGNING_KEYS`. That map is empty in the shipped build, which therefore accepts any correctly signed configuration and reports the publisher as unverified to the participant. A non-empty map is strictly exclusive: only listed signers are accepted, and the pinned key overrides the one the configuration declares and must equal it, so a configuration cannot claim a pinned key ID while carrying a different key. `ConfigurationVerifier` returns both the configuration and whether its signer was pinned, and the consent screen renders that distinction.
 
@@ -95,7 +95,7 @@ Every participant-facing app string lives in resources and ships in English and 
 
 Every import mints a new random UUID, even when the same configuration is imported twice. A personalized configuration may also contain one opaque assigned code restricted to a small ASCII grammar. The consent screen distinguishes the two modes and shows the assigned code for comparison. Both appear in encrypted metadata and bundles. Clear upload URLs and headers contain neither one, nor the experiment or configuration ID; they are not participant or device authentication.
 
-An optional `adc://join/v1` link adds an untrusted HTTPS host only as artifact transport. The link
+An optional `particeps://join/v1` link adds an untrusted HTTPS host only as artifact transport. The link
 binds the complete artifact SHA-256 and signer fingerprint; Android disables redirects and implicit
 retry, verifies the digest before the normal signature flow, and never polls for updates. A hostile
 host can deny service, but changing bytes fails before consent and cannot alter an accepted study.
@@ -165,7 +165,7 @@ Entering `RUNNING` mints an admission epoch token that collectors must present, 
 
 A storage write failure or exhausted quota force-closes the admission gate, records an incident code, and fail-closes the study to `PAUSED`. There is no ring buffer and no silent dropping of events, and reclaiming space is a different thing from either: it can only release events an endpoint has already confirmed receiving, so a quota that fills with nothing delivered stops the study rather than making room, and what was released is recorded in `retainedFromSequence`, declared in every bundle's `first_sequence_number`, and stated on the participant's dashboard. Nothing that has not reached the research team is ever discarded to free space.
 
-Occurrence lifecycle events and survey submissions have a stronger two-record boundary: the encrypted `ADCTXN01` journal makes the event append and updated metadata recoverable as one idempotent commit. Recovery applies a one-boundary-ahead journal only after authenticating an exactly matching durable tail event; it discards a prepared journal whose event is absent, and treats a same-boundary journal as a stale leftover with main metadata authoritative. Any other boundary or content mismatch fails closed. No unverified fallback reconstructs a response from UI state.
+Occurrence lifecycle events and survey submissions have a stronger two-record boundary: the encrypted `PTCTXN01` journal makes the event append and updated metadata recoverable as one idempotent commit. Recovery applies a one-boundary-ahead journal only after authenticating an exactly matching durable tail event; it discards a prepared journal whose event is absent, and treats a same-boundary journal as a stale leftover with main metadata authoritative. Any other boundary or content mismatch fails closed. No unverified fallback reconstructs a response from UI state.
 
 A corrupt segment, index gap, AEAD failure, or missing key is a hard failure, and only an incomplete trailing frame in the final segment may be recovered. Event segments missing *below* the retained floor are a hard failure too, because a prefix that disappeared without being reclaimed is indistinguishable from one that was tampered away. Main metadata must name the durable tail unless the authenticated one-event journal proves the single permitted append-recovery state; no durable count is guessed or rebuilt as fallback. An export that cannot read its whole window to the boundary fails rather than producing a partial file. Missing required access keeps a study from reaching `READY`, and a foreground service that fails to start rolls the runtime back instead of collecting. A dataset is therefore either complete over the window it declares or absent, rather than quietly partial.
 
@@ -252,7 +252,7 @@ aapt dump permissions app/build/outputs/apk/release/app-release.apk
 jq .upload ./study-canonical.json
 
 # Who signed a study, its key fingerprint, and whether the signer is pinned
-./gradlew :researcher-tools:run --args="check-config --envelope ./study.adccfg"
+./gradlew :researcher-tools:run --args="check-config --envelope ./study.partcfg"
 
 # No analytics or crash reporting in the dependency declarations
 grep -rniE "firebase|crashlytics|analytics|retrofit" --include="*.kts" --include="*.toml" .

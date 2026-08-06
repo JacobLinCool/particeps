@@ -1,6 +1,6 @@
 # Researcher guide
 
-Android Data Collector runs a study from a signed configuration file, so a new study does
+Particeps runs a study from a signed configuration file, so a new study does
 not need a new app. You describe the study in JSON — which collectors run and with what
 sampling parameters, how long it lasts, what the consent summary says, which interventions and surveys are
 scheduled, how much local storage it may use, which public key its bundles are encrypted to,
@@ -21,7 +21,7 @@ Deploying a study is a short pipeline, and this guide follows it:
 1. Generate the study signing key and the export encryption key (section 3).
 2. Write the study configuration (section 4).
 3. Canonicalise, sign, and verify it (section 5).
-4. Distribute the participant app and the `.adccfg` file, and publish your signing key
+4. Distribute the participant app and the `.partcfg` file, and publish your signing key
    fingerprint in the material that recruits participants (section 6).
 5. Pilot on the Android versions and hardware your study targets (section 7).
 6. Receive encrypted bundles — exported by participants, uploaded by their devices, or
@@ -60,7 +60,7 @@ written up.
 
 | Collector | What you obtain | What you cannot claim |
 | --- | --- | --- |
-| `app_lifecycle.v1` | Lifecycle transitions of this app's own Activities, each with the Activity class name | Anything about time spent in other apps. This instruments the collector app, not the participant's phone use. |
+| `app_lifecycle.v1` | Lifecycle transitions of this app's own Activities, each with the Activity class name | Anything about time spent in other apps. This instruments Particeps itself, not the participant's phone use. |
 | `accelerometer.v1` | Raw x/y/z acceleration in m/s² in device coordinates, the sensor's own timestamp, and the platform accuracy code | A recognised movement, posture, or activity. The app ships no classifier and produces no ground-truth label. |
 | `battery_state.v1` | Whole battery percentage, charging state/source, and power-save state | Battery health, temperature, capacity, hardware identity, or the cause of a change. |
 | `temporal_context.v1` | Time-zone ID, UTC offset, DST state, and a bounded reason for a time-context snapshot | Physical location or travel. A configured time zone is not location evidence. |
@@ -108,12 +108,16 @@ it. Section 6 covers the fingerprint you publish so participants can close that 
 The consequences differ, so track them separately.
 
 - **Signing private key lost.** You cannot issue or reissue configurations under that key
-  ID. Existing `.adccfg` files already in participants' hands keep working until they
-  expire. Recovery means generating a new key, putting it in the `signer` block of a new
-  configuration, and re-signing — no app release is involved.
+  ID. Existing `.partcfg` files already in participants' hands keep working until they
+  expire. That is true of current-format files only. An `.adccfg` from before the rename to
+  Particeps does not keep working: Particeps rejects it outright, as does every current tool,
+  so a configuration signed under the old identity has to be re-signed with the current
+  tooling regardless of how much of its validity window is left. Recovery means generating a
+  new key, putting it in the `signer` block of a new configuration, and re-signing — no app
+  release is involved.
 - **Signing private key leaked.** Anyone holding it can mint a configuration that verifies
   as yours, including one that enables more collectors, and it will carry your published
-  fingerprint. Treat this as an incident: stop distributing the affected `.adccfg`, publish
+  fingerprint. Treat this as an incident: stop distributing the affected `.partcfg`, publish
   a new key and fingerprint, re-sign under the new key ID, and notify participants. There is
   no revocation mechanism, so configurations already signed under the old key remain valid
   until they expire — which is a reason to keep validity windows short.
@@ -207,7 +211,7 @@ The decoder rejects unknown keys, missing keys, and wrong JSON types outright. T
 lenient mode. `upload` is mandatory as a key: a study that does not upload writes `"upload": {}`.
 
 Constraints enforced by
-[`core/study-definition`](../core/study-definition/src/main/kotlin/cool/linc/androiddatacollector/core/definition/StudyConfiguration.kt):
+[`core/study-definition`](../core/study-definition/src/main/kotlin/cool/linc/particeps/core/definition/StudyConfiguration.kt):
 
 - `schema_version` is always `1`. There is no fallback reader and no migration path: a
   configuration either matches the current schema exactly or is refused.
@@ -273,7 +277,7 @@ researcher-tools personalize --config template.json --mapping participants.tsv \
 ```
 
 The command validates every row and rejects duplicate configuration IDs before creating the output
-directory. It writes `<configuration_id>.json` and `<configuration_id>.adccfg`; assigned codes are
+directory. It writes `<configuration_id>.json` and `<configuration_id>.partcfg`; assigned codes are
 never placed in filenames or printed. `canonicalize` and `sign` also accept
 `--assigned-participant-id` for issuing one artifact.
 
@@ -431,7 +435,7 @@ A populated block looks like this:
 
 ```json
 "upload": {
-  "endpoint": "https://collect.example.edu/adc/v1/bundle",
+  "endpoint": "https://collect.example.edu/particeps/v1/bundle",
   "interval_minutes": 360,
   "allow_metered": false
 }
@@ -456,7 +460,7 @@ everything it collected has been delivered. Deleting local data cancels delivery
 plan for a tail you may never receive and keep manual export in your protocol as the fallback.
 
 **How much each run sends.** Before opening HTTP, the app selects an exact event boundary, creates
-one complete `ADCEXP01` bundle under its no-backup directory, flushes it to durable storage, and
+one complete `PTCEXP01` bundle under its no-backup directory, flushes it to durable storage, and
 records a manifest containing its bundle UUID, exact range/count, byte count, and SHA-256. One
 outbox entry exists at a time. Its target plaintext budget is about 16 MiB and its hard wire limit
 is 32 MiB. Process death, reboot, timeout, and response loss reuse the same bytes; the app never
@@ -487,24 +491,24 @@ The research consequence is in section 10: once a participant's device has recla
 prefix, their manual export covers a window rather than the whole study, so an uploading
 study's dataset is the reassembled chunks plus that final export.
 
-What the endpoint receives is the same `ADCEXP01` bundle described in section 9: a fixed-length
-`application/vnd.adc.research-bundle` POST with `Content-Digest` and no transfer encoding. These
-are the only ADC routing headers:
+What the endpoint receives is the same `PTCEXP01` bundle described in section 9: a fixed-length
+`application/vnd.particeps.research-bundle` POST with `Content-Digest` and no transfer encoding.
+These are the only Particeps routing headers:
 
 | Header | Value |
 | --- | --- |
-| `X-ADC-Bundle-Format` | `research-bundle-v1` |
-| `X-ADC-Bundle-Id` | Lowercase bundle UUID; the receiver's immutable object key |
-| `X-ADC-Configuration-SHA256` | SHA-256 of the exact canonical configuration bytes |
-| `X-ADC-Researcher-Key-Id` | Export recipient key ID |
-| `X-ADC-Sequence-From` | Exact claimed first sequence |
-| `X-ADC-Sequence-To` | Exact claimed last sequence |
-| `X-ADC-Event-Count` | Exact claimed event count |
+| `X-Particeps-Bundle-Format` | `particeps-research-bundle-v1` |
+| `X-Particeps-Bundle-Id` | Lowercase bundle UUID; the receiver's immutable object key |
+| `X-Particeps-Configuration-SHA256` | SHA-256 of the exact canonical configuration bytes |
+| `X-Particeps-Researcher-Key-Id` | Export recipient key ID |
+| `X-Particeps-Sequence-From` | Exact claimed first sequence |
+| `X-Particeps-Sequence-To` | Exact claimed last sequence |
+| `X-Particeps-Event-Count` | Exact claimed event count |
 
-`Content-Length` and `Content-Digest` are also required. The headers are untrusted routing claims:
-the receiver can check their syntax, arithmetic, body digest, and the identities exposed by the
-outer framing, but cannot authenticate the encrypted participant or sequence claims. No
-`participant_instance_id`, `assigned_participant_id`, `experiment_id`, or `configuration_id`
+`Content-Length` and `Content-Digest` are also required. The `X-Particeps-*` headers are untrusted
+routing claims: the receiver can check their syntax, arithmetic, body digest, and the identities
+exposed by the outer framing, but cannot authenticate the encrypted participant or sequence claims.
+No `participant_instance_id`, `assigned_participant_id`, `experiment_id`, or `configuration_id`
 appears in the URL or headers. Do not invent such a header or deduplicate ingestion by a
 participant/range pair. Receiver replay identity is the bundle UUID plus exact stored bytes and
 metadata.
@@ -561,7 +565,7 @@ Sign the canonical bytes:
   --config ./study-canonical.json \
   --private /secure/study-signing-private.key \
   --key-id lab-signer-2026 \
-  --output ./study.adccfg"
+  --output ./study.partcfg"
 ```
 
 `--key-id` must equal the configuration's `signer.key_id`, and the private key you pass must
@@ -570,7 +574,7 @@ written, because a mismatch would produce a file that signs cleanly and then fai
 device: the second failure reads `signer.public_key in the configuration does not match
 --private`.
 
-The result is a signed study configuration: an `ADCCFG01` envelope containing magic, a two-byte
+The result is a signed study configuration: a `PTCCFG01` envelope containing magic, a two-byte
 signer-key-ID length, a four-byte configuration length, the key ID, exact JCS configuration bytes,
 and a fixed 64-byte Ed25519 signature over only those configuration bytes. No signature-length
 field or alternate framing is accepted.
@@ -591,7 +595,7 @@ window — before anything reaches a participant:
 
 ```bash
 ./gradlew :researcher-tools:run --args="check-config \
-  --envelope ./study.adccfg \
+  --envelope ./study.partcfg \
   --app-version 1"
 ```
 
@@ -615,7 +619,7 @@ system clock.
 
 Any change to the configuration bytes invalidates the signature. When consent text,
 collector optionality or frequency, interventions, surveys, identity mode, quota, or the export key changes, mint a new
-`configuration_id`, re-sign, and obtain consent again. Never edit a `.adccfg` that has
+`configuration_id`, re-sign, and obtain consent again. Never edit a `.partcfg` that has
 already been distributed.
 
 ## 6. Build and distribute
@@ -629,10 +633,10 @@ Actions release workflow; the required secrets and setup are described in the re
 [`README.md`](../README.md). The workflow publishes only APKs that have passed
 `apksigner verify`, and the keystore is never committed. Sideloading uses the signed APK;
 Google Play distribution uses the corresponding AAB and track process. Building the app is
-not part of issuing a study: the same build verifies any correctly signed `.adccfg`.
+not part of issuing a study: the same build verifies any correctly signed `.partcfg`.
 
-Participants can import the `.adccfg` through the system file picker, or open an immutable
-`adc://join/v1` link / QR generated by the Web authoring surface. Join hosting is transport only:
+Participants can import the `.partcfg` through the system file picker, or open an immutable
+`particeps://join/v1` link / QR generated by the Web authoring surface. Join hosting is transport only:
 the link fixes the artifact's complete SHA-256 and signer fingerprint, and the app downloads once,
 verifies the digest before the ordinary signature flow, and never polls for replacement. Getting
 data back is manual unless the study declares an upload endpoint, in which case delivery is
@@ -657,7 +661,7 @@ you are about to sign, and against what your consent document tells participants
 
 ### Optional immutable join link and QR
 
-After signing in the Web authoring flow, enter the HTTPS location where the exact `.adccfg` bytes
+After signing in the Web authoring flow, enter the HTTPS location where the exact `.partcfg` bytes
 will be served. The browser creates the join URI and QR locally; it does not call a QR service. The
 artifact URL must use the narrow Protocol v1 profile: lowercase DNS-style HTTPS host, no credentials,
 explicit default port, query, fragment, percent escape, dot segment, or repeated slash, followed by one or
@@ -704,7 +708,7 @@ fingerprint is what turns that relationship into something checkable on the devi
 
 An organisation that wants one build to run only its own studies adds its key ID and public
 key to `TRUSTED_SIGNING_KEYS` in the `CollectorApplication` composition root
-([`app/src/main/kotlin/cool/linc/androiddatacollector/CollectorApplication.kt`](../app/src/main/kotlin/cool/linc/androiddatacollector/CollectorApplication.kt))
+([`app/src/main/kotlin/cool/linc/particeps/CollectorApplication.kt`](../app/src/main/kotlin/cool/linc/particeps/CollectorApplication.kt))
 and ships that build. The map is empty in the shipped build; populating it is strictly
 exclusive, so that build refuses every signer not listed, including studies from other
 teams. The pinned key also overrides whatever the configuration declares, so a configuration
@@ -714,7 +718,7 @@ beside the heading becomes a check.
 
 This is a build-time decision with no revocation path: retiring a pinned key means shipping
 a new APK. Reproduce it before release with `check-config --public … --key-id …`, which must
-print `pinned yes` for the `.adccfg` you intend to distribute.
+print `pinned yes` for the `.partcfg` you intend to distribute.
 
 ## 7. Pilot before recruiting
 
@@ -800,7 +804,7 @@ endpoint.
 
 ## 9. Receive and decrypt bundles
 
-A participant's `.adcexp` is ciphertext when it reaches you, and so is every chunk your
+A participant's `.partexp` is ciphertext when it reaches you, and so is every chunk your
 endpoint stores. Keep the original bytes, limit who can read them, and log receipt under your
 data governance procedure. Filenames and receipt timestamps are metadata a participant
 controls; they are not evidence of identity or integrity. An uploaded chunk carries no more
@@ -810,7 +814,7 @@ Decrypt with the matching canonical configuration and raw HPKE private key:
 
 ```bash
 ./gradlew :researcher-tools:run --args="decrypt \
-  --bundle ./participant-export.adcexp \
+  --bundle ./participant-export.partexp \
   --private /secure/export-hpke-private.key \
   --config ./study-canonical.json \
   --output /controlled/participant-export.json"
@@ -829,12 +833,12 @@ transition history, and every catalog event contract pass does it flush and atom
 file into place. The AES-GCM tag is verified only at EOF, so failed decryption or semantic
 verification deletes staging and publishes no partial plaintext.
 
-The bundle is an `ADCEXP01` container: a per-bundle AES-256-GCM content key wrapped with RFC 9180
+The bundle is a `PTCEXP01` container: a per-bundle AES-256-GCM content key wrapped with RFC 9180
 base-mode X25519/HKDF-SHA256/AES-256-GCM HPKE, over one authenticated JCS document with this
 shape:
 
 ```text
-bundle_id, bundle_kind, format  outer UUID, manual_export/automatic_upload, research-bundle-v1
+bundle_id, bundle_kind, format  outer UUID, manual_export/automatic_upload, particeps-research-bundle-v1
 configuration_sha256            SHA-256 of the exact embedded canonical configuration
 configuration                   the exact signed configuration object
 configuration_signature         signer_key_id and raw Ed25519 signature provenance
@@ -870,17 +874,18 @@ schema from observed data. The embedded configuration, its digest, its original 
 producer, outer identities, range/count contiguity, and every catalog payload are verified before
 plaintext is published.
 
-The JCS context binds `research-bundle-v1`, bundle UUID, full configuration SHA-256, and
+The JCS context binds `particeps-research-bundle-v1`, bundle UUID, full configuration SHA-256, and
 researcher key ID into HPKE `info` and document AES-GCM AAD. A wrong key, context, framing byte,
-embedded identity, or old Protocol v1 artifact fails closed. This Protocol v1 definition is a
-destructive pre-1.0 replacement; there is no former-v1 fallback.
+embedded identity, or artifact predating this definition — a pre-rename `.adcexp` among them —
+fails closed. This Protocol v1 definition is a destructive pre-1.0 replacement; there is no
+former-v1 fallback.
 
 Successful validation proves encryption to the configured researcher key, document integrity,
 and the provenance of the exact embedded signed configuration. It proves nothing about the
 participant's legal identity, participant/device authenticity, device attestation, or whether the
 platform dropped data before it was recorded.
 
-For a dataset rather than a one-file inspection, use [`adc-analysis`](../adc-analysis/README.md).
+For a dataset rather than a one-file inspection, use [`particeps-analysis`](../particeps-analysis/README.md).
 Its `inventory` command copies local exports or R2/S3-compatible objects into a
 content-addressed ciphertext workspace before keys are used. `materialize` then verifies each
 whole bundle, quarantines failures, reassembles by
@@ -1005,7 +1010,7 @@ retires itself once the backlog is gone. Deleting local data cancels delivery ou
 participant who deletes before the backlog clears keeps whatever had not yet been sent off
 your endpoint entirely. Local deletion is only
 offered from these terminal states, and it removes the encrypted store on the device. It
-does not remove `.adcexp` files a participant saved elsewhere, and it does not remove chunks
+does not remove `.partexp` files a participant saved elsewhere, and it does not remove chunks
 your endpoint already holds.
 
 Your consent document must state, and your procedures must actually deliver: how to contact

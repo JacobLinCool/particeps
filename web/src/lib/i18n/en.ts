@@ -8,7 +8,7 @@ const number = new Intl.NumberFormat('en-US');
 
 export const en: Messages = {
   app: {
-    name: 'Android Data Collector',
+    name: 'Particeps',
     tagline: 'Run a study without building an app.',
     nav: { researcher: 'Researcher', participant: 'Participant' }
   },
@@ -132,7 +132,7 @@ export const en: Messages = {
     exportPrivate: 'export-hpke-private.key',
     exportPublic: 'export-hpke-public.json',
     canonical: 'study-canonical.json',
-    signed: 'study.adccfg'
+    signed: 'study.partcfg'
   },
 
   field: {
@@ -425,7 +425,7 @@ export const en: Messages = {
     },
     files: {
       keep: 'Save your keys',
-      /** 218px. The reason — no command extracts this from the .adccfg — did not fit and is in the
+      /** 218px. The reason — no command extracts this from the .partcfg — did not fit and is in the
        *  researcher guide; what fits is the consequence, which is the half that changes a decision. */
       archive: 'Needed to decrypt your own data.',
       publish: 'The fingerprint goes into your recruitment material.',
@@ -433,7 +433,7 @@ export const en: Messages = {
       pilot: 'Pilot on the phones your study targets before you recruit anyone.',
       join: {
         title: 'Optional join link and QR',
-        artifactUrl: 'HTTPS address of the signed .adccfg',
+        artifactUrl: 'HTTPS address of the signed .partcfg',
         artifactHint: 'Host the exact signed file first, then enter its final address. Redirects are refused.',
         personalizedHint: 'Use a long opaque final path segment. Do not put the assigned participant ID in the address.',
         copy: 'Copy join link',

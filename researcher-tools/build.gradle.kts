@@ -16,7 +16,7 @@ kotlin {
 }
 
 application {
-    mainClass = "cool.linc.androiddatacollector.researcher.MainKt"
+    mainClass = "cool.linc.particeps.researcher.MainKt"
 }
 
 tasks.named<JavaExec>("run") {
@@ -24,7 +24,7 @@ tasks.named<JavaExec>("run") {
 }
 
 tasks.withType<Test>().configureEach {
-    systemProperty("adc.repository.root", rootProject.projectDir.absolutePath)
+    systemProperty("particeps.repository.root", rootProject.projectDir.absolutePath)
 }
 
 dependencies {

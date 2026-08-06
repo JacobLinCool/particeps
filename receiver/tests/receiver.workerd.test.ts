@@ -7,7 +7,7 @@ import { handleRequest } from "../src/index";
 const UPLOAD_URL = "https://receiver.example.test/v1/upload";
 const RESEARCHER_KEY_ID = "vector-hpke";
 
-describe("ADC receiver in workerd", () => {
+describe("Particeps receiver in workerd", () => {
   it("stores and exactly replays the shared Protocol v1 bundle through native R2", async () => {
     const body = decodeHex(corpus.valid.bundle.container_hex);
     const receipt = corpus.valid.upload_receipt.value;
@@ -110,16 +110,16 @@ function requestInit(
   return {
     method: "POST",
     headers: {
-      "Content-Type": "application/vnd.adc.research-bundle",
+      "Content-Type": "application/vnd.particeps.research-bundle",
       "Content-Length": receipt.byte_count,
       "Content-Digest": `sha-256=:${base64(decodeHex(receipt.sha256))}:`,
-      "X-ADC-Bundle-Format": "research-bundle-v1",
-      "X-ADC-Bundle-Id": receipt.bundle_id,
-      "X-ADC-Configuration-SHA256": receipt.configuration_sha256,
-      "X-ADC-Researcher-Key-Id": RESEARCHER_KEY_ID,
-      "X-ADC-Sequence-From": receipt.first_sequence_number,
-      "X-ADC-Sequence-To": receipt.last_sequence_number,
-      "X-ADC-Event-Count": receipt.event_count,
+      "X-Particeps-Bundle-Format": "particeps-research-bundle-v1",
+      "X-Particeps-Bundle-Id": receipt.bundle_id,
+      "X-Particeps-Configuration-SHA256": receipt.configuration_sha256,
+      "X-Particeps-Researcher-Key-Id": RESEARCHER_KEY_ID,
+      "X-Particeps-Sequence-From": receipt.first_sequence_number,
+      "X-Particeps-Sequence-To": receipt.last_sequence_number,
+      "X-Particeps-Event-Count": receipt.event_count,
     },
     body,
   };

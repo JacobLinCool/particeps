@@ -1,9 +1,16 @@
+/** Shared configuration fixture for the web suite only.
+ *
+ * The cross-language conformance vectors in `protocol/v1/conformance-vectors.json` are built by
+ * `tools/generate_protocol_vectors.mjs` from its own configuration, so changing values here cannot
+ * move a published vector.
+ */
+
 import {
   encodeBase64Url,
   hpkeKeyPairFromPrivate,
   signingKeyPairFromPrivate
-} from '../src/lib/adc/crypto';
-import type { StudyConfiguration } from '../src/lib/adc/types';
+} from '../src/lib/particeps/crypto';
+import type { StudyConfiguration } from '../src/lib/particeps/types';
 
 const raw = (byte: number) => encodeBase64Url(new Uint8Array(32).fill(byte));
 
@@ -23,7 +30,7 @@ export function validConfiguration(
     expires_at: '2027-01-01T00:00:00Z',
     minimum_client_version: '1',
     title: 'Protocol v1 study',
-    researcher: { name: 'ADC Lab', contact: 'adc@example.test' },
+    researcher: { name: 'Protocol Fixture Lab', contact: 'fixture@example.invalid' },
     purpose: 'Protocol conformance',
     duration_hours: 24,
     consent: { document_version: '2026-01', summary: 'Collect lifecycle test events.' },

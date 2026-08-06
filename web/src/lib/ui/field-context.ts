@@ -22,7 +22,7 @@ export interface FieldSource {
   message(issue: UiIssue): string;
 }
 
-const KEY = Symbol('adc.field-source');
+const KEY = Symbol('particeps.field-source');
 
 const NONE: FieldSource = {
   issues: () => [],

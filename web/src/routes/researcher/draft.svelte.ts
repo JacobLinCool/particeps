@@ -13,7 +13,7 @@
  *
  * Four fields are held apart from the rest. `configuration` is the editable object, and nothing in
  * it names it or names its keys: `experiment_id`, `configuration_id`, `signer.key_id` and
- * `export.researcher_key_id` are derived here (`lib/adc/ids.ts`) and written into `document`, which
+ * `export.researcher_key_id` are derived here (`lib/particeps/ids.ts`) and written into `document`, which
  * is what gets validated, canonicalised, signed, and downloaded. Nobody types an identifier, and
  * the property the old section note asked a researcher to maintain by hand — change anything,
  * change the configuration ID — is now true by construction.
@@ -26,11 +26,11 @@
  * public half had just been swapped out.
  */
 
-import type { ResearchBundle } from '$lib/adc/bundle';
+import type { ResearchBundle } from '$lib/particeps/bundle';
 import {
   canonicalConfigurationBytes,
   canonicalizeConfiguration
-} from '$lib/adc/canonical';
+} from '$lib/particeps/canonical';
 import {
   fingerprint as fingerprintOf,
   generateHpkeKeyPair,
@@ -39,15 +39,15 @@ import {
   verify,
   type HpkeKeyPair,
   type SigningKeyPair
-} from '$lib/adc/crypto';
-import { encodeEnvelope } from '$lib/adc/envelope';
+} from '$lib/particeps/crypto';
+import { encodeEnvelope } from '$lib/particeps/envelope';
 import {
   deriveConfigurationId,
   deriveExperimentId,
   deriveExportKeyId,
   deriveSignerKeyId
-} from '$lib/adc/ids';
-import { defaultCollector, emptyConfiguration, validate, type Issue } from '$lib/adc/schema';
+} from '$lib/particeps/ids';
+import { defaultCollector, emptyConfiguration, validate, type Issue } from '$lib/particeps/schema';
 import {
   COLLECTOR_ORDER,
   ID_PATTERN,
@@ -56,7 +56,7 @@ import {
   type InterventionConfig,
   type SurveyDefinition,
   type StudyConfiguration
-} from '$lib/adc/types';
+} from '$lib/particeps/types';
 import type { StepState } from '$lib/ui/types';
 import { SvelteSet } from 'svelte/reactivity';
 import type { ArtifactId } from './artifacts';
@@ -76,7 +76,7 @@ const NO_ARTIFACTS: Record<ArtifactId, boolean> = {
   'signing-private': false,
   'hpke-private': false,
   canonical: false,
-  adccfg: false
+  partcfg: false
 };
 
 /**
@@ -141,7 +141,7 @@ export function createDraft() {
    * not move when the title changes for a second-language arm — same experiment, different title,
    * different configuration. So it derives until it is real and then latches: `sign()` pins it,
    * because that is the moment it enters a file somebody else will hold, and `load()` adopts the
-   * one it read. Opening the English `.adccfg`, retyping the prose in Chinese, and re-signing
+   * one it read. Opening the English `.partcfg`, retyping the prose in Chinese, and re-signing
    * therefore inherits the experiment and regenerates the configuration, with nothing to remember.
    */
   let experimentIdPin = $state('');
@@ -261,7 +261,7 @@ export function createDraft() {
     if (kept['hpke-private']) total += 1;
     if (artifactCount === 4) {
       if (kept.canonical) total += 1;
-      if (kept.adccfg) total += 1;
+      if (kept.partcfg) total += 1;
     }
     return total;
   });
@@ -568,8 +568,8 @@ export function createDraft() {
       signedCanonical = null;
       attempted = false;
       touched.clear();
-      sent = { ...sent, canonical: false, adccfg: false };
-      kept = { ...kept, canonical: false, adccfg: false };
+      sent = { ...sent, canonical: false, partcfg: false };
+      kept = { ...kept, canonical: false, partcfg: false };
     },
 
     /**
@@ -626,8 +626,8 @@ export function createDraft() {
       // The name is now in a file somebody else will hold, so it stops following the title. After
       // this, editing the prose moves `configuration_id` — which is correct — and nothing else.
       if (experimentIdPin === '') experimentIdPin = target.experiment_id;
-      sent = { ...sent, canonical: false, adccfg: false };
-      kept = { ...kept, canonical: false, adccfg: false };
+      sent = { ...sent, canonical: false, partcfg: false };
+      kept = { ...kept, canonical: false, partcfg: false };
       return 'signed';
     },
 

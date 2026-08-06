@@ -1,5 +1,5 @@
 {
-  "name": "android-data-collector-web",
+  "name": "particeps-web",
   "private": true,
   "type": "module",
   "scripts": {

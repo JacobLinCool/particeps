@@ -1,5 +1,5 @@
 {
-  "catalog_format": "adc-collector-catalog-v1",
+  "catalog_format": "particeps-collector-catalog-v1",
   "catalog_version": 1,
   "collectors": [
     {

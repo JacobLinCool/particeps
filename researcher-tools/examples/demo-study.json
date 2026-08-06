@@ -9,7 +9,7 @@
   "minimum_client_version": "1",
   "title": "Modular sensing demonstration",
   "researcher": {
-    "name": "Android Data Collector maintainers",
+    "name": "Particeps maintainers",
     "contact": "research@example.invalid"
   },
   "purpose": "Verify the complete on-device collection, pause, export, and researcher-decryption loop.",

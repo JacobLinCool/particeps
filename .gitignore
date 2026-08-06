@@ -57,6 +57,6 @@ bin/
 *-private.json
 *.jks
 *.keystore
-*.adcexp
+*.partexp
 !researcher-tools/examples/INSECURE-demo-signing-private.key
 !researcher-tools/examples/INSECURE-demo-hpke-private.key

@@ -28,7 +28,7 @@ export interface StepDef {
 }
 
 /**
- * Structurally the `Issue` from `lib/adc/schema`, widened by an optional `params` so the
+ * Structurally the `Issue` from `lib/particeps/schema`, widened by an optional `params` so the
  * parameterised messages in the catalogue (`length_range`, `number_range`, `document_too_large`)
  * can be rendered without the UI knowing the bounds.
  */

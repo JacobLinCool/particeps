@@ -5,8 +5,14 @@
   summary — is never translated: it is rendered exactly as it was signed.
 -->
 <resources>
-    <!-- A product name, not prose: the same in every locale. -->
-    <string name="app_name" translatable="false">Android Data Collector</string>
+    <!--
+      A product name, not prose: the same in every locale, never translated and never
+      transliterated. A participant compares this name against the recruitment material that asked
+      them to install the app, and it is the name Android Settings shows beside the permissions they
+      grant and the storage they can clear. A locale that renders it as anything else breaks both
+      comparisons.
+    -->
+    <string name="app_name" translatable="false">Particeps</string>
     <string name="intervention_channel">Research activities</string>
     <string name="survey_title">Survey</string>
     <string name="survey_loading">Opening survey…</string>
@@ -23,7 +29,12 @@
     <string name="survey_unavailable">This survey occurrence is unavailable.</string>
 
     <!-- Header -->
-    <string name="header_no_study">Research Data Collector</string>
+    <!--
+      The title slot carries the study's own title once one is imported; before that it carries the
+      product name, so it is app_name and follows the same rule. A phrase describing the app would
+      read as a second name for it.
+    -->
+    <string name="header_no_study" translatable="false">@string/app_name</string>
     <string name="header_starting">Starting up</string>
     <string name="header_elapsed_minutes">%1$dm</string>
     <string name="header_elapsed_hours">%1$dh %2$dm</string>

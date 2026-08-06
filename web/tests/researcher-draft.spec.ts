@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { flushSync } from 'svelte';
 import { createDraft } from '../src/routes/researcher/draft.svelte';
-import { canonicalizeConfiguration } from '$lib/adc/canonical';
+import { canonicalizeConfiguration } from '$lib/particeps/canonical';
 import { decodeEnvelope } from '../src/routes/researcher/parse';
-import { verify } from '$lib/adc/crypto';
+import { verify } from '$lib/particeps/crypto';
 
 function ready() {
   const draft = createDraft();

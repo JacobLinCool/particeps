@@ -7,7 +7,7 @@
  * visible as a missing row.
  */
 
-import type { CollectorId } from '$lib/adc/types';
+import type { CollectorId } from '$lib/particeps/types';
 import type { IconRef } from '$lib/ui/icons';
 import type { MessageKey } from './copy';
 
@@ -135,6 +135,6 @@ export const SETUP_STEPS: readonly { nameKey: MessageKey; captionKey: MessageKey
   { nameKey: 'setup.step.start', captionKey: 'setup.caption.start' }
 ];
 
-export const REPOSITORY = 'https://github.com/JacobLinCool/android-data-collector';
+export const REPOSITORY = 'https://github.com/JacobLinCool/particeps';
 
 export const PARTICIPANT_GUIDE = `${REPOSITORY}/blob/main/docs/participant-guide.md`;

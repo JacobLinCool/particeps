@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalConfigurationBytes, canonicalizeConfiguration } from '$lib/adc/canonical';
-import { generateHpkeKeyPair, generateSigningKeyPair, sign } from '$lib/adc/crypto';
-import { encodeEnvelope } from '$lib/adc/envelope';
-import { DEFAULT_LOCAL_BYTES, emptyConfiguration } from '$lib/adc/schema';
+import { canonicalConfigurationBytes, canonicalizeConfiguration } from '$lib/particeps/canonical';
+import { generateHpkeKeyPair, generateSigningKeyPair, sign } from '$lib/particeps/crypto';
+import { encodeEnvelope } from '$lib/particeps/envelope';
+import { DEFAULT_LOCAL_BYTES, emptyConfiguration } from '$lib/particeps/schema';
 import { artifactBytes } from '../src/routes/researcher/artifacts';
 import { hpkeKeyPairFromPrivate, signingKeyPairFromPrivate } from '../src/routes/researcher/keys';
 import { parseConfiguration } from '../src/routes/researcher/parse';

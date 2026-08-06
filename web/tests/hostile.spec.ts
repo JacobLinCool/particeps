@@ -3,11 +3,11 @@ import {
   canonicalBytes,
   canonicalConfigurationBytes,
   canonicalizeConfiguration
-} from '../src/lib/adc/canonical';
-import { sign } from '../src/lib/adc/crypto';
-import { encodeEnvelope } from '../src/lib/adc/envelope';
-import { validate } from '../src/lib/adc/schema';
-import type { StudyConfiguration } from '../src/lib/adc/types';
+} from '../src/lib/particeps/canonical';
+import { sign } from '../src/lib/particeps/crypto';
+import { encodeEnvelope } from '../src/lib/particeps/envelope';
+import { validate } from '../src/lib/particeps/schema';
+import type { StudyConfiguration } from '../src/lib/particeps/types';
 import { parseConfiguration } from '../src/routes/researcher/parse';
 import { SIGNING, validConfiguration } from './fixture';
 
@@ -50,7 +50,7 @@ describe('closed-world configuration parser', () => {
     expect(() => parseConfiguration(canonicalBytes(value))).toThrow();
   });
 
-  it('verifies signer ID and Ed25519 signature when the input is ADCCFG01', () => {
+  it('verifies signer ID and Ed25519 signature when the input is PTCCFG01', () => {
     const configuration = validConfiguration();
     const payload = canonicalConfigurationBytes(configuration);
     const signature = sign(payload, SIGNING.privateKey);

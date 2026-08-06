@@ -6,7 +6,7 @@ Read the "what you cannot claim" column in the [researcher guide](researcher-gui
 
 ## Reading an export
 
-A decrypted bundle is a `research-bundle-v1` JSON document.
+A decrypted bundle is a `particeps-research-bundle-v1` JSON document.
 
 ```json
 {
@@ -32,7 +32,7 @@ A decrypted bundle is a `research-bundle-v1` JSON document.
     "uploaded_through_sequence": "4200"
   },
   "exported_at_utc_millis": "1767225600000",
-  "format": "research-bundle-v1",
+  "format": "particeps-research-bundle-v1",
   "producer": {"client_version": "1", "platform": "android"}
 }
 ```
@@ -43,7 +43,7 @@ before its complete ciphertext and manifest are durably staged; retries never re
 
 `configuration` is the canonical study configuration the participant consented to, reproduced verbatim. Every dataset therefore carries its own definition of what was supposed to be collected — including its `upload` block, so a dataset states whether the study it came from delivered data to an endpoint.
 
-`configuration_signature` preserves the original signer key ID and raw Ed25519 signature, while `configuration_sha256` binds the exact embedded configuration to the outer `ADCEXP01` framing. The signature and digest are verified again during decryption; they identify which key issued the artifact but do not attest who held that key or which device submitted the bundle. `producer` records the producing platform and client build.
+`configuration_signature` preserves the original signer key ID and raw Ed25519 signature, while `configuration_sha256` binds the exact embedded configuration to the outer `PTCEXP01` framing. The signature and digest are verified again during decryption; they identify which key issued the artifact but do not attest who held that key or which device submitted the bundle. `producer` records the producing platform and client build.
 
 | Field | Meaning |
 | --- | --- |
@@ -535,7 +535,7 @@ When the quota is exhausted, the write fails and the study **fail-closes to `PAU
 
 In a study that uploads, a confirmed delivery lets the device reclaim space. Above 80% of the quota, whole leading segments are released — down to 60% — provided every event in them was confirmed by the endpoint and they are not the segment still being written. Nothing undelivered is ever released, so an endpoint that stops answering brings a study back to the fail-closed case above rather than to a device that discards data. `StudyMetadata.retainedFromSequence` records the lowest sequence still present, sequence numbers are never reissued, and the participant's dashboard states how many earlier events were delivered and removed.
 
-Study metadata is held separately from the events. It is capped at 1 MiB and kept outside the event budget by a 2 MiB reserve, so the record of what a study is and how far it has been delivered cannot be crowded out by the events it describes. Its container header is `ADCMET01`.
+Study metadata is held separately from the events. It is capped at 1 MiB and kept outside the event budget by a 2 MiB reserve, so the record of what a study is and how far it has been delivered cannot be crowded out by the events it describes. Its container header is `PTCMET01`.
 
 Normal study opening does not decrypt its event log. Framing and sequence contiguity are checked from plaintext frame headers, and each collector's most recent event is persisted in metadata rather than recovered by scanning, so start-up cost is linear in frames rather than in bytes decrypted. The sole exception is a one-boundary-ahead append journal with a durable tail: recovery authenticates exactly that tail before applying its metadata. All other event payloads are authenticated when read, so damage outside the recovery tail surfaces at export or upload rather than at launch.
 

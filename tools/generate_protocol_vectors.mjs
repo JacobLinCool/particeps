@@ -109,7 +109,7 @@ const configurationSha = digest(configurationBytes);
 const signature = ed25519.sign(configurationBytes, signerPrivate);
 const signerKeyId = UTF8.encode(configuration.signer.key_id);
 const envelope = concat(
-  UTF8.encode('ADCCFG01'),
+  UTF8.encode('PTCCFG01'),
   u16(signerKeyId.length),
   u32(configurationBytes.length),
   signerKeyId,
@@ -120,7 +120,7 @@ const envelope = concat(
 const bundleId = '00000000-0000-4000-8000-000000000099';
 const bundleIdBytes = Uint8Array.from(Buffer.from(bundleId.replaceAll('-', ''), 'hex'));
 const contextValue = {
-  bundle_format: 'research-bundle-v1',
+  bundle_format: 'particeps-research-bundle-v1',
   bundle_id: bundleId,
   configuration_sha256: hex(configurationSha),
   researcher_key_id: 'vector-hpke'
@@ -191,7 +191,7 @@ const documentValue = {
     uploaded_through_sequence: '0'
   },
   exported_at_utc_millis: '10000',
-  format: 'research-bundle-v1',
+  format: 'particeps-research-bundle-v1',
   producer: { client_version: '7', platform: 'android' }
 };
 const documentBytes = bytes(documentValue);
@@ -201,7 +201,7 @@ const ephemeralPrivate = Uint8Array.from({ length: 32 }, (_, index) => 0x21 + in
 const wrappedKey = await hpkeSeal(researcherPublic, ephemeralPrivate, contentKey, context);
 const documentCiphertext = await aesGcm(contentKey, contentNonce, documentBytes, context);
 const bundlePrefixForNonce = (nonce) => concat(
-  UTF8.encode('ADCEXP01'),
+  UTF8.encode('PTCEXP01'),
   bundleIdBytes,
   configurationSha,
   u16(UTF8.encode('vector-hpke').length),
@@ -236,6 +236,11 @@ const receiptBytes = bytes(receiptValue);
 const oldConfig = concat(envelope.slice(0, 14), u16(64), envelope.slice(14));
 const wrongDigestBundle = bundle.slice();
 wrongDigestBundle[24] ^= 1;
+// The retired Android Data Collector identity is not a second dialect of Protocol v1; it is input
+// that must fail closed. These fixtures are the only place the old names survive, and they exist
+// so every implementation proves it rejects them rather than sniffing a fallback.
+const retiredMagicConfiguration = concat(UTF8.encode('ADCCFG01'), envelope.slice(8));
+const retiredMagicBundle = concat(UTF8.encode('ADCEXP01'), bundle.slice(8));
 
 const configurationVariant = (change) => {
   const value = clone(configuration);
@@ -243,7 +248,7 @@ const configurationVariant = (change) => {
   return bytes(value);
 };
 const signedVariant = (payload, signatureBytes = signature) => concat(
-  UTF8.encode('ADCCFG01'),
+  UTF8.encode('PTCCFG01'),
   u16(signerKeyId.length),
   u32(payload.length),
   signerKeyId,
@@ -272,6 +277,10 @@ const withOldProducer = await semanticBundle((value) => {
 });
 const withUnknownRootMember = await semanticBundle((value) => {
   value.unexpected = true;
+});
+// Authenticated under the current context, so only the inner format check can reject it.
+const withRetiredBundleFormat = await semanticBundle((value) => {
+  value.format = 'research-bundle-v1';
 });
 const withRangeCountMismatch = await semanticBundle((value) => {
   value.experiment.event_count = '2';
@@ -366,7 +375,7 @@ const validCanonicalJson = bytes({
 });
 
 const corpus = {
-  corpus_format: 'adc-protocol-conformance-v1',
+  corpus_format: 'particeps-protocol-conformance-v1',
   hostile: [
     { category: 'unicode_jcs', entrypoint: 'canonical_json', expected_failure: 'utf16_key_order', id: 'jcs-wrong-utf16-key-order', input_hex: hex(UTF8.encode('{"":0,"𐀀":1}')) },
     { category: 'unicode_jcs', entrypoint: 'canonical_json', expected_failure: 'malformed_utf8', id: 'jcs-malformed-utf8', input_hex: '7b2278223a22c328227d' },
@@ -383,13 +392,16 @@ const corpus = {
     { category: 'raw_key_encoding', entrypoint: 'configuration_jcs', expected_failure: 'wrong_key_length', id: 'config-short-hpke-key', input_hex: hex(configurationVariant((value) => { value.export.hpke_public_key = base64url(researcherPublic.slice(0, -1)); })) },
     { category: 'raw_key_encoding', entrypoint: 'configuration_jcs', expected_failure: 'legacy_tink_keyset', id: 'config-tink-hpke-keyset', input_hex: hex(configurationVariant((value) => { value.export.hpke_public_key = '{"primaryKeyId":1,"key":[]}'; })) },
     { category: 'trailing_bytes', entrypoint: 'configuration_jcs', expected_failure: 'noncanonical_json', id: 'config-leading-whitespace', input_hex: hex(concat(UTF8.encode(' '), configurationBytes)) },
-    { category: 'old_v1', entrypoint: 'signed_configuration', expected_failure: 'old_v1_framing', id: 'adccfg-old-signature-length', input_hex: hex(oldConfig) },
-    { category: 'malformed_length', entrypoint: 'signed_configuration', expected_failure: 'zero_key_length', id: 'adccfg-zero-key-length', input_hex: hex(concat(envelope.slice(0, 8), u16(0), envelope.slice(10))) },
-    { category: 'malformed_length', entrypoint: 'signed_configuration', expected_failure: 'truncated', id: 'adccfg-truncated', input_hex: hex(envelope.slice(0, -1)) },
-    { category: 'trailing_bytes', entrypoint: 'signed_configuration', expected_failure: 'trailing_byte', id: 'adccfg-trailing-byte', input_hex: hex(concat(envelope, Uint8Array.of(0))) },
-    { category: 'signature_input', entrypoint: 'signed_configuration', expected_failure: 'signature_payload_mismatch', id: 'adccfg-wrong-signature-input', input_hex: hex(signedVariant(signaturePayload)) },
-    { category: 'signature_input', entrypoint: 'signed_configuration', expected_failure: 'tampered_signature', id: 'adccfg-tampered-signature', input_hex: hex(signedVariant(configurationBytes, xorLast(signature))) },
-    { category: 'old_v1', entrypoint: 'bundle', expected_failure: 'old_v1_framing', id: 'bundle-old-zero-header', input_hex: hex(concat(UTF8.encode('ADCEXP01'), new Uint8Array(128))) },
+    { category: 'old_v1', entrypoint: 'signed_configuration', expected_failure: 'old_v1_framing', id: 'partcfg-old-signature-length', input_hex: hex(oldConfig) },
+    { category: 'old_v1', entrypoint: 'signed_configuration', expected_failure: 'retired_product_magic', id: 'partcfg-retired-product-magic', input_hex: hex(retiredMagicConfiguration) },
+    { category: 'malformed_length', entrypoint: 'signed_configuration', expected_failure: 'zero_key_length', id: 'partcfg-zero-key-length', input_hex: hex(concat(envelope.slice(0, 8), u16(0), envelope.slice(10))) },
+    { category: 'malformed_length', entrypoint: 'signed_configuration', expected_failure: 'truncated', id: 'partcfg-truncated', input_hex: hex(envelope.slice(0, -1)) },
+    { category: 'trailing_bytes', entrypoint: 'signed_configuration', expected_failure: 'trailing_byte', id: 'partcfg-trailing-byte', input_hex: hex(concat(envelope, Uint8Array.of(0))) },
+    { category: 'signature_input', entrypoint: 'signed_configuration', expected_failure: 'signature_payload_mismatch', id: 'partcfg-wrong-signature-input', input_hex: hex(signedVariant(signaturePayload)) },
+    { category: 'signature_input', entrypoint: 'signed_configuration', expected_failure: 'tampered_signature', id: 'partcfg-tampered-signature', input_hex: hex(signedVariant(configurationBytes, xorLast(signature))) },
+    { category: 'old_v1', entrypoint: 'bundle', expected_failure: 'old_v1_framing', id: 'bundle-old-zero-header', input_hex: hex(concat(UTF8.encode('PTCEXP01'), new Uint8Array(128))) },
+    { category: 'old_v1', entrypoint: 'bundle', expected_failure: 'retired_product_magic', id: 'bundle-retired-product-magic', input_hex: hex(retiredMagicBundle) },
+    { category: 'old_v1', entrypoint: 'bundle', expected_failure: 'retired_bundle_format', id: 'bundle-retired-bundle-format', input_hex: hex(withRetiredBundleFormat) },
     { category: 'outer_inner_identity', entrypoint: 'bundle', expected_failure: 'configuration_digest_mismatch', id: 'bundle-wrong-configuration-digest', input_hex: hex(wrongDigestBundle) },
     { category: 'body_tampering', entrypoint: 'bundle', expected_failure: 'aead_authentication', id: 'bundle-tampered-tag', input_hex: hex(xorLast(bundle)) },
     { category: 'malformed_length', entrypoint: 'bundle', expected_failure: 'truncated', id: 'bundle-truncated', input_hex: hex(bundle.slice(0, -1)) },
@@ -450,6 +462,22 @@ const corpus = {
       signer_key_id: 'vector-signer',
       signer_private_key_base64url: base64url(signerPrivate),
       signer_public_key_base64url: base64url(signerPublic)
+    },
+    // The producer of these headers is Kotlin and the only reader is the TypeScript Worker, so
+    // nothing but a shared fixture stops one side from being renamed without the other. Both sides
+    // assert against this list rather than against their own constants.
+    upload_request: {
+      bundle_format: 'particeps-research-bundle-v1',
+      media_type: 'application/vnd.particeps.research-bundle',
+      routing_headers: [
+        'X-Particeps-Bundle-Format',
+        'X-Particeps-Bundle-Id',
+        'X-Particeps-Configuration-SHA256',
+        'X-Particeps-Event-Count',
+        'X-Particeps-Researcher-Key-Id',
+        'X-Particeps-Sequence-From',
+        'X-Particeps-Sequence-To'
+      ]
     },
     upload_receipt: {
       canonical_jcs_utf8_hex: hex(receiptBytes),

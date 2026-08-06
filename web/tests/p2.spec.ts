@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalBytes, canonicalConfigurationBytes, canonicalizeConfiguration } from '../src/lib/adc/canonical';
-import { maximumReachableLocalDates, validate } from '../src/lib/adc/schema';
-import type { CollectorConfig, InterventionConfig, StudyConfiguration } from '../src/lib/adc/types';
+import { canonicalBytes, canonicalConfigurationBytes, canonicalizeConfiguration } from '../src/lib/particeps/canonical';
+import { maximumReachableLocalDates, validate } from '../src/lib/particeps/schema';
+import type { CollectorConfig, InterventionConfig, StudyConfiguration } from '../src/lib/particeps/types';
 import { parseConfiguration } from '../src/routes/researcher/parse';
 import { nextRandomWindow } from '../src/routes/researcher/random-window';
 import { validConfiguration } from './fixture';

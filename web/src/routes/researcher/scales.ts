@@ -37,7 +37,7 @@ import {
   MINIMUM_LOCAL_BYTES,
   UPLOAD_MAXIMUM_INTERVAL_MINUTES,
   UPLOAD_MINIMUM_INTERVAL_MINUTES
-} from '$lib/adc/types';
+} from '$lib/particeps/types';
 import { LADDERS, PRESETS } from './presets';
 import type { Messages } from '$lib/i18n/types';
 import type { Scale } from '$lib/ui/types';

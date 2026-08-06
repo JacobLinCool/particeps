@@ -9,4 +9,4 @@ export {
   signingKeyPairFromPrivate,
   type HpkeKeyPair,
   type SigningKeyPair
-} from '$lib/adc/crypto';
+} from '$lib/particeps/crypto';

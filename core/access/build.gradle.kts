@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "cool.linc.androiddatacollector.core.access"
+    namespace = "cool.linc.particeps.core.access"
     compileSdk = 37
     defaultConfig { minSdk = 34 }
     compileOptions {

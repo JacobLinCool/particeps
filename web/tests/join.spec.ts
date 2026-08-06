@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createJoinLink, encodeJoinLink, parseJoinLink } from '../src/lib/adc/join';
+import { createJoinLink, encodeJoinLink, parseJoinLink } from '../src/lib/particeps/join';
 
 describe('immutable join links', () => {
   it('round-trips the exact artifact digest and signer fingerprint', () => {
@@ -19,11 +19,11 @@ describe('immutable join links', () => {
 
   it('rejects URLs that WHATWG and URI implementations normalize differently', () => {
     for (const artifactUrl of [
-      'https://EXAMPLE.invalid:443/a/../config.adccfg',
-      'https://artifacts.example.invalid/config.adccfg?download=1',
-      'https://artifacts.example.invalid/a//config.adccfg',
-      'https://artifacts.example.invalid/a/%63onfig.adccfg',
-      'https://127.0.0.1/config.adccfg'
+      'https://EXAMPLE.invalid:443/a/../config.partcfg',
+      'https://artifacts.example.invalid/config.partcfg?download=1',
+      'https://artifacts.example.invalid/a//config.partcfg',
+      'https://artifacts.example.invalid/a/%63onfig.partcfg',
+      'https://127.0.0.1/config.partcfg'
     ]) {
       expect(() =>
         encodeJoinLink({
@@ -46,7 +46,7 @@ describe('immutable join links', () => {
     ).toThrow('join_url_exposes_participant_id');
     expect(() =>
       createJoinLink(
-        'https://artifacts.example.invalid/config.adccfg',
+        'https://artifacts.example.invalid/config.partcfg',
         new Uint8Array([1]),
         'A'.repeat(32),
         'roster-code'
@@ -62,19 +62,33 @@ describe('immutable join links', () => {
     ).not.toContain('roster-code');
   });
 
-  it('rejects ambiguous, mutable, or noncanonical encodings', () => {
+  it('rejects the retired adc:// scheme when nothing else about the link is wrong', () => {
     const valid = encodeJoinLink({
-      artifactUrl: 'https://artifacts.example.invalid/config.adccfg',
+      artifactUrl: 'https://artifacts.example.invalid/config.partcfg',
       artifactSha256: '0'.repeat(64),
       signerFingerprint: 'A'.repeat(32)
     });
-    const artifact = 'https%3A%2F%2Fartifacts.example.invalid%2Fconfig.adccfg';
+    expect(() => parseJoinLink(valid)).not.toThrow();
+    // Retired-identity rejection fixture. `adc://join/v1` is the old join scheme and must stay
+    // spelled out here: a rename sweep that "fixes" it would leave this test proving nothing.
+    const retired = valid.replace('particeps://join/v1?', 'adc://join/v1?');
+    expect(retired.startsWith('adc://join/v1?artifact=')).toBe(true);
+    expect(() => parseJoinLink(retired)).toThrow('join_link_invalid');
+  });
+
+  it('rejects ambiguous, mutable, or noncanonical encodings', () => {
+    const valid = encodeJoinLink({
+      artifactUrl: 'https://artifacts.example.invalid/config.partcfg',
+      artifactSha256: '0'.repeat(64),
+      signerFingerprint: 'A'.repeat(32)
+    });
+    const artifact = 'https%3A%2F%2Fartifacts.example.invalid%2Fconfig.partcfg';
     for (const hostile of [
-      valid.replace('adc://', 'https://'),
+      valid.replace('particeps://', 'https://'),
       valid.replace('artifact=', 'unknown=x&artifact='),
       valid.replace('&sha256=', `&sha256=${'0'.repeat(64)}&sha256=`),
       valid.replace('https%3A', 'http%3A'),
-      valid.replace(artifact, 'https%3A%2F%2Fuser%40artifacts.example.invalid%2Fconfig.adccfg'),
+      valid.replace(artifact, 'https%3A%2F%2Fuser%40artifacts.example.invalid%2Fconfig.partcfg'),
       valid.replace(artifact, `${artifact}%23mutable`),
       valid.replace('%2F', '%2f'),
       `${valid}&extra=1`

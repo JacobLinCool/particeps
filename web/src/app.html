@@ -17,7 +17,7 @@
       // reflow one frame in. Note the tag is `zh-Hant-TW`, not `zh-TW` — CSS language matching is
       // prefix-based and `zh-TW` does not match `zh-Hant`.
       try {
-        var stored = localStorage.getItem('adc.locale');
+        var stored = localStorage.getItem('particeps.locale');
         var picked =
           stored === 'en' || stored === 'zh-TW'
             ? stored

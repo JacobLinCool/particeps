@@ -9,7 +9,11 @@ const number = new Intl.NumberFormat('zh-TW');
 
 export const zhTW: Messages = {
   app: {
-    name: 'Android Data Collector',
+    /**
+     * 產品名稱不翻譯，也不音譯。這一個字串就是 Android 在系統設定的應用程式清單裡顯示的名稱，
+     * 也是參與者拿來跟招募說明、同意書上的名字對照的那個字；只要兩邊長得不一樣，對照就失效了。
+     */
+    name: 'Particeps',
     tagline: '不必自行開發 App，就能進行研究。',
     nav: { researcher: '研究者', participant: '參與者' }
   },
@@ -134,7 +138,7 @@ export const zhTW: Messages = {
     exportPrivate: 'export-hpke-private.key',
     exportPublic: 'export-hpke-public.json',
     canonical: 'study-canonical.json',
-    signed: 'study.adccfg'
+    signed: 'study.partcfg'
   },
 
   field: {
@@ -422,14 +426,14 @@ export const zhTW: Messages = {
     },
     files: {
       keep: '妥善保存金鑰',
-      /** 218px。「沒有任何指令能從 .adccfg 取回它」放不下，留在研究者指南裡；這裡只放會影響決定的後果。 */
+      /** 218px。「沒有任何指令能從 .partcfg 取回它」放不下，留在研究者指南裡；這裡只放會影響決定的後果。 */
       archive: '解密收到的資料時需要使用。',
       publish: '請將金鑰指紋放入招募資料。',
       distribute: '給參與者',
       pilot: '正式招募前，請先在研究預計支援的 Android 版本與機型上完成測試。',
       join: {
         title: '選用的加入連結與 QR Code',
-        artifactUrl: '已簽署 .adccfg 的 HTTPS 位址',
+        artifactUrl: '已簽署 .partcfg 的 HTTPS 位址',
         artifactHint: '請先託管完全相同的已簽署檔案，再輸入最終位址；App 不接受重新導向。',
         personalizedHint: '最後一段路徑必須是夠長的隨機字串，且位址不得包含指定參與者 ID。',
         copy: '複製加入連結',

@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "cool.linc.androiddatacollector.collector.temporalcontext"
+    namespace = "cool.linc.particeps.collector.temporalcontext"
     compileSdk = 37
     defaultConfig { minSdk = 34 }
     compileOptions {

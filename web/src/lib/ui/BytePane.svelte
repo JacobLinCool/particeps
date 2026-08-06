@@ -13,7 +13,7 @@
   import CopyButton from './CopyButton.svelte';
   import { tokenize } from './bytes';
   import { byteRatio, fillLevel, fraction } from './format';
-  import { MAXIMUM_CONFIGURATION_BYTES } from '$lib/adc/types';
+  import { MAXIMUM_CONFIGURATION_BYTES } from '$lib/particeps/types';
 
   interface Props {
     text: string;
