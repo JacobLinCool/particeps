@@ -2,7 +2,7 @@
 
 Particeps is a research data collection app for Android. It collects and stores everything on your own phone. Every study you import shows you its title, research team, purpose, duration, contact details, data sources, whether it sends data to the research team automatically, and consent text — all before anything is collected.
 
-The name is a Latin word, said PAR-ti-keps. It means someone who takes part. That is meant concretely here: your data stays on the phone, every source a study uses is shown to you before you are asked to consent, and nothing at all is collected until you press Start study.
+The name is a Latin word. It means someone who takes part. That is meant concretely here: your data stays on the phone, every source a study uses is shown to you before you are asked to consent, and nothing at all is collected until you press Start study.
 
 It does not mean the study is yours to design. Which sources it may use, how long it runs, and whether it sends data to the research team automatically are fixed in the signed file you import, and nothing you do in the app changes them. You can read all of that before you agree, and you can say no to the whole study. Within a study, the only sources you can hold back are the ones it marks optional: declining the Android access an optional source needs, or not enabling the research keyboard, leaves that source off and the study runs without it. Section 4 covers what each source asks for and section 5 covers the keyboard; a source the study marks required stops the study instead of running without it. Data that has already reached the research team cannot be taken back.
 
