@@ -15,9 +15,9 @@ describe('participant upload disclosure', () => {
 // participant control the app does not provide.
 describe('participant naming note', () => {
   it('states the limits alongside the name in both locales', () => {
-    expect(en.hero.naming.name).toContain('PAR-ti-keps');
+    expect(en.hero.naming.name).toContain('Latin');
     expect(en.hero.naming.limits).toContain('Nothing that has already left your phone can be taken back');
-    expect(zhTW.hero.naming.name).toContain('PAR-ti-keps');
+    expect(zhTW.hero.naming.name).toContain('拉丁文');
     expect(zhTW.hero.naming.limits).toContain('無法收回');
   });
 });

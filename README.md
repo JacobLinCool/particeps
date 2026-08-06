@@ -10,7 +10,7 @@ Standing up a mobile sensing study normally means writing an Android app, gettin
 
 ### The name
 
-*Particeps* is Latin for one who takes part or shares in something, and it is the root of *participant*. Say it PAR-ti-keps.
+*Particeps* is Latin for one who takes part or shares in something, and it is the root of *participant*.
 
 The name describes where the design puts the participant, and it is worth being exact about what that does and does not mean. Events are written and encrypted on the participant's own phone; every collector a study enables is shown to them, with what it records and what it cannot establish, before they are asked to consent; and nothing is collected until they press Start. Those are defaults the implementation actually provides. What the name does not grant is authorship of the study: the collector set, the duration, and whether the study uploads on a schedule are fixed in the signed configuration, and a participant cannot change them, add to them, or recall a bundle once it has been delivered. Their leverage over a running study is bounded and real — decline it outright, withhold the Android access an *optional* collector needs so that collector stays off, pause, finish early, withdraw, and delete the local data. A collector the configuration marks required is not optional in that sense: withholding its access stops the study rather than trimming it.
 
