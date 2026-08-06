@@ -18,6 +18,12 @@ The release workflow reconstructs the same `.signing` configuration used locally
 
 **`Pages`** (`pages.yml`) deploys the web authoring surface on pushes to `main` that touch it, not on a tag. It builds a project site, and `BASE_PATH` comes from the repository name at build time, so the published path follows whatever the repository is called. No path is pinned in the source, which is why renaming the repository is enough on its own — and why it is not optional. Until the repository is renamed from `android-data-collector` to `particeps`, the tree says Particeps everywhere while the site still publishes at `https://jacoblincool.github.io/android-data-collector/`. Renaming it moves the site to `https://jacoblincool.github.io/particeps/` on the next deploy to `main`.
 
+`BASE_PATH` is read at build time from the event payload, and that payload carries the repository name as it was when the event was created. A run queued before a rename therefore keeps building the old path however many times it is retried, because re-running replays the same event and redeploys the same artifact.
+
+The Particeps rename hit this. The deploy that followed the merge timed out — for an unrelated reason, a GitHub Pages deployment-lag incident that day — and re-running only the failed job republished a build whose HTML still pointed at `/android-data-collector/_app/…`. The title and the routes were right and the workflow was green; every asset was a 404. That is the failure mode least likely to be noticed, and the retry is what caused it, not the timeout.
+
+So after renaming the repository, trigger Pages fresh rather than re-running anything: `gh workflow run pages.yml --ref main`. A `workflow_dispatch` event is created at dispatch time and carries the current name. Then check the published HTML rather than the workflow's green tick — `curl -s <url> | grep -c '<old-repo-name>'` must be zero, and one asset URL taken from that HTML must return 200. A deploy can also simply be slow or stuck on GitHub's side; check <https://www.githubstatus.com> before assuming the rename broke something.
+
 GitHub will redirect the old repository URL to the new one, but only until some other repository claims the old name. Treat that as a courtesy to stale links rather than an address the project still publishes.
 
 What a redirect cannot fix is anything already in a participant's hands. A join link is a `particeps://join/v1` URI carrying the hosting URL of the signed `.partcfg`, its SHA-256, and the signer fingerprint, and a QR code is that URI rendered; both are immutable by design. An issued link or a printed QR cannot be repointed at a new address. So if a study's artifact was served from the old Pages path, or if a poster, an email, or a consent appendix sent participants there, reissue the join link and the QR at the new URL and redistribute them. The configuration itself does not need re-signing — the envelope bytes and their digest are unchanged, only the URL that serves them.
@@ -86,7 +92,7 @@ Before tagging, update `version` and `date-released` in [`CITATION.cff`](../../C
 The rename is not a recurring step, but it is not finished when the code lands either. In order:
 
 1. Rename the GitHub repository from `android-data-collector` to `particeps`, and update its description, topics, and homepage. Do this only once `main` carries the renamed tree, because the badges, documentation links, and `BASE_PATH` in it all assume the new name. Repository secrets survive a rename and need nothing.
-2. Confirm the next deploy to `main` publishes the site at the new path, and reissue any join link or QR that pointed at the old one.
+2. Dispatch Pages fresh (`gh workflow run pages.yml --ref main`) rather than re-running the run that straddled the rename, verify the published HTML carries no old-name asset paths, and reissue any join link or QR that pointed at the old one.
 3. Register `cool.linc.particeps` under Developer Verification with the existing certificate fingerprint, as above.
 4. Cut the first post-rename tag, restore `version` and `date-released` in `CITATION.cff` as part of it, and say plainly in its release notes that it is a fresh install rather than an update.
 
