@@ -19,7 +19,7 @@ The name describes where the design puts the participant, and it is worth being 
 1. **Generate your keys.** One Ed25519 pair to sign study configurations, one X25519 HPKE pair to decrypt bundles. `researcher-tools` writes raw 32-byte keys as unpadded base64url.
 2. **Write the study.** A strict Protocol v1 RFC 8785 JSON file naming collectors, reusable surveys, scheduled interventions, anonymous or assigned-code identity mode, duration, storage quota, consent text, and signing/export public keys.
 3. **Sign it.** `researcher-tools sign` produces a `.partcfg` file. Because the signing public key travels inside the signed bytes, any build of the app can verify it.
-4. **Distribute.** Participants install the app and import your `.partcfg`. Setup is five steps, one screen each — the study details, what each enabled collector records and does not record, the consent text with the signer's key fingerprint, the Android access your collectors need, and the start button — and collection begins only when they press it.
+4. **Distribute.** Participants install the app and import your `.partcfg`, or open a `particeps://join/v1` link that names where those exact bytes are served and pins their SHA-256. Setup is five steps, one screen each — the study details, what each enabled collector records and does not record, the consent text with the signer's key fingerprint, the Android access your collectors need, and the start button — and collection begins only when they press it.
 5. **Collect.** Events are written to encrypted on-device storage. Participants can pause, resume, finish early, or withdraw.
 6. **Export and analyse.** The participant exports an encrypted bundle and sends it to you. If the study declares an upload endpoint, the app also delivers immutable ciphertext bundles to an R2 receiver on a schedule. `particeps-analysis` inventories, verifies, decrypts, reassembles, and writes typed Parquet offline.
 
@@ -132,6 +132,7 @@ signing-keygen   generate an Ed25519 signing pair
 hpke-keygen      generate a raw X25519 HPKE key pair
 canonicalize     strictly parse and emit a canonical configuration
 sign             sign a canonical configuration into .partcfg
+personalize      sign one canonical configuration and .partcfg per row of an assigned-code mapping
 check-config     verify envelope, signature, platform, validity window, and client build; optionally pin the signer
 decrypt          decrypt a .partexp into particeps-research-bundle-v1 JSON
 ```

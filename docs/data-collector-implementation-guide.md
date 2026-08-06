@@ -33,8 +33,10 @@ codec's `when` over collector IDs is the allowlist.
 
 Every type below is declared in one file:
 [`core/collector-api/.../CollectorContracts.kt`](../core/collector-api/src/main/kotlin/cool/jacoblin/particeps/core/collector/CollectorContracts.kt).
-The only other file in `:core:collector-api` is the shared base class covered in
-[section 6](#6-lifecycle).
+The other four files in `:core:collector-api` are `SerializedCallbackCollector.kt` and
+`SourceLifecycle.kt`, the shared base class and the source registration/teardown result types
+covered in [section 6](#6-lifecycle); the generated `ProtocolEventContracts.kt`; and
+`LatestValueRateGate.kt`, the tested rate gate that on-change collectors use.
 
 ### Plugin and instance
 
@@ -141,6 +143,9 @@ sealed interface EmitResult {
 
     data object RejectedByAdmissionGate : EmitResult
 
+    /** The collector crossed its declared ID, schema, or maximum encoded-size boundary. */
+    data object ContractViolation : EmitResult
+
     data object StorageFailure : EmitResult
 }
 
@@ -179,6 +184,9 @@ enum class AccessKind {
     RESEARCH_KEYBOARD_ENABLED,
     RESEARCH_KEYBOARD_SELECTED,
     ACCELEROMETER_HARDWARE,
+    GYROSCOPE_HARDWARE,
+    AMBIENT_LIGHT_HARDWARE,
+    PROXIMITY_HARDWARE,
 }
 
 data class AccessRequirement(
@@ -188,7 +196,7 @@ data class AccessRequirement(
 ```
 
 `AccessKind` deliberately mixes Android runtime permissions, special access grants, an
-input-method selection state, and a hardware capability. They are all preconditions the
+input-method selection state, and hardware capabilities. They are all preconditions the
 participant can see and, except for hardware, revoke. `required` is not a property of the
 collector; it is copied from the `required` flag the researcher set on that collector in the
 study configuration.
@@ -321,9 +329,21 @@ The base class for callback-driven collectors is
 It marks all four lifecycle methods `final` and leaves you two:
 
 ```kotlin
-protected abstract suspend fun registerSource()
-protected abstract suspend fun unregisterSource()
+protected abstract suspend fun registerSource(): SourceRegistrationResult
+protected abstract suspend fun unregisterSource(): SourceTeardownResult
 ```
+
+Both return an explicit outcome rather than `Unit`, because a failure has to say whether the
+Android source was left attached. `SourceRegistrationResult` is `Registered`, `Released(failure)`
+when rollback proved nothing is attached, or `Uncertain(failure)` when it did not.
+`SourceTeardownResult` is `Released` or `ReleasedWithFailure(failure)`, both of which promise the
+callbacks are physically released or independently isolated; throwing instead leaves the source
+uncertain, and the base class then refuses to register a second generation over it. Both types are
+declared in
+[`SourceLifecycle.kt`](../core/collector-api/src/main/kotlin/cool/jacoblin/particeps/core/collector/SourceLifecycle.kt),
+alongside `registerSourceWithRollback`, which returns the registration result, and
+`completeSourceTeardown`, which runs every teardown operation before rethrowing the first failure so
+the collector can return a teardown result of its own.
 
 Use it unless your source is a periodic query. What the base class does with each call:
 
@@ -332,11 +352,13 @@ Use it unless your source is a periodic query. What the base class does with eac
 1. Rejects a second start (`check(consumerJob == null)`) and rejects starting from any state
    other than `STOPPED` or `FAILED`.
 2. Launches the single consumer coroutine on `Dispatchers.Default` in the runtime's scope.
-3. Calls `registerSource()` inside a `sourceRegistered` guard that makes double registration
+3. Calls `registerSource()` inside a `sourceState` guard that makes double registration
    a failure rather than a silent second listener.
-4. On success sets `ACTIVE`. On failure it drains the consumer, clears the job, sets
-   `FAILED` / `SOURCE_REGISTRATION_FAILED`, and rethrows so the runtime can record
-   `COLLECTOR_START_FAILED`. The collector can be started again afterwards.
+4. On success sets `ACTIVE`. On failure it sets `FAILED` / `SOURCE_REGISTRATION_FAILED` and
+   rethrows so the runtime can record `COLLECTOR_START_FAILED`. It drains the consumer and clears
+   the job only when the source is proven released, which is also the only case in which the
+   collector can be started again afterwards; an `Uncertain` registration leaves the consumer
+   running and blocks a restart.
 
 ### `pause()`
 
@@ -446,7 +468,13 @@ draw a wrong conclusion about timing.
 | --- | --- | --- |
 | `Accepted(sequenceNumber)` | durably appended | nothing |
 | `RejectedByAdmissionGate` | outside a valid running window | drop it silently; this is normal at every pause and stop |
+| `ContractViolation` | the draft is not this collector's ID, or it fails the catalog-derived event contract | set `FAILED` with a fixed reason code |
 | `StorageFailure` | the append failed | set `FAILED` with a fixed reason code |
+
+`ContractViolation` is a defect in the collector, not a runtime condition: the runtime checks the
+declared ID, payload schema, payload type, field set, field values, and worst-case encoded size
+before it consults the admission gate, and returns without recording an incident or closing the
+gate. Nothing about it improves on a retry.
 
 `StorageFailure` is not recoverable by retrying. On the runtime side, `emit` force-closes the
 admission gate, records the `STORAGE_WRITE_FAILED` incident, and launches a fail-closed
@@ -516,6 +544,7 @@ Codes currently in the source:
 | `SOURCE_REGISTRATION_FAILED` | `SerializedCallbackCollector` | `registerSource()` threw during start or resume |
 | `SOURCE_UNREGISTRATION_FAILED` | `SerializedCallbackCollector` | `unregisterSource()` threw during pause or stop |
 | `CALLBACK_QUEUE_FULL` | `SerializedCallbackCollector` | the bounded queue rejected an event |
+| `EVENT_CONTRACT_VIOLATION` | `SerializedCallbackCollector`, `network_usage.v1`, `usage_events.v1` | `emit` returned `ContractViolation` |
 | `STORAGE_WRITE_FAILED` | `SerializedCallbackCollector`, `network_usage.v1`, `usage_events.v1` | `emit` returned `StorageFailure` |
 | `WALL_CLOCK_NOT_FORWARD` | `network_usage.v1`, `usage_events.v1` | the wall clock did not advance past the coverage start |
 | `USAGE_ACCESS_REVOKED` | `network_usage.v1`, `usage_events.v1` | the platform query threw `SecurityException` |
@@ -533,6 +562,11 @@ whichever wrote last. Runtime-level incidents (`COMMAND_REJECTED`, `RUNTIME_FAIL
 `RuntimeSnapshot.incidentCode`, and are not collector health.
 
 ## 10. The twelve built-in collectors
+
+Twelve is the number a study configuration can choose from. The catalog holds thirteen entries:
+the thirteenth, `interventions.v1`, is marked `"selectable": false` because the runtime rather
+than a collector emits those events, and a study cannot select it. It is documented in the
+[data dictionary](data-dictionary.md) instead.
 
 Each entry states what the collector records and, as importantly, what its data cannot be
 used to claim.
@@ -873,7 +907,7 @@ agree:
 | `core/access/.../AccessManager.kt` → `isGranted` | `getDefaultSensor(Sensor.TYPE_LIGHT) != null` |
 | `core/access/.../AccessManager.kt` → `settingsIntent` | `null` — there is no settings screen for hardware |
 | `app/.../MainActivity.kt` → `requestAccess` | `Unit` — hardware cannot be requested |
-| `app/.../CollectorDashboard.kt` → `AccessKind.displayName` | a participant-readable label |
+| `app/.../CollectorDashboard.kt` → `AccessKind.labelRes()` | a participant-readable label as an app string resource |
 
 Required missing hardware blocks enrollment. Optional missing hardware reports blocked access and
 starts only if hardware becomes available; it never substitutes another source.
@@ -972,4 +1006,7 @@ Stated here rather than discovered later.
   review remains a security decision whenever Android APIs or build tooling change.
 - **`privacyClass` is declared but unread.** It documents the author's classification and
   drives no behaviour.
-- **`displayName` is not shown to participants.** The dashboard lists collectors by ID.
+- **`displayName` is not shown to participants.** `CollectorGrid` renders a localized name and
+  glyph that `CollectorSummary.summarize()` derives from the configuration type, out of the app's
+  own string resources. The descriptor's `displayName` reaches no participant-facing surface, so
+  the two can drift apart without anything failing.

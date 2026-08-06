@@ -76,6 +76,18 @@ If the content does not match what the research team told you, if the contact de
 
 Two of these presses are not the same kind of thing. Continue (繼續) on the **Study** step is what moves the study forward internally, from imported through verified to awaiting consent. Continue (繼續) on the **Data** step only turns the page: the study's state does not change, because reading the list of sources and agreeing to it are one decision as far as the app is concerned, shown to you as two pages. One consequence is worth knowing: if you leave the app while you are on the Consent page and come back, you land on the Data page again rather than on the checkbox.
 
+### If you were given a link or a QR code
+
+Step 2 has a second form. Instead of sending you a file, a research team can recruit you with a link beginning `particeps://join/v1`, or with a QR code that holds one. Opening the link, or scanning the QR code and opening what it offers, starts the app, and the app fetches the study file itself from the address written inside the link.
+
+The link names the file it expects: the address to fetch it from, the exact contents of the file, and the fingerprint of the key it is signed with. The app fetches that address once, over an encrypted connection, and checks that what arrived is byte for byte the file the link names and is signed by the key the link names. If either check fails, nothing is imported. If both pass, the file goes through the same checks section 1 describes, and the setup carries on from the **Study** step exactly as it does for a file you picked yourself. Nothing is collected until you press Start study (開始研究).
+
+The app fetches the file once and never goes back for another. A link cannot change a study you have already imported, and a research team that needs to change anything has to sign a new file and give you a new link for it.
+
+A link is accepted only when your phone holds no study at all. A study you have finished or withdrawn from but not yet deleted still counts, and so does a deletion that has not finished. When a link is refused for that reason the app shows the code `JOIN_ACTIVE_STUDY`, which reports the situation rather than a fault.
+
+Arriving this way also changes what checking the signer's fingerprint can prove. **Who signed the study**, below, explains how.
+
 ### Where you are in the setup
 
 Under the study title, during setup, the app draws five dots left to right, joined by a line: Study, Data, Consent, Access, Start. A step you have finished is a filled check mark, the step you are on is a thick ring, and steps still ahead are faint thin rings. The line between them fills in as you go. The names are not printed — the dots give the position and the panel below gives the content — but a screen reader announces the name of the step you are on. Nothing on this row is a button; it tells you how much of the setup is left.
@@ -103,6 +115,8 @@ Most studies show an instruction, then the reason for it in smaller grey type:
 **Nothing here is in red, and that is deliberate.** A study whose signer the app does not recognise is the ordinary case, not a fault — so the block reads as something for you to do, not as an alarm. Red in this app is reserved for a source that has actually stopped working. If the fingerprints do not match, or your research team never published one, that is when to stop and ask.
 
 **Seeing this is normal.** It is what the app shows for any study whose signer is not built into the app, which is most of them. It is not a warning that this particular study is fake. What it means is that the app cannot do this check for you, so you do it: your research team should have given you the fingerprint in the study information sheet, the consent document, or wherever they recruited you. Compare the two. If they match, the file came from whoever holds that key. If they do not match, or you were never given a fingerprint, stop and ask your research team before consenting.
+
+**If you arrived by a link or a QR code, the fingerprint you were sent with it is not the one to compare against.** A `particeps://join/v1` link carries a signer fingerprint inside it, and the app refuses to import a file signed by any other key, so the fingerprint on this screen is the fingerprint that was in the link. Comparing the two shows only that the link agrees with itself: whoever composed the link chose both. To learn anything, the fingerprint you compare against has to reach you by a route the link did not — the study information sheet, the consent document, your research team's published page, or the team itself through details you already had.
 
 The other possibility is a version of the app built by an institution to run only its own studies. It shows:
 
@@ -427,6 +441,10 @@ Uninstalling the app or clearing its app data also destroys the local keys and d
 | --- | --- |
 | The interface is in a language you cannot read | Tap the globe at the top right of the header and pick a language; it is the same setting as Android Settings → Apps → Particeps → Language |
 | The configuration file will not import | Check the file, the client build/platform, and the study's validity period; do not modify the `.partcfg`, and contact the research team |
+| `JOIN_LINK_INVALID` after opening a link or QR code | The link is not a complete `particeps://join/v1` link. Nothing was fetched and nothing was imported; ask your research team to send the link again rather than retyping or editing it |
+| `JOIN_ACTIVE_STUDY` after opening a link or QR code | Not a fault: the phone still holds a study, so the link was not acted on. A study you have finished or withdrawn from but not yet deleted counts, and so does a deletion that has not finished. Open the link again once the phone holds no study |
+| `JOIN_IMPORT_FAILED` after opening a link or QR code | The study file did not arrive intact or did not pass its checks: the fetch failed, what arrived was not the file the link names, it was not signed by the key the link names, or one of the checks in section 1 failed. Nothing was imported; quote the code to your research team |
+| `STUDY_IMPORT_FAILED` | The app's own record that an import did not finish, whether it came from a link or from a file. Nothing was imported and nothing already on the phone changed |
 | Check this against the fingerprint your research team published (請與研究團隊公佈的金鑰指紋核對) | Ordinary for most studies; compare the fingerprint on the Configuration signature (設定檔簽章) block with the one your research team published, and if you do not have one, ask before consenting |
 | The fingerprint does not match the one you were given | Do not consent. Contact your research team through details you already had, not details taken from the study screen |
 | A required item in the access list is not granted | Tap that row, finish on the Android screen it opens, and return to the app; if you do not want to grant it, do not start |
@@ -442,7 +460,7 @@ Uninstalling the app or clearing its app data also destroys the local keys and d
 | An `UPLOAD_…` code appears where the sent figure usually is | Collection carries on. Network, timeout, busy-server, and temporary-server errors retry automatically; other protocol/receipt errors can be terminal. Connect to Wi-Fi and charge the phone, then contact the research team and quote a persistent code |
 | Storage failure / paused | The app fails closed and stops accepting events; do not clear the app's data, contact the research team first, or export if you need to |
 
-When the app has something to tell you, it shows a short code in capital letters in a red band directly under the header, beside a solid dot — `STORAGE_WRITE_FAILED`, `CONFIGURATION_IMPORT_FAILED`, `EXPORT_FAILED` and the like. Passing the code to your research team helps them diagnose the problem, and it contains none of your collected data. Two codes in that band are confirmations rather than problems: `EXPORT_COMPLETE` after an export finishes, and `LOCAL_DATA_DELETED` after a deletion.
+When the app has something to tell you, it shows a short code in capital letters in a red band directly under the header, beside a solid dot — `STORAGE_WRITE_FAILED`, `CONFIGURATION_IMPORT_FAILED`, `EXPORT_FAILED` and the like. Passing the code to your research team helps them diagnose the problem, and it contains none of your collected data. Two codes in that band are confirmations rather than problems: `EXPORT_COMPLETE` after an export finishes, and `LOCAL_DATA_DELETED` after a deletion. A third, `JOIN_ACTIVE_STUDY`, is a refusal rather than a fault: the phone already holds a study, so the link was not acted on.
 
 ## 11. State reference
 
@@ -470,9 +488,9 @@ If you need to describe your situation to your research team, the internal names
 
 ## 12. If you tested an earlier version of this app
 
-This app used to be called Android Data Collector. As far as your phone is concerned, that app and Particeps are two completely separate apps. They sit side by side, and installing Particeps brings nothing across: no study, no consent, no collected events, and no export record moves from one to the other. The older app keeps running on your phone, with everything it already holds, until you remove it. What it can no longer do is deliver: it writes files in the older format, and if its study sends data automatically, the research team's server no longer accepts what it sends.
+This app used to be called Android Data Collector. The identity Android uses to tell one app from another has moved twice since then, and the key the releases are signed with has been rotated once, so an earlier install is a separate application even where it already carries the name Particeps. As far as your phone is concerned, that older app and this one are two completely separate apps: the older install cannot update into this one, and the rotated signing key would refuse the update even if the identity had stayed the same. They sit side by side, and installing Particeps brings nothing across: no study, no consent, no collected events, and no export record moves from one to the other. The older app keeps running on your phone, with everything it already holds, until you remove it. What an Android Data Collector install can no longer do is deliver: it writes files in the older format, and if its study sends data automatically, the research team's server no longer accepts what it sends.
 
-**Ask your research team before you uninstall the older app.** Uninstalling it destroys the key it keeps on your phone, and after that the encrypted data it collected cannot be read by anyone — not by you, not by them. There is no recovery and no backup. If they want what the older app collected, export it from that app while it is still installed and send them the file; tell them it came from the older version, because they need the older tools to open it. Only then uninstall.
+**Ask your research team before you uninstall the older app.** Uninstalling it destroys the key it keeps on your phone, and after that the encrypted data it collected cannot be read by anyone — not by you, not by them. There is no recovery and no backup. If they want what the older app collected, export it from that app while it is still installed and send them the file; tell them which version it came from, because an export written by an Android Data Collector install needs the older tools to open it. Only then uninstall.
 
 If your study uses the research keyboard, you have to enable it and select it again for Particeps. Android treats it as a different keyboard, so the setting you made for the older app does not carry over. Section 4 describes the two steps.
 

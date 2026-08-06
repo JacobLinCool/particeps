@@ -61,8 +61,9 @@ researcher tools -> study definition + signed protocol + export format
 - The upload watermark advances only on `201 Created` or exact-replay `200 OK` with a canonical
   seven-field receipt matching the outbox manifest, and never backwards. Redirects, `202`, other
   statuses, and malformed or mismatched receipts cannot commit. A confirmed delivery is the only thing that makes
-  local data reclaimable. Reclaiming starts only above 80% of the study's quota and takes whole
-  leading segments at or below the watermark. Undelivered data is never released to make room.
+  local data reclaimable. Reclaiming starts only above 80% of the study's quota, stops at 60% of
+  it, and takes whole leading segments at or below the watermark. Undelivered data is never
+  released to make room.
 - Study metadata is self-sufficient: opening a study validates framing and sequence contiguity
   from the plaintext frame headers and reads `lastEvents` from the metadata, so load cost is
   linear in frames rather than in bytes decrypted. Event payloads are authenticated when read;

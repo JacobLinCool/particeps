@@ -72,6 +72,50 @@ A manual bundle is bounded by `storage.maximum_local_bytes`, which is why `resea
 
 `format` is bound into the bundle's cryptographic associated data, so a reader built for a different version fails to decrypt rather than silently misreading one: the authentication tag fails before any field is parsed.
 
+### The transition history
+
+`transitions` is the study's lifecycle in order, one object per state change, from import up to the `state` the bundle reports. A study that has only been imported carries an empty array.
+
+```json
+{
+  "from": "RUNNING",
+  "reason": "PARTICIPANT_PAUSED",
+  "time": {
+    "wall_time_utc_millis": "1767225600000",
+    "monotonic_time_nanos": "12345678901234",
+    "boot_session_id": "0a1b2c3d4e5f60718293a4b5c6d7e8f9"
+  },
+  "to": "PAUSED"
+}
+```
+
+| Field | JSON type | Meaning |
+| --- | --- | --- |
+| `from` | string | The state before this change |
+| `to` | string | The state after it |
+| `reason` | string | Why it happened. Each reason has exactly one destination state. |
+| `time` | object | The same three clocks, with the same caveats, as an event's `observed_time` |
+
+A state is one of `IMPORTED`, `CONFIG_VERIFIED`, `CONSENT_PENDING`, `ACCESS_SETUP`, `READY`, `RUNNING`, `PAUSED`, `COMPLETED`, or `WITHDRAWN`. The reasons and the state each one produces:
+
+| `reason` | `to` |
+| --- | --- |
+| `CONFIGURATION_SIGNATURE_VERIFIED` | `CONFIG_VERIFIED` |
+| `CONSENT_REVIEW_OPENED` | `CONSENT_PENDING` |
+| `CONSENT_ACCEPTED` | `ACCESS_SETUP` |
+| `ACCESS_PREFLIGHT_PASSED` | `READY` |
+| `PARTICIPANT_STARTED` | `RUNNING` |
+| `PARTICIPANT_PAUSED` | `PAUSED` |
+| `PARTICIPANT_RESUMED` | `RUNNING` |
+| `PARTICIPANT_FINISHED_EARLY` | `COMPLETED` |
+| `STUDY_DURATION_ELAPSED` | `COMPLETED` |
+| `PARTICIPANT_WITHDREW` | `WITHDRAWN` |
+| `STORAGE_FAILURE` | `PAUSED` |
+
+The history is checked before any plaintext is published: the first `from` is `IMPORTED`, each `from` equals the previous `to`, each `reason` agrees with its destination, the pair is a legal transition, and the last `to` equals `state`. A bundle whose history does not chain fails verification rather than decoding partially.
+
+Reconstruct the running and paused windows from `transitions` rather than from export times. `particeps-analysis` validates the history but does not materialize it: the typed Parquet dataset holds collector events only, so this array is read from the decrypted bundle JSON.
+
 ### The event envelope
 
 Every event has the same shape regardless of collector.

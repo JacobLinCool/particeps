@@ -109,8 +109,16 @@ of sources having been shown. Once setup is over the header shows the study stat
 instead, and the panel becomes collector health, an event meter, and the lifecycle controls.
 
 `CollectorSummary.kt` is what the data step renders: one template per collector type, filled from
-the signed configuration's own parameters, plus a fixed per-collector line naming what that source
-cannot see. It is app-authored text with no configuration field behind it — see
+the signed configuration's own parameters. A summary carries a glyph, a name, that one detail line,
+and whether the collector is optional; the panel shows the glyph, the name, an `Optional` tag when
+the configuration does not mark the collector required, and the detail. Several of the detail
+templates end in a limit — battery context is not battery health or hardware identity, a time zone
+is not a location claim, rotation has no orientation or activity inferred from it — but that
+clause is part of the detail text rather than a separate field, and the collectors whose template
+does not carry one state nothing about what the source cannot see. The per-collector statement of
+what a source cannot establish is the table in [`researcher-guide.md`](researcher-guide.md), which
+is documentation for the researcher designing the study and not something the app renders. The
+summaries are app-authored text with no configuration field behind them — see
 [`threat-model.md`](threat-model.md).
 
 Every participant-facing string is a resource; none is written into Kotlin. The app ships English
@@ -493,6 +501,27 @@ the same way.
   re-verifies the signed envelope and loads the encrypted metadata. Collectors are constructed on
   every initialization, but the admission gate, collector activation, and the foreground service are
   restored only when the persisted state was `RUNNING`.
+- `DailyStatusWorker` posts one low-importance notification a day while the study is `RUNNING` or
+  `PAUSED`. It says either that collection is still running or that the study is paused and since
+  when, and nothing else: no counts, no collector names, and the title line is the application's own
+  name rather than the study title, because this arrives every day and a lock screen is readable by
+  whoever is holding the phone. One notification tag, so today's reminder replaces yesterday's. A
+  run in any other state, or with no configuration, posts nothing. Without `POST_NOTIFICATIONS` the
+  run succeeds without posting rather than retrying.
+- `AndroidStudyWorkScheduler.scheduleDailyStatus` enqueues it as unique periodic work with a one-day
+  period and a one-day initial delay, from `schedule` when a study starts and from
+  `reschedulePendingWork` whenever a session initialises. Periodic rather than a chain: a day is far
+  above the 15-minute floor, so nothing is silently clamped, and the platform re-establishes
+  periodic work across reboots. `ExistingPeriodicWorkPolicy.KEEP`, so a session initialising again
+  does not push the next reminder a full day away.
+- The schedule is deliberately not cancelled on pause, since a paused study is the case the
+  reminder exists for; `cancelCollectionWork` cancels both the schedule and any standing
+  notification when the study reaches a terminal state — finished early, completed at its
+  deadline, or withdrawn — and deleting local data cancels it as well. Starting or stopping
+  collection retracts a standing reminder without posting a replacement, because it states a state
+  that has just stopped being true and the next daily run posts the truth. Since pause stops the
+  foreground service and cancels visible prompt notifications, this is the only notification that
+  appears while a study is paused.
 - Each intervention combines a reusable action with one or more triggers. Actions are localized
   notifications or localized native surveys. Triggers are one-time offsets, repeating intervals,
   daily local times, or signed random local windows. Relative triggers declare whether elapsed

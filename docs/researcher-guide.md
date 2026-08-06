@@ -741,6 +741,11 @@ OEM hardware:
 - Consent; every required and optional access; behaviour after a denial; revoking access
   mid-study.
 - Start, pause, resume, finish, and withdraw for every configured collector.
+- The daily status reminder: that it arrives, that it says the study is paused after a pause and
+  collecting again after a resume, and that finishing or withdrawing stops it. Reminders are a
+  day apart, so a pilot that runs for an afternoon will not show you one. If your study schedules
+  no interventions, grant notification access yourself first — the access step does not ask for
+  it, and without it nothing is posted.
 - Two exports and two successful decryptions from each of `RUNNING`, `PAUSED`,
   `COMPLETED`, and `WITHDRAWN`.
 - If the study uploads: the consent step's upload block against your consent document, a
@@ -781,6 +786,28 @@ Re-entering the consent state returns to the data step, so nobody reaches the ch
 without the list of sources having been on screen. Afterwards participants can pause, resume,
 finish early, withdraw, export repeatedly, and delete local data; the irreversible ones ask
 for confirmation. See [`participant-guide.md`](participant-guide.md) for what they are told.
+
+From the start press onward the app posts one status reminder a day, for as long as the study is
+`RUNNING` or `PAUSED`. It is a low-importance notification — no sound — whose title is the
+application's own name rather than your study's, and whose single line says either that collection
+is still running or that the study is paused and since when. It carries no collector names, no
+counts, and nothing you wrote: it arrives every day for the study's whole duration, on a lock
+screen anyone holding the phone can read. The paused half is why it exists — a pause changes
+nothing else on the phone, so a study a participant meant to resume can sit collecting nothing for
+weeks with nothing saying so.
+
+Plan participant contact around it. It is not one of your interventions — the app posts it on its
+own, and no configuration field switches it off, rewords it, or adds to it — and the first one
+arrives about a day after the start press. Starting or stopping collection retracts a reminder
+already on screen rather than posting a replacement, so a paused study is never left asserting that
+it is still collecting; finishing, completing on the duration deadline, and withdrawing cancel the
+schedule and clear the standing notification. It needs notification access, which the access step
+requires only when your study schedules interventions, so in a study without them it reaches only
+the participants who granted notifications for some other reason. None of that makes the reminder
+a guarantee that a participant has been reminded: its timing is best effort rather than an exact
+alarm, a force stop blocks it until the app is opened again, and a participant can turn its
+channel off in Android's notification settings or revoke notification access, either of which
+stops the reminder without stopping the study.
 
 Researchers must not:
 

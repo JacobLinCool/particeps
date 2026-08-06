@@ -304,7 +304,11 @@ one while accepting the other. Absence of a vector is not permission to accept a
 encoding.
 
 The join-link corpus is consumed by Kotlin and TypeScript, the two implementations that create or
-open join links. Python analysis has no join-link entrypoint and does not interpret that corpus.
+open join links. Python analysis has no join-link entrypoint and never parses a join link.
+`tools/validate_protocol_vectors.py` does read the corpus, but only to check the fixtures
+themselves: closed-world shape, corpus identity, digest and fingerprint spelling, ASCII, and the
+4,096-byte limit. That is not an implementation of the join-link grammar, and it proves nothing
+about the profile rules above.
 
 Validate the checked-in sources with:
 

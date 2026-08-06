@@ -16,7 +16,7 @@ The release workflow reconstructs the same `.signing` configuration used locally
 
 ## The published site
 
-**`Pages`** (`pages.yml`) deploys the web authoring surface on pushes to `main` that touch it, not on a tag. It builds a project site, and `BASE_PATH` comes from the repository name at build time, so the published path follows whatever the repository is called. No path is pinned in the source, which is why renaming the repository is enough on its own — and why it is not optional. Until the repository is renamed from `android-data-collector` to `particeps`, the tree says Particeps everywhere while the site still publishes at `https://jacoblincool.github.io/android-data-collector/`. Renaming it moves the site to `https://jacoblincool.github.io/particeps/` on the next deploy to `main`.
+**`Pages`** (`pages.yml`) deploys the web authoring surface on pushes to `main` that touch it, not on a tag. It builds a project site, and `BASE_PATH` comes from the repository name at build time, so the published path follows whatever the repository is called. No path is pinned in the source, which is why renaming the repository is enough on its own — and why it was not optional. The repository has been renamed from `android-data-collector` to `particeps`, and the site publishes at `https://jacoblincool.github.io/particeps/`; the old path serves nothing.
 
 `BASE_PATH` is read at build time from the event payload, and that payload carries the repository name as it was when the event was created. A run queued before a rename therefore keeps building the old path however many times it is retried, because re-running replays the same event and redeploys the same artifact.
 
@@ -45,7 +45,7 @@ Nothing published before `cool.jacoblin.particeps` can be updated in place, and 
 
 The key was rotated to correct the certificate's subject, which named the pre-rename product and cannot be edited in place — a certificate is signed over its own subject, so changing it means issuing a new one. That was affordable only because every tag published to that point was a pre-1.0 release candidate and Developer Verification had not yet been registered. It stops being affordable the moment a real participant is running a released build, so it does not happen again.
 
-Every tester installs the new APK fresh and uninstalls the old one themselves. Uninstalling takes the old app's encrypted storage with it, and there is no migration: the storage key is non-exportable, so data written by the pre-rename build can leave only through that build's own export, in the pre-rename formats, which current tooling does not read. A tester holding data worth keeping should export it before uninstalling and analyse it with the pre-rename tooling. State this in the release notes for the first post-rename tag; a tester expecting an in-place update will otherwise read a correct install as a failed one.
+Every tester installs the new APK fresh and uninstalls the old one themselves. Uninstalling takes the old app's encrypted storage with it, and there is no migration: the storage key is non-exportable, so data written by the pre-rename build can leave only through that build's own export, in the pre-rename formats, which current tooling does not read. A tester holding data worth keeping should export it before uninstalling and analyse it with the pre-rename tooling. State this in the release notes for the first post-rename tag; a tester expecting an in-place update will otherwise read a correct install as a failed one. The notes for `v1.0.0-rc.4` do not state it, so it still has to reach testers another way.
 
 ## Android Developer Verification
 
@@ -87,16 +87,21 @@ git tag -a v0.1.0 -m "v0.1.0"
 git push origin v0.1.0
 ```
 
-Before tagging, update `version` and `date-released` in [`CITATION.cff`](../../CITATION.cff). Both fields are absent right now: every existing tag predates the rename and carries the old identity, so the file deliberately names no version rather than attributing one of those releases to Particeps. The first post-rename tag adds them back.
+Before tagging, update `version` and `date-released` in [`CITATION.cff`](../../CITATION.cff). Both fields are present again and name `1.0.0-rc.4`, the first post-rename tag. They were absent before it because every tag up to `v1.0.0-rc.3` carries the old identity, and the file named no version rather than attributing one of those releases to Particeps. Keep both fields in step with the tag at every release.
 
-### One-off: finishing the Particeps cutover
+### One-off: the Particeps cutover
 
-The rename is not a recurring step, but it is not finished when the code lands either. In order:
+The rename is not a recurring step, and it is not finished when the code lands either. What has been done, in order:
 
-1. Rename the GitHub repository from `android-data-collector` to `particeps`, and update its description, topics, and homepage. Do this only once `main` carries the renamed tree, because the badges, documentation links, and `BASE_PATH` in it all assume the new name. Repository secrets survive a rename and need nothing.
-2. Dispatch Pages fresh (`gh workflow run pages.yml --ref main`) rather than re-running the run that straddled the rename, verify the published HTML carries no old-name asset paths, and reissue any join link or QR that pointed at the old one.
-3. Register `cool.jacoblin.particeps` under Developer Verification with the existing certificate fingerprint, as above.
-4. Cut the first post-rename tag, restore `version` and `date-released` in `CITATION.cff` as part of it, and say plainly in its release notes that it is a fresh install rather than an update.
+1. The GitHub repository was renamed from `android-data-collector` to `particeps`, and its description, topics, and homepage were updated with it. The rename waited on `main` carrying the renamed tree, because the badges, documentation links, and `BASE_PATH` in it all assume the new name. Repository secrets survived it and needed nothing.
+2. Pages redeployed under the new name. The published HTML carries no old-name asset paths, and an asset URL taken from it returns 200.
+3. `v1.0.0-rc.4` was tagged as the first post-rename release, and `version` and `date-released` returned to `CITATION.cff` in it.
+
+What remains:
+
+- Register `cool.jacoblin.particeps` under Developer Verification against the current keystore fingerprint, as above. No package name this project has used was ever registered.
+- The release notes for `v1.0.0-rc.4` are the generated changelog and do not say that it is a fresh install rather than an update. Say it to testers by some other route, and in the notes of the next tag.
+- Reissue any join link or QR that pointed at the old Pages path, as the section above describes. This is per study rather than a single step: it is finished only when no issued link and no printed QR still points there.
 
 ## Pinned signers
 
