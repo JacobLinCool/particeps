@@ -15,9 +15,10 @@ implementation are invalid, as they always were. Artifacts bearing the retired A
 Collector identity — `ADCCFG01`, `ADCEXP01`, `research-bundle-v1`, `adc://join/v1`,
 `application/vnd.adc.research-bundle`, or any `X-ADC-*` header — are invalid too. Neither class is
 an earlier dialect of this protocol. Readers MUST NOT retain a parser, migration path, dual
-interpretation, alias, sniffing heuristic, or fallback for either, and MUST fail closed on them
+interpretation, alias, sniffing heuristic, or fallback for either. They MUST fail closed on both
 exactly as on random bytes. The hostile corpus in this directory carries executable coverage for
-both.
+both. [CHANGELOG.md](../../CHANGELOG.md) records which release retired which spelling, and what
+that asks of someone who already installed one.
 
 The companion [`collector-catalog.json`](collector-catalog.json) is the closed-world collector and
 event schema. [`conformance-vectors.json`](conformance-vectors.json) and
@@ -76,7 +77,9 @@ offset    size  value
 signature. The signed message is exactly `configuration_jcs`, without a framing prefix. The key ID
 must equal `configuration.signer.key_id`. The verifier obtains the raw Ed25519 public key from
 `configuration.signer.public_key`, verifies the fixed 64-byte signature, then applies signer
-pinning policy. A valid self-contained signature proves integrity, not publisher identity.
+pinning policy. A valid self-contained signature proves integrity, not publisher identity. What
+that trust model is and is not worth — pinning, fingerprint comparison, and publisher
+impersonation — is in the [threat model](../../docs/threat-model.md).
 
 The configuration SHA-256 used everywhere below is SHA-256 over `configuration_jcs`, not over the
 envelope.
@@ -107,16 +110,16 @@ decoded artifact URL uses this deliberately narrow canonical HTTPS profile:
 
 This profile is intentionally sufficient for an immutable filename or opaque path token, not a
 general browser URL. A personalized artifact MUST use at least 128 bits of random opaque path
-material (the authoring tools require a final base64url segment of at least 22 characters), and
-MUST NOT put an assigned participant ID in the URL or link.
+material; the authoring tools require a final base64url segment of at least 22 characters. It MUST
+NOT put an assigned participant ID in the URL or link.
 
 The Android app rejects a join while any active study or pending deletion exists. It performs one
-bounded GET with redirects and implicit retries disabled, stages under no-backup storage, checks
-the complete artifact SHA-256, then executes the ordinary Ed25519 verification and fingerprint /
-consent flow. The host cannot replace accepted bytes: digest mismatch fails before signature
-verification. Staging is cleared on process startup, before each attempt, and after success or
-failure. There is no polling, refresh, replacement, background update, or assigned participant ID
-in the join URI.
+bounded GET with redirects and implicit retries disabled, and stages the response under no-backup
+storage. It then checks the complete artifact SHA-256 and executes the ordinary Ed25519
+verification and fingerprint / consent flow. The host cannot replace accepted bytes: digest
+mismatch fails before signature verification. Staging is cleared on process startup, before each
+attempt, and after success or failure. There is no polling, refresh, replacement, background
+update, or assigned participant ID in the join URI.
 
 ## Encrypted bundle (`PTCEXP01`)
 
@@ -149,7 +152,7 @@ offset     size  value
 
 `researcher_key_id_length` is in `3..64`; the decoded value matches
 `[a-z0-9][a-z0-9-]{2,63}`. `C` is greater than the 16-byte GCM tag. An automatic-upload container is
-at most 32 MiB; a manual export has no 32 MiB wire limit and is instead bounded by the signed local
+at most 32 MiB. A manual export has no 32 MiB wire limit and is instead bounded by the signed local
 storage quota, so manual-export readers stream it. There is no ciphertext-length field: the file or
 HTTP body ends the container, and truncation or appended bytes fail authentication or JCS
 validation.
@@ -163,16 +166,15 @@ context = UTF8({"bundle_format":"particeps-research-bundle-v1","bundle_id":"<bun
 ```
 
 The context is RFC 9180 `info` when sealing the content key; HPKE base-mode `aad` is empty. The
-context bytes are separately used as AES-256-GCM associated data for the document. A wrong bundle format, bundle ID,
-configuration digest, researcher key ID, HPKE suite, `enc`, sealed key, or content nonce fails
-authentication.
+context bytes are separately used as AES-256-GCM associated data for the document. A wrong bundle
+format, bundle ID, configuration digest, researcher key ID, HPKE suite, `enc`, sealed key, or
+content nonce fails authentication.
 
-Note what this makes of the rename to Particeps. `ADCCFG01` → `PTCCFG01` and `ADCEXP01` →
-`PTCEXP01` are length-preserving, so every binary offset in this document is unchanged. The bundle
-format is not: `particeps-research-bundle-v1` is ten bytes longer than the name it replaces, and
-it is authenticated here. Every deterministic vector, sealed fixture, and assertion on a sealed
-bundle's exact byte count was regenerated rather than edited, and a bundle sealed under the
-retired context fails authentication rather than decoding into anything.
+The bundle format string is authenticated here, which is what makes the rename to Particeps a wire
+change rather than a spelling. The two magics are length-preserving, so every binary offset above
+is unchanged. `particeps-research-bundle-v1` is ten bytes longer than the name it replaces, so a
+bundle sealed under the retired context fails authentication rather than decoding into anything.
+Every deterministic vector and sealed fixture was regenerated rather than edited.
 
 ### Authenticated document
 
@@ -239,9 +241,9 @@ body staged before HTTP starts. The exact request headers are:
 | `X-Particeps-Sequence-To` | canonical decimal exact last sequence |
 | `X-Particeps-Event-Count` | canonical decimal count |
 
-This vocabulary — the media type, the bundle format, and the seven routing header names — is the
-one part of Protocol v1 with a producer in one language and its only reader in another. It is
-therefore also in `conformance-vectors.json` as `valid.upload_request`, and both sides assert
+This vocabulary is the media type, the bundle format, and the seven routing header names. It is
+the one part of Protocol v1 whose producer is in one language and whose only reader is in another.
+It is therefore also in `conformance-vectors.json` as `valid.upload_request`, and both sides assert
 against that fixture rather than against their own constants. Asserting against your own constant
 proves only that you are self-consistent, which is exactly what a half-applied rename is.
 
@@ -281,10 +283,17 @@ A success body is JCS JSON with `Content-Type: application/json` and exactly the
 }
 ```
 
-Both `201 Created` and exact-replay `200 OK` return this same canonical seven-member receipt. Before
-advancing its watermark, the client requires every receipt value to match its durable outbox
-manifest exactly. Receive time, researcher key ID, and claimed range may additionally be retained
-as untrusted R2 custom metadata; they are not added to the receipt JSON.
+Both `201 Created` and exact-replay `200 OK` return this same canonical seven-member receipt:
+`bundle_id`, `byte_count`, `configuration_sha256`, `event_count`, `first_sequence_number`,
+`last_sequence_number`, and `sha256`. There are no other members.
+
+Those two responses are also the only ones that may advance the client's uploaded-through
+watermark, and only when every receipt value matches its durable outbox manifest exactly. `202
+Accepted`, any other `2xx`, a redirect, `409 Conflict`, any other `4xx`, a malformed receipt, and a
+receipt that mismatches the manifest never advance it. The watermark never moves backwards.
+
+Receive time, researcher key ID, and claimed range may additionally be retained as untrusted R2
+custom metadata; they are not added to the receipt JSON.
 
 The receiver has no list, download, delete, administration, decryption, private-key, D1, Queue, KV,
 Durable Object, dashboard, or runtime-configuration path. Deployment-time allowlists, WAF/rate
@@ -296,15 +305,19 @@ extensions.
 Every implementation must consume the shared valid and hostile corpus in this directory. The
 corpus must cover Unicode JCS ordering, integral bounds, raw-key encodings, signature input, HPKE
 labels and wrong contexts, malformed lengths, wrong outer/inner identities, body tampering,
-range/count mismatch, rejection of the pre-v1 encodings, rejection of the retired Android Data
-Collector identity (the `ADCCFG01` and `ADCEXP01` magics, the `research-bundle-v1` bundle format,
-and the `adc://join/v1` scheme), unknown fields and payloads, non-finite sensor values, and
-trailing bytes. The two legacy classes are named separately because an implementation can reject
-one while accepting the other. Absence of a vector is not permission to accept an unspecified
-encoding.
+range/count mismatch, unknown fields and payloads, non-finite sensor values, and trailing bytes. It
+must also cover rejection of the pre-v1 encodings and rejection of the retired Android Data
+Collector identity: the `ADCCFG01` and `ADCEXP01` magics, the `research-bundle-v1` bundle format,
+and the `adc://join/v1` scheme. The two legacy classes are named separately because an
+implementation can reject one while accepting the other. Absence of a vector is not permission to
+accept an unspecified encoding.
 
 The join-link corpus is consumed by Kotlin and TypeScript, the two implementations that create or
-open join links. Python analysis has no join-link entrypoint and does not interpret that corpus.
+open join links. Python analysis has no join-link entrypoint and never parses a join link.
+`tools/validate_protocol_vectors.py` does read the corpus, but only to check the fixtures
+themselves: closed-world shape, corpus identity, digest and fingerprint spelling, ASCII, and the
+4,096-byte limit. That is not an implementation of the join-link grammar, and it proves nothing
+about the profile rules above.
 
 Validate the checked-in sources with:
 
@@ -316,10 +329,11 @@ python3 tools/retired_identity_audit.py
 
 The last of those is what keeps the retirement above from decaying into a convention. It searches
 every tracked file for the retired spellings and fails on any that is not in its reviewed
-allow-list, so a hostile fixture cannot quietly become a live constant and a new one cannot be
-added without saying in writing why it must carry an old name. It also pins the Android
-`applicationId`, because that single value is what makes a pre-rename install a different
-application rather than something Android would offer to upgrade.
+allow-list. A hostile fixture therefore cannot quietly become a live constant, and a new one cannot
+be added without saying in writing why it must carry an old name. It also pins the Android
+`applicationId`, the single value that decides whether an install is the same application.
+[CHANGELOG.md](../../CHANGELOG.md) records the moves of that value, and what each one asks of
+someone who already installed a release.
 
 After deliberately changing a wire rule, regenerate the deterministic corpus with
 `node tools/generate_protocol_vectors.mjs` and make every language consumer pass the new bytes in

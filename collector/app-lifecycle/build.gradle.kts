@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "cool.linc.particeps.collector.applifecycle"
+    namespace = "cool.jacoblin.particeps.collector.applifecycle"
     compileSdk = 37
 
     defaultConfig {

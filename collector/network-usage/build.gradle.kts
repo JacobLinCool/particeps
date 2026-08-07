@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "cool.linc.particeps.collector.networkusage"
+    namespace = "cool.jacoblin.particeps.collector.networkusage"
     compileSdk = 37
     defaultConfig { minSdk = 34 }
     compileOptions {

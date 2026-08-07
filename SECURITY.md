@@ -29,7 +29,7 @@ Anything showing that a security property the current release claims does not ac
 - **Data leaving the device other than as the signed configuration specifies and the consent screen disclosed.** A study may declare an upload endpoint, and the app then posts encrypted bundles to exactly that endpoint on the stated schedule. Any transmission to another destination, on another schedule, from a study whose `upload` block is empty, or carrying anything the researcher's private key does not have to open, is in scope.
 - **Reading study data at rest** without the device's Keystore key — decrypting event segments or metadata, or extracting the key.
 - **Reading an encrypted export** without the researcher's HPKE private key, or making a tampered export decrypt successfully.
-- **Accepting a study configuration that should have been rejected** — a configuration running without a valid Ed25519 signature over its exact canonical bytes, a mismatch between what is signed and what is executed, a signer key ID in the envelope that disagrees with the one in the signed bytes, an expiry or app-version check bypass, or a build with pinned signers accepting a configuration signed by anyone else or carrying a key other than the pinned one. That the shipped build accepts a correctly signed configuration from an unpinned signer is the documented design, not a vulnerability; the consent screen discloses it.
+- **Accepting a study configuration that should have been rejected** — a configuration running without a valid Ed25519 signature over its exact canonical bytes, a mismatch between what is signed and what is executed, a signer key ID in the envelope that disagrees with the one in the signed bytes, or an expiry or app-version check bypass. On a build with pinned signers, accepting a configuration signed by anyone else, or one carrying a key other than the pinned one, is in scope as well. That the shipped build accepts a correctly signed configuration from an unpinned signer is the documented design, not a vulnerability. The consent screen discloses it.
 - **Collecting outside the participant's consent** — recording before an explicit start, after a pause boundary, after completion or withdrawal, or from a collector the configuration did not enable.
 - **A collector obtaining more than its contract allows** — most importantly the keyboard collector reaching text, or any collector reaching data outside its declared surface.
 - **Silent data loss or corruption** presented to the participant or researcher as a complete dataset.
@@ -43,13 +43,13 @@ These are documented limitations rather than vulnerabilities. See [docs/threat-m
 
 - Attacks requiring a rooted or already-compromised device, or a malicious OS build.
 - Attacks requiring physical access to an unlocked device.
-- A malicious researcher. A participant who consents to a study is trusting that research team; this software limits what a study can technically do, but a researcher can still design a study that collects more than a participant expected.
+- A malicious researcher. A participant who consents to a study is trusting that research team. This software limits what a study can technically do, but a researcher can still design a study that collects more than a participant expected.
 - A configuration signed by an unpinned key that names a research team it did not come from. A signature proves the file is unchanged since signing, not who wrote it. The consent screen shows the signer key ID and fingerprint and says so; the mitigation is the fingerprint a research team publishes to its participants.
 - What happens to an export file after the participant shares it. Once it leaves the device, its safety depends on the researcher's own key handling and storage.
 - Loss of the researcher's HPKE private key making exports permanently undecryptable. The current design has no escrow or recovery path.
 - Inference risks inherent to the data itself — that keyboard touch dynamics or location traces can be identifying is a property of the data, disclosed in the consent content, not a bug.
 - Findings from automated scanners with no demonstrated impact.
-- The example keys in `researcher-tools/examples`. They are public fixtures on purpose and are named to say so.
+- The example keys in `researcher-tools/examples`. They are public fixtures on purpose and are named to say so — see [`researcher-tools/examples/README.md`](researcher-tools/examples/README.md).
 
 ## Verifying the claims yourself
 

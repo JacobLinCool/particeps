@@ -38,12 +38,11 @@ A decrypted bundle is a `particeps-research-bundle-v1` JSON document.
 ```
 
 The example is expanded for readability. The authenticated bytes are RFC 8785 JCS, so member
-order and number spelling are canonical. An automatic upload's exact event boundary is selected
-before its complete ciphertext and manifest are durably staged; retries never regenerate it.
+order and number spelling are canonical.
 
-`configuration` is the canonical study configuration the participant consented to, reproduced verbatim. Every dataset therefore carries its own definition of what was supposed to be collected — including its `upload` block, so a dataset states whether the study it came from delivered data to an endpoint.
+`configuration` is the canonical study configuration the participant consented to, reproduced verbatim. Every dataset therefore carries its own definition of what was supposed to be collected. That includes its `upload` block, so a dataset states whether the study it came from delivered data to an endpoint.
 
-`configuration_signature` preserves the original signer key ID and raw Ed25519 signature, while `configuration_sha256` binds the exact embedded configuration to the outer `PTCEXP01` framing. The signature and digest are verified again during decryption; they identify which key issued the artifact but do not attest who held that key or which device submitted the bundle. `producer` records the producing platform and client build.
+`configuration_signature` preserves the original signer key ID and raw Ed25519 signature. `configuration_sha256` is the digest of that same configuration. [Protocol v1](../protocol/v1/README.md) defines how both are carried and bound by the encrypted container. Both are verified again during decryption. They identify which key issued the artifact. They do not attest who held that key, or which device submitted the bundle — see the [threat model](threat-model.md) for what a signer does and does not establish. `producer` records the producing platform and client build.
 
 | Field | Meaning |
 | --- | --- |
@@ -61,16 +60,60 @@ before its complete ciphertext and manifest are durably staged; retries never re
 
 The two ways data leaves the device produce the same document. What differs is the window.
 
-- A **manual export** runs to whatever was durable when the participant pressed export. It starts at `first_sequence_number: "1"` unless the device has reclaimed a delivered prefix to free space, in which case it starts at the lowest sequence still on the phone. Successive exports from one participant therefore overlap, each containing everything the previous one did that has not since been reclaimed.
-- An **uploaded chunk**, from a study whose configuration names an endpoint, starts after the last sequence an exact receipt confirmed. The app selects a boundary near a 16 MiB plaintext target, durably stages one immutable ciphertext bundle, and enforces a 32 MiB wire ceiling. Consecutive chunks normally abut; exact replays have the same bundle UUID and bytes.
+- A **manual export** runs to whatever was durable when the participant pressed export. It starts at `first_sequence_number: "1"`. If the device has reclaimed a delivered prefix to free space, it starts instead at the lowest sequence still on the phone. Successive exports from one participant therefore overlap, each containing everything the previous one did that has not since been reclaimed.
+- An **uploaded chunk**, from a study whose configuration names an endpoint, starts after the last sequence an exact upload receipt confirmed. Its end is a boundary the app picks near a 16 MiB plaintext target, not a boundary stated anywhere in the study's configuration. Consecutive chunks normally abut. An exact replay carries the same bundle UUID and the same bytes as the delivery it repeats. [Protocol v1](../protocol/v1/README.md) defines the receipt and what makes a replay exact.
 
 Read `first_sequence_number` and `last_sequence_number` on every bundle rather than assuming a starting point or deriving a boundary from the study's configuration. In an uploading study the complete dataset for a participant is the chunks plus the final export, joined on sequence number.
 
-A manual bundle is bounded by `storage.maximum_local_bytes`, which is why `researcher-tools decrypt` streams rather than decrypting in memory. The 32 MiB ceiling applies to automatic upload bodies.
+A manual bundle is bounded by `storage.maximum_local_bytes` rather than by the automatic-upload wire ceiling, which is why `researcher-tools decrypt` streams rather than decrypting in memory.
 
 `state`, `transitions`, and `configuration` describe the study as a whole in both cases, not just the window, so the same transition history repeats in every chunk. `events`, `event_count`, `first_sequence_number`, and `last_sequence_number` are window-scoped.
 
-`format` is bound into the bundle's cryptographic associated data, so a reader built for a different version fails to decrypt rather than silently misreading one: the authentication tag fails before any field is parsed.
+A reader built for a different bundle format fails to decrypt rather than silently misreading one: the authentication tag fails before any field is parsed. [Protocol v1](../protocol/v1/README.md) lists everything the container authenticates alongside `format`.
+
+### The transition history
+
+`transitions` is the study's lifecycle in order, one object per state change, from import up to the `state` the bundle reports. A study that has only been imported carries an empty array.
+
+```json
+{
+  "from": "RUNNING",
+  "reason": "PARTICIPANT_PAUSED",
+  "time": {
+    "wall_time_utc_millis": "1767225600000",
+    "monotonic_time_nanos": "12345678901234",
+    "boot_session_id": "0a1b2c3d4e5f60718293a4b5c6d7e8f9"
+  },
+  "to": "PAUSED"
+}
+```
+
+| Field | JSON type | Meaning |
+| --- | --- | --- |
+| `from` | string | The state before this change |
+| `to` | string | The state after it |
+| `reason` | string | Why it happened. Each reason has exactly one destination state. |
+| `time` | object | The same three clocks, with the same caveats, as an event's `observed_time` |
+
+A state is one of `IMPORTED`, `CONFIG_VERIFIED`, `CONSENT_PENDING`, `ACCESS_SETUP`, `READY`, `RUNNING`, `PAUSED`, `COMPLETED`, or `WITHDRAWN`. The reasons and the state each one produces:
+
+| `reason` | `to` |
+| --- | --- |
+| `CONFIGURATION_SIGNATURE_VERIFIED` | `CONFIG_VERIFIED` |
+| `CONSENT_REVIEW_OPENED` | `CONSENT_PENDING` |
+| `CONSENT_ACCEPTED` | `ACCESS_SETUP` |
+| `ACCESS_PREFLIGHT_PASSED` | `READY` |
+| `PARTICIPANT_STARTED` | `RUNNING` |
+| `PARTICIPANT_PAUSED` | `PAUSED` |
+| `PARTICIPANT_RESUMED` | `RUNNING` |
+| `PARTICIPANT_FINISHED_EARLY` | `COMPLETED` |
+| `STUDY_DURATION_ELAPSED` | `COMPLETED` |
+| `PARTICIPANT_WITHDREW` | `WITHDRAWN` |
+| `STORAGE_FAILURE` | `PAUSED` |
+
+The history is checked before any plaintext is published: the first `from` is `IMPORTED`, each `from` equals the previous `to`, each `reason` agrees with its destination, the pair is a legal transition, and the last `to` equals `state`. A bundle whose history does not chain fails verification rather than decoding partially.
+
+Reconstruct the running and paused windows from `transitions` rather than from export times. `particeps-analysis` validates the history but does not materialize it. The typed Parquet dataset holds collector events only, so this array is read from the decrypted bundle JSON.
 
 ### The event envelope
 
@@ -122,7 +165,7 @@ The common event envelope does not carry a time zone or UTC offset. A study that
 `temporal_context.v1` receives the bounded snapshots documented below; otherwise local time cannot
 be reconstructed from an export.
 
-`observed_time` is stamped inside the collector callback at capture time, with two exceptions: `network_usage.v1` and `usage_events.v1` are polling collectors and stamp one `observed_time` per poll, shared by every event in that batch. For those two, use the in-payload source time instead.
+`observed_time` is stamped inside the collector callback at capture time, with two exceptions. `network_usage.v1` and `usage_events.v1` are polling collectors: they stamp one `observed_time` per poll, shared by every event in that batch. For those two, use the in-payload source time instead.
 
 Several collectors also carry a source-supplied time in their payload. **Do not subtract across clock bases:**
 
@@ -133,7 +176,7 @@ Several collectors also carry a source-supplied time in their payload. **Do not 
 
 ### Deduplication
 
-Exports overlap by design — a participant can export repeatedly, and each export contains everything from its retained floor up to its boundary. Partition by `(experiment_id, configuration_id)` and deduplicate on `(participant_instance_id, sequence_number)`, making the complete event identity all four values. Identical repeats are duplicates; different content at one identity is a conflict, never a last-write-wins update. Do not merge solely on an assigned ID. Receiver ingestion instead deduplicates the immutable bundle UUID and exact bytes/metadata; a participant/range pair is not an ingest key.
+Exports overlap by design — a participant can export repeatedly, and each export contains everything from its retained floor up to its boundary. Partition by `(experiment_id, configuration_id)` and deduplicate on `(participant_instance_id, sequence_number)`, making the complete event identity all four values. Identical repeats are duplicates; different content at one identity is a conflict, never a last-write-wins update. Do not merge solely on an assigned ID. Receiver ingestion uses a different key entirely — the immutable bundle UUID with its exact bytes and metadata, never a participant/range pair — as [Protocol v1](../protocol/v1/README.md) sets out.
 
 ### Intervention and survey events (`interventions.v1`)
 
@@ -160,7 +203,7 @@ For compliance metrics, start with the lifecycle event that actually supports th
 - Across a process restart, `network_usage.v1` and `usage_events.v1` do resume their query window from the last stored event, so a restart is not the same as a pause.
 - A collector that loses access reports `BLOCKED_ACCESS` and stops. It never emits a placeholder or interpolated value.
 
-A reclaimed prefix is not one of these gaps. When a bundle's `first_sequence_number` is above 1, the events below it were collected, delivered to the study's endpoint, and then removed from the phone to free space — they are in the chunks that endpoint received, not missing from the study. Events that were never delivered are never removed.
+A reclaimed prefix is not one of these gaps. When a bundle's `first_sequence_number` is above 1, the events below it were collected, delivered to the study's endpoint, and then removed from the phone to free space. They are in the chunks that endpoint received, not missing from the study. Events that were never delivered are never removed.
 
 ---
 
@@ -285,7 +328,7 @@ orientation, posture, gesture, or activity labels.
 
 Raw ambient illuminance after a monotonic rate gate and change threshold. Because Android light
 sensors are commonly on-change sources, the newest threshold-sized change inside the minimum
-interval is retained and emitted when the interval opens; its original observation time and
+interval is retained and emitted when the interval opens. Its original observation time and
 `source_elapsed_realtime_nanos` are preserved. A later reading equivalent to the last emitted lux
 value cancels that pending change. Accuracy is descriptive metadata on emitted lux samples and is
 not an independent emission trigger.
@@ -406,7 +449,7 @@ The one-minute floor is there so a pilot can confirm within a minute that the co
 | `rx_packets` | long | packets | Device total received |
 | `tx_packets` | long | packets | Device total transmitted |
 
-**Interpretation limits.** The query is `querySummaryForDevice` with a null subscriber ID: device totals only. There is no per-app or per-UID attribution, and none can be recovered. Android's accounting is coarse and can lag, so a window's totals describe the window, not the instant traffic occurred within it. The first event arrives one full poll interval after the study starts, and resuming from a pause restarts the window at the moment of resume — the paused interval is never counted.
+**Interpretation limits.** The query is `querySummaryForDevice` with a null subscriber ID: device totals only. There is no per-app or per-UID attribution, and none can be recovered. Android's accounting is coarse and can lag, so a window's totals describe the window, not the instant traffic occurred within it. The first event arrives one full poll interval after the study starts. Resuming from a pause restarts the window at the moment of resume, so the paused interval is never counted.
 
 Not recorded: per-app attribution, subscriber ID, hostnames, URLs, destinations, content, instantaneous throughput, ethernet or VPN transports.
 
@@ -435,7 +478,7 @@ The one-minute floor is a piloting setting. Polling more often does not make the
 | `source_time_utc_millis` | long | ms since epoch, UTC | Android's own event time. Use this, not `observed_time`, which is the poll time. | Always |
 | `package_name` | string | — | Package of the app the event concerns | **Omitted entirely** when Android reports it as null or blank |
 
-**Interpretation limits.** These are raw events, not a session stream. Android's retention and delivery are not guaranteed to be complete or timely, and this collector does not reconstruct sessions, durations, or foreground time — if you need those, you derive them, and the gaps are yours to handle. `SCREEN_INTERACTIVE` means the screen was on and interactive; it does not mean the participant was looking at it.
+**Interpretation limits.** These are raw events, not a session stream. Android's retention and delivery are not guaranteed to be complete or timely. This collector does not reconstruct sessions, durations, or foreground time. If you need those, you derive them, and the gaps are yours to handle. `SCREEN_INTERACTIVE` means the screen was on and interactive; it does not mean the participant was looking at it.
 
 Not recorded: activity or class names (package only), window titles, notification content, app usage durations, or any unmapped event type.
 
@@ -513,13 +556,13 @@ Touch dynamics on the study's own keyboard surface. This is the only collector c
 | `key_category` | string | — | One of `"LETTER"`, `"SPACE"`, `"BACKSPACE"`, `"ENTER"` — **the category only, never which key** |
 | `geometry_version` | string | — | Constant `"qwerty-v1"`, identifying the fixed layout that makes relative coordinates interpretable |
 
-**What is structurally impossible here.** Key identity and text never reach the event path. The keyboard's typing path and its observation path are separate, and only the key's *category* is passed to the observer — so an event can tell you a letter key was pressed, never which letter. There is no way to reconstruct typed text from this data.
+**What is structurally impossible here.** Key identity and text never reach the event path. The keyboard's typing path and its observation path are separate, and only the key's *category* is passed to the observer. An event can therefore tell you a letter key was pressed, never which letter. There is no way to reconstruct typed text from this data.
 
 **Capture is disabled entirely** when the input field is a password field of any variation, when the editor sets `IME_FLAG_NO_PERSONALIZED_LEARNING`, or when no field information is available at all. The keyboard keeps working; only observation stops. This is fail-closed: an unknown field is treated as sensitive.
 
 Only `MOVE` events are rate-limited, at the configured sampling rate. `DOWN`, `UP`, and `CANCEL` are never dropped. Touches that land outside a key, and secondary pointers in a multi-touch gesture, produce no events.
 
-**This is still identifying.** No text does not mean no risk. Typing rhythm, dwell times, and within-key touch position are behaviourally distinctive and can support inference about the person and, in aggregate, about what kind of input they were producing. It must be disclosed explicitly in consent content, and participants should be told they can switch back to their normal keyboard before sensitive input.
+**This is still identifying.** No text does not mean no risk. Typing rhythm, dwell times, and within-key touch position are behaviourally distinctive. They can support inference about the person, and in aggregate about what kind of input they were producing. It must be disclosed explicitly in consent content, and participants should be told they can switch back to their normal keyboard before sensitive input.
 
 Not recorded: characters, committed text, surrounding text, clipboard, suggestions or autocorrect data, absolute screen coordinates, keyboard pixel dimensions, the target app's package, `EditorInfo` contents, or calibrated force.
 
@@ -527,20 +570,20 @@ Not recorded: characters, committed text, surrounding text, clipboard, suggestio
 
 ## Volume and quota
 
-A study declares a local storage quota between 8 MiB and 8 GiB (8,388,608 to 8,589,934,592 bytes). Events are written into 4 MiB segments, at most 2,048 of them resident at once, which is what lets a study reach the top of that range while still reclaiming space 4 MiB at a time. A single encoded event may not exceed 64 KiB. A segment is appended to and never rewritten.
+A study declares a local storage quota between 8 MiB and 8 GiB (8,388,608 to 8,589,934,592 bytes). Events are written into 4 MiB segments, at most 2,048 of them resident at once. That is what lets a study reach the top of that range while still reclaiming space 4 MiB at a time. A single encoded event may not exceed 64 KiB. A segment is appended to and never rewritten.
 
-The ceiling is high because high-rate collectors fill space quickly — an accelerometer at 100 Hz produces tens of megabytes per hour — but a quota is space claimed on someone's personal phone, so ask for what the study needs rather than for the maximum.
+The ceiling is high because high-rate collectors fill space quickly: an accelerometer at 100 Hz produces tens of megabytes per hour. But a quota is space claimed on someone's personal phone. Ask for what the study needs rather than for the maximum.
 
 When the quota is exhausted, the write fails and the study **fail-closes to `PAUSED`** with a storage-failure reason. It does not drop events silently and it does not overwrite the oldest data. Size your quota against your collectors' event rate before deployment, and check the accelerometer in particular: at 200 Hz it will exhaust a small quota quickly.
 
-In a study that uploads, a confirmed delivery lets the device reclaim space. Above 80% of the quota, whole leading segments are released — down to 60% — provided every event in them was confirmed by the endpoint and they are not the segment still being written. Nothing undelivered is ever released, so an endpoint that stops answering brings a study back to the fail-closed case above rather than to a device that discards data. `StudyMetadata.retainedFromSequence` records the lowest sequence still present, sequence numbers are never reissued, and the participant's dashboard states how many earlier events were delivered and removed.
+In a study that uploads, a confirmed delivery lets the device reclaim space. Above 80% of the quota, whole leading segments are released, down to 60%. A segment is released only when every event in it was confirmed by the endpoint and it is not the segment still being written. Nothing undelivered is ever released. An endpoint that stops answering therefore brings a study back to the fail-closed case above, rather than to a device that discards data. `StudyMetadata.retainedFromSequence` records the lowest sequence still present, sequence numbers are never reissued, and the participant's dashboard states how many earlier events were delivered and removed.
 
-Study metadata is held separately from the events. It is capped at 1 MiB and kept outside the event budget by a 2 MiB reserve, so the record of what a study is and how far it has been delivered cannot be crowded out by the events it describes. Its container header is `PTCMET01`.
+Study metadata is held separately from the events. It is capped at 1 MiB and kept outside the event budget by a 2 MiB reserve. The record of what a study is, and how far it has been delivered, therefore cannot be crowded out by the events it describes. Its container header is `PTCMET01`.
 
-Normal study opening does not decrypt its event log. Framing and sequence contiguity are checked from plaintext frame headers, and each collector's most recent event is persisted in metadata rather than recovered by scanning, so start-up cost is linear in frames rather than in bytes decrypted. The sole exception is a one-boundary-ahead append journal with a durable tail: recovery authenticates exactly that tail before applying its metadata. All other event payloads are authenticated when read, so damage outside the recovery tail surfaces at export or upload rather than at launch.
+Normal study opening does not decrypt its event log. Framing and sequence contiguity are checked from plaintext frame headers, and each collector's most recent event is persisted in metadata rather than recovered by scanning. Start-up cost is therefore linear in frames rather than in bytes decrypted. The sole exception is a one-boundary-ahead append journal with a durable tail: recovery authenticates exactly that tail before applying its metadata. All other event payloads are authenticated when read, so damage outside the recovery tail surfaces at export or upload rather than at launch.
 
 Each collector descriptor declares `maximumEncodedEventBytes`. The runtime encodes every admitted
 event with the worst-case sequence width and rejects it before append when it exceeds that
-collector-specific ceiling; the store's 64 KiB global cap remains a second boundary. CI also
+collector-specific ceiling. The store's 64 KiB global cap remains a second boundary. CI also
 checks collector source, compiled constants, and module dependencies as documented in the
 [Collector capability policy](../assurance/README.md).

@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "cool.linc.particeps.collector.networkstate"
+    namespace = "cool.jacoblin.particeps.collector.networkstate"
     compileSdk = 37
     defaultConfig { minSdk = 34 }
     compileOptions {

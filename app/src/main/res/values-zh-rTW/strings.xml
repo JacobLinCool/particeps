@@ -5,6 +5,10 @@
 -->
 <resources>
     <string name="intervention_channel">研究活動</string>
+    <string name="daily_channel">每日研究提醒</string>
+    <string name="daily_running">仍在收集中。開啟 App 可以暫停、匯出或提前結束。</string>
+    <string name="daily_paused_since">自 %1$s 暫停中。在你重新開始之前不會收集任何資料。</string>
+    <string name="daily_paused_unknown">目前暫停中。在你重新開始之前不會收集任何資料。</string>
     <string name="survey_title">問卷</string>
     <string name="survey_loading">正在開啟問卷…</string>
     <string name="survey_required">必填</string>
@@ -22,6 +26,7 @@
     <string name="header_starting">準備中</string>
     <string name="header_elapsed_minutes">%1$d 分</string>
     <string name="header_elapsed_hours">%1$d 小時 %2$d 分</string>
+    <string name="status_paused_since">自 %1$s 暫停，已經過 %2$s</string>
     <string name="header_elapsed_days">%1$d 天 %2$d 小時</string>
 
     <string name="step_study">研究</string>

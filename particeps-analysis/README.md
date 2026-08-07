@@ -37,14 +37,13 @@ LocalBundleSource / S3BundleSource
 
 R2 metadata and paths are untrusted routing claims. Participant/event identity exists only after
 the complete authenticated document verifies. Automatic receiver objects retain the 32 MiB wire
-bound. A local manual export may reach its signed local-storage quota (at most 8 GiB), so GCM
-decryption, JCS checking, event validation, reassembly, and Parquet row groups are streamed or
-spilled instead of loading the document into memory. AEAD authentication completes before JSON is
-accepted. Every plaintext staging/spill artifact is inside a tightened mode-0700 directory with
-owner-only files and is removed on every handled success or failure. One invalid bundle is
-quarantined whole and
-emits no rows. A conflicting authenticated event identity stops dataset publication; there is no
-last-write-wins behavior or unknown-schema fallback.
+bound. A local manual export may reach its signed local-storage quota, at most 8 GiB. GCM
+decryption, JCS checking, event validation, reassembly, and Parquet row groups are therefore
+streamed or spilled instead of loading the document into memory. AEAD authentication completes
+before JSON is accepted. Every plaintext staging/spill artifact is inside a tightened mode-0700
+directory with owner-only files and is removed on every handled success or failure. One invalid
+bundle is quarantined whole and emits no rows. A conflicting authenticated event identity stops
+dataset publication; there is no last-write-wins behavior or unknown-schema fallback.
 
 ## Install and run
 
@@ -109,9 +108,9 @@ uv run python -m unittest discover -s tests -v
   list/decrypt/admin API.
 - `reports/validation-report.json` records quarantine and conflict outcomes even when publication
   stops. `quality-summary.json` distinguishes overlaps, identical duplicates, conflicts, interior
-  gaps, undelivered suffixes, reclaimed prefixes, and achieved mean sampling rates (rounded to the
-  nearest millihertz, with the exact interval count and duration retained); it does not infer
-  participant behavior. Sensor rates use the catalog-declared hardware/source
+  gaps, undelivered suffixes, reclaimed prefixes, and achieved mean sampling rates. Rates are
+  rounded to the nearest millihertz, and the exact interval count and duration are retained. It
+  does not infer participant behavior. Sensor rates use the catalog-declared hardware/source
   `source_elapsed_realtime_nanos`, not callback-envelope time, so Android FIFO batching does not
   collapse the measured duration.
 - Potentially large quality collections use the stable
@@ -121,9 +120,9 @@ uv run python -m unittest discover -s tests -v
   `examples_truncated` is true.
 - An identical duplicate has the same authenticated event identity and bytes. A conflict has the
   same identity but different bytes and stops publication. An interior gap is absent below the
-  highest arrived sequence; an undelivered suffix is absent after it but at or below the latest
-  authenticated durable boundary; a reclaimed prefix is absent below the latest authenticated
-  retained boundary. These labels describe evidence availability, not why a participant did or did
-  not produce an observation.
+  highest arrived sequence. An undelivered suffix is absent after that sequence but at or below the
+  latest authenticated durable boundary. A reclaimed prefix is absent below the latest
+  authenticated retained boundary. These labels describe evidence availability, not why a
+  participant did or did not produce an observation.
 - Database connectors are intentionally out of scope. `DatasetSink` is the narrow extension
   contract; Parquet is the only implementation in this release.

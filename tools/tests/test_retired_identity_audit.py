@@ -98,10 +98,13 @@ class RetiredIdentityAuditTest(unittest.TestCase):
                 {
                     "app/build.gradle.kts": BUILD_FILE,
                     "src/Restore.kt": 'val legacy = "cool.linc.androiddatacollector"',
+                    "src/AlsoRestore.kt": 'val previous = "cool.linc.particeps"',
                 },
             )
             problems = audit_fresh_install_boundary(root)
-            self.assertTrue(any("retired namespace" in problem for problem in problems))
+            # Both retired namespaces, not just the first: an application that has been renamed
+            # twice has two dead namespaces, and reading either is the same mistake.
+            self.assertEqual(2, sum("retired namespace" in problem for problem in problems))
 
     def test_every_allow_list_entry_still_exists_and_still_needs_the_exception(self) -> None:
         from tools.retired_identity_audit import ALLOWED

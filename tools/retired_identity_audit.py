@@ -11,7 +11,7 @@ stay what they are meant to be: hostile-rejection fixtures and prose that docume
 retirement. Adding a file to that list is a deliberate act with a written justification, which is
 the review the rename issue asked for.
 
-The second is the fresh-install boundary. Moving `applicationId` to `cool.linc.particeps` is what
+The second is the fresh-install boundary. Moving `applicationId` to `cool.jacoblin.particeps` is what
 makes a pre-rename install a different application that Android will not upgrade, and it is also
 what made renaming the Keystore aliases, work names, and storage suffixes safe. Both halves are
 asserted here: the identity is pinned, and no source file may read the retired namespace.
@@ -40,15 +40,16 @@ PATTERNS: dict[str, str] = {
     "routing_header": r"[Xx]-[Aa][Dd][Cc]-",
     "python_package": r"adc[-_]analysis",
     "bare_token": r"(?<![0-9A-Za-z_])[Aa][Dd][Cc](?![0-9A-Za-z_])",
+    # The second retired namespace contains no ADC spelling, so without its own pattern it
+    # would be enforced only on the six suffixes the boundary check reads.
+    "retired_namespace": r"cool[./]linc[./]particeps",
 }
 
 # path -> why the retired spelling belongs there. Nothing else may carry one.
 ALLOWED: dict[str, str] = {
-    "README.md": "documents that pre-rename artifacts and installs are unsupported",
-    "app/src/androidTest/kotlin/cool/linc/particeps/AndroidConfigurationImportTest.kt":
+    "CHANGELOG.md": "the release history; naming the identity each release carried is its job",
+    "app/src/androidTest/kotlin/cool/jacoblin/particeps/AndroidConfigurationImportTest.kt":
         "retired-identity rejection fixture: import must fail closed on the old magic",
-    "docs/maintainers/release.md": "records the cutover a maintainer still has to finish",
-    "docs/p0-p2-implementation-contract.md": "invariant naming exactly which inputs are rejected",
     "docs/participant-guide.md": "tells a participant what the app they already installed was called",
     "docs/researcher-guide.md": "states that a pre-rename configuration or export is refused",
     "protocol/v1/README.md": "normative statement of the retired identity's rejection",
@@ -63,8 +64,11 @@ ALLOWED: dict[str, str] = {
     "web/tests/join.spec.ts": "retired-identity rejection fixture",
 }
 
-APPLICATION_ID = "cool.linc.particeps"
-RETIRED_NAMESPACE = "cool.linc.androiddatacollector"
+APPLICATION_ID = "cool.jacoblin.particeps"
+# Every namespace this application has ever shipped under. Each one is a different application to
+# Android, so none of them may be read: there is no install to migrate from, only data that the
+# uninstall of that build already destroyed.
+RETIRED_NAMESPACES = ("cool.linc.androiddatacollector", "cool.linc.particeps")
 
 SKIP_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".jar", ".zip", ".keystore", ".jks"}
 
@@ -123,11 +127,12 @@ def audit_fresh_install_boundary(root: Path) -> list[str]:
             text = (root / name).read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        if RETIRED_NAMESPACE in text:
-            problems.append(
-                f"{name}: references {RETIRED_NAMESPACE}. Nothing may read the retired namespace; "
-                "there is no migration path from it."
-            )
+        for namespace in RETIRED_NAMESPACES:
+            if namespace in text:
+                problems.append(
+                    f"{name}: references {namespace}. Nothing may read a retired namespace; "
+                    "there is no migration path from any of them."
+                )
     return problems
 
 

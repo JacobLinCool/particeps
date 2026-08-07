@@ -16,7 +16,7 @@ kotlin {
 }
 
 application {
-    mainClass = "cool.linc.particeps.researcher.MainKt"
+    mainClass = "cool.jacoblin.particeps.researcher.MainKt"
 }
 
 tasks.named<JavaExec>("run") {

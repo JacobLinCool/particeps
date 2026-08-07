@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "cool.linc.particeps.collector.batterystate"
+    namespace = "cool.jacoblin.particeps.collector.batterystate"
     compileSdk = 37
     defaultConfig { minSdk = 34 }
     compileOptions {

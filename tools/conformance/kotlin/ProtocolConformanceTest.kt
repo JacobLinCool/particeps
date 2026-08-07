@@ -2,15 +2,15 @@ package particeps.conformance
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import cool.linc.particeps.core.crypto.HpkeCrypto
-import cool.linc.particeps.core.definition.ProtocolCanonicalJson
-import cool.linc.particeps.core.definition.StudyConfigurationCodec
-import cool.linc.particeps.core.export.ResearchBundleVerifier
-import cool.linc.particeps.core.export.ResearchExport
-import cool.linc.particeps.core.export.UploadReceiptCodec
-import cool.linc.particeps.core.protocol.ConfigurationVerifier
-import cool.linc.particeps.core.protocol.JoinLink
-import cool.linc.particeps.core.protocol.SignedConfigurationCodec
+import cool.jacoblin.particeps.core.crypto.HpkeCrypto
+import cool.jacoblin.particeps.core.definition.ProtocolCanonicalJson
+import cool.jacoblin.particeps.core.definition.StudyConfigurationCodec
+import cool.jacoblin.particeps.core.export.ResearchBundleVerifier
+import cool.jacoblin.particeps.core.export.ResearchExport
+import cool.jacoblin.particeps.core.export.UploadReceiptCodec
+import cool.jacoblin.particeps.core.protocol.ConfigurationVerifier
+import cool.jacoblin.particeps.core.protocol.JoinLink
+import cool.jacoblin.particeps.core.protocol.SignedConfigurationCodec
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
