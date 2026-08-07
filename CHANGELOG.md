@@ -7,7 +7,7 @@ something that a device treats as identity — the application ID, the file form
 certificate. None of them can update an earlier install in place. That is stated once here rather
 than in each document that touches it.
 
-## Unreleased
+## v1.0.0-rc.5 — 2026-08-07
 
 - The application ID moved from `cool.linc.particeps` to `cool.jacoblin.particeps`, and the release
   signing key was rotated so that the certificate names Particeps rather than the pre-rename

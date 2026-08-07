@@ -28,9 +28,10 @@ keywords:
   - participant control
   - android
 license: MIT
-# v1.0.0-rc.4 is the first release candidate that is Particeps. The three before it
+# v1.0.0-rc.4 was the first release candidate named Particeps; v1.0.0-rc.5 is the first under the
+# cool.jacoblin.particeps application ID and the rotated signing certificate. The ones before it
 # (v1.0.0-rc.1 through v1.0.0-rc.3) carry the pre-rename identity, a different applicationId, and
 # different file formats; they are unsupported and are not versions of this software. Keep both
 # fields in step with the tag at every release.
-version: 1.0.0-rc.4
-date-released: "2026-08-06"
+version: 1.0.0-rc.5
+date-released: "2026-08-07"
