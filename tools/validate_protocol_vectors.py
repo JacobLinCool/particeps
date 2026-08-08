@@ -131,6 +131,35 @@ def validate(path: Path = VECTORS) -> None:
         fail("bundle context does not match framing")
     if len(raw(bundle["hpke_wrapped_content_key_hex"], "wrapped key")) != 80:
         fail("HPKE wrapped key must be 80 bytes")
+    document_bytes = raw(bundle["document_jcs_utf8_hex"], "bundle document")
+    document = json.loads(document_bytes)
+    if canonical_json(document) != document_bytes:
+        fail("bundle document is not canonical JSON")
+    pause_experiment = document.get("experiment")
+    pause_transitions = (
+        pause_experiment.get("transitions")
+        if isinstance(pause_experiment, dict)
+        else None
+    )
+    last_transition = (
+        pause_transitions[-1]
+        if isinstance(pause_transitions, list) and pause_transitions
+        else None
+    )
+    if (
+        not isinstance(last_transition, dict)
+        or pause_experiment.get("state") != "PAUSED"
+        or {
+            key: last_transition.get(key)
+            for key in ("from", "reason", "to")
+        }
+        != {
+            "from": "RUNNING",
+            "reason": "REQUIRED_ACCESS_MISSING",
+            "to": "PAUSED",
+        }
+    ):
+        fail("required-access pause bundle does not carry its normative transition")
     request = valid["upload_request"]
     if set(request) != {"bundle_format", "media_type", "routing_headers"}:
         fail("valid upload request fixture is not closed-world")

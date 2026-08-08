@@ -43,8 +43,6 @@ projection. `LatestValueRateGate.kt` is the tested rate gate that on-change coll
 interface CollectorPlugin {
     val descriptor: CollectorDescriptor
 
-    fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement>
-
     fun create(configuration: CollectorConfiguration, context: CollectorContext): Collector
 }
 
@@ -61,9 +59,10 @@ interface Collector {
 }
 ```
 
-`accessRequirements` and `create` both receive the base `CollectorConfiguration` interface
-and must narrow it themselves. Every existing plugin rejects a mismatch with
-`IllegalArgumentException` rather than substituting a default.
+`create` receives the base `CollectorConfiguration` interface and must narrow it itself. Every
+existing plugin rejects a mismatch with `IllegalArgumentException` rather than substituting a
+default. Access is not a plugin callback: the descriptor declares a closed, configuration-independent
+set of capabilities, and the registry derives requirements from it.
 
 ### Descriptor
 
@@ -73,6 +72,7 @@ data class CollectorDescriptor(
     val displayName: String,
     val privacyClass: PrivacyClass,
     val eventContract: CollectorEventContract,
+    val accessKinds: Set<AccessKind>,
 ) {
     val payloadSchemaVersion get() = eventContract.payloadSchemaVersion
     val maximumEncodedEventBytes get() = eventContract.maximumEncodedEventBytes
@@ -81,6 +81,9 @@ data class CollectorDescriptor(
         require(ID_PATTERN.matches(id)) { "Invalid collector ID" }
         require(displayName.isNotBlank()) { "Collector display name must not be blank" }
     }
+
+    fun accessRequirements(required: Boolean): Set<AccessRequirement> =
+        accessKinds.mapTo(mutableSetOf()) { kind -> AccessRequirement(kind, required) }
 
     private companion object {
         val ID_PATTERN = Regex("[a-z][a-z0-9_.-]{2,63}")
@@ -96,6 +99,9 @@ enum class PrivacyClass {
 `CollectorEventContract` supplies the closed payload-type/field set, field types and bounds,
 payload schema version, and maximum encoded size. Plugins obtain it from
 `ProtocolEventContracts[ID]`; editing the generated file directly is forbidden.
+`accessKinds` is the complete Android capability declaration for this collector. It cannot vary
+with a researcher's parameters and carries no permission string, `Intent`, participant-facing text,
+or callback.
 
 ### Context and clocks
 
@@ -128,8 +134,9 @@ data class ResearchTime(
 
 Wall time can jump backwards when the participant or the network changes the device clock.
 `elapsedRealtimeNanos` is monotonic within a boot, and `bootSessionId` tells an analyst
-which boot an elapsed reading belongs to. The admission gate compares only
-`elapsedRealtimeNanos`, so ordering decisions never depend on wall time.
+which boot an elapsed reading belongs to. Admission requires the same boot as the one durable
+`PARTICIPANT_STARTED` transition and compares that monotonic reading against both the current epoch
+and the exact signed duration; ordering and deadline decisions never depend on wall time.
 
 ### Event sink
 
@@ -177,6 +184,7 @@ timestamp it resumes from, even after the segment holding that event is gone.
 ```kotlin
 enum class AccessKind {
     FINE_LOCATION,
+    LOCATION_SERVICES,
     BACKGROUND_LOCATION,
     NOTIFICATIONS,
     USAGE_ACCESS,
@@ -195,15 +203,71 @@ data class AccessRequirement(
 ```
 
 `AccessKind` deliberately mixes Android runtime permissions, special access grants, an
-input-method selection state, and hardware capabilities. They are all preconditions the
-participant can see and, except for hardware, revoke. `required` is not a property of the
-collector. It is copied from the `required` flag the researcher set on that collector in the
-study configuration.
+input-method selection state, and hardware capabilities. They are all participant-visible
+preconditions and, except for hardware, can change after setup. A descriptor names only the kinds.
+`CollectorRegistry.accessRequirements` combines each configured collector's `required` flag with
+its descriptor's `accessKinds`, returning `CollectorAccessRequirement` values that retain the
+collector ID as owner.
 
-| `required` | Missing access at preflight | Missing access at start |
-| --- | --- | --- |
-| `true` | `completeAccessSetup` rejects the command; the study cannot reach `READY` | collector health becomes `BLOCKED_ACCESS` / `ACCESS_UNAVAILABLE` |
-| `false` | preflight passes | collector health becomes `BLOCKED_ACCESS` / `ACCESS_UNAVAILABLE`, the rest of the study runs |
+`StudyAccessPolicy` then adds `NOTIFICATIONS` as an unconditional required study-feature owner and
+deduplicates by `AccessKind` without discarding owners. The merged requirement is required when any
+owner is required. For example, required Network usage plus optional Usage events yields one
+required Usage Access item whose owner list preserves both collector IDs and marks the latter
+optional. Notification access remains required even when the study has no interventions.
+
+| Requirement | Missing at Done | Removed before Start/Resume | Removed while running |
+| --- | --- | --- | --- |
+| At least one owner is required | `completeAccessSetup` re-inspects and rejects; state remains `ACCESS_SETUP` | Start/Resume re-inspects and rejects; state remains `READY`/`PAUSED` | The service waits 25 seconds before reconciling; an exact location probe has a five-second deadline, giving a nominal 30-second code-path budget rather than a wall-clock SLA. The study gate closes, a durable `REQUIRED_ACCESS_MISSING` pause begins, and persistence failure never reopens admission. |
+| Every collector owner is optional | Setup may complete | That collector starts/resumes `BLOCKED_ACCESS` / `ACCESS_UNAVAILABLE`; other collectors run | Only each affected collector's gate closes before its source pauses. Other collector gates stay open, and the affected gate reopens only after a successful start or resume. |
+
+Start and Resume first ask the foreground-service host to acknowledge Android's notification and
+exact service types, with a five-second timeout. The runtime does not start or resume any collector
+until that acknowledgement succeeds. If Android redelivers an old service intent into a new process,
+the service first shows a short-lived neutral restoration notification using only `specialUse` and
+no study title. The initialized session then revalidates durable `RUNNING` state and current access
+and either replaces it through a fresh, acknowledged start with the exact types or removes it while
+stopping the stale service.
+
+Whole-study safety reconciliation closes every admission gate, then writes an identity-free typed
+marker to app-private no-backup storage. When the durable state is `RUNNING`, it persists the
+matching `PAUSED` transition; containment from `READY` or an already `PAUSED` state preserves that
+existing lifecycle boundary and uses the marker only for the outstanding cleanup obligation.
+Required-access loss records `REQUIRED_ACCESS_MISSING`; losing every acknowledged foreground host
+during an in-run type change records `COLLECTION_HOST_FAILURE`; a failed or cancelled source release
+records `COLLECTION_TEARDOWN_FAILURE`; and an untrustworthy mutable store operation records
+`STORAGE_FAILURE`. Failure to durably establish or retire the study's WorkManager set records
+`WORK_SCHEDULING_FAILURE`. These five names are safety-pause/transition reasons; fixed UI incidents,
+collector-health reason codes, and upload-failure codes are separate taxonomies. Runtime-owned
+failures synchronously persist the safety witness before returning. If
+persistence, collector teardown, or host cleanup does not complete, unique WorkManager work carries
+the same reason and retries independently of the foreground service. Enqueue is a durable handoff
+only after WorkManager acknowledges its database operation. Recovery, Start, Resume, and running
+reconciliation merge the marker and active retry before any gate opens and reject a conflict or
+inspection failure. After the durable transition and cleanup succeed, a non-cancellable completion
+sequence clears the marker, awaits retry cancellation, and only then clears in-memory pending state.
+
+`AccessRules` in `:core:access` is the closed Android acquisition contract. Every `AccessKind` has
+exactly one rule with a stable order, prerequisites, an optional `SetupAction`, and optional
+`SetupGuidance`. Fine location precedes request-specific Android location-service readiness, which
+precedes background location; App details opens only after both prerequisites are satisfied.
+Research-keyboard Enable precedes Select. Runtime
+permissions, system settings, and the input-method picker are closed `SetupAction` variants;
+hardware has no action. A missing system settings handler becomes an explicit unavailable result,
+not a different intent or fallback.
+
+`AccessInspectionRequest` keeps platform inspection typed and complete: requirements, a
+`LocationAccessProfile` copied from the signed `LocationConfiguration`, and closed notification
+purposes. It never accepts a channel ID or arbitrary intent from a collector or configuration.
+`StudyAccessGateway.inspect` is suspendable because the production location probe calls
+`SettingsClient.checkLocationSettings` with the same priority, interval, minimum interval, maximum
+batch delay, and minimum displacement as `LocationCollector`. Global location off and
+`RESOLUTION_REQUIRED` stay actionable through the fixed location-settings screen;
+`SETTINGS_CHANGE_UNAVAILABLE` and an unclassified check failure are explicit fail-closed
+unavailable states.
+
+The app renders the resolved plan as one card per kind, including every owner, app-authored English
+and Traditional Chinese manual steps, and one explicit action button where applicable. A plugin or
+signed configuration cannot inject a permission, intent, action callback, or setup string.
 
 A blocked collector produces no events. It never produces substitute, degraded, or
 placeholder events.
@@ -325,15 +389,22 @@ equally to a configuration built in a test.
 
 The base class for callback-driven collectors is
 [`SerializedCallbackCollector`](../core/collector-api/src/main/kotlin/cool/jacoblin/particeps/core/collector/SerializedCallbackCollector.kt).
-It marks all four lifecycle methods `final` and leaves you two:
+It marks all five lifecycle methods `final`, leaves two required source hooks, and provides one
+optional post-admission hook:
 
 ```kotlin
 protected abstract suspend fun registerSource(): SourceRegistrationResult
+protected open suspend fun onSourceAdmitted() = Unit
 protected abstract suspend fun unregisterSource(): SourceTeardownResult
 ```
 
-Both return an explicit outcome rather than `Unit`, because a failure has to say whether the
-Android source was left attached. `SourceRegistrationResult` is `Registered`, `Released(failure)`
+`registerSource()` owns only physical source registration. Override `onSourceAdmitted()` when the
+collector must publish one initial snapshot: the runtime calls it only after registration succeeds
+and that collector's admission gate is open. A callback delivered during registration is outside
+the admitted interval and must not be used as the only initial-state record.
+
+The two required source hooks return an explicit outcome rather than `Unit`, because a failure has
+to say whether the Android source was left attached. `SourceRegistrationResult` is `Registered`, `Released(failure)`
 when rollback proved nothing is attached, or `Uncertain(failure)` when it did not.
 `SourceTeardownResult` is `Released` or `ReleasedWithFailure(failure)`. Both promise the callbacks
 are physically released or independently isolated. Throwing instead leaves the source uncertain,
@@ -359,6 +430,10 @@ Use it unless your source is a periodic query. What the base class does with eac
    the job only when the source is proven released. That is also the only case in which the
    collector can be started again afterwards: an `Uncertain` registration leaves the consumer
    running and blocks a restart.
+5. After `start()` returns successfully, the runtime opens the collector gate and invokes
+   `onAdmissionOpened()`, which validates the registered source and delegates to
+   `onSourceAdmitted()`. If that hook fails, the runtime closes the gate and reports
+   `COLLECTOR_START_FAILED`; the owned source remains available for explicit teardown.
 
 ### `pause()`
 
@@ -367,22 +442,31 @@ Use it unless your source is a periodic query. What the base class does with eac
    reaches `emit` before `pause` returns.
 3. Sets `PAUSED` unless health is already `FAILED`. A failure is never cleared by pausing.
 
-Around this, the runtime has already put the admission gate into `DRAINING` with a boundary
-taken from `clocks.now().elapsedRealtimeNanos`. During the drain, only events from the same
-epoch whose `observedTime.elapsedRealtimeNanos` is strictly before the boundary are accepted.
-Anything observed after the participant pressed pause is dropped, even if it is still sitting
-in the queue.
+Around a participant pause, the runtime puts the global study gate into `DRAINING` with a boundary
+taken from `clocks.now().elapsedRealtimeNanos`. During the drain, only events from the same study and collector epochs whose
+`observedTime.elapsedRealtimeNanos` is strictly before the boundary are accepted. Each collector gate
+closes after its source teardown; the runtime waits for every already-admitted write before persisting
+the participant transition. Anything observed after the participant pressed pause is dropped, even
+if it is still sitting in the queue. Required-access and other whole-study safety loss instead
+force-close all gates immediately, then waits for any write already executing in the store.
+
+Optional-access loss uses a narrower ordering: close the affected collector gate first, then pause
+that source. It does not drain or close the study gate or any unrelated collector gate. A teardown
+failure therefore cannot leave the affected source able to persist events.
 
 ### `resume()`
 
 1. Requires an existing consumer job and a `PAUSED` or `FAILED` status.
 2. Calls `registerSource()` again. It does not launch a second consumer.
 3. Sets `ACTIVE`.
+4. After `resume()` succeeds, the runtime opens the new collector epoch and calls the same
+   post-admission hook. Hook failure closes the epoch and reports `COLLECTOR_RESUME_FAILED`.
 
-The runtime calls `admissionGate.open()` on resume, which increments the epoch. Tokens
-captured before the pause are dead. A retrospective-query collector must start a new coverage
-window at resume time, and must not backfill the paused interval. See `network_usage.v1` and
-`usage_events.v1`, both of which reset their query start to the resume wall time.
+The runtime opens a new study epoch on resume, but each collector gate stays closed until that
+collector's `start()` or `resume()` returns successfully. Both generations change, so tokens captured
+before the pause are dead. A retrospective-query collector must start a new coverage window at resume
+time, and must not backfill the paused interval. See `network_usage.v1` and `usage_events.v1`, both of
+which reset their query start to the resume wall time.
 
 ### `stop()`
 
@@ -409,7 +493,8 @@ protected fun capture(draft: () -> EventDraft) {
 }
 ```
 
-The token is taken *before* the draft is built, on the source thread. Two consequences you
+The collector-bound `EventSink` captures a composite token from the study-wide gate and that
+collector's private gate *before* the draft is built, on the source thread. Three consequences you
 should rely on:
 
 - If the study is not running, the lambda never executes. No observation is even constructed
@@ -417,6 +502,12 @@ should rely on:
   asserts exactly this.
 - The token pins the epoch at observation time, not at write time. An event queued before a
   pause carries the pre-pause epoch and is judged against the drain boundary.
+- The original observation time must be from the participant-start boot and strictly before the
+  signed monotonic deadline. The runtime checks this when registering the admitted write and again
+  inside the metadata boundary, so a delayed callback or delayed WorkManager completion cannot add
+  data beyond the declared duration.
+- Optional access can close one collector's gate without interrupting other collectors; old tokens
+  from that collector stay invalid after access returns.
 
 A collector subclass supplies only the draft:
 
@@ -476,11 +567,16 @@ declared ID, payload schema, payload type, field set, field values, and worst-ca
 before it consults the admission gate. It then returns without recording an incident or closing
 the gate. Nothing about it improves on a retry.
 
-`StorageFailure` is not recoverable by retrying. On the runtime side, `emit` force-closes the
-admission gate, records the `STORAGE_WRITE_FAILED` incident, and launches a fail-closed
-transition to `PAUSED` with reason `STORAGE_FAILURE`. The design choice is deliberate:
-when the system can no longer prove it is recording completely, it stops recording rather
-than producing a log with invisible holes.
+`StorageFailure` is not recoverable by retrying the event. While the append still owns the metadata
+serialization lock, `emit` force-closes the study gate and every collector gate, records the
+`STORAGE_WRITE_FAILED` incident, and latches a typed `STORAGE_FAILURE` safety-pause request. Before
+the failing append returns, the app-owned `SafetyPauseWitness` must persist the private marker or
+receive WorkManager's durable enqueue acknowledgement for a reason-bearing retry. The session layer
+does not acknowledge that request until it has either persisted `PAUSED` and completed cleanup or
+confirmed that durable retry. If
+both paths fail, the request remains pending and closed for another attempt. The design choice is
+deliberate: when the system can no longer prove it is recording completely, it stops recording
+rather than producing a log with invisible holes.
 
 ## 8. Concurrency and backpressure
 
@@ -675,9 +771,11 @@ cross-device precision or presence claim is made.
 { "include_bandwidth_estimates": true }
 ```
 
-Uses `ConnectivityManager.registerDefaultNetworkCallback`. Every `registerSource()` — so at
-both start and resume — also writes one `NETWORK_SNAPSHOT` describing the current state. A
-segment therefore never begins with an unknown connection state.
+Uses `ConnectivityManager.registerDefaultNetworkCallback`. After every successful source
+registration — at both start and resume — `onSourceAdmitted()` writes one `NETWORK_SNAPSHOT`
+only after the collector gate is open. The admitted interval therefore always contains a current
+snapshot, and that snapshot cannot be dropped at the activation boundary. A platform callback may
+race it into the queue, so the snapshot is not promised to be the segment's first event.
 
 Payload types: `NETWORK_AVAILABLE`, `NETWORK_LOST`, `NETWORK_CAPABILITIES`,
 `NETWORK_SNAPSHOT`.
@@ -780,7 +878,7 @@ used and is sensitive; a data set containing it is not anonymous.
 | Display name | `Location` |
 | Privacy class | `SENSITIVE` |
 | Declared max bytes | 4,096 |
-| Access | `FINE_LOCATION` and `BACKGROUND_LOCATION` |
+| Access | `FINE_LOCATION`, `LOCATION_SERVICES`, and `BACKGROUND_LOCATION` |
 | Queue | 512 |
 
 Configuration fields, all required and exact:
@@ -798,6 +896,23 @@ Uses Google Play services `FusedLocationProviderClient`. There is no platform
 register rather than silently switching to a different, undocumented source.
 `registerSource()` re-checks `ACCESS_FINE_LOCATION` itself and throws if it was revoked
 after the study started.
+
+Before registration, the application derives a `LocationAccessProfile` from these same five
+configuration fields and asks Play services whether the exact request can be satisfied. The
+foreground-service monitor waits 25 seconds between complete access inspections, and the exact
+location-settings probe has a five-second deadline. The nominal code-path budget from a completed
+check to a decision is therefore 30 seconds; Android scheduling can extend the wall-clock interval.
+Turning off location from Quick Settings pauses a required study or blocks an optional Location
+collector instead of leaving its health at `ACTIVE` while fixes stop.
+
+Foreground-service typing follows the same fail-closed boundary. When optional Location access
+returns, the application first obtains an acknowledged host start with the `location` type and only
+then starts or resumes the collector. On revocation, it first closes the Location collector's private
+gate and pauses that source, and only then starts the host again without `location` (leaving
+`specialUse`). A failed type upgrade keeps Location admission closed while unrelated collectors
+continue only when the fallback non-location host is acknowledged. A failed upgrade plus failed
+fallback, or a failed downgrade, closes all collector admission and durably pauses the study with
+`COLLECTION_HOST_FAILURE`.
 
 `LOCATION_FIX` fields: `source_elapsed_realtime_nanos`, `source_time_utc_millis`,
 `latitude_degrees`, `longitude_degrees`, `horizontal_accuracy_meters`, `mock`; plus
@@ -897,19 +1012,31 @@ canonical round-trip.
 
 ### Step 4 — access kind
 
-`AMBIENT_LIGHT_HARDWARE` is a closed [`AccessKind`](../core/collector-api/src/main/kotlin/cool/jacoblin/particeps/core/collector/CollectorContracts.kt).
-Every exhaustive `when` and the app build fail until the following participant-facing surfaces
-agree:
+`AmbientLightCollectorPlugin.descriptor.accessKinds` contains `AMBIENT_LIGHT_HARDWARE`, a closed
+[`AccessKind`](../core/collector-api/src/main/kotlin/cool/jacoblin/particeps/core/collector/CollectorContracts.kt).
+The plugin does not implement an access callback. `CollectorRegistry` derives the owned
+requirement from that descriptor and the configuration's `required` flag.
+
+Adding a genuinely new `AccessKind` is a cross-layer contract change. Every exhaustive `when` and
+the app build must fail until these closed surfaces agree:
 
 | File | What to add |
 | --- | --- |
-| `core/access/.../AccessManager.kt` → `isGranted` | `getDefaultSensor(Sensor.TYPE_LIGHT) != null` |
-| `core/access/.../AccessManager.kt` → `settingsIntent` | `null` — there is no settings screen for hardware |
-| `app/.../MainActivity.kt` → `requestAccess` | `Unit` — hardware cannot be requested |
-| `app/.../CollectorDashboard.kt` → `AccessKind.labelRes()` | a participant-readable label as an app string resource |
+| The collector's `CollectorDescriptor.accessKinds` | The capability, and no permission string, `Intent`, text, or callback |
+| `core/access/.../AccessRules.kt` | One semantic order, prerequisite set, closed action, and guidance choice; hardware uses no action |
+| `core/access/.../AccessManager.kt` | The authoritative Android state check; request-specific state uses a typed suspend probe, while ambient light uses `getDefaultSensor(Sensor.TYPE_LIGHT) != null` |
+| `app/.../AccessPresentation.kt` | Exhaustive localized label, plus exhaustive guidance presentation when the rule declares guidance |
+| `app/src/main/res/values*/strings.xml` | Participant-readable English and Traditional Chinese labels and any app-authored manual steps |
+| `core/access/.../AccessRulesTest.kt` and access UI tests | Closed-rule coverage, prerequisite/action resolution, owners, manual guidance, and absence of fallback |
+
+Do not add per-kind arbitrary-intent handling to `MainActivity`. It dispatches only the closed
+`SetupAction` variants: foreground location or notification runtime permission, one of the fixed
+system settings actions, or the input-method picker. Background location deliberately resolves to
+the fixed App details action after fine location and request-specific location-service readiness;
+it is never requested as another runtime permission.
 
 Required missing hardware blocks enrollment. Optional missing hardware reports blocked access and
-starts only if hardware becomes available; it never substitutes another source.
+does not block the rest of the study; it never substitutes another source.
 
 ### Step 5 — catalog and generated contract
 
@@ -979,14 +1106,29 @@ allowlist, and catalog parity checks must all land together.
 
 - [ ] Strict configuration tests pass for nominal values, both boundaries, out-of-range
       values, unknown keys, missing keys, wrong types, and canonical round-trip.
-- [ ] `required` and optional access both behave as documented, and a blocked collector
-      produces no events rather than substitutes.
-- [ ] Start, pause, resume, stop, repeated pause cycles, process restart, and mid-study
-      permission revocation are all exercised.
-- [ ] No event is recorded after the pause boundary, and a token from a previous epoch is
-      rejected.
+- [ ] Descriptor `accessKinds`, registry owner preservation, shared-kind deduplication, and
+      required/optional merging all behave as documented; Notifications remains unconditionally
+      required, and a blocked collector produces no events rather than substitutes.
+- [ ] Every `AccessKind` has one closed rule and exhaustive English/Traditional Chinese
+      presentation; prerequisite order, explicit action dispatch, manual guidance, and unavailable
+      system/hardware states are tested without a fallback.
+- [ ] Location access passes the exact signed request through `AccessInspectionRequest` and tests
+      ready, resolution-required, change-unavailable, and check-failed results; notification tests
+      cover base channels with and without the intervention feature.
+- [ ] Start, resume, and recovered `RUNNING` activation wait for an acknowledged foreground-service
+      type; timeout and redelivered-intent restoration/stop paths are exercised.
+- [ ] Pause, stop, repeated pause cycles, process restart, and mid-study permission revocation are
+      exercised, including the 25-second monitor, five-second location-probe deadline, durable
+      typed safety-pause marker, reason-bearing WorkManager retry, acknowledged enqueue/cancellation,
+      worker-only process recovery, and Resume waiting for retry retirement before gates reopen.
+- [ ] No event is recorded after a whole-study pause boundary or an optional collector's gate closes;
+      old study and collector epoch tokens are rejected. Optional Location tests prove host type
+      upgrade-before-resume and gate/pause-before-downgrade ordering, successful fallback continuity,
+      and global `COLLECTION_HOST_FAILURE` pause after double-promotion or demotion failure.
 - [ ] Queue full, disk full, and AEAD or key failure all fail closed, and no payload value
-      reaches logcat.
+      reaches logcat. An append plus metadata/marker failure must still leave one acknowledged typed
+      `STORAGE_FAILURE` work record that prevents process-death recovery from starting a host or
+      collector.
 - [ ] Every payload field's unit, clock, precision, platform limitation, and sensitivity is
       documented.
 - [ ] The catalog validates, generated Kotlin is current, schema-invalid and over-size events are

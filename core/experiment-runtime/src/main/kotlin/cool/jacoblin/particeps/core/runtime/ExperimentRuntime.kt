@@ -27,12 +27,18 @@ import cool.jacoblin.particeps.core.model.InterventionOccurrence
 import cool.jacoblin.particeps.core.model.OccurrenceState
 import cool.jacoblin.particeps.core.model.ExperimentStateMachine
 import cool.jacoblin.particeps.core.model.RecordedEvent
+import cool.jacoblin.particeps.core.model.ResearchTime
+import cool.jacoblin.particeps.core.model.SafetyPauseReason
 import cool.jacoblin.particeps.core.model.StudyMetadata
 import cool.jacoblin.particeps.core.model.StudyStore
+import cool.jacoblin.particeps.core.model.StudyStoreMutationFailedClosed
 import cool.jacoblin.particeps.core.model.TransitionReason
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,10 +47,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 data class RuntimeSnapshot(
     val metadata: StudyMetadata? = null,
     val collectorHealth: Map<String, CollectorHealth> = emptyMap(),
+    /** Typed request retained until the application confirms a durable safety-pause handoff. */
+    val pendingSafetyPauseReason: SafetyPauseReason? = null,
     val incidentCode: String? = null,
 )
 
@@ -94,18 +103,27 @@ sealed interface SurveyAnswer {
 
 enum class SurveySubmissionResult { ACCEPTED, ALREADY_SUBMITTED, EXPIRED, INVALID }
 
+/** Persists a closed safety reason without acquiring any runtime or application session lock. */
+fun interface SafetyPauseWitness {
+    suspend fun persist(reason: SafetyPauseReason)
+}
+
 class ExperimentRuntime(
     val configuration: StudyConfiguration,
     private val store: StudyStore,
     private val collectorRegistry: CollectorRegistry,
     internal val clocks: ResearchClocks,
     private val scope: CoroutineScope,
-    private val availableAccess: () -> Set<AccessKind>,
-) : EventSink {
+    private val safetyPauseWitness: SafetyPauseWitness,
+) {
     private val stateMachine = ExperimentStateMachine()
     private val admissionGate = EventAdmissionGate()
+    private val pendingSafetyPause = AtomicReference<SafetyPauseReason?>(null)
     private val commandMutex = Mutex()
     private val metadataMutex = Mutex()
+    private val admittedWriteMutex = Mutex()
+    private var admittedWriteCount = 0
+    private var admittedWritesDrained = CompletableDeferred<Unit>().apply { complete(Unit) }
     private val collectorEntries = mutableMapOf<String, CollectorEntry>()
     private val healthJobs = mutableListOf<Job>()
     private var currentMetadata: StudyMetadata? = null
@@ -115,15 +133,21 @@ class ExperimentRuntime(
 
     fun now() = clocks.now()
 
-    suspend fun initialize(): CommandResult = executeCommand(requireInitialized = false) {
+    /** Loads durable state and creates collectors without starting any process resource. */
+    suspend fun initialize(
+        recoveredSafetyReason: SafetyPauseReason? = null,
+    ): CommandResult = executeCommand(requireInitialized = false) {
         check(currentMetadata == null) { "Runtime is already initialized" }
-        val loaded = store.loadMetadata() ?: StudyMetadata.initial(
+        var loaded = store.loadMetadata() ?: StudyMetadata.initial(
             configuration.experimentId,
             configuration.configurationId,
             configuration.assignedParticipantId,
         ).also { initial ->
             store.initialize(initial)
         }
+        store.resolvePendingAppendFailure(
+            (recoveredSafetyReason ?: SafetyPauseReason.STORAGE_FAILURE).transitionReason,
+        )?.let { resolved -> loaded = resolved }
         check(loaded.experimentId == configuration.experimentId) { "Experiment ID mismatch" }
         check(loaded.configurationId == configuration.configurationId) { "Configuration ID mismatch" }
         check(loaded.assignedParticipantId == configuration.assignedParticipantId) { "Assigned participant ID mismatch" }
@@ -135,10 +159,30 @@ class ExperimentRuntime(
                 collectorHealth = collectorEntries.mapValues { entry -> entry.value.collector.health.value },
             )
         }
-        if (loaded.state == ExperimentState.RUNNING) {
-            admissionGate.open()
-            activateCollectors()
+    }
+
+    /**
+     * Restores collectors only after the application has confirmed its foreground-service host.
+     *
+     * Keeping this separate from [initialize] prevents a recovered location collector from
+     * acquiring resources before Android has acknowledged the matching foreground-service type.
+     */
+    suspend fun activateRecoveredRunning(availableAccess: Set<AccessKind>): CommandResult = executeCommand {
+        check(requireMetadata().state == ExperimentState.RUNNING) {
+            "Only a durably running study can be recovered"
         }
+        admissionGate.open()
+        activateCollectors(availableAccess)
+    }
+
+    /** Converts a stale durable RUNNING state to its typed safety pause before activation. */
+    suspend fun pauseRecoveredForSafetyFailure(reason: SafetyPauseReason): CommandResult = executeCommand {
+        check(requireMetadata().state == ExperimentState.RUNNING) {
+            "Only a durably running study can be paused during recovery"
+        }
+        closeAllAdmission()
+        val effectiveReason = latchSafetyPauseReason(reason)
+        transitionTo(ExperimentState.PAUSED, effectiveReason.transitionReason)
     }
 
     suspend fun reviewStudy(): CommandResult = executeCommand {
@@ -159,7 +203,7 @@ class ExperimentRuntime(
     suspend fun completeAccessSetup(availableAccess: Set<AccessKind>): CommandResult = executeCommand {
         val missingRequired = configuredPlugins()
             .flatMap { (collectorConfiguration, plugin) ->
-                plugin.accessRequirements(collectorConfiguration)
+                plugin.descriptor.accessRequirements(collectorConfiguration.required)
             }
             .filter { it.required && it.kind !in availableAccess }
         require(missingRequired.isEmpty()) {
@@ -168,10 +212,10 @@ class ExperimentRuntime(
         transitionTo(ExperimentState.READY, TransitionReason.ACCESS_PREFLIGHT_PASSED)
     }
 
-    suspend fun start(): CommandResult = executeCommand {
+    suspend fun start(availableAccess: Set<AccessKind>): CommandResult = executeCommand {
         transitionTo(ExperimentState.RUNNING, TransitionReason.PARTICIPANT_STARTED)
         admissionGate.open()
-        activateCollectors()
+        activateCollectors(availableAccess)
     }
 
     suspend fun pause(): CommandResult = executeCommand {
@@ -182,10 +226,198 @@ class ExperimentRuntime(
         )
     }
 
-    suspend fun resume(): CommandResult = executeCommand {
+    /**
+     * Closes every event boundary before durably recording a non-participant safety pause.
+     *
+     * Admission remains closed and collectors are paused even if the metadata write fails. The
+     * application owns a typed durable marker and retries this operation without losing [reason].
+     */
+    suspend fun closeAdmissionForSafetyFailure(reason: SafetyPauseReason): SafetyPauseReason? =
+        commandMutex.withLock {
+            if (currentMetadata?.state !in setOf(
+                    ExperimentState.READY,
+                    ExperimentState.RUNNING,
+                    ExperimentState.PAUSED,
+                )
+            ) {
+                return@withLock null
+            }
+            closeAllAdmission()
+            latchSafetyPauseReason(reason)
+        }
+
+    suspend fun pauseForSafetyFailure(reason: SafetyPauseReason): CommandResult = commandMutex.withLock {
+        mutableSnapshot.update { it.copy(incidentCode = null) }
+        val metadata = currentMetadata
+        if (metadata?.state != ExperimentState.RUNNING) {
+            mutableSnapshot.update { it.copy(incidentCode = INCIDENT_COMMAND_REJECTED) }
+            return@withLock CommandResult.Failed(INCIDENT_COMMAND_REJECTED)
+        }
+
+        closeAllAdmission()
+        val effectiveReason = latchSafetyPauseReason(reason)
+        val boundary = clocks.now()
+
+        var transitionFailure: Throwable? = null
+        val collectorsPaused = withContext(NonCancellable) {
+            val paused = pauseCollectors()
+            awaitAdmittedWritesDrained()
+            paused
+        }
+        try {
+            val afterDrain = requireMetadata()
+            val alreadyCommitted = afterDrain.state == ExperimentState.PAUSED &&
+                afterDrain.transitions.lastOrNull()?.reason == effectiveReason.transitionReason
+            if (!alreadyCommitted) {
+                transitionTo(
+                    ExperimentState.PAUSED,
+                    effectiveReason.transitionReason,
+                    boundary,
+                )
+            }
+        } catch (failure: Throwable) {
+            transitionFailure = failure
+        }
+
+        transitionFailure?.let { failure ->
+            failure.rethrowIfCancellation()
+            mutableSnapshot.update { it.copy(incidentCode = INCIDENT_PAUSE_PERSISTENCE_FAILED) }
+            return@withLock CommandResult.Failed(INCIDENT_PAUSE_PERSISTENCE_FAILED)
+        }
+        if (!collectorsPaused) {
+            mutableSnapshot.update { it.copy(incidentCode = INCIDENT_COLLECTOR_PAUSE_FAILED) }
+            return@withLock CommandResult.Failed(INCIDENT_COLLECTOR_PAUSE_FAILED)
+        }
+        CommandResult.Success
+    }
+
+    fun hasPendingSafetyPause(): Boolean {
+        val current = mutableSnapshot.value
+        return pendingSafetyPause.get() != null ||
+            (current.metadata?.state == ExperimentState.RUNNING &&
+                current.incidentCode == INCIDENT_PAUSE_PERSISTENCE_FAILED)
+    }
+
+    /**
+     * Clears the runtime-owned signal only after the application established either the durable
+     * PAUSED boundary and cleanup or an acknowledged durable retry carrying the same closed reason.
+     */
+    suspend fun acknowledgeSafetyPauseRequest(reason: SafetyPauseReason): Boolean = commandMutex.withLock {
+        if (!pendingSafetyPause.compareAndSet(reason, null)) return@withLock false
+        mutableSnapshot.update { current ->
+            if (current.pendingSafetyPauseReason == reason) {
+                current.copy(pendingSafetyPauseReason = null)
+            } else {
+                current
+            }
+        }
+        true
+    }
+
+    /** Retries both the durable boundary and any collector teardown that did not complete. */
+    suspend fun retrySafetyPause(reason: SafetyPauseReason): CommandResult = commandMutex.withLock {
+        closeAllAdmission()
+        val effectiveReason = latchSafetyPauseReason(reason)
+        val metadata = currentMetadata
+        val state = metadata?.state
+        if (state !in setOf(ExperimentState.READY, ExperimentState.RUNNING, ExperimentState.PAUSED)) {
+            return@withLock CommandResult.Failed(INCIDENT_COMMAND_REJECTED)
+        }
+        try {
+            val collectorsPaused = withContext(NonCancellable) {
+                val paused = pauseCollectors()
+                awaitAdmittedWritesDrained()
+                paused
+            }
+            if (state == ExperimentState.RUNNING) {
+                transitionTo(ExperimentState.PAUSED, effectiveReason.transitionReason)
+            } else {
+                val resolvedAppend = store.resolvePendingAppendFailure(effectiveReason.transitionReason)
+                // A failed READY/PAUSED -> RUNNING save may have atomically replaced the file before
+                // its directory-fsync or coroutine acknowledgement failed. Rewriting the verified
+                // in-memory pre-transition metadata is the rollback acknowledgement; the marker or
+                // typed work must remain until this write succeeds.
+                if (resolvedAppend == null) {
+                    store.saveMetadata(requireNotNull(metadata))
+                } else {
+                    currentMetadata = resolvedAppend
+                    publishMetadata(resolvedAppend)
+                }
+            }
+            if (!collectorsPaused) {
+                mutableSnapshot.update { it.copy(incidentCode = INCIDENT_COLLECTOR_PAUSE_FAILED) }
+                return@withLock CommandResult.Failed(INCIDENT_COLLECTOR_PAUSE_FAILED)
+            }
+            mutableSnapshot.update { it.copy(incidentCode = null) }
+            CommandResult.Success
+        } catch (failure: Throwable) {
+            failure.rethrowIfCancellation()
+            mutableSnapshot.update { it.copy(incidentCode = INCIDENT_PAUSE_PERSISTENCE_FAILED) }
+            CommandResult.Failed(INCIDENT_PAUSE_PERSISTENCE_FAILED)
+        }
+    }
+
+    suspend fun resume(availableAccess: Set<AccessKind>): CommandResult = executeCommand {
+        check(pendingSafetyPause.get() == null) {
+            "A pending safety failure must be durably resolved before resuming"
+        }
         transitionTo(ExperimentState.RUNNING, TransitionReason.PARTICIPANT_RESUMED)
         admissionGate.open()
-        activateCollectors()
+        activateCollectors(availableAccess)
+    }
+
+    /** Reconciles optional collector access while the study itself remains running. */
+    suspend fun reconcileCollectorAccess(availableKinds: Set<AccessKind>): CommandResult = executeCommand {
+        check(requireMetadata().state == ExperimentState.RUNNING) {
+            "Collector access can be reconciled only while running"
+        }
+        check(pendingSafetyPause.get() == null) {
+            "Collector access cannot reopen while a safety pause is pending"
+        }
+        collectorEntries.forEach { (id, entry) ->
+            val missingAccess = entry.plugin.descriptor
+                .accessRequirements(entry.configuration.required)
+                .any { requirement -> requirement.kind !in availableKinds }
+            if (missingAccess) {
+                // Access revocation is the admission boundary. Close it before inspecting health or
+                // asking the source to tear down, because FAILED does not prove physical release.
+                entry.closeAdmission()
+                entry.accessBlocked = true
+                if (!entry.hasStarted) {
+                    publishCollectorHealth(id, entry)
+                    return@forEach
+                }
+                if (!entry.sourcePaused) {
+                    try {
+                        entry.collector.pause()
+                        entry.sourcePaused = true
+                        entry.admissionFailureReason = null
+                    } catch (failure: Throwable) {
+                        failure.rethrowIfCancellation()
+                        entry.admissionFailureReason = "COLLECTOR_PAUSE_FAILED"
+                        publishCollectorHealth(id, entry)
+                        return@forEach
+                    }
+                }
+                publishCollectorHealth(id, entry)
+                return@forEach
+            }
+
+            entry.accessBlocked = false
+            when {
+                entry.admissionOpen -> publishCollectorHealth(id, entry)
+                !entry.hasStarted -> activateCollector(id, entry, resume = false)
+                entry.sourcePaused -> activateCollector(id, entry, resume = true)
+                else -> {
+                    // A previous start or teardown did not establish a resumable source state.
+                    // Access returning cannot make that uncertainty safe, so admission stays shut.
+                    if (entry.admissionFailureReason == null) {
+                        entry.admissionFailureReason = "COLLECTOR_ADMISSION_CLOSED"
+                    }
+                    publishCollectorHealth(id, entry)
+                }
+            }
+        }
     }
 
     suspend fun finishEarly(): CommandResult = executeCommand {
@@ -197,8 +429,10 @@ class ExperimentRuntime(
                 stopCollectors = true,
             )
         } else {
-            transitionTo(ExperimentState.COMPLETED, TransitionReason.PARTICIPANT_FINISHED_EARLY)
-            stopCollectors()
+            stopAndTransitionFromClosed(
+                ExperimentState.COMPLETED,
+                TransitionReason.PARTICIPANT_FINISHED_EARLY,
+            )
         }
     }
 
@@ -211,8 +445,10 @@ class ExperimentRuntime(
                 stopCollectors = true,
             )
         } else {
-            transitionTo(ExperimentState.COMPLETED, TransitionReason.STUDY_DURATION_ELAPSED)
-            stopCollectors()
+            stopAndTransitionFromClosed(
+                ExperimentState.COMPLETED,
+                TransitionReason.STUDY_DURATION_ELAPSED,
+            )
         }
     }
 
@@ -225,16 +461,31 @@ class ExperimentRuntime(
             )
 
             ExperimentState.PAUSED -> {
-                transitionTo(ExperimentState.WITHDRAWN, TransitionReason.PARTICIPANT_WITHDREW)
-                stopCollectors()
+                stopAndTransitionFromClosed(
+                    ExperimentState.WITHDRAWN,
+                    TransitionReason.PARTICIPANT_WITHDREW,
+                )
             }
 
-            else -> transitionTo(ExperimentState.WITHDRAWN, TransitionReason.PARTICIPANT_WITHDREW)
+            else -> stopAndTransitionFromClosed(
+                ExperimentState.WITHDRAWN,
+                TransitionReason.PARTICIPANT_WITHDREW,
+            )
         }
     }
 
     suspend fun ensureOccurrence(planned: InterventionOccurrence): InterventionOccurrence = metadataMutex.withLock {
+        check(pendingSafetyPause.get() == null) {
+            "Occurrence planning is disabled while a safety pause is pending"
+        }
         val metadata = requireMetadata()
+        check(metadata.state == ExperimentState.RUNNING) {
+            "Occurrences can be planned only while the study is running"
+        }
+        val now = clocks.now()
+        check(withinSignedDuration(now)) {
+            "Occurrences cannot be changed after the signed study duration"
+        }
         metadata.occurrences[planned.occurrenceId]?.let { existing ->
             if (existing.state == OccurrenceState.SCHEDULED &&
                 (existing.scheduledFor.wallTimeUtcMillis != planned.scheduledFor.wallTimeUtcMillis ||
@@ -248,7 +499,7 @@ class ExperimentRuntime(
                     metadata.copy(occurrences = metadata.occurrences + (revised.occurrenceId to revised)),
                     revised,
                     "INTERVENTION_RESCHEDULED",
-                    clocks.now(),
+                    now,
                 )
                 return@withLock revised
             }
@@ -259,19 +510,22 @@ class ExperimentRuntime(
             metadata.copy(occurrences = metadata.occurrences + (planned.occurrenceId to planned)),
             planned,
             "INTERVENTION_SCHEDULED",
-            clocks.now(),
+            now,
         )
         planned
     }
 
     suspend fun claimOccurrenceIfDue(occurrenceId: String): OccurrenceClaimResult = metadataMutex.withLock {
         val metadata = requireMetadata()
-        if (metadata.state != ExperimentState.RUNNING) return@withLock OccurrenceClaimResult.InactiveStudy
+        if (metadata.state != ExperimentState.RUNNING || pendingSafetyPause.get() != null) {
+            return@withLock OccurrenceClaimResult.InactiveStudy
+        }
+        val now = clocks.now()
+        if (!withinSignedDuration(now)) return@withLock OccurrenceClaimResult.InactiveStudy
         val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock OccurrenceClaimResult.Missing
         if (occurrence.state !in setOf(OccurrenceState.SCHEDULED, OccurrenceState.POSTING)) {
             return@withLock OccurrenceClaimResult.Terminal
         }
-        val now = clocks.now()
         if (now.wallTimeUtcMillis >= occurrence.expiresAtUtcMillis) {
             expireOccurrence(metadata, occurrence, now)
             return@withLock OccurrenceClaimResult.Expired
@@ -281,7 +535,7 @@ class ExperimentRuntime(
         val claimed = if (occurrence.state == OccurrenceState.SCHEDULED) {
             occurrence.copy(state = OccurrenceState.POSTING).also { next ->
                 val updated = metadata.copy(occurrences = metadata.occurrences + (occurrenceId to next))
-                store.saveMetadata(updated)
+                performStoreMutation { store.saveMetadata(updated) }
                 currentMetadata = updated
                 publishMetadata(updated)
             }
@@ -301,7 +555,11 @@ class ExperimentRuntime(
      */
     suspend fun expireOccurrenceIfDue(occurrenceId: String): OccurrenceExpiryResult = metadataMutex.withLock {
         val metadata = requireMetadata()
-        if (metadata.state != ExperimentState.RUNNING) return@withLock OccurrenceExpiryResult.InactiveStudy
+        if (metadata.state != ExperimentState.RUNNING || pendingSafetyPause.get() != null) {
+            return@withLock OccurrenceExpiryResult.InactiveStudy
+        }
+        val now = clocks.now()
+        if (!withinSignedDuration(now)) return@withLock OccurrenceExpiryResult.InactiveStudy
         val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock OccurrenceExpiryResult.Missing
         if (
             occurrence.state in setOf(OccurrenceState.EXPIRED, OccurrenceState.SURVEY_SUBMITTED) ||
@@ -309,7 +567,6 @@ class ExperimentRuntime(
         ) {
             return@withLock OccurrenceExpiryResult.Terminal
         }
-        val now = clocks.now()
         val remaining = occurrence.expiresAtUtcMillis - now.wallTimeUtcMillis
         if (remaining > 0) return@withLock OccurrenceExpiryResult.NotDue(remaining)
         expireOccurrence(metadata, occurrence, now)
@@ -318,12 +575,13 @@ class ExperimentRuntime(
 
     suspend fun markNotificationPosted(occurrenceId: String): Boolean = metadataMutex.withLock {
         val metadata = requireMetadata()
-        if (metadata.state != ExperimentState.RUNNING) return@withLock false
+        if (metadata.state != ExperimentState.RUNNING || pendingSafetyPause.get() != null) return@withLock false
+        val now = clocks.now()
+        if (!withinSignedDuration(now)) return@withLock false
         val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock false
         if (occurrence.state !in setOf(OccurrenceState.POSTING, OccurrenceState.NOTIFICATION_POSTED)) {
             return@withLock false
         }
-        val now = clocks.now()
         if (now.wallTimeUtcMillis >= occurrence.expiresAtUtcMillis) {
             expireOccurrence(metadata, occurrence, now)
             return@withLock false
@@ -341,9 +599,10 @@ class ExperimentRuntime(
 
     suspend fun openOccurrence(occurrenceId: String): OccurrenceDispatch? = metadataMutex.withLock {
         val metadata = requireMetadata()
-        if (metadata.state != ExperimentState.RUNNING) return@withLock null
-        val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock null
+        if (metadata.state != ExperimentState.RUNNING || pendingSafetyPause.get() != null) return@withLock null
         val now = clocks.now()
+        if (!withinSignedDuration(now)) return@withLock null
+        val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock null
         if (now.wallTimeUtcMillis >= occurrence.expiresAtUtcMillis && occurrence.state != OccurrenceState.SURVEY_SUBMITTED) {
             expireOccurrence(metadata, occurrence, now)
             return@withLock null
@@ -369,10 +628,13 @@ class ExperimentRuntime(
         answers: Map<String, SurveyAnswer>,
     ): SurveySubmissionResult = metadataMutex.withLock {
         val metadata = requireMetadata()
-        if (metadata.state != ExperimentState.RUNNING) return@withLock SurveySubmissionResult.INVALID
+        if (metadata.state != ExperimentState.RUNNING || pendingSafetyPause.get() != null) {
+            return@withLock SurveySubmissionResult.INVALID
+        }
+        val now = clocks.now()
+        if (!withinSignedDuration(now)) return@withLock SurveySubmissionResult.INVALID
         val occurrence = metadata.occurrences[occurrenceId] ?: return@withLock SurveySubmissionResult.INVALID
         if (occurrence.state == OccurrenceState.SURVEY_SUBMITTED) return@withLock SurveySubmissionResult.ALREADY_SUBMITTED
-        val now = clocks.now()
         if (now.wallTimeUtcMillis >= occurrence.expiresAtUtcMillis) {
             expireOccurrence(metadata, occurrence, now)
             return@withLock SurveySubmissionResult.EXPIRED
@@ -434,7 +696,7 @@ class ExperimentRuntime(
         }
         if (sequenceInclusive <= metadata.uploadedThroughSequence) return@withLock metadata
         val updated = metadata.copy(uploadedThroughSequence = sequenceInclusive)
-        store.saveMetadata(updated)
+        performStoreMutation { store.saveMetadata(updated) }
         currentMetadata = updated
         publishMetadata(updated)
         updated
@@ -455,10 +717,12 @@ class ExperimentRuntime(
         val metadata = requireMetadata()
         val usage = store.storageUsage()
         if (usage.fraction <= EVICT_ABOVE_FRACTION) return@withLock metadata
-        val updated = store.evictThrough(
-            metadata,
-            targetBytes = (usage.quotaBytes * EVICT_DOWN_TO_FRACTION).toLong(),
-        )
+        val updated = performStoreMutation {
+            store.evictThrough(
+                metadata,
+                targetBytes = (usage.quotaBytes * EVICT_DOWN_TO_FRACTION).toLong(),
+            )
+        }
         if (updated === metadata) return@withLock metadata
         currentMetadata = updated
         publishMetadata(updated)
@@ -473,53 +737,118 @@ class ExperimentRuntime(
         healthJobs.clear()
     }
 
-    override fun captureToken(): AdmissionToken? = admissionGate.capture()
+    private fun captureStudyToken(): AdmissionToken? = admissionGate.capture()
 
-    override suspend fun emit(
-        token: AdmissionToken,
+    private suspend fun persistAdmittedEvent(
+        studyToken: AdmissionToken,
+        collectorGate: EventAdmissionGate,
+        collectorToken: AdmissionToken,
         event: EventDraft,
     ): EmitResult {
-        val descriptor = collectorEntries[event.collectorId]?.plugin?.descriptor
-            ?: return EmitResult.ContractViolation
-        if (!descriptor.eventContract.accepts(event, Long.MAX_VALUE)) return EmitResult.ContractViolation
-        if (!admissionGate.accepts(token, event.observedTime.elapsedRealtimeNanos)) {
+        if (!registerAdmittedWrite(
+                studyToken,
+                collectorGate,
+                collectorToken,
+                event.observedTime,
+            )
+        ) {
             return EmitResult.RejectedByAdmissionGate
         }
 
-        return metadataMutex.withLock {
-            if (!admissionGate.accepts(token, event.observedTime.elapsedRealtimeNanos)) {
-                return@withLock EmitResult.RejectedByAdmissionGate
+        return try {
+            metadataMutex.withLock {
+                if (!acceptsAdmission(
+                        studyToken,
+                        collectorGate,
+                        collectorToken,
+                        event.observedTime,
+                    )
+                ) {
+                    return@withLock EmitResult.RejectedByAdmissionGate
+                }
+                val metadata = requireMetadata()
+                val recorded = RecordedEvent(
+                    sequenceNumber = metadata.nextSequenceNumber,
+                    collectorId = event.collectorId,
+                    payloadSchemaVersion = event.payloadSchemaVersion,
+                    observedTime = event.observedTime,
+                    payloadType = event.payloadType,
+                    fields = event.fields.toSortedMap(),
+                )
+                val updated = metadata.copy(
+                    eventCount = metadata.eventCount + 1,
+                    nextSequenceNumber = metadata.nextSequenceNumber + 1,
+                    lastEvents = metadata.lastEvents + (recorded.collectorId to recorded),
+                )
+                try {
+                    appendEventAtomicallyOrSignalStorageFailure(recorded, updated)
+                    currentMetadata = updated
+                    publishMetadata(updated)
+                    EmitResult.Accepted(recorded.sequenceNumber)
+                } catch (failure: Throwable) {
+                    failure.rethrowIfCancellation()
+                    EmitResult.StorageFailure
+                }
             }
-            val metadata = requireMetadata()
-            val recorded = RecordedEvent(
-                sequenceNumber = metadata.nextSequenceNumber,
-                collectorId = event.collectorId,
-                payloadSchemaVersion = event.payloadSchemaVersion,
-                observedTime = event.observedTime,
-                payloadType = event.payloadType,
-                fields = event.fields.toSortedMap(),
-            )
-            val updated = metadata.copy(
-                eventCount = metadata.eventCount + 1,
-                nextSequenceNumber = metadata.nextSequenceNumber + 1,
-                lastEvents = metadata.lastEvents + (recorded.collectorId to recorded),
-            )
-            try {
-                store.appendEventAtomically(recorded, updated)
-                currentMetadata = updated
-                publishMetadata(updated)
-                EmitResult.Accepted(recorded.sequenceNumber)
-            } catch (failure: Throwable) {
-                failure.rethrowIfCancellation()
-                admissionGate.forceClose()
-                mutableSnapshot.update { it.copy(incidentCode = INCIDENT_STORAGE_WRITE_FAILED) }
-                scope.launch { failClosedAfterStorageFailure() }
-                EmitResult.StorageFailure
-            }
+        } finally {
+            withContext(NonCancellable) { completeAdmittedWrite() }
         }
     }
 
-    override suspend fun latestEvent(collectorId: String): RecordedEvent? = metadataMutex.withLock {
+    private suspend fun registerAdmittedWrite(
+        studyToken: AdmissionToken,
+        collectorGate: EventAdmissionGate,
+        collectorToken: AdmissionToken,
+        observedAt: ResearchTime,
+    ): Boolean = admittedWriteMutex.withLock {
+        if (!acceptsAdmission(studyToken, collectorGate, collectorToken, observedAt)) {
+            return@withLock false
+        }
+        if (admittedWriteCount == 0) admittedWritesDrained = CompletableDeferred()
+        admittedWriteCount += 1
+        true
+    }
+
+    private suspend fun completeAdmittedWrite() = admittedWriteMutex.withLock {
+        check(admittedWriteCount > 0) { "Admitted write accounting underflow" }
+        admittedWriteCount -= 1
+        if (admittedWriteCount == 0) admittedWritesDrained.complete(Unit)
+    }
+
+    private suspend fun awaitAdmittedWritesDrained() {
+        admittedWriteMutex.withLock { admittedWritesDrained }.await()
+    }
+
+    private fun acceptsAdmission(
+        studyToken: AdmissionToken,
+        collectorGate: EventAdmissionGate,
+        collectorToken: AdmissionToken,
+        observedAt: ResearchTime,
+    ): Boolean = admissionGate.accepts(studyToken, observedAt.elapsedRealtimeNanos) &&
+        collectorGate.accepts(collectorToken, observedAt.elapsedRealtimeNanos) &&
+        withinSignedDuration(observedAt)
+
+    /**
+     * Uses the participant's one signed start transition as the immutable admission boundary.
+     *
+     * Wall time is deliberately irrelevant: it can jump while Android is running. A timestamp
+     * from another boot, before the start, or at/after the exact monotonic deadline is not
+     * admissible. Returning false rather than estimating across a reboot preserves fail-closed
+     * recovery semantics.
+     */
+    private fun withinSignedDuration(observedAt: ResearchTime): Boolean {
+        val start = currentMetadata?.transitions?.singleOrNull {
+            it.reason == TransitionReason.PARTICIPANT_STARTED
+        } ?: return false
+        if (start.from != ExperimentState.READY || start.to != ExperimentState.RUNNING) return false
+        if (start.time.bootSessionId != observedAt.bootSessionId) return false
+        if (observedAt.elapsedRealtimeNanos < start.time.elapsedRealtimeNanos) return false
+        val elapsedNanos = observedAt.elapsedRealtimeNanos - start.time.elapsedRealtimeNanos
+        val durationNanos = configuration.durationHours.toLong() * NANOS_PER_HOUR
+        return elapsedNanos < durationNanos
+    }
+
+    private suspend fun latestEvent(collectorId: String): RecordedEvent? = metadataMutex.withLock {
         requireMetadata().lastEvents[collectorId]
     }
 
@@ -532,6 +861,8 @@ class ExperimentRuntime(
             if (requireInitialized) check(currentMetadata != null) { "Runtime is not initialized" }
             command()
             CommandResult.Success
+        } catch (failure: CancellationException) {
+            throw failure
         } catch (_: IllegalArgumentException) {
             mutableSnapshot.update { it.copy(incidentCode = INCIDENT_COMMAND_REJECTED) }
             CommandResult.Failed(INCIDENT_COMMAND_REJECTED)
@@ -549,22 +880,28 @@ class ExperimentRuntime(
     private fun createCollectors() {
         check(collectorEntries.isEmpty()) { "Collectors already exist" }
         configuredPlugins().forEach { (configuration, plugin) ->
+            val collectorAdmissionGate = EventAdmissionGate()
             val collector = plugin.create(
                 configuration,
                 CollectorContext(
                     scope = scope,
-                    eventSink = CollectorEventSink(plugin.descriptor),
+                    eventSink = CollectorEventSink(plugin.descriptor, collectorAdmissionGate),
                     clocks = clocks,
                 ),
             )
-            collectorEntries[plugin.descriptor.id] = CollectorEntry(
+            val entry = CollectorEntry(
                 collector = collector,
                 configuration = configuration,
                 plugin = plugin,
+                admissionGate = collectorAdmissionGate,
             )
+            collectorEntries[plugin.descriptor.id] = entry
             healthJobs += scope.launch {
                 collector.health.collect { health ->
-                    updateCollectorHealth(plugin.descriptor.id, health)
+                    updateCollectorHealth(
+                        plugin.descriptor.id,
+                        entry.presentedHealth(health),
+                    )
                 }
             }
         }
@@ -574,56 +911,106 @@ class ExperimentRuntime(
         collectorConfiguration to collectorRegistry.pluginFor(collectorConfiguration)
     }
 
-    private suspend fun activateCollectors() {
+    private suspend fun activateCollectors(availableKinds: Set<AccessKind>) {
         collectorEntries.forEach { (id, entry) ->
-            val missingAccess = entry.plugin.accessRequirements(entry.configuration)
-                .filter { it.kind !in availableAccess() }
+            val missingAccess = entry.plugin.descriptor.accessRequirements(entry.configuration.required)
+                .filter { it.kind !in availableKinds }
             if (missingAccess.isNotEmpty()) {
-                updateCollectorHealth(
-                    id,
-                    CollectorHealth(CollectorStatus.BLOCKED_ACCESS, "ACCESS_UNAVAILABLE"),
-                )
+                entry.closeAdmission()
+                entry.accessBlocked = true
+                publishCollectorHealth(id, entry)
+                return@forEach
+            }
+            entry.accessBlocked = false
+            activateCollector(id, entry, resume = entry.hasStarted)
+        }
+    }
+
+    /** Opens collector admission only after its source reports a successful start or resume. */
+    private suspend fun activateCollector(
+        id: String,
+        entry: CollectorEntry,
+        resume: Boolean,
+    ) {
+        entry.closeAdmission()
+        try {
+            if (resume) {
+                entry.collector.resume()
+            } else {
+                entry.collector.start()
+                entry.hasStarted = true
+            }
+            entry.sourcePaused = false
+            entry.admissionFailureReason = null
+            entry.openAdmission()
+            entry.collector.onAdmissionOpened()
+            publishCollectorHealth(id, entry)
+        } catch (failure: Throwable) {
+            entry.closeAdmission()
+            entry.hasStarted = entry.hasStarted || entry.collector.requiresStop
+            failure.rethrowIfCancellation()
+            entry.admissionFailureReason = if (resume) {
+                "COLLECTOR_RESUME_FAILED"
+            } else {
+                "COLLECTOR_START_FAILED"
+            }
+            publishCollectorHealth(id, entry)
+        }
+    }
+
+    private suspend fun pauseCollectors(): Boolean {
+        var allPaused = true
+        collectorEntries.forEach { (id, entry) ->
+            if (!entry.hasStarted) {
+                entry.closeAdmission()
                 return@forEach
             }
             try {
-                if (entry.hasStarted) {
-                    entry.collector.resume()
-                } else {
-                    entry.collector.start()
-                    entry.hasStarted = true
-                }
-            } catch (failure: Throwable) {
-                entry.hasStarted = entry.hasStarted || entry.collector.requiresStop
-                failure.rethrowIfCancellation()
-                updateCollectorHealth(id, CollectorHealth(CollectorStatus.FAILED, "COLLECTOR_START_FAILED"))
-            }
-        }
-    }
-
-    private suspend fun pauseCollectors() {
-        collectorEntries.forEach { (id, entry) ->
-            if (!entry.hasStarted) return@forEach
-            try {
                 entry.collector.pause()
+                entry.sourcePaused = true
+                entry.admissionFailureReason = null
             } catch (failure: Throwable) {
                 failure.rethrowIfCancellation()
-                updateCollectorHealth(id, CollectorHealth(CollectorStatus.FAILED, "COLLECTOR_PAUSE_FAILED"))
+                allPaused = false
+                entry.admissionFailureReason = "COLLECTOR_PAUSE_FAILED"
+                publishCollectorHealth(id, entry)
+            } finally {
+                // The global boundary is already draining or closed. Retire this collector epoch
+                // after teardown as a second, collector-owned admission boundary.
+                entry.closeAdmission()
             }
         }
+        return allPaused
     }
 
-    private suspend fun stopCollectors() {
+    private fun closeAllAdmission() {
+        admissionGate.forceClose()
+        collectorEntries.values.forEach(CollectorEntry::closeAdmission)
+    }
+
+    private suspend fun stopCollectors(): Boolean {
+        var allStopped = true
         collectorEntries.forEach { (id, entry) ->
-            if (!entry.hasStarted) return@forEach
+            if (!entry.hasStarted) {
+                entry.closeAdmission()
+                return@forEach
+            }
+            entry.accessBlocked = false
             try {
                 entry.collector.stop()
+                entry.sourcePaused = false
+                entry.admissionFailureReason = null
             } catch (failure: Throwable) {
                 failure.rethrowIfCancellation()
-                updateCollectorHealth(id, CollectorHealth(CollectorStatus.FAILED, "COLLECTOR_STOP_FAILED"))
+                allStopped = false
+                entry.admissionFailureReason = "COLLECTOR_STOP_FAILED"
+                publishCollectorHealth(id, entry)
             } finally {
+                entry.closeAdmission()
                 entry.hasStarted = entry.collector.requiresStop
             }
         }
+        return allStopped
     }
 
     private suspend fun drainAndTransition(
@@ -634,15 +1021,75 @@ class ExperimentRuntime(
         val boundary = clocks.now()
         val token = admissionGate.beginDrain(boundary.elapsedRealtimeNanos)
         try {
+            // Metadata is committed only after every write already admitted at the boundary has
+            // finished. Closing after source teardown rejects late callbacks; a storage failure
+            // either becomes the stronger pause reason or prevents a terminal export entirely.
+            val sourcesReleased = if (stopCollectors) stopCollectors() else pauseCollectors()
+            admissionGate.close(token)
+            awaitAdmittedWritesDrained()
+            if (!sourcesReleased) {
+                signalSafetyFailure(
+                    SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE,
+                    INCIDENT_COLLECTION_TEARDOWN_FAILED,
+                )
+            }
+            if (stopCollectors) {
+                check(pendingSafetyPause.get() == null) {
+                    "A safety failure prevents the terminal transition"
+                }
+            }
             transitionTo(to, reason, boundary)
+            check(sourcesReleased) {
+                "Collector teardown failed at the pause boundary"
+            }
         } catch (failure: Throwable) {
-            admissionGate.restoreActive(token)
+            admissionGate.forceClose()
+            persistCancelledTeardownWitness(failure)
             throw failure
         }
+    }
+
+    private suspend fun stopAndTransitionFromClosed(
+        to: ExperimentState,
+        reason: TransitionReason,
+    ) {
+        val startedPaused = currentMetadata?.state == ExperimentState.PAUSED
         try {
-            if (stopCollectors) stopCollectors() else pauseCollectors()
-        } finally {
-            admissionGate.close(token)
+            if (!stopCollectors()) {
+                signalSafetyFailure(
+                    SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE,
+                    INCIDENT_COLLECTION_TEARDOWN_FAILED,
+                )
+                error("Collector teardown failed before the terminal transition")
+            }
+            awaitAdmittedWritesDrained()
+            check(pendingSafetyPause.get() == null) {
+                "A safety failure prevents the terminal transition"
+            }
+            transitionTo(to, reason)
+        } catch (failure: Throwable) {
+            closeAllAdmission()
+            if (startedPaused) persistCancelledTeardownWitness(failure)
+            throw failure
+        }
+    }
+
+    /**
+     * Once a drain has started, caller cancellation cannot be allowed to erase the only evidence
+     * that source teardown is incomplete. Persist the typed witness before propagating cancellation;
+     * recovery will enter PAUSED before any host or collector can reopen.
+     */
+    private suspend fun persistCancelledTeardownWitness(failure: Throwable) {
+        if (failure !is CancellationException) return
+        try {
+            withContext(NonCancellable) {
+                signalSafetyFailure(
+                    SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE,
+                    INCIDENT_COLLECTION_TEARDOWN_FAILED,
+                )
+            }
+        } catch (witnessFailure: Throwable) {
+            failure.addSuppressed(witnessFailure)
         }
     }
 
@@ -652,24 +1099,20 @@ class ExperimentRuntime(
         time: cool.jacoblin.particeps.core.model.ResearchTime = clocks.now(),
     ) {
         metadataMutex.withLock {
-            val updated = stateMachine.transition(requireMetadata(), state, reason, time)
-            store.saveMetadata(updated)
+            // A storage failure can be published while a participant pause is waiting on this
+            // mutex. Linearize that concurrent pause as the stronger safety transition so its
+            // durable reason can never become PARTICIPANT_PAUSED after the fail-closed signal.
+            val effectiveReason = if (state == ExperimentState.PAUSED) {
+                pendingSafetyPause.get()?.transitionReason ?: reason
+            } else {
+                reason
+            }
+            val updated = stateMachine.transition(requireMetadata(), state, effectiveReason, time)
+            performStoreMutation(mayHaveCommittedRunning = state == ExperimentState.RUNNING) {
+                store.saveMetadata(updated)
+            }
             currentMetadata = updated
             publishMetadata(updated)
-        }
-    }
-
-    private suspend fun failClosedAfterStorageFailure() {
-        commandMutex.withLock {
-            pauseCollectors()
-            val metadata = currentMetadata ?: return@withLock
-            if (metadata.state != ExperimentState.RUNNING) return@withLock
-            try {
-                transitionTo(ExperimentState.PAUSED, TransitionReason.STORAGE_FAILURE)
-            } catch (failure: Throwable) {
-                failure.rethrowIfCancellation()
-                mutableSnapshot.update { it.copy(incidentCode = INCIDENT_PAUSE_PERSISTENCE_FAILED) }
-            }
         }
     }
 
@@ -703,9 +1146,12 @@ class ExperimentRuntime(
         metadataAfterState: StudyMetadata,
         occurrence: InterventionOccurrence,
         payloadType: String,
-        observedAt: cool.jacoblin.particeps.core.model.ResearchTime,
+        observedAt: ResearchTime,
         additionalFields: Map<String, String> = emptyMap(),
     ) {
+        check(withinSignedDuration(observedAt)) {
+            "Occurrence events cannot be admitted after the signed study duration"
+        }
         val draft = EventDraft(
             collectorId = INTERVENTION_COLLECTOR_ID,
             payloadSchemaVersion = 1,
@@ -735,9 +1181,127 @@ class ExperimentRuntime(
             nextSequenceNumber = event.sequenceNumber + 1,
             lastEvents = metadataAfterState.lastEvents + (event.collectorId to event),
         )
-        store.appendEventAtomically(event, updated)
+        try {
+            appendEventAtomicallyOrSignalStorageFailure(event, updated)
+        } catch (failure: StudyStoreMutationFailedClosed) {
+            val recovered = requireNotNull(currentMetadata)
+            val recoveredEvent = recovered.lastEvents[INTERVENTION_COLLECTOR_ID]
+            if (
+                recovered.eventCount != updated.eventCount ||
+                recoveredEvent != event ||
+                recovered.occurrences[occurrence.occurrenceId] != occurrence
+            ) {
+                throw failure
+            }
+            // The occurrence mutation and its event are durable even though the whole study has
+            // entered a typed storage safety pause. Reporting semantic success keeps an already
+            // posted Android notification consistent with durable NOTIFICATION_POSTED state.
+            return
+        }
         currentMetadata = updated
         publishMetadata(updated)
+    }
+
+    /**
+     * Makes every atomic event append share the same fail-closed storage boundary.
+     *
+     * Callers may translate or propagate the original failure, but the typed request is published
+     * first while their metadata critical section is still held. This method never takes
+     * [commandMutex], preserving the runtime's command -> metadata lock ordering.
+     */
+    private suspend fun appendEventAtomicallyOrSignalStorageFailure(
+        event: RecordedEvent,
+        metadata: StudyMetadata,
+    ) {
+        try {
+            store.appendEventAtomically(event, metadata, clocks.now())
+        } catch (failure: Throwable) {
+            val recovered = (failure as? StudyStoreMutationFailedClosed)?.metadata
+            if (recovered != null) {
+                currentMetadata = recovered
+                publishMetadata(recovered)
+            }
+            var effectiveReason = pendingSafetyPause.get() ?: SafetyPauseReason.STORAGE_FAILURE
+            try {
+                effectiveReason = signalStorageFailure()
+            } catch (witnessFailure: Throwable) {
+                failure.addSuppressed(witnessFailure)
+                effectiveReason = pendingSafetyPause.get() ?: effectiveReason
+            }
+            if (recovered != null) {
+                try {
+                    store.resolvePendingAppendFailure(effectiveReason.transitionReason)?.let { resolved ->
+                        currentMetadata = resolved
+                        publishMetadata(resolved)
+                    }
+                } catch (resolutionFailure: Throwable) {
+                    failure.addSuppressed(resolutionFailure)
+                }
+            }
+            val cancellation = failure.cause as? CancellationException
+            throw cancellation ?: failure
+        }
+    }
+
+    /** Protects every mutable store operation that can strand a durably RUNNING study. */
+    private suspend fun <T> performStoreMutation(
+        mayHaveCommittedRunning: Boolean = false,
+        mutation: suspend () -> T,
+    ): T = try {
+        mutation()
+    } catch (failure: Throwable) {
+        if (currentMetadata?.state == ExperimentState.RUNNING || mayHaveCommittedRunning) {
+            try {
+                signalStorageFailure()
+            } catch (witnessFailure: Throwable) {
+                failure.addSuppressed(witnessFailure)
+            }
+        }
+        throw failure
+    }
+
+    /**
+     * Closes live collection before publishing a storage request without acquiring commandMutex.
+     * The atomic latch makes concurrent access/host/storage failures deterministically first-wins.
+     */
+    private suspend fun signalStorageFailure(): SafetyPauseReason =
+        signalSafetyFailure(
+            SafetyPauseReason.STORAGE_FAILURE,
+            INCIDENT_STORAGE_WRITE_FAILED,
+        )
+
+    private suspend fun signalSafetyFailure(
+        reason: SafetyPauseReason,
+        incidentCode: String,
+    ): SafetyPauseReason {
+        closeAllAdmission()
+        val effectiveReason = latchSafetyPauseReason(reason)
+        mutableSnapshot.update { it.copy(incidentCode = incidentCode) }
+        withContext(NonCancellable) {
+            safetyPauseWitness.persist(effectiveReason)
+        }
+        return effectiveReason
+    }
+
+    private fun latchSafetyPauseReason(requested: SafetyPauseReason): SafetyPauseReason {
+        while (true) {
+            val existing = pendingSafetyPause.get()
+            if (existing != null) {
+                publishPendingSafetyPause(existing)
+                return existing
+            }
+            if (pendingSafetyPause.compareAndSet(null, requested)) {
+                publishPendingSafetyPause(requested)
+                return requested
+            }
+        }
+    }
+
+    private fun publishPendingSafetyPause(reason: SafetyPauseReason) {
+        mutableSnapshot.update { current ->
+            if (current.pendingSafetyPauseReason == reason) current
+            else current.copy(pendingSafetyPauseReason = reason)
+        }
     }
 
     private fun validateAndEncodeAnswers(survey: SurveyDefinition, answers: Map<String, SurveyAnswer>): String? {
@@ -805,25 +1369,84 @@ class ExperimentRuntime(
         }
     }
 
-    private data class CollectorEntry(
+    private fun publishCollectorHealth(
+        collectorId: String,
+        entry: CollectorEntry,
+    ) {
+        updateCollectorHealth(collectorId, entry.presentedHealth(entry.collector.health.value))
+    }
+
+    private class CollectorEntry(
         val collector: Collector,
         val configuration: cool.jacoblin.particeps.core.definition.CollectorConfiguration,
         val plugin: CollectorPlugin,
-        var hasStarted: Boolean = false,
-    )
+        val admissionGate: EventAdmissionGate,
+    ) {
+        var hasStarted: Boolean = false
+        var sourcePaused: Boolean = false
+        var admissionOpen: Boolean = false
+
+        @Volatile
+        var accessBlocked: Boolean = false
+
+        @Volatile
+        var admissionFailureReason: String? = null
+
+        fun openAdmission() {
+            admissionGate.open()
+            admissionOpen = true
+        }
+
+        fun closeAdmission() {
+            admissionGate.forceClose()
+            admissionOpen = false
+        }
+
+        fun presentedHealth(sourceHealth: CollectorHealth): CollectorHealth {
+            val failureReason = admissionFailureReason
+            return when {
+                failureReason != null -> CollectorHealth(
+                    CollectorStatus.FAILED,
+                    failureReason,
+                )
+                accessBlocked && sourceHealth.status != CollectorStatus.FAILED ->
+                    CollectorHealth(CollectorStatus.BLOCKED_ACCESS, "ACCESS_UNAVAILABLE")
+                else -> sourceHealth
+            }
+        }
+    }
+
+    private data class CollectorAdmissionToken(
+        val studyToken: AdmissionToken,
+        val collectorToken: AdmissionToken,
+    ) : AdmissionToken
 
     /** Binds a collector's shared admission capability to its own declared event contract. */
     private inner class CollectorEventSink(
         private val descriptor: CollectorDescriptor,
+        private val collectorAdmissionGate: EventAdmissionGate,
     ) : EventSink {
-        override fun captureToken(): AdmissionToken? = this@ExperimentRuntime.captureToken()
+        override fun captureToken(): AdmissionToken? {
+            val collectorToken = collectorAdmissionGate.capture() ?: return null
+            val studyToken = captureStudyToken() ?: return null
+            return CollectorAdmissionToken(studyToken, collectorToken)
+        }
 
-        override suspend fun emit(token: AdmissionToken, event: EventDraft): EmitResult =
-            if (event.collectorId != descriptor.id) {
-                EmitResult.ContractViolation
-            } else {
-                this@ExperimentRuntime.emit(token, event)
+        override suspend fun emit(token: AdmissionToken, event: EventDraft): EmitResult {
+            if (event.collectorId != descriptor.id ||
+                !descriptor.eventContract.accepts(event, Long.MAX_VALUE)
+            ) {
+                return EmitResult.ContractViolation
             }
+            val admission = token as? CollectorAdmissionToken
+                ?: return EmitResult.RejectedByAdmissionGate
+            return persistAdmittedEvent(
+                studyToken = admission.studyToken,
+                event = event,
+                collectorGate = collectorAdmissionGate,
+                collectorToken = admission.collectorToken,
+            )
+        }
 
         override suspend fun latestEvent(collectorId: String): RecordedEvent? {
             require(collectorId == descriptor.id) { "Collector cannot inspect another collector's event" }
@@ -848,9 +1471,12 @@ class ExperimentRuntime(
         const val EVICT_DOWN_TO_FRACTION = 0.60
 
         const val INCIDENT_STORAGE_WRITE_FAILED = "STORAGE_WRITE_FAILED"
+        const val INCIDENT_COLLECTION_TEARDOWN_FAILED = "COLLECTION_TEARDOWN_FAILED"
         const val INCIDENT_PAUSE_PERSISTENCE_FAILED = "PAUSE_PERSISTENCE_FAILED"
+        const val INCIDENT_COLLECTOR_PAUSE_FAILED = "COLLECTOR_PAUSE_FAILED"
         const val MAXIMUM_SURVEY_ANSWERS_BYTES = 60 * 1024
         const val INTERVENTION_COLLECTOR_ID = "interventions.v1"
+        const val NANOS_PER_HOUR = 60L * 60L * 1_000_000_000L
     }
 }
 

@@ -25,7 +25,22 @@ enum class TransitionReason(
     PARTICIPANT_FINISHED_EARLY(ExperimentState.COMPLETED),
     STUDY_DURATION_ELAPSED(ExperimentState.COMPLETED),
     PARTICIPANT_WITHDREW(ExperimentState.WITHDRAWN),
+    REQUIRED_ACCESS_MISSING(ExperimentState.PAUSED),
+    COLLECTION_HOST_FAILURE(ExperimentState.PAUSED),
+    WORK_SCHEDULING_FAILURE(ExperimentState.PAUSED),
+    COLLECTION_TEARDOWN_FAILURE(ExperimentState.PAUSED),
     STORAGE_FAILURE(ExperimentState.PAUSED),
+}
+
+/** Closed reasons that force collection admission to remain closed until an explicit resume. */
+enum class SafetyPauseReason(
+    val transitionReason: TransitionReason,
+) {
+    REQUIRED_ACCESS_MISSING(TransitionReason.REQUIRED_ACCESS_MISSING),
+    COLLECTION_HOST_FAILURE(TransitionReason.COLLECTION_HOST_FAILURE),
+    WORK_SCHEDULING_FAILURE(TransitionReason.WORK_SCHEDULING_FAILURE),
+    COLLECTION_TEARDOWN_FAILURE(TransitionReason.COLLECTION_TEARDOWN_FAILURE),
+    STORAGE_FAILURE(TransitionReason.STORAGE_FAILURE),
 }
 
 data class ResearchTime(

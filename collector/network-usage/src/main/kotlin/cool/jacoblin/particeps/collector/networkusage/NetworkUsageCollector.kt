@@ -4,7 +4,6 @@ import android.app.usage.NetworkStatsManager
 import android.content.Context
 import cool.jacoblin.particeps.core.model.EventDraft
 import cool.jacoblin.particeps.core.collector.AccessKind
-import cool.jacoblin.particeps.core.collector.AccessRequirement
 import cool.jacoblin.particeps.core.definition.CollectorConfiguration
 import cool.jacoblin.particeps.core.definition.NetworkTransport
 import cool.jacoblin.particeps.core.definition.NetworkUsageConfiguration
@@ -38,14 +37,9 @@ class NetworkUsageCollectorPlugin(
         id = NetworkUsageConfiguration.ID,
         displayName = "Aggregate network usage",
         privacyClass = PrivacyClass.SENSITIVE,
+        accessKinds = setOf(AccessKind.USAGE_ACCESS),
         eventContract = requireNotNull(ProtocolEventContracts[NetworkUsageConfiguration.ID]),
     )
-
-    override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
-        val typed = configuration as? NetworkUsageConfiguration
-            ?: throw IllegalArgumentException("Invalid network-usage configuration")
-        return setOf(AccessRequirement(AccessKind.USAGE_ACCESS, typed.required))
-    }
 
     override fun create(
         configuration: CollectorConfiguration,

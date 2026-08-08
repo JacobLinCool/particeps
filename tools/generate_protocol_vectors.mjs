@@ -155,7 +155,7 @@ const documentValue = {
     next_sequence_number: '2',
     participant_instance_id: '00000000-0000-4000-8000-000000000017',
     retained_from_sequence: '1',
-    state: 'RUNNING',
+    state: 'PAUSED',
     transitions: [
       {
         from: 'IMPORTED',
@@ -186,6 +186,12 @@ const documentValue = {
         reason: 'PARTICIPANT_STARTED',
         time: { boot_session_id: 'boot-vector', monotonic_time_nanos: '500', wall_time_utc_millis: '500' },
         to: 'RUNNING'
+      },
+      {
+        from: 'RUNNING',
+        reason: 'REQUIRED_ACCESS_MISSING',
+        time: { boot_session_id: 'boot-vector', monotonic_time_nanos: '3000', wall_time_utc_millis: '2000' },
+        to: 'PAUSED'
       }
     ],
     uploaded_through_sequence: '0'

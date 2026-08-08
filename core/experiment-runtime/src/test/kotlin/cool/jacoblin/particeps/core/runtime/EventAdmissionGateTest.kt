@@ -34,4 +34,17 @@ class EventAdmissionGateTest {
         assertFalse(gate.accepts(first, 1))
         assertTrue(gate.accepts(second, 11))
     }
+
+    @Test
+    fun aTokenIsBoundToTheGateThatIssuedIt() {
+        val first = EventAdmissionGate()
+        val second = EventAdmissionGate()
+        val firstToken = first.open()
+        val secondToken = second.open()
+
+        assertTrue(first.accepts(firstToken, 1))
+        assertTrue(second.accepts(secondToken, 1))
+        assertFalse(first.accepts(secondToken, 1))
+        assertFalse(second.accepts(firstToken, 1))
+    }
 }

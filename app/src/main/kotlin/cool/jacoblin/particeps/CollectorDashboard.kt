@@ -53,8 +53,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import cool.jacoblin.particeps.core.application.StudyAccessFeature
+import cool.jacoblin.particeps.core.application.StudyAccessOwner
+import cool.jacoblin.particeps.core.application.StudyAccessStatus
 import cool.jacoblin.particeps.core.collector.AccessKind
-import cool.jacoblin.particeps.core.collector.AccessStatus
+import cool.jacoblin.particeps.core.collector.AccessResolution
+import cool.jacoblin.particeps.core.collector.SetupAction
 import cool.jacoblin.particeps.core.collector.CollectorStatus
 import cool.jacoblin.particeps.core.definition.StudyConfiguration
 import cool.jacoblin.particeps.core.definition.UploadConfiguration
@@ -79,6 +83,11 @@ object UiTags {
     const val EXPORT = "export"
     const val EVENT_COUNT = "event_count"
     const val PAUSED_SINCE = "paused_since"
+
+    fun accessItem(kind: AccessKind) = "access_item_${kind.name}"
+    fun accessOwners(kind: AccessKind) = "access_owners_${kind.name}"
+    fun accessInstructions(kind: AccessKind) = "access_instructions_${kind.name}"
+    fun accessAction(kind: AccessKind) = "access_action_${kind.name}"
 }
 
 data class StudyUiActions(
@@ -88,7 +97,7 @@ data class StudyUiActions(
     val review: () -> Unit,
     val acceptConsent: () -> Unit,
     val completeAccess: () -> Unit,
-    val requestAccess: (AccessKind) -> Unit,
+    val requestAccess: (SetupAction) -> Unit,
     val start: () -> Unit,
     val pause: () -> Unit,
     val resume: () -> Unit,
@@ -175,7 +184,12 @@ private fun Dashboard(
     // Re-entering CONSENT_PENDING starts at the data page again, so nobody lands on the checkbox
     // without the list of sources having been on screen.
     var page by remember(metadata?.state) { mutableStateOf(SetupStep.DATA) }
+    val requiredAccessMissing = study?.access?.any { it.requirement.required && !it.granted } == true
     val step = metadata?.state?.let { setupStep(it, page) }
+    val accessRemediation = requiredAccessMissing && when (metadata?.state) {
+        ExperimentState.READY, ExperimentState.RUNNING, ExperimentState.PAUSED -> true
+        else -> false
+    }
 
     Column(
         modifier = modifier
@@ -200,27 +214,47 @@ private fun Dashboard(
             return@Column
         }
 
-        when (step) {
-            SetupStep.STUDY -> StudyPanel(study, actions, state.busy)
-            SetupStep.DATA -> DataPanel(
+        if (accessRemediation) {
+            AccessPanel(
                 configuration = study.configuration,
+                checks = study.access,
                 actions = actions,
                 busy = state.busy,
-                onContinue = { page = SetupStep.CONSENT },
+                completesInitialSetup = false,
             )
-            SetupStep.CONSENT -> ConsentPanel(study, actions, state.busy)
-            SetupStep.ACCESS -> AccessPanel(study.access, actions, state.busy)
-            SetupStep.START -> StartPanel(actions, state.busy)
-            null -> CollectionPanel(study, actions, state.busy)
+        } else {
+            when (step) {
+                SetupStep.STUDY -> StudyPanel(study, actions, state.busy)
+                SetupStep.DATA -> DataPanel(
+                    configuration = study.configuration,
+                    actions = actions,
+                    busy = state.busy,
+                    onContinue = { page = SetupStep.CONSENT },
+                )
+                SetupStep.CONSENT -> ConsentPanel(study, actions, state.busy)
+                SetupStep.ACCESS -> AccessPanel(
+                    configuration = study.configuration,
+                    checks = study.access,
+                    actions = actions,
+                    busy = state.busy,
+                    completesInitialSetup = true,
+                )
+                SetupStep.START -> StartPanel(actions, state.busy)
+                null -> CollectionPanel(study, actions, state.busy)
+            }
         }
     }
 }
 
-private fun setupStep(state: ExperimentState, page: SetupStep): SetupStep? = when (state) {
+private fun setupStep(
+    state: ExperimentState,
+    page: SetupStep,
+): SetupStep? = when (state) {
     ExperimentState.IMPORTED, ExperimentState.CONFIG_VERIFIED -> SetupStep.STUDY
     ExperimentState.CONSENT_PENDING -> page
     ExperimentState.ACCESS_SETUP -> SetupStep.ACCESS
     ExperimentState.READY -> SetupStep.START
+    ExperimentState.RUNNING, ExperimentState.PAUSED -> null
     else -> null
 }
 
@@ -594,49 +628,175 @@ private fun UploadDisclosure(upload: UploadConfiguration?) {
     }
 }
 
-/** Step 4. Each row is the control: tapping an outstanding item opens the screen that grants it. */
+/**
+ * Step 4. Each capability is one card, even when several collectors share it.
+ *
+ * Collector modules declare only a closed [AccessKind]. Android actions and participant-facing
+ * instructions remain app-owned, so neither a signed study nor a plugin can inject an intent or
+ * arbitrary setup copy.
+ */
 @Composable
-private fun AccessPanel(checks: List<AccessStatus>, actions: StudyUiActions, busy: Boolean) {
+private fun AccessPanel(
+    configuration: StudyConfiguration,
+    checks: List<StudyAccessStatus>,
+    actions: StudyUiActions,
+    busy: Boolean,
+    completesInitialSetup: Boolean,
+) {
     val requiredReady = checks.none { it.requirement.required && !it.granted }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         checks.forEach { check ->
-            val actionable = !check.granted && check.requirement.kind !in HARDWARE_ACCESS
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(
-                        if (actionable) {
-                            Modifier.clickable { actions.requestAccess(check.requirement.kind) }
-                        } else {
-                            Modifier
-                        },
+            AccessCard(configuration, check, actions, busy)
+        }
+        if (completesInitialSetup) {
+            Spacer(Modifier.height(4.dp))
+            Button(
+                onClick = actions.completeAccess,
+                enabled = requiredReady && !busy,
+                modifier = Modifier.fillMaxWidth().testTag(UiTags.ACCESS_COMPLETE),
+            ) { Text(stringResource(R.string.action_done)) }
+        }
+        WithdrawLink(actions, busy)
+    }
+}
+
+@Composable
+internal fun AccessCard(
+    configuration: StudyConfiguration,
+    check: StudyAccessStatus,
+    actions: StudyUiActions,
+    busy: Boolean,
+) {
+    val kind = check.requirement.kind
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(UiTags.accessItem(kind))
+            .padding(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (check.granted) {
+                CheckMark(MaterialTheme.colorScheme.secondary, 16.dp)
+            } else {
+                PendingMark(blocking = check.requirement.required)
+            }
+            Text(
+                stringResource(kind.labelRes()),
+                modifier = Modifier.weight(1f),
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (!check.requirement.required) {
+                Text(
+                    stringResource(R.string.data_optional),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        AccessOwners(configuration, kind, check.owners)
+
+        if (!check.granted) {
+            check.guidance
+                ?.takeUnless { check.resolution is AccessResolution.Unavailable }
+                ?.presentation()
+                ?.let { guidance ->
+                Column(
+                    modifier = Modifier.testTag(UiTags.accessInstructions(kind)),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        stringResource(guidance.descriptionRes),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    .padding(vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                if (check.granted) {
-                    CheckMark(MaterialTheme.colorScheme.secondary, 16.dp)
-                } else {
-                    PendingMark(blocking = check.requirement.required)
+                    Text(stringResource(R.string.access_manual_steps), fontWeight = FontWeight.SemiBold)
+                    guidance.stepResources.forEachIndexed { index, stepRes ->
+                        Text(stringResource(R.string.access_step_number, index + 1, guidanceStepText(stepRes)))
+                    }
                 }
-                Text(stringResource(check.requirement.kind.labelRes()), Modifier.weight(1f))
-                if (!check.granted && !check.requirement.required) {
+            }
+
+            when (val resolution = check.resolution) {
+                AccessResolution.Satisfied -> Unit
+                is AccessResolution.ActionRequired -> OutlinedButton(
+                    onClick = { actions.requestAccess(resolution.action) },
+                    enabled = !busy,
+                    modifier = Modifier.testTag(UiTags.accessAction(kind)),
+                ) { Text(stringResource(resolution.action.labelRes())) }
+                is AccessResolution.BlockedByPrerequisites -> resolution.missing
+                    .sortedBy { it.name }
+                    .forEach { prerequisite ->
+                        Text(
+                            stringResource(
+                                R.string.access_complete_first,
+                                stringResource(prerequisite.labelRes()),
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                is AccessResolution.Unavailable -> Text(
+                    stringResource(resolution.reason.messageRes()),
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+        HorizontalDivider()
+    }
+}
+
+@Composable
+private fun guidanceStepText(stepResource: Int): String = when (stepResource) {
+    R.string.access_background_location_step_choose_always -> stringResource(
+        stepResource,
+        LocalContext.current.packageManager.backgroundPermissionOptionLabel,
+    )
+    else -> stringResource(stepResource)
+}
+
+@Composable
+private fun AccessOwners(
+    configuration: StudyConfiguration,
+    kind: AccessKind,
+    owners: Set<StudyAccessOwner>,
+) {
+    val collectorOrder = configuration.collectors.mapIndexed { index, collector -> collector.id to index }.toMap()
+    val collectors = configuration.collectors.associateBy { it.id }
+    val orderedOwners = owners.sortedBy { owner ->
+        when (owner) {
+            is StudyAccessOwner.Feature -> -1
+            is StudyAccessOwner.Collector -> collectorOrder.getValue(owner.collectorId)
+        }
+    }
+    Column(
+        modifier = Modifier.testTag(UiTags.accessOwners(kind)),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Text(
+            stringResource(R.string.access_used_by),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        orderedOwners.forEach { owner ->
+            val label = when (owner) {
+                is StudyAccessOwner.Collector -> collectors.getValue(owner.collectorId).summarize().name
+                is StudyAccessOwner.Feature -> when (owner.feature) {
+                    StudyAccessFeature.STUDY_NOTIFICATIONS ->
+                        stringResource(R.string.access_owner_study_notifications)
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.access_owner_item, label))
+                if (!owner.required) {
                     Text(
                         stringResource(R.string.data_optional),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
-            HorizontalDivider()
         }
-        Spacer(Modifier.height(12.dp))
-        Button(
-            onClick = actions.completeAccess,
-            enabled = requiredReady && !busy,
-            modifier = Modifier.fillMaxWidth().testTag(UiTags.ACCESS_COMPLETE),
-        ) { Text(stringResource(R.string.action_done)) }
-        WithdrawLink(actions, busy)
     }
 }
 
@@ -658,6 +818,12 @@ private fun CollectionPanel(study: StudyUiState.ActiveStudy, actions: StudyUiAct
     val state = study.metadata.state
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
         CollectorGrid(study)
+        OptionalAccessRemediation(
+            configuration = study.configuration,
+            checks = study.access,
+            actions = actions,
+            busy = busy,
+        )
         EventMeter(study)
         when (state) {
             ExperimentState.RUNNING -> CollectionControls(
@@ -680,6 +846,25 @@ private fun CollectionPanel(study: StudyUiState.ActiveStudy, actions: StudyUiAct
         }
         if (state != ExperimentState.WITHDRAWN) WithdrawLink(actions, busy)
         StudyDetails(study)
+    }
+}
+
+@Composable
+internal fun OptionalAccessRemediation(
+    configuration: StudyConfiguration,
+    checks: List<StudyAccessStatus>,
+    actions: StudyUiActions,
+    busy: Boolean,
+) {
+    val missing = checks.filter { !it.requirement.required && !it.granted }
+    if (missing.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(stringResource(R.string.optional_access_title), fontWeight = FontWeight.SemiBold)
+        Text(
+            stringResource(R.string.optional_access_body),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        missing.forEach { AccessCard(configuration, it, actions, busy) }
     }
 }
 
@@ -1023,26 +1208,6 @@ private fun ExperimentState.labelRes(): Int = when (this) {
     ExperimentState.WITHDRAWN -> R.string.state_withdrawn
     else -> R.string.state_running
 }
-
-private fun AccessKind.labelRes(): Int = when (this) {
-    AccessKind.FINE_LOCATION -> R.string.access_fine_location
-    AccessKind.BACKGROUND_LOCATION -> R.string.access_background_location
-    AccessKind.NOTIFICATIONS -> R.string.access_notifications
-    AccessKind.USAGE_ACCESS -> R.string.access_usage_access
-    AccessKind.RESEARCH_KEYBOARD_ENABLED -> R.string.access_research_keyboard_enabled
-    AccessKind.RESEARCH_KEYBOARD_SELECTED -> R.string.access_research_keyboard_selected
-    AccessKind.ACCELEROMETER_HARDWARE -> R.string.access_accelerometer_hardware
-    AccessKind.GYROSCOPE_HARDWARE -> R.string.access_gyroscope_hardware
-    AccessKind.AMBIENT_LIGHT_HARDWARE -> R.string.access_ambient_light_hardware
-    AccessKind.PROXIMITY_HARDWARE -> R.string.access_proximity_hardware
-}
-
-private val HARDWARE_ACCESS = setOf(
-    AccessKind.ACCELEROMETER_HARDWARE,
-    AccessKind.GYROSCOPE_HARDWARE,
-    AccessKind.AMBIENT_LIGHT_HARDWARE,
-    AccessKind.PROXIMITY_HARDWARE,
-)
 
 private val TERMINAL_STATES = setOf(ExperimentState.COMPLETED, ExperimentState.WITHDRAWN)
 

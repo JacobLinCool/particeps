@@ -58,6 +58,12 @@ describe('shared Protocol v1 conformance corpus', () => {
     expect(opened.ok).toBe(true);
     if (!opened.ok) return;
     expect(new TextEncoder().encode(opened.bundle.text)).toEqual(bytes(bundle.document_jcs_utf8_hex));
+    expect(opened.bundle.document.experiment.state).toBe('PAUSED');
+    expect(opened.bundle.document.experiment.transitions.at(-1)).toMatchObject({
+      from: 'RUNNING',
+      reason: 'REQUIRED_ACCESS_MISSING',
+      to: 'PAUSED'
+    });
   });
 
   for (const vector of corpus.hostile) {

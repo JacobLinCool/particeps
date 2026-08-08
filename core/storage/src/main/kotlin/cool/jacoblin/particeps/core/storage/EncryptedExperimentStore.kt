@@ -3,11 +3,15 @@ package cool.jacoblin.particeps.core.storage
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import android.util.AtomicFile
 import cool.jacoblin.particeps.core.model.RecordedEvent
+import cool.jacoblin.particeps.core.model.ExperimentState
+import cool.jacoblin.particeps.core.model.ExperimentStateMachine
+import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.core.model.StorageUsage
 import cool.jacoblin.particeps.core.model.StudyMetadata
 import cool.jacoblin.particeps.core.model.StudyStore
+import cool.jacoblin.particeps.core.model.StudyStoreMutationFailedClosed
+import cool.jacoblin.particeps.core.model.TransitionReason
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
@@ -22,22 +26,45 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-class EncryptedExperimentStore(
+class EncryptedExperimentStore internal constructor(
     context: Context,
     private val experimentId: String,
     private val maximumLocalBytes: Long,
+    private val deleteSegment: (File) -> Boolean,
+    private val fileSystem: AcknowledgedFileSystem = AndroidAcknowledgedFileSystem,
+    private val appendFrame: (File, ByteArray) -> Unit = ::appendFrameDurably,
 ) : StudyStore {
+    constructor(
+        context: Context,
+        experimentId: String,
+        maximumLocalBytes: Long,
+    ) : this(
+        context,
+        experimentId,
+        maximumLocalBytes,
+        File::delete,
+        AndroidAcknowledgedFileSystem,
+    )
+
     private val mutex = Mutex()
+    private val stateMachine = ExperimentStateMachine()
     private val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
     private val opaqueId = sha256(experimentId.toByteArray(Charsets.UTF_8)).toHex()
     private val keyAlias = "particeps-core-$opaqueId"
     private val rootDirectory = context.noBackupFilesDir.resolve(STORAGE_DIRECTORY)
-    private val metadataFile = AtomicFile(rootDirectory.resolve("$opaqueId.metadata.ptc"))
-    private val transactionFile = AtomicFile(rootDirectory.resolve("$opaqueId.transaction.ptc"))
+    private val metadataFile = AcknowledgedAtomicFile(
+        rootDirectory.resolve("$opaqueId.metadata.ptc"),
+        fileSystem,
+    )
+    private val transactionFile = AcknowledgedAtomicFile(
+        rootDirectory.resolve("$opaqueId.transaction.ptc"),
+        fileSystem,
+    )
     private val eventDirectory = rootDirectory.resolve("$opaqueId.events")
     private var persistedSequenceBoundary = 0L
     private var persistedRetainedFrom = 1L
     private var persistedMetadata: StudyMetadata? = null
+    private var appendRecoveryRequired = false
 
     init {
         require(maximumLocalBytes in MINIMUM_LOCAL_BYTES..MAXIMUM_LOCAL_BYTES) { "Invalid storage quota" }
@@ -45,10 +72,13 @@ class EncryptedExperimentStore(
 
     override suspend fun loadMetadata(): StudyMetadata? = withContext(Dispatchers.IO) {
         mutex.withLock {
-            if (!metadataFile.baseFile.exists()) {
-                require(eventDirectory.listFiles().isNullOrEmpty()) { "Event segments exist without metadata" }
+            appendRecoveryRequired = transactionFile.exists()
+            if (!metadataFile.exists()) {
+                require(eventDirectoryEntries().isEmpty()) { "Event segments exist without metadata" }
+                require(!appendRecoveryRequired) { "Append transaction exists without metadata" }
                 persistedMetadata = null
                 persistedSequenceBoundary = 0
+                persistedRetainedFrom = 1
                 return@withLock null
             }
             val key = existingKey() ?: error("Encrypted experiment key is unavailable")
@@ -65,7 +95,7 @@ class EncryptedExperimentStore(
             val mainMetadata = StudyDataJsonCodec.decodeMetadata(
                 decryptMetadata(metadataFile.readFully(), key),
             )
-            val hasTransaction = transactionFile.baseFile.exists()
+            val hasTransaction = appendRecoveryRequired
             val transactionMetadata = if (hasTransaction) {
                 StudyDataJsonCodec.decodeMetadata(
                     decryptDocument(transactionFile.readFully(), key, TRANSACTION_HEADER),
@@ -74,9 +104,7 @@ class EncryptedExperimentStore(
                 null
             }
             val durableTail = if (
-                transactionMetadata != null &&
-                transactionMetadata.eventCount == mainMetadata.eventCount + 1 &&
-                transactionMetadata.eventCount == scan.lastSequence
+                transactionMetadata != null && transactionMetadata.eventCount == scan.lastSequence
             ) {
                 readDurableTail(key, scan.lastSequence)
             } else {
@@ -96,8 +124,8 @@ class EncryptedExperimentStore(
             if (recovery.rewriteMetadata || metadata != recovery.metadata) {
                 writeMetadata(encryptDocument(StudyDataJsonCodec.encodeMetadata(metadata), key, METADATA_HEADER))
             }
-            if (hasTransaction) {
-                transactionFile.delete()
+            if (hasTransaction && !recovery.failureResolutionRequired) {
+                retireTransactionAfterCommit()
             }
             require(metadata.experimentId == experimentId) { "Encrypted experiment ID mismatch" }
             // The lifetime counter comes from metadata, not from the scan: reclaimed events are
@@ -105,13 +133,18 @@ class EncryptedExperimentStore(
             persistedSequenceBoundary = metadata.eventCount
             persistedRetainedFrom = metadata.retainedFromSequence
             persistedMetadata = metadata
+            appendRecoveryRequired = recovery.failureResolutionRequired
             metadata
         }
     }
 
     override suspend fun initialize(metadata: StudyMetadata) = withContext(Dispatchers.IO) {
         mutex.withLock {
-            require(!metadataFile.baseFile.exists() && eventDirectory.listFiles().isNullOrEmpty()) {
+            require(
+                !metadataFile.exists() &&
+                    !transactionFile.exists() &&
+                    eventDirectoryEntries().isEmpty(),
+            ) {
                 "Study storage is already initialized"
             }
             require(metadata.experimentId == experimentId) { "Experiment ID mismatch" }
@@ -122,15 +155,20 @@ class EncryptedExperimentStore(
 
     override suspend fun saveMetadata(metadata: StudyMetadata) = withContext(Dispatchers.IO) {
         mutex.withLock {
+            requireNoPendingAppendRecovery()
             requireNotNull(persistedMetadata) { "Study storage is not initialized" }
             require(metadata.experimentId == experimentId) { "Experiment ID mismatch" }
             require(metadata.eventCount == persistedSequenceBoundary) { "Metadata event boundary changed" }
+            require(metadata.retainedFromSequence >= persistedRetainedFrom) {
+                "Metadata retained floor cannot move behind durable storage"
+            }
             persistMetadata(metadata, existingKey() ?: error("Encrypted experiment key is unavailable"))
         }
     }
 
     override suspend fun appendEvent(event: RecordedEvent) = withContext(Dispatchers.IO) {
         mutex.withLock {
+            requireNoPendingAppendRecovery()
             val metadata = requireNotNull(persistedMetadata) { "Study storage is not initialized" }
             appendTransaction(
                 event,
@@ -140,37 +178,152 @@ class EncryptedExperimentStore(
                     lastEvents = metadata.lastEvents + (event.collectorId to event),
                     retainedFromSequence = persistedRetainedFrom,
                 ),
+                event.observedTime,
             )
         }
     }
 
-    override suspend fun appendEventAtomically(event: RecordedEvent, metadata: StudyMetadata) =
-        withContext(Dispatchers.IO) { mutex.withLock { appendTransaction(event, metadata) } }
+    override suspend fun appendEventAtomically(
+        event: RecordedEvent,
+        metadata: StudyMetadata,
+        failureTime: ResearchTime,
+    ) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            requireNoPendingAppendRecovery()
+            appendTransaction(event, metadata, failureTime)
+        }
+    }
 
-    private fun appendTransaction(event: RecordedEvent, metadata: StudyMetadata) {
+    override suspend fun resolvePendingAppendFailure(reason: TransitionReason): StudyMetadata? =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                if (!appendRecoveryRequired) return@withLock null
+                require(reason in SAFETY_PAUSE_TRANSITION_REASONS) {
+                    "Append recovery requires a closed safety-pause reason"
+                }
+                val current = requireNotNull(persistedMetadata) {
+                    "Study storage is not initialized"
+                }
+                require(current.state == ExperimentState.PAUSED) {
+                    "Pending append recovery is not paused"
+                }
+                val failure = current.transitions.lastOrNull()
+                    ?: error("Pending append recovery has no transition")
+                require(
+                    failure.from == ExperimentState.RUNNING &&
+                        failure.to == ExperimentState.PAUSED &&
+                        failure.reason == TransitionReason.STORAGE_FAILURE,
+                ) { "Pending append recovery has no synthetic storage transition" }
+                val resolved = if (reason == TransitionReason.STORAGE_FAILURE) {
+                    current
+                } else {
+                    current.copy(
+                        transitions = current.transitions.dropLast(1) + failure.copy(reason = reason),
+                    )
+                }
+                if (resolved != current) writeMetadataDocument(resolved, existingKeyOrThrow())
+                commitAuthoritativeMetadata(resolved)
+                retireTransactionAfterCommit()
+                appendRecoveryRequired = false
+                resolved
+            }
+        }
+
+    private fun appendTransaction(
+        event: RecordedEvent,
+        metadata: StudyMetadata,
+        failureTime: ResearchTime,
+    ) {
         val current = requireNotNull(persistedMetadata) { "Study storage is not initialized" }
         require(event.sequenceNumber == persistedSequenceBoundary + 1) { "Non-contiguous event append" }
         require(metadata.eventCount == event.sequenceNumber && metadata.nextSequenceNumber == event.sequenceNumber + 1) {
             "Atomic metadata boundary mismatch"
         }
         require(metadata.experimentId == experimentId) { "Experiment ID mismatch" }
-        val validated = AppendTransactionRecovery.recover(
-            main = current,
-            transaction = metadata,
-            durableLastSequence = event.sequenceNumber,
-            durableTail = event,
-        )
-        check(validated.rewriteMetadata && validated.metadata == metadata) {
-            "Atomic append metadata is not a valid one-event successor"
-        }
         val key = existingKey() ?: error("Encrypted experiment key is unavailable")
         val encoded = StudyDataJsonCodec.encodeMetadata(metadata)
         require(encoded.size <= MAXIMUM_METADATA_BYTES) { "Experiment metadata quota exceeded" }
-        writeAtomic(transactionFile, encryptDocument(encoded, key, TRANSACTION_HEADER))
-        appendEncryptedEvent(event, key)
-        persistedSequenceBoundary = event.sequenceNumber
-        persistMetadata(metadata, key)
-        transactionFile.delete()
+        val failClosedMetadata = stateMachine.transition(
+            metadata,
+            ExperimentState.PAUSED,
+            TransitionReason.STORAGE_FAILURE,
+            failureTime,
+        )
+        val validated = AppendTransactionRecovery.recover(
+            main = current,
+            transaction = failClosedMetadata,
+            durableLastSequence = event.sequenceNumber,
+            durableTail = event,
+        )
+        check(validated.rewriteMetadata && validated.metadata == failClosedMetadata) {
+            "Atomic append metadata is not a valid one-event successor"
+        }
+        val failClosedEncoded = StudyDataJsonCodec.encodeMetadata(failClosedMetadata)
+        require(failClosedEncoded.size <= MAXIMUM_METADATA_BYTES) {
+            "Fail-closed append metadata quota exceeded"
+        }
+        appendRecoveryRequired = true
+        try {
+            transactionFile.write(encryptDocument(failClosedEncoded, key, TRANSACTION_HEADER))
+        } catch (failure: Throwable) {
+            if (!transactionFile.exists()) appendRecoveryRequired = false
+            throw failure
+        }
+        try {
+            appendEncryptedEvent(event, key)
+            writeMetadataDocument(metadata, key)
+            commitAuthoritativeMetadata(metadata)
+            retireTransactionAfterCommit()
+            appendRecoveryRequired = false
+        } catch (failure: Throwable) {
+            val recovered = try {
+                recoverFailedAppend(current, failClosedMetadata, key)
+            } catch (recoveryFailure: Throwable) {
+                failure.addSuppressed(recoveryFailure)
+                throw failure
+            }
+            throw StudyStoreMutationFailedClosed(recovered, failure)
+        }
+    }
+
+    private fun recoverFailedAppend(
+        main: StudyMetadata,
+        failClosedMetadata: StudyMetadata,
+        key: SecretKey,
+    ): StudyMetadata {
+        val scan = scanEvents(
+            key = key,
+            fromSequenceInclusive = 1,
+            upToSequenceInclusive = Long.MAX_VALUE,
+            recoverTail = true,
+            decryptPayloads = false,
+        )
+        val durableTail = if (failClosedMetadata.eventCount == scan.lastSequence) {
+            readDurableTail(key, scan.lastSequence)
+        } else {
+            null
+        }
+        val recovery = AppendTransactionRecovery.recover(
+            main = main,
+            transaction = failClosedMetadata,
+            durableLastSequence = scan.lastSequence,
+            durableTail = durableTail,
+        )
+        if (recovery.rewriteMetadata) writeMetadataDocument(recovery.metadata, key)
+        commitAuthoritativeMetadata(recovery.metadata)
+            // Keep the fail-closed journal as provenance until the runtime supplies the winning
+            // application safety reason. This is what makes first-wins survive process death.
+            appendRecoveryRequired = true
+            return recovery.metadata
+    }
+
+    private fun retireTransactionAfterCommit() {
+        try {
+            transactionFile.delete()
+        } catch (_: Exception) {
+            // Main metadata is already authoritative. A surviving journal makes the next open
+            // conservatively recover PAUSED; an absent journal leaves the acknowledged commit.
+        }
     }
 
     override suspend fun readEvents(
@@ -204,6 +357,7 @@ class EncryptedExperimentStore(
         targetBytes: Long,
     ): StudyMetadata = withContext(Dispatchers.IO) {
         mutex.withLock {
+            requireNoPendingAppendRecovery()
             requireNotNull(persistedMetadata) { "Study storage is not initialized" }
             require(metadata.experimentId == experimentId) { "Experiment ID mismatch" }
             // The caller's copy is written back with a new floor, so it must not be stale in any
@@ -230,11 +384,23 @@ class EncryptedExperimentStore(
             // indistinguishable from a prefix having been tampered away.
             val updated = metadata.copy(retainedFromSequence = plan.retainedFromSequence)
             persistMetadata(updated, key)
-            plan.segmentIndices.forEach { index ->
+            // Unlinking is physical cleanup after the logical floor commit. Stop at the first
+            // failed unlink so the remaining files stay one contiguous suffix; returning the
+            // authoritative metadata is safe because every planned segment was already confirmed
+            // by the endpoint. A later reclaim or process recovery can retry the harmless prefix.
+            for (index in plan.segmentIndices) {
                 val file = eventDirectory.resolve("events-${index.toString().padStart(8, '0')}.ptcs")
-                check(!file.exists() || file.delete()) { "Cannot delete event segment" }
+                try {
+                    if (file.exists()) {
+                        if (!deleteSegment(file) || file.exists()) break
+                    }
+                    fileSystem.syncDirectory(eventDirectory)
+                } catch (_: Exception) {
+                    // The logical floor and authoritative metadata were acknowledged first. A
+                    // surviving delivered prefix is harmless and will be retried on a later pass.
+                    break
+                }
             }
-            persistedRetainedFrom = plan.retainedFromSequence
             updated
         }
     }
@@ -243,22 +409,53 @@ class EncryptedExperimentStore(
         mutex.withLock {
             metadataFile.delete()
             transactionFile.delete()
-            eventDirectory.listFiles()?.forEach { file -> check(file.delete()) { "Cannot delete event segment" } }
-            if (eventDirectory.exists()) check(eventDirectory.delete()) { "Cannot delete event directory" }
+            eventDirectoryEntries().forEach { file ->
+                fileSystem.deleteIfExists(file)
+                check(!fileSystem.exists(file)) { "Cannot delete event segment" }
+            }
+            if (eventDirectory.exists()) {
+                fileSystem.syncDirectory(eventDirectory)
+                fileSystem.deleteIfExists(eventDirectory)
+                check(!fileSystem.exists(eventDirectory)) { "Cannot delete event directory" }
+                fileSystem.syncDirectory(rootDirectory)
+            }
             if (keyStore.containsAlias(keyAlias)) keyStore.deleteEntry(keyAlias)
             persistedSequenceBoundary = 0
             persistedRetainedFrom = 1
             persistedMetadata = null
+            appendRecoveryRequired = false
         }
     }
 
+    private fun requireNoPendingAppendRecovery() {
+        check(!appendRecoveryRequired) {
+            "Append transaction requires fail-closed recovery before another mutation"
+        }
+    }
+
+    private fun existingKeyOrThrow(): SecretKey =
+        existingKey() ?: error("Encrypted experiment key is unavailable")
+
     private fun persistMetadata(
+        metadata: StudyMetadata,
+        key: SecretKey,
+    ) {
+        writeMetadataDocument(metadata, key)
+        commitAuthoritativeMetadata(metadata)
+    }
+
+    private fun writeMetadataDocument(
         metadata: StudyMetadata,
         key: SecretKey,
     ) {
         val encoded = StudyDataJsonCodec.encodeMetadata(metadata)
         require(encoded.size <= MAXIMUM_METADATA_BYTES) { "Experiment metadata quota exceeded" }
         writeMetadata(encryptDocument(encoded, key, METADATA_HEADER))
+    }
+
+    private fun commitAuthoritativeMetadata(metadata: StudyMetadata) {
+        persistedSequenceBoundary = metadata.eventCount
+        persistedRetainedFrom = metadata.retainedFromSequence
         persistedMetadata = metadata
     }
 
@@ -273,19 +470,18 @@ class EncryptedExperimentStore(
         require(storageBytes() + frameBytes <= maximumLocalBytes - METADATA_RESERVE_BYTES) {
             "Experiment event quota exceeded"
         }
-        require(eventDirectory.exists() || eventDirectory.mkdirs()) { "Cannot create event directory" }
+        fileSystem.ensureDirectory(eventDirectory)
         var segment = latestSegment() ?: createSegment(1)
         if (segment.file.length() + frameBytes > MAXIMUM_SEGMENT_BYTES) {
             segment = createSegment(segment.index + 1)
         }
-        RandomAccessFile(segment.file, "rw").use { output ->
-            output.seek(output.length())
-            output.writeLong(event.sequenceNumber)
-            output.writeInt(encrypted.ciphertext.size)
-            output.write(encrypted.iv)
-            output.write(encrypted.ciphertext)
-            output.fd.sync()
-        }
+        val frame = ByteBuffer.allocate(frameBytes)
+            .putLong(event.sequenceNumber)
+            .putInt(encrypted.ciphertext.size)
+            .put(encrypted.iv)
+            .put(encrypted.ciphertext)
+            .array()
+        appendFrame(segment.file, frame)
     }
 
     /**
@@ -305,12 +501,7 @@ class EncryptedExperimentStore(
         decryptPayloads: Boolean = true,
         consume: (RecordedEvent) -> Unit = {},
     ): EventScan {
-        val segments = eventDirectory.listFiles()
-            .orEmpty()
-            .mapNotNull { file -> SEGMENT_PATTERN.matchEntire(file.name)?.groupValues?.get(1)?.toInt()?.let {
-                Segment(it, file)
-            } }
-            .sortedBy(Segment::index)
+        val segments = segments()
         // Survivors must be contiguous among themselves. They no longer have to start at index 1,
         // because reclaiming removes whole leading segments and never reuses an index.
         val baseIndex = segments.firstOrNull()?.index ?: 1
@@ -410,21 +601,39 @@ class EncryptedExperimentStore(
         require(index in 1..MAXIMUM_SEGMENT_INDEX) { "Event segment index exhausted" }
         require(segments().size < MAXIMUM_LIVE_SEGMENTS) { "Too many event segments" }
         val file = eventDirectory.resolve("events-${index.toString().padStart(8, '0')}.ptcs")
-        require(file.createNewFile()) { "Cannot create event segment" }
-        RandomAccessFile(file, "rw").use { output ->
-            output.write(SEGMENT_HEADER)
-            output.writeInt(index)
-            output.fd.sync()
-        }
+        require(!file.exists()) { "Event segment already exists" }
+        val header = ByteBuffer.allocate(SEGMENT_HEADER_BYTES)
+            .put(SEGMENT_HEADER)
+            .putInt(index)
+            .array()
+        AcknowledgedAtomicFile(file, fileSystem).write(header)
         return Segment(index, file)
     }
 
-    private fun segments(): List<Segment> = eventDirectory.listFiles()
-        .orEmpty()
-        .mapNotNull { file -> SEGMENT_PATTERN.matchEntire(file.name)?.groupValues?.get(1)?.toInt()?.let {
-            Segment(it, file)
-        } }
+    private fun segments(): List<Segment> = eventDirectoryEntries()
+        .map { file ->
+            val incomplete = SEGMENT_PENDING_PATTERN.matchEntire(file.name)
+                ?: SEGMENT_REPLACEMENT_PATTERN.matchEntire(file.name)
+            incomplete?.let { match ->
+                throw IncompleteAtomicWrite(
+                    eventDirectory.resolve("events-${match.groupValues[1]}.ptcs"),
+                )
+            }
+            val match = requireNotNull(SEGMENT_PATTERN.matchEntire(file.name)) {
+                "Unexpected entry in event storage: ${file.name}"
+            }
+            require(file.isFile) { "Event segment is not a regular file" }
+            Segment(match.groupValues[1].toInt(), file)
+        }
         .sortedBy(Segment::index)
+
+    private fun eventDirectoryEntries(): List<File> {
+        if (!fileSystem.exists(eventDirectory)) return emptyList()
+        check(fileSystem.isDirectory(eventDirectory)) { "Event storage is not a directory" }
+        return checkNotNull(fileSystem.listFiles(eventDirectory)) {
+            "Cannot enumerate event storage"
+        }.toList()
+    }
 
     private fun latestSegment(): Segment? = segments().maxByOrNull(Segment::index)
 
@@ -440,7 +649,7 @@ class EncryptedExperimentStore(
         }
 
     private fun storageBytes(): Long = metadataFile.baseFile.length() +
-        eventDirectory.listFiles().orEmpty().sumOf(File::length)
+        eventDirectoryEntries().sumOf(File::length)
 
     private fun encryptDocument(
         plaintext: ByteArray,
@@ -513,19 +722,7 @@ class EncryptedExperimentStore(
         .putLong(sequenceNumber)
         .array()
 
-    private fun writeMetadata(encrypted: ByteArray) = writeAtomic(metadataFile, encrypted)
-
-    private fun writeAtomic(file: AtomicFile, encrypted: ByteArray) {
-        require(rootDirectory.exists() || rootDirectory.mkdirs()) { "Cannot create experiment storage directory" }
-        val output = file.startWrite()
-        try {
-            output.write(encrypted)
-            file.finishWrite(output)
-        } catch (failure: Throwable) {
-            file.failWrite(output)
-            throw failure
-        }
-    }
+    private fun writeMetadata(encrypted: ByteArray) = metadataFile.write(encrypted)
 
     private fun existingKey(): SecretKey? = keyStore.getKey(keyAlias, null) as? SecretKey
 
@@ -594,8 +791,28 @@ class EncryptedExperimentStore(
         // exact string is refused rather than migrated.
         val METADATA_HEADER = "PTCMET01".toByteArray(Charsets.US_ASCII)
         val TRANSACTION_HEADER = "PTCTXN01".toByteArray(Charsets.US_ASCII)
+        val SAFETY_PAUSE_TRANSITION_REASONS = setOf(
+            TransitionReason.REQUIRED_ACCESS_MISSING,
+            TransitionReason.COLLECTION_HOST_FAILURE,
+            TransitionReason.WORK_SCHEDULING_FAILURE,
+            TransitionReason.COLLECTION_TEARDOWN_FAILURE,
+            TransitionReason.STORAGE_FAILURE,
+        )
+
+        fun appendFrameDurably(
+            file: File,
+            frame: ByteArray,
+        ) {
+            RandomAccessFile(file, "rw").use { output ->
+                output.seek(output.length())
+                output.write(frame)
+                output.fd.sync()
+            }
+        }
         val SEGMENT_HEADER = "PTCEVT01".toByteArray(Charsets.US_ASCII)
         val SEGMENT_PATTERN = Regex("events-([0-9]{8})\\.ptcs")
+        val SEGMENT_PENDING_PATTERN = Regex("\\.events-([0-9]{8})\\.ptcs\\.pending")
+        val SEGMENT_REPLACEMENT_PATTERN = Regex("\\.events-([0-9]{8})\\.ptcs\\.replacement")
         val SEGMENT_HEADER_BYTES = SEGMENT_HEADER.size + Int.SIZE_BYTES
         val MINIMUM_METADATA_FILE_BYTES = METADATA_HEADER.size + IV_BYTES + GCM_TAG_BYTES + 2
         val MAXIMUM_METADATA_FILE_BYTES = METADATA_HEADER.size + IV_BYTES + GCM_TAG_BYTES + MAXIMUM_METADATA_BYTES

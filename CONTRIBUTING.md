@@ -51,7 +51,7 @@ The debug APK lands at `app/build/outputs/apk/debug/app-debug.apk`. A clean chec
 With an emulator or device attached:
 
 ```bash
-./gradlew :core:storage:connectedDebugAndroidTest :app:connectedDebugAndroidTest
+./gradlew connectedDebugAndroidTest
 ```
 
 The app suite separates the Android signed-configuration regression
@@ -75,7 +75,10 @@ adb -s emulator-5554 emu sensor set proximity 1
   -Pandroid.testInstrumentationRunnerArguments.p2SyntheticInputs=true
 ```
 
-CI runs unit tests, Android lint, and debug and release builds on every pull request. Please check those pass locally first. Note that `allWarningsAsErrors` is on, so an unhandled branch in an exhaustive `when` is a build failure rather than a warning.
+CI runs unit tests, Android lint, debug and release builds, then the complete connected suite on an
+API 34 Google APIs emulator on every pull request. Please check the host-side and attached-device
+commands above locally first. Note that `allWarningsAsErrors` is on, so an unhandled branch in an
+exhaustive `when` is a build failure rather than a warning.
 
 ### Tests
 

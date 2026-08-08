@@ -5,7 +5,14 @@
 -->
 <resources>
     <string name="intervention_channel">研究活動</string>
+    <string name="intervention_channel_description">排程的研究活動與問卷</string>
     <string name="daily_channel">每日研究提醒</string>
+    <string name="daily_channel_description">每日安靜提醒研究目前正在收集或已暫停</string>
+    <string name="collection_channel">研究資料收集中</string>
+    <string name="collection_channel_description">參與者同意的研究正在收集資料時顯示</string>
+    <string name="collection_notification_title">研究資料收集中</string>
+    <string name="collection_recovery_notification_text">正在確認是否應繼續收集</string>
+    <string name="collection_recovery_notification_title">正在確認研究狀態</string>
     <string name="daily_running">仍在收集中。開啟 App 可以暫停、匯出或提前結束。</string>
     <string name="daily_paused_since">自 %1$s 暫停中。在你重新開始之前不會收集任何資料。</string>
     <string name="daily_paused_unknown">目前暫停中。在你重新開始之前不會收集任何資料。</string>
@@ -54,6 +61,9 @@
     <string name="action_delete">刪除本機資料</string>
     <string name="action_confirm">確認</string>
     <string name="action_cancel">取消</string>
+    <string name="action_allow_access">允許</string>
+    <string name="action_open_settings">開啟 Android 設定</string>
+    <string name="action_choose_keyboard">選擇鍵盤</string>
 
     <string name="cd_language">語言</string>
     <string name="cd_details">詳細資訊</string>
@@ -152,6 +162,7 @@
     <string name="upload_any_network">Wi-Fi 或行動網路</string>
 
     <string name="access_fine_location">精確位置</string>
+    <string name="access_location_services">Android 定位服務</string>
     <string name="access_background_location">背景位置</string>
     <string name="access_notifications">通知</string>
     <string name="access_usage_access">使用情況存取權</string>
@@ -161,6 +172,51 @@
     <string name="access_gyroscope_hardware">陀螺儀</string>
     <string name="access_ambient_light_hardware">環境光感測器</string>
     <string name="access_proximity_hardware">接近感測器</string>
+    <string name="access_used_by">使用這項設定</string>
+    <string name="access_owner_item">• %1$s</string>
+    <string name="access_owner_study_notifications">研究狀態與持續收集通知；設定排程活動時也用於活動通知</string>
+    <string name="access_manual_steps">手動操作步驟</string>
+    <string name="optional_access_title">選用資料來源需要設定</string>
+    <string name="optional_access_body">研究會繼續執行。恢復下列設定後，只有使用該設定的選用資料來源會繼續收集。</string>
+    <string name="access_step_number">%1$d. %2$s</string>
+    <string name="access_complete_first">請先完成「%1$s」。</string>
+    <string name="access_hardware_unavailable">這支手機沒有提供此感測器，無法透過設定啟用，也不會使用替代資料。</string>
+    <string name="access_location_settings_change_unavailable">Android 回報這支手機無法滿足本研究要求的位置設定。開始前請聯絡研究團隊。</string>
+    <string name="access_location_settings_check_failed">Particeps 無法確認這支手機是否能滿足研究設定的位置請求。開始前請聯絡研究團隊。</string>
+    <string name="access_system_screen_unavailable">這支手機沒有提供所需的 Android 設定畫面，請先聯絡研究團隊，不要開始研究。</string>
+
+    <string name="access_fine_location_settings_description">多次拒絕後，Android 不會再顯示權限對話框。請從 Particeps 的應用程式資訊恢復精確位置。</string>
+    <string name="access_fine_location_settings_step_permissions">在「應用程式資訊」中開啟「權限」，再選擇「位置」。</string>
+    <string name="access_fine_location_settings_step_precise">選擇「僅在使用應用程式時允許」，並開啟「使用精確位置」。</string>
+    <string name="access_fine_location_settings_step_return">返回 Particeps；App 會自動檢查實際的 Android 設定。</string>
+
+    <string name="access_location_services_description">Android 必須能滿足本研究設定的精確位置請求，包括準確度與更新設定。</string>
+    <string name="access_location_services_step_enable">開啟「使用位置」，以及本研究所需的位置準確度服務。</string>
+    <string name="access_location_services_step_return">返回 Particeps；App 會自動檢查研究設定的完整位置請求。</string>
+
+    <string name="access_background_location_description">Android 要求另外設定才能持續收集位置。Particeps 關閉或未使用時，這個研究仍可能在背景收集位置。</string>
+    <string name="access_background_location_step_open_permissions">在「應用程式資訊」中開啟「權限」，再選擇「位置」。</string>
+    <string name="access_background_location_step_choose_always">選擇「%1$s」。</string>
+    <string name="access_background_location_step_return">返回 Particeps；App 會自動檢查實際的 Android 設定。</string>
+
+    <string name="access_notifications_settings_description">如果權限對話框已無法授權，或 Particeps 必要的通知類別被關閉，就必須從 Android 設定恢復。</string>
+    <string name="access_notifications_settings_step_enable">開啟「允許通知」。</string>
+    <string name="access_notifications_settings_step_channels">保持「研究資料收集中」與「每日研究提醒」開啟；若本研究有排程活動，也請保持「研究活動」開啟。</string>
+    <string name="access_notifications_settings_step_return">返回 Particeps；App 會自動檢查權限與必要通知類別。</string>
+
+    <string name="access_usage_access_description">Android 將 App 與網路使用情況視為特殊存取權，因此無法透過一般權限對話框啟用。</string>
+    <string name="access_usage_access_step_choose_app">在「使用情況存取權」畫面找到並開啟 Particeps。</string>
+    <string name="access_usage_access_step_enable">開啟「允許使用情況存取權」。</string>
+    <string name="access_usage_access_step_return">返回 Particeps；App 會自動檢查實際的 Android 設定。</string>
+
+    <string name="access_keyboard_enable_description">研究鍵盤是 Android 輸入法，必須先在系統設定中啟用，之後才能選用。</string>
+    <string name="access_keyboard_enable_step_manage">開啟「管理螢幕小鍵盤」。</string>
+    <string name="access_keyboard_enable_step_enable">啟用「研究鍵盤」，並確認 Android 顯示的警告。</string>
+    <string name="access_keyboard_enable_step_return">啟用後返回 Particeps。</string>
+
+    <string name="access_keyboard_select_description">啟用研究鍵盤後，請在 Android 鍵盤選擇器中將它設為目前鍵盤。</string>
+    <string name="access_keyboard_select_step_choose">在系統鍵盤選擇器中選擇「研究鍵盤」。</string>
+    <string name="access_keyboard_select_step_return">返回 Particeps；App 會自動檢查目前選用的鍵盤。</string>
 
     <plurals name="meter_events">
         <item quantity="other">%1$s 筆</item>

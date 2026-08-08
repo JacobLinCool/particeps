@@ -50,7 +50,6 @@ ALLOWED: dict[str, str] = {
     "CHANGELOG.md": "the release history; naming the identity each release carried is its job",
     "app/src/androidTest/kotlin/cool/jacoblin/particeps/AndroidConfigurationImportTest.kt":
         "retired-identity rejection fixture: import must fail closed on the old magic",
-    "docs/participant-guide.md": "tells a participant what the app they already installed was called",
     "docs/researcher-guide.md": "states that a pre-rename configuration or export is refused",
     "protocol/v1/README.md": "normative statement of the retired identity's rejection",
     "protocol/v1/join-link-vectors.json": "retired-scheme rejection fixture",

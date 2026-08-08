@@ -3,9 +3,9 @@ package cool.jacoblin.particeps
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import cool.jacoblin.particeps.core.application.StudyAccessStatus
 import cool.jacoblin.particeps.core.application.StudySessionManager
 import cool.jacoblin.particeps.core.application.UploadStatus
-import cool.jacoblin.particeps.core.collector.AccessStatus
 import cool.jacoblin.particeps.core.collector.CollectorHealth
 import cool.jacoblin.particeps.core.definition.StudyConfiguration
 import cool.jacoblin.particeps.core.export.ExportReceipt
@@ -41,7 +41,7 @@ sealed interface StudyUiState {
     data class ActiveStudy(
         val configuration: StudyConfiguration,
         val metadata: StudyMetadata,
-        val access: List<AccessStatus>,
+        val access: List<StudyAccessStatus>,
         val collectorHealth: Map<String, CollectorHealth>,
         val lastExport: ExportReceipt?,
         val upload: UploadStatus?,
@@ -111,7 +111,9 @@ class StudyViewModel(
         localMessage.value = "LOCAL_DATA_DELETED"
     }
 
-    fun refreshAccess() = session.refreshAccess()
+    fun refreshAccess() = operation(INCIDENT_ACCESS_INSPECTION_FAILED) {
+        session.reconcileAccess()
+    }
 
     fun reportMessage(code: String) {
         localMessage.value = code
@@ -156,5 +158,6 @@ class StudyViewModel(
         const val INCIDENT_EXPORT_FAILED = "EXPORT_FAILED"
         const val INCIDENT_DELETE_FAILED = "LOCAL_DATA_DELETE_FAILED"
         const val INCIDENT_COMMAND_FAILED = "COMMAND_FAILED"
+        const val INCIDENT_ACCESS_INSPECTION_FAILED = "ACCESS_INSPECTION_FAILED"
     }
 }

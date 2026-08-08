@@ -202,6 +202,42 @@ strictly contiguous and cover that exact range. An automatic upload is never emp
 manual export, `event_count` is `"0"`, `last_sequence_number = first_sequence_number - 1`, and
 `events` is empty.
 
+`state` is exactly one of `IMPORTED`, `CONFIG_VERIFIED`, `CONSENT_PENDING`, `ACCESS_SETUP`,
+`READY`, `RUNNING`, `PAUSED`, `COMPLETED`, or `WITHDRAWN`. `transitions` is an ordered array of
+exact `{from, reason, time, to}` objects. `from` and `to` are states. `time` has exactly
+`boot_session_id`, `monotonic_time_nanos`, and `wall_time_utc_millis`; the two times are canonical
+non-negative decimal strings and the boot-session ID is 1–128 UTF-8 bytes.
+
+Every transition reason has one normative destination:
+
+| `reason` | Required `to` |
+| --- | --- |
+| `CONFIGURATION_SIGNATURE_VERIFIED` | `CONFIG_VERIFIED` |
+| `CONSENT_REVIEW_OPENED` | `CONSENT_PENDING` |
+| `CONSENT_ACCEPTED` | `ACCESS_SETUP` |
+| `ACCESS_PREFLIGHT_PASSED` | `READY` |
+| `PARTICIPANT_STARTED` | `RUNNING` |
+| `PARTICIPANT_PAUSED` | `PAUSED` |
+| `PARTICIPANT_RESUMED` | `RUNNING` |
+| `PARTICIPANT_FINISHED_EARLY` | `COMPLETED` |
+| `STUDY_DURATION_ELAPSED` | `COMPLETED` |
+| `PARTICIPANT_WITHDREW` | `WITHDRAWN` |
+| `REQUIRED_ACCESS_MISSING` | `PAUSED` |
+| `COLLECTION_HOST_FAILURE` | `PAUSED` |
+| `WORK_SCHEDULING_FAILURE` | `PAUSED` |
+| `COLLECTION_TEARDOWN_FAILURE` | `PAUSED` |
+| `STORAGE_FAILURE` | `PAUSED` |
+
+The legal state graph is `IMPORTED -> {CONFIG_VERIFIED, WITHDRAWN}`,
+`CONFIG_VERIFIED -> {CONSENT_PENDING, WITHDRAWN}`,
+`CONSENT_PENDING -> {ACCESS_SETUP, WITHDRAWN}`, `ACCESS_SETUP -> {READY, WITHDRAWN}`,
+`READY -> {RUNNING, WITHDRAWN}`, `RUNNING -> {PAUSED, COMPLETED, WITHDRAWN}`,
+`PAUSED -> {RUNNING, COMPLETED, WITHDRAWN}`, `COMPLETED -> {WITHDRAWN}`, and no transition out
+of `WITHDRAWN`. An empty history is legal only when `state` is `IMPORTED`. Otherwise the first
+`from` is `IMPORTED`, every later `from` equals the preceding `to`, each pair belongs to this graph,
+each reason has the destination above, and the final `to` equals `state`. A reader rejects the
+whole authenticated document when any one of these conditions fails.
+
 Each event has exactly `sequence_number`, `collector_id`, `payload_schema_version`,
 `observed_time`, `payload_type`, and `fields`. Sequence, `wall_time_utc_millis`, and
 `monotonic_time_nanos` are canonical decimal strings; `boot_session_id` is 1–128 UTF-8 bytes. The

@@ -6,7 +6,6 @@ import android.hardware.SensorEvent
 import android.os.SystemClock
 import cool.jacoblin.particeps.collector.sensorcommon.AndroidSensorCollector
 import cool.jacoblin.particeps.core.collector.AccessKind
-import cool.jacoblin.particeps.core.collector.AccessRequirement
 import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
@@ -28,14 +27,9 @@ class AmbientLightCollectorPlugin(context: Context) : CollectorPlugin {
         id = AmbientLightConfiguration.ID,
         displayName = "Ambient light",
         privacyClass = PrivacyClass.SENSITIVE,
+        accessKinds = setOf(AccessKind.AMBIENT_LIGHT_HARDWARE),
         eventContract = requireNotNull(ProtocolEventContracts[AmbientLightConfiguration.ID]),
     )
-
-    override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
-        val typed = configuration as? AmbientLightConfiguration
-            ?: throw IllegalArgumentException("Invalid ambient-light configuration")
-        return setOf(AccessRequirement(AccessKind.AMBIENT_LIGHT_HARDWARE, typed.required))
-    }
 
     override fun create(configuration: CollectorConfiguration, context: CollectorContext): Collector {
         val typed = configuration as? AmbientLightConfiguration

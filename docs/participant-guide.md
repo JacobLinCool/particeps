@@ -4,7 +4,16 @@ Particeps is a research data collection app for Android. It collects and stores 
 
 The name is a Latin word. It means someone who takes part. That is meant concretely here: your data stays on the phone, every source a study uses is shown to you before you are asked to consent, and nothing at all is collected until you press Start study.
 
-It does not mean the study is yours to design. Which sources it may use, how long it runs, and whether it sends data to the research team automatically are fixed in the signed file you import. Nothing you do in the app changes them. You can read all of that before you agree, and you can say no to the whole study. Within a study, the only sources you can hold back are the ones it marks optional. Declining the Android access an optional source needs, or not enabling the research keyboard, leaves that source off, and the study runs without it. Section 4 covers what each source asks for and section 5 covers the keyboard. A source the study marks required stops the study instead of running without it. Data that has already reached the research team cannot be taken back.
+It does not mean the study is yours to design. Which sources it may use, how long it runs, and
+whether it sends data to the research team automatically are fixed in the signed file you import.
+Nothing you do in the app changes them. You can read all of that before you agree, and you can say
+no to the whole study. A source marked Optional can stay off when you leave its unshared Android
+access disabled. Optional is not a separate source switch: if a required source uses the same
+Android capability, granting it for the required source also makes it available to the optional
+one. The Access card names every source that shares a capability. Section 4 covers those cards and
+section 5 covers the keyboard. A source the study marks required prevents setup, starting, or
+resuming while its access is missing instead of being silently ignored. Data that has already
+reached the research team cannot be taken back.
 
 What you can always do is decline, pause, finish early, withdraw, and — once you have finished or withdrawn — permanently delete the study data on your phone. The app never asks why.
 
@@ -24,14 +33,18 @@ Because English is the default, this guide quotes the screen in English and give
 
 **Ordinary study prose is never translated.** The study title, purpose, contact details, and consent text are shown exactly as signed. Survey titles, descriptions, questions, and choices are different. The signed configuration can carry an English and a Traditional Chinese version. The survey uses the best exact language match, and falls back to the signed default.
 
-Two pieces of text stay in English whichever language you pick, because they are written into the code rather than into the translated set:
-
-- The ongoing notification shown while a study is collecting: "Research collection active", followed by the study title.
-- The banner on the research keyboard: "Research touch capture active" or "Touch capture disabled for this field".
+The ongoing collection notification and the research keyboard's status banner follow the app
+language. Researcher-authored study text still remains exactly as signed, including the study title
+shown after that localized notification heading.
 
 The interface also says some things without words: a check mark, a coloured dot, a row of five dots, a progress bar, a set of small drawn icons. The app draws all of these itself rather than taking them from an icon set, so this guide describes what each one looks like, and you can match it against the screen in front of you.
 
-Every word of the interface lives in [`app/src/main/res/values/strings.xml`](../app/src/main/res/values/strings.xml) (English) and [`app/src/main/res/values-zh-rTW/strings.xml`](../app/src/main/res/values-zh-rTW/strings.xml) (Traditional Chinese), so anyone can read those two files and check every label in this guide against them.
+Participant-facing prose lives in Android string resources: the main app resources are
+[`app/src/main/res/values/strings.xml`](../app/src/main/res/values/strings.xml) (English) and
+[`app/src/main/res/values-zh-rTW/strings.xml`](../app/src/main/res/values-zh-rTW/strings.xml)
+(Traditional Chinese), while a collector that owns its own participant surface keeps its strings in
+that module's corresponding resource directories. Anyone can inspect those files and check every
+label in this guide against them.
 
 ## What matters most
 
@@ -67,7 +80,9 @@ The setup is five steps, and the screen shows **one** of them at a time. The hea
 3. **Study.** The panel shows the study's purpose in the research team's own words, then three rows, each an icon and a value with no label. A head and shoulders is the research team's name, an envelope is their contact details, and a clock is how long the study runs. Read all four before you go on. Press Continue (繼續).
 4. **Data.** Every source this study switched on, one row each, with a sentence saying what it records and a second line saying what it does not. Section 3 goes through them. Press Continue (繼續).
 5. **Consent.** The research team's consent text, then two blocks the app writes itself: who signed the study, and whether it sends data automatically. Read all of it: the data, the purpose, the risks, the export, the withdrawal, and the deletion terms. Only if you understand it and want to take part, tick "I have read and agree to the data collection and export described above." (我已閱讀並同意上述資料收集與匯出方式。) and press Agree (同意).
-6. **Access.** Grant what the study needs. Section 4 goes through it. Press Done (完成).
+6. **Access.** Review one card for each Android capability the study needs. Every card says what
+   uses it; cards that need a system change provide a named button and, where Android requires
+   manual work, numbered instructions. Section 4 goes through them. Press Done (完成).
 7. **Start.** Press Start study (開始研究). This is the press that begins collection; section 6 describes what happens next.
 
 At every one of these steps you can stop. Closing the app after importing leaves the study sitting there, unstarted, with nothing collected. Withdraw (退出研究) sits at the bottom of every panel except the Data one, so you can leave from almost anywhere in the setup without starting.
@@ -190,7 +205,13 @@ The values written into those sentences:
 - **T** is an interval, written in the largest unit that stays exact: 30 s (30 秒), 15 min (15 分鐘), 2 h (2 小時), 1 day (1 天).
 - **D** is a distance in whole metres: 25 m (25 公尺).
 
-Optional (選用) beside a name means the study can start without the Android access that source needs. If you leave that access off, that source alone reports `ACCESS_UNAVAILABLE` on the collecting screen and every other source carries on. Leaving one off is a normal choice, not an error. A source without that word needs its access granted before the study can start at all.
+Optional (選用) beside a name means that source does not, by itself, make its Android access
+mandatory. If no required source shares the same access, you can leave it off: that source alone
+reports `ACCESS_UNAVAILABLE` on the collecting screen and every other source carries on. If an
+optional and a required source share one Android capability, the Access step shows one shared card,
+names both sources, and requires the capability because the required source needs it. A source
+without Optional needs all of its access granted before the study can start. Optional is not a
+separate on/off switch for a source: when its access is already granted, that source can run.
 
 The sentences are short because they are the summary. This is what each source actually puts in the file. The [data dictionary](data-dictionary.md) holds the exact field list for every source, including everything each one does not record; it is written against the same source code the app runs.
 
@@ -213,50 +234,124 @@ The same names and the same icons come back on the collecting screen, one row pe
 
 ## 4. Access setup
 
-You cannot start until every required item is granted. Optional items can be left off: the source that needs one reports `ACCESS_UNAVAILABLE` on the collecting screen, and the other sources keep working.
+You cannot start until every required item is granted. Notifications are required for every study.
+For collector access, an item is required when at least one required source needs it. An item used
+only by optional sources can be left off: those sources report `ACCESS_UNAVAILABLE` on the
+collecting screen, and the other sources keep working.
 
-The access list is one row per item, separated by thin lines. Each row has a mark on the left, the name of the access, and sometimes a word on the right:
+The Access step shows one card per Android capability, not one card per source. A shared capability
+therefore appears once: for example, Data volume and App and screen use share a single Usage access
+card. Each card shows the capability name, its status, and a **Used by** (使用這項設定) list naming
+every source or study feature that depends on it. Optional (選用) beside an owner means that owner
+does not make the shared capability mandatory. Optional beside the card title means that none of
+its owners does.
 
-| What the row shows | What it means |
+| What the card shows | What it means |
 | --- | --- |
-| A check mark | Granted |
-| A solid red dot | Required, and not granted yet. You cannot start until it is |
-| A hollow ring, with Optional (選用) at the end of the row | Optional, and not granted yet. You can start without it |
+| A check mark | Android currently reports the capability as granted or available |
+| A solid red dot | Required, and not satisfied yet. You cannot finish setup, start, or resume until it is |
+| A hollow ring, with Optional (選用) beside the title | Not satisfied, but every owner is optional, so the study can run without it |
 
-Tap anywhere on a row that is not granted yet and the app sends you straight to the Android screen that grants it. Finish there, come back to the app, and the mark on that row changes. When no required row is left, press Done (完成).
+The whole card is not a control. When there is something you can do, use its explicit Allow
+(允許), Open Android settings (開啟 Android 設定), or Choose keyboard (選擇鍵盤) button. Special Android settings
+also include app-written **Manual steps** (手動操作步驟) in English or Traditional Chinese. Follow
+those steps on the Android screen, then return to Particeps; the app checks the real setting again
+automatically. Those instructions and buttons are fixed by the app. Neither a study file nor a
+collector can insert arbitrary instructions or open a different screen.
+
+Some cards depend on an earlier one. Precise location must be granted before the Background
+location button appears, and the research keyboard must be enabled before the keyboard picker can
+be opened. A waiting card says which item to complete first. When every required card has a check
+mark, press Done (完成). The app checks required access again at Done, Start study, and Resume, so a
+grant removed in Android settings cannot be bypassed by an older on-screen state. While a study is
+running, the foreground service waits 25 seconds between complete access checks. A check of the exact
+Location request can take up to another five seconds, so a change made just after a completed check
+normally has a 30-second code-path budget. Android can delay background execution, so this is not a
+strict wall-clock guarantee. When a required loss is detected, Particeps closes study-wide event
+admission, records the closed reason—without a study or participant identity—in a private safety
+marker, and pauses collection. If saving the pause or stopping a source does not finish, Android
+background work carries the same reason and keeps retrying even after the foreground service stops;
+recovery checks both records before any source can restart. They are removed only after the pause and
+cleanup succeed. The relevant Access cards replace the collection controls, and the header
+still says Paused rather than sending you back through setup. Losing an optional-only capability
+closes the separate event gate for only its sources before pausing them; the other sources keep
+working, and an affected gate reopens only after its source successfully starts again.
 
 ### Notifications (通知)
 
-Used for three things: scheduled study activities, the notification that stays visible while collection is running, and a once-a-day reminder of where the study stands. Activities use Android's background work system, which is not an exact alarm: battery saving, Doze, or system scheduling can delay them.
+Notifications are required in every study, including one with no scheduled study activities. The
+card's Used by line reads **Study status and ongoing collection; scheduled activities when
+configured** (研究狀態與持續收集通知；設定排程活動時也用於活動通知). Press Allow (允許) for Android's notification
+permission dialog. Particeps also verifies that Android allows notifications for the app and that
+the ongoing-collection and daily-status channels are enabled. When the study actually contains
+scheduled activities, it checks that channel too. If a required channel is off, the card opens the
+app's notification settings and names the channels to restore.
 
-The daily reminder says either that the study is still collecting, or that it is paused and since when. It exists for the second case: a pause changes nothing else on the phone, so a study you meant to resume can sit stopped for weeks without anything saying so. It is a quiet notification, with no sound. It names only the app and the state, never the study, so it discloses nothing to someone glancing at your lock screen. It stops when the study finishes or you withdraw.
+Notifications are used for scheduled study activities when the study has them, the notification
+shown while collection is running, and a once-a-day reminder of where the study stands. Activities
+use Android's background work system, which is not an exact alarm: battery saving, Doze, or system
+scheduling can delay them.
+
+The daily reminder says either that the study is still collecting, or that it is paused and since when. It exists for the second case: a pause changes nothing else on the phone, so a study you meant to resume can sit stopped for weeks without anything saying so. It is a quiet notification, with no sound. It names only Particeps and the collection state, never the study; someone glancing at your lock screen can still learn that this phone uses Particeps and whether collection is running or paused. It stops when the study finishes or you withdraw. Turning off a required notification channel makes Particeps pause the study at its next access check rather than continue without that status surface.
 
 ### Sensor hardware (感測器硬體) and basic network state
 
 Accelerometer, gyroscope, ambient-light, and proximity items are hardware checks, not permission
-dialogs, so their rows do nothing when tapped. A required source blocks enrollment when its sensor
-is absent; an optional source remains off. Connection type uses only Android's ordinary
-network-state permission and has no row of its own.
+dialogs, so their cards have no action button. A required source blocks enrollment when its sensor
+is absent; an optional source remains off. The card explains that there is no setting or substitute
+that can enable missing hardware. Connection type uses only Android's ordinary
+network-state permission and has no Access card of its own.
 
 ### Usage access (使用情況存取權)
 
-Data volume and app and screen use need "Usage access". That is a special Android setting, and it lets an app see which apps have been in the foreground and how much data the device has used. You grant it on an Android system screen, not inside this app, and Android controls that screen.
+Data volume and app and screen use need "Usage access". If both are enabled, the single card names
+both under Used by. That is a special Android setting, and it lets an app see which apps have been
+in the foreground and how much data the device has used. Press Open Android settings
+(開啟 Android 設定), find and
+open Particeps, turn on Permit usage access, and return to Particeps. Android controls that screen.
 
 You can turn it back off later. The affected source then stops receiving data and reports a problem. It does not invent replacement values for the gap.
 
-### Precise location (精確位置) and Background location (背景位置)
+### Precise location (精確位置), Android location services (Android 定位服務), and Background location (背景位置)
 
-Android may ask about precise location and background location separately. These are requested only if the study actually lists a location source. Continuous background collection is accompanied by a visible foreground-service notification, the kind Android requires an app to show while it does ongoing work. That is how you can see when collection is running. You can decline optional location, or stop it later with pause or withdrawal.
+Android handles precise location and background location separately. These cards appear only if the
+study lists a Location source. First press Allow (允許) on Precise location and grant
+precise rather than approximate location. Until that is done, Background location says to complete
+Precise location first and has no action button.
 
-### Enable the research keyboard (啟用研究鍵盤) and Select the research keyboard (選用研究鍵盤)
+After precise location, the Android location services card checks more than the phone-wide location
+toggle. It asks Android whether the phone can satisfy the exact accuracy, interval, batching, and
+minimum-distance request in the signed study. If Android says a setting must change, press Open
+Android settings (開啟 Android 設定), turn on Use location and the required location-accuracy
+services, then return. If Android reports that the request cannot be satisfied or cannot be checked,
+the card blocks a required Location source and tells you to contact the research team; Particeps
+does not guess that a degraded provider is equivalent.
 
-The research keyboard is an Android input method (a keyboard app, the same kind of component as any third-party keyboard you might install). Turning it on takes two deliberate actions from you: enable it in Android's system settings, then select it in the keyboard picker.
+Once precise location and the configured location request are ready, press Open Android settings
+(開啟 Android 設定) on Background location. The app opens Android's **App info** for Particeps; it
+does not try to request background location through a second permission pop-up. Open Permissions,
+then Location, choose the background option Android displays on that phone (often **Allow all the
+time** in English), and return to Particeps so it can check the setting. Continuous background
+collection is accompanied by a visible
+foreground-service notification, the kind Android requires an app to show while it does ongoing
+work. If optional Location access is restored during a run, Android first confirms that the service
+has added its Location type and only then does the Location source restart. If that access is removed,
+Particeps first closes Location event admission and pauses the source, then removes the Location type
+from the service. You can decline optional location, or stop it later with pause or withdrawal.
+
+### Enable the research keyboard (啟用研究鍵盤) and Select the research keyboard (選擇研究鍵盤)
+
+The research keyboard is an Android input method (a keyboard app, the same kind of component as any
+third-party keyboard you might install). Turning it on takes two deliberate actions from you. First,
+press Open Android settings (開啟 Android 設定), open Manage on-screen keyboards, enable Research keyboard, confirm
+Android's warning, and return. Only after Particeps confirms that step does Choose keyboard
+(選擇鍵盤) appear for the second card; press it and choose Research keyboard in Android's picker.
 
 Only touches on this keyboard's own surface are visible to it. The app does not use an Accessibility Service — the Android feature that can observe activity across all apps — to watch touches anywhere else. Read section 5 before you enable it.
 
 ## 5. Important warning about the research keyboard
 
-Research events from the keyboard do not include the actual key identity, the text you submitted, the surrounding text, the clipboard, or suggestions. Some fields are excluded: a password field, or a field an app marks as private or as no-personalized-learning. Touch collection is switched off for that field, and the keyboard shows "Touch capture disabled for this field".
+Research events from the keyboard do not include the actual key identity, the text you submitted, the surrounding text, the clipboard, or suggestions. Some fields are excluded: a password field, or a field an app marks as private or as no-personalized-learning. Touch collection is switched off for that field, and the keyboard shows "Touch capture disabled for this field" (「此欄位已停用觸控資料收集」).
 
 **"No text" does not mean "no risk."** The key category, the relative position of your touch, and the timing can still reveal patterns in what you type. A skilled analyst working with such data can infer more than a list of field names suggests. Third-party apps also sometimes fail to mark sensitive fields correctly, and when that happens, the field is not protected by the rule above — the app has no way to detect the mistake.
 
@@ -271,17 +366,33 @@ The research keyboard is a basic English-letter QWERTY layout. It is not a passw
 
 ## 6. Starting a study
 
-On the last setup step the fifth dot is the current one and the panel holds two things: Start study (開始研究) and Withdraw (退出研究). Nothing is collected in this state, and the app prints no state name for it — during setup the header shows your position, not a status. Collection begins only when you press Start study (開始研究).
+On the last setup step the fifth dot is the current one and the panel holds two things: Start study (開始研究) and Withdraw (退出研究). Nothing is collected in this state, and the app prints no state name for it — during setup the header shows your position, not a status. When you press Start study (開始研究), Particeps first asks Android to start the visible foreground service and waits up to five seconds for Android to confirm its notification and service types. No source starts before that confirmation; if it fails or times out, the study remains not running. Resume uses the same ordering.
 
-The moment you do, the five dots are replaced, permanently, by a status line, and the panel below becomes the collecting screen.
+After that confirmation succeeds and the study starts, the five dots are replaced, permanently, by a status line, and the panel below becomes the collecting screen.
 
 While a study is collecting:
 
 - Continuous sources run under a visible research foreground service, so the ongoing "Research collection active" notification is present the whole time.
+- If Android cannot keep an acknowledged foreground service while changing its service type, the
+  app closes all event admission and pauses rather than collecting without that visible host. A
+  failed Location upgrade may leave unrelated sources running only when Android confirms a safe
+  non-location foreground-service fallback.
 - Signed interventions are scheduled as one-time, repeating-interval, or daily local-time activities. A schedule may count calendar time or only time spent actively collecting.
-- When the study's duration is reached, the system completes a collecting or paused study for you. Battery-saving scheduling can delay this.
+- When the study's duration is reached, the system completes a collecting or paused study for you.
+  Battery-saving scheduling can delay when that completed status appears, but every observation is
+  checked against the exact same-boot Start deadline, so the delay cannot extend the data window.
 
-After you restart your phone, only a study that was Collecting (收集中) tries to resume. If you force stop the app, Android may block its work until you open it again. Open the app and check the status line if you are unsure.
+After you restart your phone, Particeps cannot safely use the adjustable wall clock to infer how much
+of an active study elapsed while the old boot was unavailable. It therefore keeps every source closed
+and moves a previously Collecting (收集中) study to a typed scheduling-failure pause; a study already
+Paused (已暫停) stays paused and cannot Resume across that boot boundary. It does not use wall time as
+a fallback or silently begin a new duration. Separately, Android can redeliver an earlier service
+request while Particeps rebuilds its process within the same boot. A short-lived neutral restoration
+notification with no study title may then appear. The app removes it while stopping the stale service
+unless the saved state, clock boundary, and current access all revalidate; only an acknowledged active
+notification with the exact service types can precede source activation. If you force stop the app,
+Android may block its work until you open it again. Open the app and check the status line if you are
+unsure.
 
 ### Scheduled activities and surveys
 
@@ -378,7 +489,7 @@ Finishing or withdrawing does not strand data the research team was already owed
 
 ### Pause and resume
 
-When you press Pause (暫停), the app writes a pause boundary, stops the sources, and flushes events that were already queued before that boundary. Once the status line shows Paused (已暫停), no new study events are accepted for the period you are paused. The line under it tells you when the pause started and how long it has lasted. Data already collected stays on your phone, encrypted. The ongoing notification and any visible scheduled-activity notification go away, and the daily reminder starts saying you are paused instead. A survey cannot be opened or submitted while paused.
+When you press Pause (暫停), the app takes a pause boundary, stops the sources, closes their event gates, waits for events already admitted before that boundary, and then saves the paused state. If a source cannot stop cleanly, the app records a safety pause and keeps retrying cleanup instead of reporting an ordinary participant pause. Once the status line shows Paused (已暫停), no new study events are accepted for the period you are paused. The line under it tells you when the pause started and how long it has lasted. Data already collected stays on your phone, encrypted. The ongoing notification and any visible scheduled-activity notification go away, and the daily reminder starts saying you are paused instead. A survey cannot be opened or submitted while paused.
 
 Pressing Resume (繼續收集) starts a new collection interval. Data volume and app and screen use are not backfilled: the app does not go back and collect what happened while you were paused. Calendar time and scheduled-activity availability still pass during a pause, so the app expires missed activities and reconciles any remaining ones when you resume.
 
@@ -446,8 +557,8 @@ Uninstalling the app or clearing its app data also destroys the local keys and d
 | `STUDY_IMPORT_FAILED` | The app's own record that an import did not finish, whether it came from a link or from a file. Nothing was imported and nothing already on the phone changed |
 | Check this against the fingerprint your research team published (請與研究團隊公佈的金鑰指紋核對) | Ordinary for most studies; compare the fingerprint on the Configuration signature (設定檔簽章) block with the one your research team published, and if you do not have one, ask before consenting |
 | The fingerprint does not match the one you were given | Do not consent. Contact your research team through details you already had, not details taken from the study screen |
-| A required item in the access list is not granted | Tap that row, finish on the Android screen it opens, and return to the app; if you do not want to grant it, do not start |
-| A source shows `ACCESS_UNAVAILABLE` | The access it needs is not granted. The other sources keep working; grant it only if you want to |
+| A required Access card is not granted | Use the named button on that card and follow its numbered Manual steps, if shown. If it says to complete another item first, finish that prerequisite first. Return to Particeps so it can re-check Android. If you do not want to grant it, do not start |
+| An optional source shows `ACCESS_UNAVAILABLE` | The access it needs is not granted. Its source is paused and the other sources keep working. Particeps tries to restart it when Android reports the capability available; its event gate opens only if that restart succeeds, otherwise it stays off with a failure code. |
 | Motion sensor unavailable | The device has no compatible accelerometer; the app does not fabricate substitute data, so a study that requires it cannot start |
 | Gyroscope, ambient-light, or proximity sensor unavailable | The phone lacks that hardware; required collection cannot start and optional collection stays off. There is no substitute or inferred fallback. |
 | A source shows a red dot and any other code | Pause first, check that permission or special access, then try to resume; if it still fails, contact the research team and quote the code |
@@ -487,11 +598,11 @@ If you need to describe your situation to your research team, the internal names
 
 ## 12. If you tested an earlier version of this app
 
-This app used to be called Android Data Collector. As far as your phone is concerned, an earlier install and this one are two completely separate apps, and that is also true of an earlier install already carrying the name Particeps. The older install cannot update into this one. The two sit side by side, and installing Particeps brings nothing across: no study, no consent, no collected events, and no export record moves from one to the other. The older app keeps running on your phone, with everything it already holds, until you remove it. What it can no longer do is deliver: it writes files in the older format, and if its study sends data automatically, the research team's server no longer accepts what it sends. [CHANGELOG.md](../CHANGELOG.md) records which release changed what, and why no release can update an earlier install in place.
+If your phone has `v1.0.0-rc.5`, install the signed rc.6 APK directly over it. Do **not** uninstall rc.5 first. Rc.5 established the current application ID and production signing certificate, so Android accepts rc.6 as an in-place update and preserves the study, consent, encrypted events, Keystore key, notification permission, and keyboard settings already owned by that app.
 
-**Ask your research team before you uninstall the older app.** Uninstalling it destroys the key it keeps on your phone, and after that the encrypted data it collected cannot be read by anyone — not by you, not by them. There is no recovery and no backup. If they want what the older app collected, export it from that app while it is still installed and send them the file. Tell them which version it came from, because an export written by an Android Data Collector install needs the older tools to open it. Only then uninstall.
+Rc.4 and earlier are different. They use another application ID or signing certificate and cannot update directly to rc.6. They may sit beside the current Particeps app and bring no on-device study, consent, events, or export history across. **Ask your research team before uninstalling one of those older apps.** Uninstalling destroys its on-device key, after which anything not exported can no longer be read. Export first and tell the team which version produced the file. An rc.4 `.partexp` export already uses the current format and current tooling can read it; an rc.3-or-earlier pre-rename export requires matching pre-rename analysis tooling and is intentionally rejected by current tools. No current tool migrates either app's encrypted on-device state. [CHANGELOG.md](../CHANGELOG.md) records the exact release boundary.
 
-If your study uses the research keyboard, you have to enable it and select it again for Particeps. Android treats it as a different keyboard, so the setting you made for the older app does not carry over. Section 4 describes the two steps.
+When moving from rc.4 or earlier, enable and select the research keyboard again because Android treats the current package as a different keyboard. An rc.5→rc.6 in-place update keeps that Android setting. Section 4 describes the two setup steps if they are needed.
 
 ---
 

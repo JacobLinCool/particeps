@@ -7,7 +7,6 @@ import cool.jacoblin.particeps.collector.sensorcommon.AndroidSensorCollector
 import cool.jacoblin.particeps.core.model.EventDraft
 import cool.jacoblin.particeps.core.definition.AccelerometerConfiguration
 import cool.jacoblin.particeps.core.collector.AccessKind
-import cool.jacoblin.particeps.core.collector.AccessRequirement
 import cool.jacoblin.particeps.core.definition.CollectorConfiguration
 import cool.jacoblin.particeps.core.collector.PrivacyClass
 import cool.jacoblin.particeps.core.collector.ProtocolEventContracts
@@ -25,14 +24,9 @@ class AccelerometerCollectorPlugin(
         id = AccelerometerConfiguration.ID,
         displayName = "Accelerometer",
         privacyClass = PrivacyClass.SENSITIVE,
+        accessKinds = setOf(AccessKind.ACCELEROMETER_HARDWARE),
         eventContract = requireNotNull(ProtocolEventContracts[AccelerometerConfiguration.ID]),
     )
-
-    override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
-        val typed = configuration as? AccelerometerConfiguration
-            ?: throw IllegalArgumentException("Invalid accelerometer configuration")
-        return setOf(AccessRequirement(AccessKind.ACCELEROMETER_HARDWARE, typed.required))
-    }
 
     override fun create(
         configuration: CollectorConfiguration,

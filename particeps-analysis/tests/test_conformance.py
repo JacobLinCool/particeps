@@ -95,18 +95,9 @@ class ProtocolConformanceTest(unittest.TestCase):
 
     def test_manual_export_streams_events_and_receiver_origin_rejects_it(self) -> None:
         bundle = self.corpus["valid"]["bundle"]
-        encoded = bytes.fromhex(bundle["container_hex"])
         document = json.loads(bytes.fromhex(bundle["document_jcs_utf8_hex"]))
         document["bundle_kind"] = "manual_export"
-        key_length = int.from_bytes(encoded[56:58], "big")
-        ciphertext_start = 70 + key_length + 80
-        manual = encoded[:ciphertext_start] + AESGCM(
-            bytes.fromhex(bundle["content_key_hex"])
-        ).encrypt(
-            bytes.fromhex(bundle["content_nonce_hex"]),
-            canonicalize(document),
-            bytes.fromhex(bundle["context_jcs_utf8_hex"]),
-        )
+        manual = self._reseal_document(document)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             path = root / "manual.partexp"
@@ -144,6 +135,80 @@ class ProtocolConformanceTest(unittest.TestCase):
             )
             with self.assertRaises(ValidationError):
                 verifier.verify(receiver)
+
+    def test_required_access_loss_accepts_running_to_paused_bundle(self) -> None:
+        bundle = self.corpus["valid"]["bundle"]
+        document = json.loads(bytes.fromhex(bundle["document_jcs_utf8_hex"]))
+        self.assertEqual("PAUSED", document["experiment"]["state"])
+        self.assertEqual(
+            {
+                "from": "RUNNING",
+                "reason": "REQUIRED_ACCESS_MISSING",
+                "to": "PAUSED",
+            },
+            {
+                key: document["experiment"]["transitions"][-1][key]
+                for key in ("from", "reason", "to")
+            },
+        )
+
+        verified = self._verify_container(bytes.fromhex(bundle["container_hex"]))
+        try:
+            self.assertEqual(verified.event_count, len(verified.events))
+        finally:
+            verified.events.close()
+
+    def test_collection_host_failure_accepts_running_to_paused_bundle(self) -> None:
+        bundle = self.corpus["valid"]["bundle"]
+        document = json.loads(bytes.fromhex(bundle["document_jcs_utf8_hex"]))
+        document["experiment"]["transitions"][-1]["reason"] = (
+            "COLLECTION_HOST_FAILURE"
+        )
+
+        verified = self._verify_container(self._reseal_document(document))
+        try:
+            self.assertEqual(verified.event_count, len(verified.events))
+        finally:
+            verified.events.close()
+
+    def test_collection_teardown_failure_accepts_running_to_paused_bundle(self) -> None:
+        bundle = self.corpus["valid"]["bundle"]
+        document = json.loads(bytes.fromhex(bundle["document_jcs_utf8_hex"]))
+        document["experiment"]["transitions"][-1]["reason"] = (
+            "COLLECTION_TEARDOWN_FAILURE"
+        )
+
+        verified = self._verify_container(self._reseal_document(document))
+        try:
+            self.assertEqual(verified.event_count, len(verified.events))
+        finally:
+            verified.events.close()
+
+    def test_work_scheduling_failure_accepts_running_to_paused_bundle(self) -> None:
+        bundle = self.corpus["valid"]["bundle"]
+        document = json.loads(bytes.fromhex(bundle["document_jcs_utf8_hex"]))
+        document["experiment"]["transitions"][-1]["reason"] = (
+            "WORK_SCHEDULING_FAILURE"
+        )
+
+        verified = self._verify_container(self._reseal_document(document))
+        try:
+            self.assertEqual(verified.event_count, len(verified.events))
+        finally:
+            verified.events.close()
+
+    def _reseal_document(self, document: object) -> bytes:
+        bundle = self.corpus["valid"]["bundle"]
+        encoded = bytes.fromhex(bundle["container_hex"])
+        key_length = int.from_bytes(encoded[56:58], "big")
+        ciphertext_start = 70 + key_length + 80
+        return encoded[:ciphertext_start] + AESGCM(
+            bytes.fromhex(bundle["content_key_hex"])
+        ).encrypt(
+            bytes.fromhex(bundle["content_nonce_hex"]),
+            canonicalize(document),
+            bytes.fromhex(bundle["context_jcs_utf8_hex"]),
+        )
 
     def _verify_container(self, encoded: bytes):
         bundle = self.corpus["valid"]["bundle"]

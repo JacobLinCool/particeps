@@ -1,8 +1,10 @@
 package cool.jacoblin.particeps.core.collector
 
+import cool.jacoblin.particeps.core.definition.CollectorConfiguration
+import cool.jacoblin.particeps.core.definition.LocationConfiguration
+import cool.jacoblin.particeps.core.definition.LocationPriority
 import cool.jacoblin.particeps.core.model.EventDraft
 import cool.jacoblin.particeps.core.model.RecordedEvent
-import cool.jacoblin.particeps.core.definition.CollectorConfiguration
 import com.google.gson.JsonParser
 import com.google.gson.JsonParseException
 import com.google.gson.Strictness
@@ -19,6 +21,7 @@ enum class PrivacyClass {
 
 enum class AccessKind {
     FINE_LOCATION,
+    LOCATION_SERVICES,
     BACKGROUND_LOCATION,
     NOTIFICATIONS,
     USAGE_ACCESS,
@@ -35,20 +38,168 @@ data class AccessRequirement(
     val required: Boolean,
 )
 
+/** App-owned notification purposes derived from verified study features; channel IDs stay platform-owned. */
+enum class NotificationAccessFeature {
+    COLLECTION,
+    DAILY_STATUS,
+    INTERVENTIONS,
+}
+
+/**
+ * The exact location request configured by the study and checked before collection starts.
+ *
+ * This deliberately preserves the signed integer units. The Android implementation performs the
+ * same millimetre-to-metre conversion as the collector when it builds the Play services request.
+ */
+data class LocationAccessProfile(
+    val intervalMillis: Long,
+    val minimumIntervalMillis: Long,
+    val maximumBatchDelayMillis: Long,
+    val minimumDisplacementMillimeters: Int,
+    val priority: LocationPriority,
+) {
+    init {
+        require(intervalMillis in 1_000..3_600_000) { "Invalid location interval" }
+        require(minimumIntervalMillis in 500..intervalMillis) { "Invalid location minimum interval" }
+        require(maximumBatchDelayMillis in 0..86_400_000) { "Invalid location batch delay" }
+        require(minimumDisplacementMillimeters in 0..10_000_000) { "Invalid location displacement" }
+    }
+
+    companion object {
+        fun from(configuration: LocationConfiguration) = LocationAccessProfile(
+            intervalMillis = configuration.intervalMillis,
+            minimumIntervalMillis = configuration.minimumIntervalMillis,
+            maximumBatchDelayMillis = configuration.maximumBatchDelayMillis,
+            minimumDisplacementMillimeters = configuration.minimumDisplacementMillimeters,
+            priority = configuration.priority,
+        )
+    }
+}
+
+/**
+ * All context needed to inspect access without guessing collector configuration or channel IDs.
+ */
+data class AccessInspectionRequest(
+    val requirements: Set<AccessRequirement>,
+    val locationProfile: LocationAccessProfile? = null,
+    val notificationFeatures: Set<NotificationAccessFeature> = emptySet(),
+) {
+    init {
+        require(requirements.distinctBy(AccessRequirement::kind).size == requirements.size) {
+            "Access inspection contains duplicate kinds"
+        }
+        require((AccessKind.LOCATION_SERVICES in requirements.map(AccessRequirement::kind)) == (locationProfile != null)) {
+            "Location services access requires exactly one location profile"
+        }
+        val requestsNotifications = requirements.any { it.kind == AccessKind.NOTIFICATIONS }
+        require(requestsNotifications || notificationFeatures.isEmpty()) {
+            "Notification features require notifications access"
+        }
+        require(!requestsNotifications || notificationFeatures.containsAll(BASE_NOTIFICATION_FEATURES)) {
+            "Notifications access requires collection and daily-status channels"
+        }
+    }
+
+    private companion object {
+        val BASE_NOTIFICATION_FEATURES = setOf(
+            NotificationAccessFeature.COLLECTION,
+            NotificationAccessFeature.DAILY_STATUS,
+        )
+    }
+}
+
+sealed interface SetupAction {
+    enum class RuntimePermission : SetupAction {
+        FOREGROUND_LOCATION,
+        NOTIFICATIONS,
+    }
+
+    enum class SystemSettings : SetupAction {
+        APPLICATION_DETAILS,
+        APPLICATION_NOTIFICATIONS,
+        LOCATION_SERVICES,
+        USAGE_ACCESS,
+        INPUT_METHODS,
+    }
+
+    data object ShowInputMethodPicker : SetupAction
+}
+
+enum class SetupGuidance {
+    FOREGROUND_LOCATION_SETTINGS,
+    LOCATION_SERVICES,
+    BACKGROUND_LOCATION,
+    NOTIFICATIONS_SETTINGS,
+    USAGE_ACCESS,
+    RESEARCH_KEYBOARD_ENABLE,
+    RESEARCH_KEYBOARD_SELECT,
+}
+
+enum class AccessUnavailableReason {
+    HARDWARE_ABSENT,
+    LOCATION_SETTINGS_CHANGE_UNAVAILABLE,
+    LOCATION_SETTINGS_CHECK_FAILED,
+    SYSTEM_HANDLER_MISSING,
+}
+
+sealed interface AccessResolution {
+    data object Satisfied : AccessResolution
+
+    data class ActionRequired(
+        val action: SetupAction,
+    ) : AccessResolution
+
+    data class BlockedByPrerequisites(
+        val missing: Set<AccessKind>,
+    ) : AccessResolution {
+        init {
+            require(missing.isNotEmpty()) { "Blocked access must name a missing prerequisite" }
+        }
+    }
+
+    data class Unavailable(
+        val reason: AccessUnavailableReason,
+    ) : AccessResolution
+}
+
 data class AccessStatus(
     val requirement: AccessRequirement,
-    val granted: Boolean,
-)
-interface StudyAccessGateway {
-    fun inspect(requirements: Set<AccessRequirement>): List<AccessStatus>
-    fun grantedKinds(requirements: Set<AccessRequirement>): Set<AccessKind>
+    val resolution: AccessResolution,
+    val guidance: SetupGuidance?,
+) {
+    val granted: Boolean get() = resolution == AccessResolution.Satisfied
 }
+
+data class AccessSnapshot(
+    val statuses: List<AccessStatus>,
+) {
+    val satisfiedKinds: Set<AccessKind> = statuses
+        .filter(AccessStatus::granted)
+        .mapTo(mutableSetOf()) { it.requirement.kind }
+    val requiredReady: Boolean = statuses.none { it.requirement.required && !it.granted }
+
+    init {
+        require(statuses.distinctBy { it.requirement.kind }.size == statuses.size) {
+            "Access snapshot contains duplicate kinds"
+        }
+    }
+}
+
+interface StudyAccessGateway {
+    suspend fun inspect(request: AccessInspectionRequest): AccessSnapshot
+}
+
+data class CollectorAccessRequirement(
+    val collectorId: String,
+    val requirement: AccessRequirement,
+)
 
 data class CollectorDescriptor(
     val id: String,
     val displayName: String,
     val privacyClass: PrivacyClass,
     val eventContract: CollectorEventContract,
+    val accessKinds: Set<AccessKind>,
 ) {
     val payloadSchemaVersion get() = eventContract.payloadSchemaVersion
     val maximumEncodedEventBytes get() = eventContract.maximumEncodedEventBytes
@@ -57,6 +208,9 @@ data class CollectorDescriptor(
         require(ID_PATTERN.matches(id)) { "Invalid collector ID" }
         require(displayName.isNotBlank()) { "Collector display name must not be blank" }
     }
+
+    fun accessRequirements(required: Boolean): Set<AccessRequirement> =
+        accessKinds.mapTo(mutableSetOf()) { kind -> AccessRequirement(kind, required) }
 
     private companion object {
         val ID_PATTERN = Regex("[a-z][a-z0-9_.-]{2,63}")
@@ -297,8 +451,6 @@ interface ResearchClocks {
 interface CollectorPlugin {
     val descriptor: CollectorDescriptor
 
-    fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement>
-
     fun create(configuration: CollectorConfiguration, context: CollectorContext): Collector
 }
 
@@ -309,6 +461,13 @@ interface Collector {
     val requiresStop: Boolean get() = false
 
     suspend fun start()
+
+    /**
+     * Called after source startup succeeds and the runtime opens this collector's admission gate.
+     * Collectors that publish an initial snapshot must do so here: callbacks delivered while the
+     * source is still registering are intentionally outside the admitted collection interval.
+     */
+    suspend fun onAdmissionOpened() = Unit
 
     suspend fun pause()
 
@@ -335,8 +494,11 @@ class CollectorRegistry(
         plugins.singleOrNull { it.descriptor.id == configuration.id }
             ?: throw IllegalArgumentException("Collector is not compiled into this app: ${configuration.id}")
 
-    fun accessRequirements(configurations: List<CollectorConfiguration>): Set<AccessRequirement> =
+    fun accessRequirements(configurations: List<CollectorConfiguration>): List<CollectorAccessRequirement> =
         configurations.flatMap { configuration ->
-            pluginFor(configuration).accessRequirements(configuration)
-        }.toSet()
+            val descriptor = pluginFor(configuration).descriptor
+            descriptor.accessRequirements(configuration.required).map { requirement ->
+                CollectorAccessRequirement(descriptor.id, requirement)
+            }
+        }
 }

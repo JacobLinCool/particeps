@@ -109,7 +109,17 @@ A state is one of `IMPORTED`, `CONFIG_VERIFIED`, `CONSENT_PENDING`, `ACCESS_SETU
 | `PARTICIPANT_FINISHED_EARLY` | `COMPLETED` |
 | `STUDY_DURATION_ELAPSED` | `COMPLETED` |
 | `PARTICIPANT_WITHDREW` | `WITHDRAWN` |
+| `COLLECTION_HOST_FAILURE` | `PAUSED` |
+| `COLLECTION_TEARDOWN_FAILURE` | `PAUSED` |
+| `REQUIRED_ACCESS_MISSING` | `PAUSED` |
 | `STORAGE_FAILURE` | `PAUSED` |
+| `WORK_SCHEDULING_FAILURE` | `PAUSED` |
+
+The last five rows are lifecycle transition reasons, not generic error labels. They appear in an
+exported history only when an already durable `RUNNING` study is forced to `PAUSED`. Missing access
+during setup, first Start, or Resume leaves the existing state unchanged and therefore adds no such
+transition. Collector-health codes, upload-failure codes, and participant-facing incident codes are
+separate diagnostic fields and must not be interpreted as `transitions[].reason` values.
 
 The history is checked before any plaintext is published: the first `from` is `IMPORTED`, each `from` equals the previous `to`, each `reason` agrees with its destination, the pair is a legal transition, and the last `to` equals `state`. A bundle whose history does not chain fails verification rather than decoding partially.
 
@@ -500,7 +510,10 @@ Fused Location fixes via Google Play Services.
 
 This collector always requires precise location. There is no coarse-only mode, and `priority` selects a power/accuracy trade-off within fine location rather than reducing the permission it needs. Say so in your consent text.
 
-**Access:** fine location and background location. Continuous collection runs under a visible foreground service notification.
+**Access:** fine location, request-specific Android location-service readiness, and background
+location. Before registration the app asks Play services whether the exact configured priority,
+intervals, batching, and minimum distance can be satisfied. Continuous collection runs under a
+visible foreground service notification.
 
 **Payload type:** `LOCATION_FIX`.
 
@@ -580,7 +593,7 @@ In a study that uploads, a confirmed delivery lets the device reclaim space. Abo
 
 Study metadata is held separately from the events. It is capped at 1 MiB and kept outside the event budget by a 2 MiB reserve. The record of what a study is, and how far it has been delivered, therefore cannot be crowded out by the events it describes. Its container header is `PTCMET01`.
 
-Normal study opening does not decrypt its event log. Framing and sequence contiguity are checked from plaintext frame headers, and each collector's most recent event is persisted in metadata rather than recovered by scanning. Start-up cost is therefore linear in frames rather than in bytes decrypted. The sole exception is a one-boundary-ahead append journal with a durable tail: recovery authenticates exactly that tail before applying its metadata. All other event payloads are authenticated when read, so damage outside the recovery tail surfaces at export or upload rather than at launch.
+Normal study opening does not decrypt its event log. Framing and sequence contiguity are checked from plaintext frame headers, and each collector's most recent event is persisted in metadata rather than recovered by scanning. Start-up cost is therefore linear in frames rather than in bytes decrypted. The sole exception is a fail-closed append journal whose proposed event is the durable tail: recovery authenticates exactly that tail, retains it inside PAUSED metadata, and keeps the journal until the app-owned winning safety reason is resolved. If the event is absent or truncated, recovery instead retains the prior event boundary PAUSED. All other event payloads are authenticated when read, so damage outside the recovery tail surfaces at export or upload rather than at launch.
 
 Each collector descriptor declares `maximumEncodedEventBytes`. The runtime encodes every admitted
 event with the worst-case sequence width and rejects it before append when it exceeds that

@@ -6,7 +6,6 @@ import android.hardware.SensorEvent
 import android.os.SystemClock
 import cool.jacoblin.particeps.collector.sensorcommon.AndroidSensorCollector
 import cool.jacoblin.particeps.core.collector.AccessKind
-import cool.jacoblin.particeps.core.collector.AccessRequirement
 import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
@@ -28,14 +27,9 @@ class ProximityCollectorPlugin(context: Context) : CollectorPlugin {
         id = ProximityConfiguration.ID,
         displayName = "Proximity",
         privacyClass = PrivacyClass.SENSITIVE,
+        accessKinds = setOf(AccessKind.PROXIMITY_HARDWARE),
         eventContract = requireNotNull(ProtocolEventContracts[ProximityConfiguration.ID]),
     )
-
-    override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
-        val typed = configuration as? ProximityConfiguration
-            ?: throw IllegalArgumentException("Invalid proximity configuration")
-        return setOf(AccessRequirement(AccessKind.PROXIMITY_HARDWARE, typed.required))
-    }
 
     override fun create(configuration: CollectorConfiguration, context: CollectorContext): Collector {
         val typed = configuration as? ProximityConfiguration

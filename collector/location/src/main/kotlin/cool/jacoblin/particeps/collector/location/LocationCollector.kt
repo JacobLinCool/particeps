@@ -7,7 +7,6 @@ import android.location.Location
 import android.os.HandlerThread
 import cool.jacoblin.particeps.core.model.EventDraft
 import cool.jacoblin.particeps.core.collector.AccessKind
-import cool.jacoblin.particeps.core.collector.AccessRequirement
 import cool.jacoblin.particeps.core.definition.CollectorConfiguration
 import cool.jacoblin.particeps.core.definition.LocationConfiguration
 import cool.jacoblin.particeps.core.definition.LocationPriority
@@ -42,17 +41,13 @@ class LocationCollectorPlugin(
         id = LocationConfiguration.ID,
         displayName = "Location",
         privacyClass = PrivacyClass.SENSITIVE,
+        accessKinds = setOf(
+            AccessKind.FINE_LOCATION,
+            AccessKind.LOCATION_SERVICES,
+            AccessKind.BACKGROUND_LOCATION,
+        ),
         eventContract = requireNotNull(ProtocolEventContracts[LocationConfiguration.ID]),
     )
-
-    override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
-        val typed = configuration as? LocationConfiguration
-            ?: throw IllegalArgumentException("Invalid location configuration")
-        return setOf(
-            AccessRequirement(AccessKind.FINE_LOCATION, typed.required),
-            AccessRequirement(AccessKind.BACKGROUND_LOCATION, typed.required),
-        )
-    }
 
     override fun create(
         configuration: CollectorConfiguration,

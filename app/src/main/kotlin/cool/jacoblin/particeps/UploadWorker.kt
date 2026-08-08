@@ -6,7 +6,9 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.WorkerParameters
 import cool.jacoblin.particeps.core.application.UploadAttemptResult
 import cool.jacoblin.particeps.platform.AndroidStudyWorkScheduler
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 
 /**
  * Periodically delivers undelivered events to the study's endpoint.
@@ -48,12 +50,16 @@ class UploadWorker(
         // Once the backlog is gone there is nothing left to wake up for, so the chain simply is
         // not renewed.
         if (!session.uploadDrained()) {
-            AndroidStudyWorkScheduler(applicationContext).scheduleUpload(
-                expectedExperimentId,
-                expectedConfigurationId,
-                upload,
-                ExistingWorkPolicy.REPLACE,
-            )
+            // REPLACE cancels this worker. Keep the short WorkManager transaction alive until its
+            // replacement is durably acknowledged; no upload/network work runs in this context.
+            withContext(NonCancellable) {
+                AndroidStudyWorkScheduler(applicationContext).scheduleUpload(
+                    expectedExperimentId,
+                    expectedConfigurationId,
+                    upload,
+                    ExistingWorkPolicy.REPLACE,
+                )
+            }
         }
         return Result.success()
     }

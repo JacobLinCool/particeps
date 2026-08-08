@@ -3,7 +3,6 @@ package cool.jacoblin.particeps.core.storage
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import android.util.AtomicFile
 import cool.jacoblin.particeps.core.protocol.ActiveStudyRecord
 import cool.jacoblin.particeps.core.protocol.ActiveStudyStore
 import java.nio.ByteBuffer
@@ -17,16 +16,31 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-class EncryptedActiveStudyStore(
-    context: Context,
+class EncryptedActiveStudyStore private constructor(
+    private val atomicFile: AcknowledgedFile,
+    private val keyStore: KeyStore,
 ) : ActiveStudyStore {
+    constructor(context: Context) : this(
+        atomicFile = AcknowledgedAtomicFile(context.noBackupFilesDir.resolve(FILE_NAME)),
+        keyStore = androidKeyStore(),
+    )
+
+    internal constructor(
+        context: Context,
+        fileSystem: AcknowledgedFileSystem,
+    ) : this(
+        atomicFile = AcknowledgedAtomicFile(
+            context.noBackupFilesDir.resolve(FILE_NAME),
+            fileSystem,
+        ),
+        keyStore = androidKeyStore(),
+    )
+
     private val mutex = Mutex()
-    private val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-    private val atomicFile = AtomicFile(context.noBackupFilesDir.resolve(FILE_NAME))
 
     override suspend fun load(): ActiveStudyRecord? = withContext(Dispatchers.IO) {
         mutex.withLock {
-            if (!atomicFile.baseFile.exists()) return@withLock null
+            if (!atomicFile.exists()) return@withLock null
             val bytes = atomicFile.readFully()
             require(bytes.size in MINIMUM_ENCODED_BYTES..MAXIMUM_ENCODED_BYTES) {
                 "Encrypted active-study file has an invalid size"
@@ -50,7 +64,7 @@ class EncryptedActiveStudyStore(
     ) = withContext(Dispatchers.IO) {
         val deletion = ActiveStudyRecord.DeletionPending(experimentId, maximumLocalBytes)
         mutex.withLock {
-            require(atomicFile.baseFile.exists()) { "No active study to delete" }
+            require(atomicFile.exists()) { "No active study to delete" }
             val key = keyStore.getKey(KEY_ALIAS, null) as? SecretKey
                 ?: error("Active-study encryption key is unavailable")
             val id = deletion.experimentId.toByteArray(Charsets.US_ASCII)
@@ -90,14 +104,7 @@ class EncryptedActiveStudyStore(
 
     private fun writeRecord(plaintext: ByteArray, key: SecretKey) {
         val encrypted = encrypt(plaintext, key)
-        val output = atomicFile.startWrite()
-        try {
-            output.write(encrypted)
-            atomicFile.finishWrite(output)
-        } catch (failure: Throwable) {
-            atomicFile.failWrite(output)
-            throw failure
-        }
+        atomicFile.write(encrypted)
     }
 
     private fun decodeRecord(plaintext: ByteArray): ActiveStudyRecord {
@@ -155,6 +162,8 @@ class EncryptedActiveStudyStore(
             .generateKey()
 
     private companion object {
+        fun androidKeyStore(): KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val CIPHER = "AES/GCM/NoPadding"
         const val KEY_ALIAS = "particeps-active-study-v1"

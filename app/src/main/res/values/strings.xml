@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  English is the default locale. Every string a participant can see lives here; nothing user-facing
-  is written into Kotlin. Researcher-supplied text — the study title, purpose, contact, and consent
-  summary — is never translated: it is rendered exactly as it was signed.
+  English is the default locale. Every participant-facing main-app string lives here; a collector
+  with its own participant surface owns the corresponding resources in its module. Nothing
+  user-facing is written into Kotlin. Researcher-supplied text — the study title, purpose, contact,
+  and consent summary — is never translated: it is rendered exactly as it was signed.
 -->
 <resources>
     <!--
@@ -14,7 +15,14 @@
     -->
     <string name="app_name" translatable="false">Particeps</string>
     <string name="intervention_channel">Research activities</string>
+    <string name="intervention_channel_description">Scheduled study activities and surveys</string>
     <string name="daily_channel">Daily study reminder</string>
+    <string name="daily_channel_description">A quiet daily reminder that the study is collecting or paused</string>
+    <string name="collection_channel">Active research collection</string>
+    <string name="collection_channel_description">Shown while a consented research study is collecting data</string>
+    <string name="collection_notification_title">Research collection active</string>
+    <string name="collection_recovery_notification_text">Checking whether collection should continue</string>
+    <string name="collection_recovery_notification_title">Restoring research status</string>
     <string name="daily_running">Still collecting. Open the app to pause, export, or finish early.</string>
     <!-- %1$s is a locale-formatted date and time. -->
     <string name="daily_paused_since">Paused since %1$s. Nothing is being collected until you resume.</string>
@@ -75,6 +83,9 @@
     <string name="action_delete">Delete local data</string>
     <string name="action_confirm">Confirm</string>
     <string name="action_cancel">Cancel</string>
+    <string name="action_allow_access">Allow</string>
+    <string name="action_open_settings">Open Android settings</string>
+    <string name="action_choose_keyboard">Choose keyboard</string>
 
     <!-- Content descriptions for controls that carry no text -->
     <string name="cd_language">Language</string>
@@ -187,6 +198,7 @@
 
     <!-- Step 4: access -->
     <string name="access_fine_location">Precise location</string>
+    <string name="access_location_services">Android location services</string>
     <string name="access_background_location">Background location</string>
     <string name="access_notifications">Notifications</string>
     <string name="access_usage_access">Usage access</string>
@@ -196,6 +208,51 @@
     <string name="access_gyroscope_hardware">Gyroscope</string>
     <string name="access_ambient_light_hardware">Ambient-light sensor</string>
     <string name="access_proximity_hardware">Proximity sensor</string>
+    <string name="access_used_by">Used by</string>
+    <string name="access_owner_item">• %1$s</string>
+    <string name="access_owner_study_notifications">Study status and ongoing collection; scheduled activities when configured</string>
+    <string name="access_manual_steps">Manual steps</string>
+    <string name="optional_access_title">Optional sources need setup</string>
+    <string name="optional_access_body">The study keeps running. Restore any item below to resume only the optional sources that use it.</string>
+    <string name="access_step_number">%1$d. %2$s</string>
+    <string name="access_complete_first">Complete %1$s first.</string>
+    <string name="access_hardware_unavailable">This phone does not provide this sensor. There is no setting or substitute that can enable it.</string>
+    <string name="access_location_settings_change_unavailable">Android reports that this phone cannot satisfy the location settings required by this study. Contact the research team before starting.</string>
+    <string name="access_location_settings_check_failed">Particeps could not verify whether this phone can satisfy the study’s configured location request. Contact the research team before starting.</string>
+    <string name="access_system_screen_unavailable">This phone does not provide the required Android settings screen. Contact the research team before starting.</string>
+
+    <string name="access_fine_location_settings_description">Android no longer offers the permission dialog after repeated denial. Restore precise location from Particeps App info.</string>
+    <string name="access_fine_location_settings_step_permissions">In App info, open Permissions, then Location.</string>
+    <string name="access_fine_location_settings_step_precise">Choose Allow only while using the app and turn on Use precise location.</string>
+    <string name="access_fine_location_settings_step_return">Return to Particeps; it checks the real Android setting automatically.</string>
+
+    <string name="access_location_services_description">Android must be able to satisfy this study’s exact location request, including its configured accuracy and update settings.</string>
+    <string name="access_location_services_step_enable">Turn on Use location and the location-accuracy services required by this study.</string>
+    <string name="access_location_services_step_return">Return to Particeps; it checks the exact configured location request automatically.</string>
+
+    <string name="access_background_location_description">For continuous location collection, Android requires a separate setting. This study may collect location in the background while Particeps is closed or not in use.</string>
+    <string name="access_background_location_step_open_permissions">In App info, open Permissions, then Location.</string>
+    <string name="access_background_location_step_choose_always">Choose “%1$s”.</string>
+    <string name="access_background_location_step_return">Return to Particeps; it checks the real Android setting automatically.</string>
+
+    <string name="access_notifications_settings_description">Android settings are required when the permission dialog can no longer grant access or a required Particeps notification channel is off.</string>
+    <string name="access_notifications_settings_step_enable">Turn on Allow notifications.</string>
+    <string name="access_notifications_settings_step_channels">Keep Active research collection and Daily study reminder enabled. If this study has scheduled activities, keep Research activities enabled too.</string>
+    <string name="access_notifications_settings_step_return">Return to Particeps; it checks the permission and required channels automatically.</string>
+
+    <string name="access_usage_access_description">Android treats app and network usage as special access, so a normal permission dialog cannot enable it.</string>
+    <string name="access_usage_access_step_choose_app">Find and open Particeps on the Usage access screen.</string>
+    <string name="access_usage_access_step_enable">Turn on Permit usage access.</string>
+    <string name="access_usage_access_step_return">Return to Particeps; it checks the real Android setting automatically.</string>
+
+    <string name="access_keyboard_enable_description">The research keyboard is an Android input method and must be enabled in system settings before it can be selected.</string>
+    <string name="access_keyboard_enable_step_manage">Open Manage on-screen keyboards.</string>
+    <string name="access_keyboard_enable_step_enable">Enable Research keyboard and confirm Android’s warning.</string>
+    <string name="access_keyboard_enable_step_return">Return to Particeps after the keyboard is enabled.</string>
+
+    <string name="access_keyboard_select_description">After enabling the research keyboard, choose it as the current keyboard in Android’s picker.</string>
+    <string name="access_keyboard_select_step_choose">Choose Research keyboard in the system keyboard picker.</string>
+    <string name="access_keyboard_select_step_return">Return to Particeps; it checks the selected keyboard automatically.</string>
 
     <!-- Collecting -->
     <plurals name="meter_events">

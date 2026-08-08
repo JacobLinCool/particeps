@@ -152,8 +152,23 @@ interface StudyStore {
 
     suspend fun appendEvent(event: RecordedEvent)
 
-    /** Commits one event and its resulting metadata as a recoverable transaction. */
-    suspend fun appendEventAtomically(event: RecordedEvent, metadata: StudyMetadata)
+    /**
+     * Commits one event and its resulting metadata as a recoverable transaction. [failureTime]
+     * pre-arms the exact fail-closed boundary before any journal or event byte is mutated.
+     */
+    suspend fun appendEventAtomically(
+        event: RecordedEvent,
+        metadata: StudyMetadata,
+        failureTime: ResearchTime,
+    )
+
+    /**
+     * Resolves a fail-closed append journal that survived an uncertain mutation. Implementations
+     * return the authoritative PAUSED metadata when such a journal existed, or null when no append
+     * recovery is pending. [reason] must be the application-owned winning safety reason; resolving
+     * it is the only mutation allowed while that journal remains pending.
+     */
+    suspend fun resolvePendingAppendFailure(reason: TransitionReason): StudyMetadata?
 
     /**
      * Streams `[fromSequenceInclusive, upToSequenceInclusive]`. Implementations must deliver the
@@ -182,3 +197,13 @@ interface StudyStore {
 
     suspend fun clear()
 }
+
+/**
+ * A mutation failed after its fail-closed journal was acknowledged, and the store recovered a
+ * durable PAUSED boundary before returning. Runtimes must adopt [metadata] before reporting the
+ * original failure so they cannot reuse the pre-transaction sequence number in the same process.
+ */
+class StudyStoreMutationFailedClosed(
+    val metadata: StudyMetadata,
+    cause: Throwable,
+) : java.io.IOException("Study-store mutation recovered fail-closed", cause)

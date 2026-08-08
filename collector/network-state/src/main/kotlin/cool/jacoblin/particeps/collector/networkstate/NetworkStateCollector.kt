@@ -5,7 +5,6 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import cool.jacoblin.particeps.core.model.EventDraft
-import cool.jacoblin.particeps.core.collector.AccessRequirement
 import cool.jacoblin.particeps.core.definition.CollectorConfiguration
 import cool.jacoblin.particeps.core.definition.NetworkStateConfiguration
 import cool.jacoblin.particeps.core.collector.PrivacyClass
@@ -30,13 +29,9 @@ class NetworkStateCollectorPlugin(
         id = NetworkStateConfiguration.ID,
         displayName = "Network connection state",
         privacyClass = PrivacyClass.SENSITIVE,
+        accessKinds = emptySet(),
         eventContract = requireNotNull(ProtocolEventContracts[NetworkStateConfiguration.ID]),
     )
-
-    override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
-        require(configuration is NetworkStateConfiguration) { "Invalid network-state configuration" }
-        return emptySet()
-    }
 
     override fun create(
         configuration: CollectorConfiguration,
@@ -82,7 +77,6 @@ private class NetworkStateCollector(
             register = {
                 connectivityManager.registerDefaultNetworkCallback(callback)
                 callbackRegistered = true
-                captureCurrentState()
             },
             rollback = {
                 completeSourceTeardown(
@@ -91,6 +85,10 @@ private class NetworkStateCollector(
                 )
             },
         )
+    }
+
+    override suspend fun onSourceAdmitted() {
+        captureCurrentState()
     }
 
     override suspend fun unregisterSource(): SourceTeardownResult {
