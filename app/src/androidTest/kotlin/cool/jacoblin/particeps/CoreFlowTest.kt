@@ -2,8 +2,12 @@ package cool.jacoblin.particeps
 
 import android.Manifest
 import android.app.NotificationManager
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -18,6 +22,8 @@ import cool.jacoblin.particeps.core.model.ExperimentState
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.After
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,10 +33,16 @@ class CoreFlowTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
 
+    @Before
+    fun clearStudyBeforeTest() = runBlocking { session().clearStudyDataForTest() }
+
+    @After
+    fun clearStudyAfterTest() = runBlocking { session().clearStudyDataForTest() }
+
     @Test
     fun fullParticipantFlowRunsModularCollectorsAndHonorsPause() {
-        val session = (composeRule.activity.application as CollectorApplication).session
-        composeRule.waitUntil(TIMEOUT_MILLIS) { session.snapshot.value.initialized }
+        val session = session()
+        waitUntilExactlyOneNode(hasTestTag(UiTags.IMPORT_DEMO))
         composeRule.onNodeWithTag(UiTags.IMPORT_DEMO).performScrollTo().performClick()
         composeRule.waitUntil(TIMEOUT_MILLIS) {
             val snapshot = session.snapshot.value
@@ -135,8 +147,11 @@ class CoreFlowTest {
         composeRule.waitUntil(TIMEOUT_MILLIS) {
             session.snapshot.value.runtime.metadata?.state == ExperimentState.RUNNING
         }
+        waitUntilExactlyOneNode(hasTestTag(UiTags.FINISH) and isEnabled())
         composeRule.onNodeWithTag(UiTags.FINISH).performScrollTo().performClick()
-        composeRule.onNodeWithText(composeRule.activity.getString(R.string.action_confirm)).performClick()
+        val confirm = composeRule.activity.getString(R.string.action_confirm)
+        waitUntilExactlyOneNode(hasText(confirm))
+        composeRule.onNodeWithText(confirm).performClick()
         composeRule.waitUntil(TIMEOUT_MILLIS) {
             session.snapshot.value.runtime.metadata?.state == ExperimentState.COMPLETED
         }
@@ -146,6 +161,14 @@ class CoreFlowTest {
             .assertTextEquals(composeRule.activity.getString(R.string.state_completed))
         composeRule.onNodeWithTag(UiTags.EXPORT).performScrollTo()
         runBlocking { session.deleteLocalData() }
+    }
+
+    private fun session() = (composeRule.activity.application as CollectorApplication).session
+
+    private fun waitUntilExactlyOneNode(matcher: SemanticsMatcher) {
+        composeRule.waitUntil(TIMEOUT_MILLIS) {
+            composeRule.onAllNodes(matcher).fetchSemanticsNodes().size == 1
+        }
     }
 
     private fun setRequiredNotificationChannelAvailable(

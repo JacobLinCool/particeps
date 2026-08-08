@@ -6,7 +6,6 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import cool.jacoblin.particeps.core.model.SafetyPauseReason
-import cool.jacoblin.particeps.core.runtime.CommandResult
 import cool.jacoblin.particeps.platform.AndroidStudyWorkScheduler
 import cool.jacoblin.particeps.platform.AtomicSafetyPauseStore
 import cool.jacoblin.particeps.platform.SafetyPauseWorkIdentity
@@ -14,9 +13,7 @@ import cool.jacoblin.particeps.platform.awaitWorkPersistence
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -32,13 +29,15 @@ class WorkManagerSafetyPauseIntegrationTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val application = context.applicationContext as CollectorApplication
         val session = application.session
-        withTimeout(TIMEOUT_MILLIS) { session.snapshot.first { it.initialized } }
-        assertNull("The integration test requires an isolated app data directory", session.snapshot.value.configuration)
 
         val workManager = WorkManager.getInstance(context)
         val scheduler = AndroidStudyWorkScheduler(context)
         val marker = AtomicSafetyPauseStore(context)
         val reason = SafetyPauseReason.REQUIRED_ACCESS_MISSING
+        session.clearStudyDataForTest()
+        awaitWorkPersistence(workManager.cancelAllWorkByTag(SafetyPauseWorkIdentity.COMMON_TAG))
+        marker.clear()
+        assertNull("The integration test requires an isolated app data directory", session.snapshot.value.configuration)
         try {
             session.importSignedConfiguration(requireNotNull(DemoStudy.load)(context.resources))
             val experimentId = requireNotNull(session.snapshot.value.configuration).experimentId
@@ -76,10 +75,7 @@ class WorkManagerSafetyPauseIntegrationTest {
         } finally {
             awaitWorkPersistence(workManager.cancelAllWorkByTag(SafetyPauseWorkIdentity.COMMON_TAG))
             marker.clear()
-            if (session.snapshot.value.configuration != null) {
-                assertEquals(CommandResult.Success, session.withdraw())
-                session.deleteLocalData()
-            }
+            session.clearStudyDataForTest()
         }
     }
 

@@ -4,9 +4,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.storage.EncryptedActiveStudyStore
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -23,7 +21,7 @@ class AndroidConfigurationImportTest {
     fun debugDemoImportsIntoTheAndroidSession() = runBlocking {
         val application = ApplicationProvider.getApplicationContext<CollectorApplication>()
         val session = application.session
-        withTimeout(TIMEOUT_MILLIS) { session.snapshot.first { it.initialized } }
+        session.clearStudyDataForTest()
         assertNull("test requires a clean study session", session.snapshot.value.configuration)
 
         try {
@@ -32,10 +30,7 @@ class AndroidConfigurationImportTest {
 
             assertEquals(ExperimentState.IMPORTED, session.snapshot.value.runtime.metadata?.state)
         } finally {
-            if (session.snapshot.value.configuration != null) {
-                session.withdraw()
-                session.deleteLocalData()
-            }
+            session.clearStudyDataForTest()
         }
     }
 
@@ -49,26 +44,28 @@ class AndroidConfigurationImportTest {
     fun theRetiredConfigurationMagicFailsClosedInTheParser() = runBlocking {
         val application = ApplicationProvider.getApplicationContext<CollectorApplication>()
         val session = application.session
-        withTimeout(TIMEOUT_MILLIS) { session.snapshot.first { it.initialized } }
+        session.clearStudyDataForTest()
         assertNull("test requires a clean study session", session.snapshot.value.configuration)
 
-        val loadDemo = requireNotNull(DemoStudy.load)
-        val envelope = loadDemo(application.resources).also { RETIRED_CONFIGURATION_MAGIC.copyInto(it) }
+        try {
+            val loadDemo = requireNotNull(DemoStudy.load)
+            val envelope = loadDemo(application.resources).also { RETIRED_CONFIGURATION_MAGIC.copyInto(it) }
 
-        val failure = runCatching { session.importSignedConfiguration(envelope) }.exceptionOrNull()
+            val failure = runCatching { session.importSignedConfiguration(envelope) }.exceptionOrNull()
 
-        assertNotNull("the retired magic must not import", failure)
-        assertNull(session.snapshot.value.configuration)
-        assertNull(session.snapshot.value.runtime.metadata)
-        assertNull(
-            "a refused import must persist no active study",
-            EncryptedActiveStudyStore(application).load(),
-        )
+            assertNotNull("the retired magic must not import", failure)
+            assertNull(session.snapshot.value.configuration)
+            assertNull(session.snapshot.value.runtime.metadata)
+            assertNull(
+                "a refused import must persist no active study",
+                EncryptedActiveStudyStore(application).load(),
+            )
+        } finally {
+            session.clearStudyDataForTest()
+        }
     }
 
     private companion object {
-        const val TIMEOUT_MILLIS = 20_000L
-
         /**
          * Retired-identity rejection fixture: the pre-Particeps signed-configuration magic, kept
          * here only as bytes the import path has to refuse. Nothing in this repository writes it.
