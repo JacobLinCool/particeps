@@ -1,7 +1,6 @@
 package cool.jacoblin.particeps
 
 import android.Manifest
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -39,7 +38,8 @@ class DailyStatusWorker(
         val metadata = snapshot.runtime.metadata
         val state = metadata?.state
         if (snapshot.configuration == null ||
-            (state != ExperimentState.RUNNING && state != ExperimentState.PAUSED)
+            (snapshot.safetyPauseStatus == null &&
+                state != ExperimentState.RUNNING && state != ExperimentState.PAUSED)
         ) {
             // Finished, withdrawn, deleted, or never started. Nothing to remind anyone about, and
             // the periodic request outlives the study unless it retires itself here.
@@ -53,8 +53,11 @@ class DailyStatusWorker(
             return Result.success()
         }
 
-        val text = when (state) {
-            ExperimentState.PAUSED -> {
+        val text = when {
+            snapshot.safetyPauseStatus != null -> {
+                applicationContext.getString(R.string.daily_paused_unknown)
+            }
+            state == ExperimentState.PAUSED -> {
                 val pausedAt = metadata.transitions
                     .lastOrNull { it.to == ExperimentState.PAUSED }
                     ?.time
@@ -77,20 +80,10 @@ class DailyStatusWorker(
         }
 
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ID,
-                applicationContext.getString(R.string.daily_channel),
-                // Low: this arrives every day for as long as the study runs. Anything that makes a
-                // sound daily for a fortnight is a reason to uninstall the app, which would end the
-                // study far more effectively than a missed reminder.
-                NotificationManager.IMPORTANCE_LOW,
-            ),
-        )
         manager.notify(
             NOTIFICATION_TAG,
             0,
-            android.app.Notification.Builder(applicationContext, CHANNEL_ID)
+            android.app.Notification.Builder(applicationContext, ParticepsNotificationChannels.DAILY_STATUS)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle(applicationContext.getString(R.string.app_name))
                 .setContentText(text)
@@ -112,6 +105,5 @@ class DailyStatusWorker(
     companion object {
         /** One tag, so today's reminder replaces yesterday's rather than stacking up. */
         const val NOTIFICATION_TAG = "daily-status"
-        private const val CHANNEL_ID = "research-daily-status-v1"
     }
 }

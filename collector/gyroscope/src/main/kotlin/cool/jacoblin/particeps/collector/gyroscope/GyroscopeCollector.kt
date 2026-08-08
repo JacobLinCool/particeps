@@ -5,7 +5,6 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import cool.jacoblin.particeps.collector.sensorcommon.AndroidSensorCollector
 import cool.jacoblin.particeps.core.collector.AccessKind
-import cool.jacoblin.particeps.core.collector.AccessRequirement
 import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
@@ -24,14 +23,9 @@ class GyroscopeCollectorPlugin(context: Context) : CollectorPlugin {
         id = GyroscopeConfiguration.ID,
         displayName = "Gyroscope",
         privacyClass = PrivacyClass.SENSITIVE,
+        accessKinds = setOf(AccessKind.GYROSCOPE_HARDWARE),
         eventContract = requireNotNull(ProtocolEventContracts[GyroscopeConfiguration.ID]),
     )
-
-    override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
-        val typed = configuration as? GyroscopeConfiguration
-            ?: throw IllegalArgumentException("Invalid gyroscope configuration")
-        return setOf(AccessRequirement(AccessKind.GYROSCOPE_HARDWARE, typed.required))
-    }
 
     override fun create(configuration: CollectorConfiguration, context: CollectorContext): Collector {
         val typed = configuration as? GyroscopeConfiguration

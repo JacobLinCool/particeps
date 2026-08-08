@@ -5,16 +5,60 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: write
-
 concurrency:
   group: android-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  instrumented:
+    name: Instrumented release gate (API 34)
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Validate the Gradle wrapper
+        uses: gradle/actions/wrapper-validation@0f4528296b4bc09e8ae0fc7be30185a4ab435545 # v6.0.0
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@0f4528296b4bc09e8ae0fc7be30185a4ab435545 # v6.0.0
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run connected tests on the minimum supported Android version
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 37
+          system-image-api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7_pro
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: ./gradlew --no-daemon connectedDebugAndroidTest
+
   release:
     name: Verify, sign, and publish APK
+    needs: instrumented
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -125,7 +169,7 @@ jobs:
       - name: Test, lint, and build signed release APK
         run: >-
           ./gradlew --no-daemon
-          test testDebugUnitTest lintDebug assembleRelease
+          test testDebugUnitTest lintDebug lintRelease assembleRelease
           -PreleaseVersionName=${{ steps.release_metadata.outputs.version_name }}
           -PreleaseVersionCode=${{ github.run_number }}
 
@@ -136,15 +180,24 @@ jobs:
           python3 tools/validate_protocol_vectors.py
           python3 tools/retired_identity_audit.py
           python3 tools/collector_assurance.py
+          python3 -m unittest discover -s tools/tests -v
           ./gradlew --no-daemon \
             -I tools/protocol-conformance.init.gradle \
             :core:export:test \
             --tests particeps.conformance.ProtocolConformanceTest
 
+      - name: Extract versioned release notes
+        shell: bash
+        run: >-
+          python3 tools/changelog_release_notes.py
+          "$GITHUB_REF_NAME"
+          "$RUNNER_TEMP/release-notes.md"
+
       - name: Verify and package signed APK
         id: signed_apk
         shell: bash
         run: |
+          set -euo pipefail
           build_tools="$ANDROID_SDK_ROOT/build-tools/$ANDROID_BUILD_TOOLS_VERSION"
           signed_apk="app/build/outputs/apk/release/app-release.apk"
           release_dir="$RUNNER_TEMP/android-release"
@@ -153,7 +206,7 @@ jobs:
           test -f "$signed_apk"
           mkdir -p "$release_dir"
           cp "$signed_apk" "$release_apk"
-          "$build_tools/apksigner" verify --verbose --print-certs "$release_apk"
+          python3 tools/verify_release_apk.py "$build_tools/apksigner" "$release_apk"
 
           (
             cd "$release_dir"
@@ -169,8 +222,10 @@ jobs:
           APK: ${{ steps.signed_apk.outputs.apk }}
           CHECKSUM: ${{ steps.signed_apk.outputs.checksum }}
           IS_PRERELEASE: ${{ steps.release_metadata.outputs.prerelease }}
+          RELEASE_NOTES: ${{ runner.temp }}/release-notes.md
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --notes-file "$RELEASE_NOTES"
             gh release upload "$GITHUB_REF_NAME" "$APK" "$CHECKSUM" --clobber
           else
             release_kind=()
@@ -179,7 +234,7 @@ jobs:
             fi
             gh release create "$GITHUB_REF_NAME" "$APK" "$CHECKSUM" \
               --verify-tag \
-              --generate-notes \
+              --notes-file "$RELEASE_NOTES" \
               --title "$GITHUB_REF_NAME" \
               "${release_kind[@]}"
           fi

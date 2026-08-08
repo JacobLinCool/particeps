@@ -34,6 +34,7 @@ import cool.jacoblin.particeps.core.storage.EncryptedExperimentStore
 import cool.jacoblin.particeps.platform.AndroidResearchClocks
 import cool.jacoblin.particeps.platform.AndroidStudyCollectionHost
 import cool.jacoblin.particeps.platform.AndroidStudyWorkScheduler
+import cool.jacoblin.particeps.platform.AtomicSafetyPauseStore
 import cool.jacoblin.particeps.platform.FileUploadOutbox
 import cool.jacoblin.particeps.platform.InterventionDeliveryCoordinator
 import cool.jacoblin.particeps.platform.JoinArtifactDownloader
@@ -56,7 +57,12 @@ class CollectorApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        accessManager = AccessManager(this, ResearchInputMethodService::class.java.name)
+        ParticepsNotificationChannels.ensureCreated(this)
+        accessManager = AccessManager(
+            this,
+            ResearchInputMethodService::class.java.name,
+            ParticepsNotificationChannels.idsByFeature,
+        )
         joinArtifactDownloader = JoinArtifactDownloader(noBackupFilesDir.resolve("join-import"))
         val registry = CollectorRegistry(
             listOf(
@@ -88,19 +94,20 @@ class CollectorApplication : Application() {
             storeFactory = StudyStoreFactory { experimentId, maximumLocalBytes ->
                 EncryptedExperimentStore(this, experimentId, maximumLocalBytes)
             },
-            runtimeFactory = ExperimentRuntimeFactory { configuration, store, availableAccess ->
+            runtimeFactory = ExperimentRuntimeFactory { configuration, store, safetyPauseWitness ->
                 ExperimentRuntime(
                     configuration,
                     store,
                     registry,
                     AndroidResearchClocks(this, configuration.experimentId),
                     applicationScope,
-                    availableAccess,
+                    safetyPauseWitness,
                 )
             },
             collectorRegistry = registry,
             accessGateway = accessManager,
             collectionHost = AndroidStudyCollectionHost(this),
+            safetyPauseStore = AtomicSafetyPauseStore(this),
             workScheduler = workScheduler,
             exporter = StudyExporter { verified, metadata, events, destination ->
                 ResearchExport.encrypt(
@@ -128,11 +135,10 @@ class CollectorApplication : Application() {
         )
         applicationScope.launch {
             session.initialize()
-            // The delivery chain is one-time work, so it has no platform-side repetition to fall
-            // back on. Re-establishing it here covers a link lost to a crash or a force stop.
-            session.snapshot.value.configuration?.let(workScheduler::reschedulePendingWork)
             InterventionDeliveryCoordinator.recoverStalePosting {
-                session.rescheduleInterventions(recoverStalePosting = true)
+                // Session recovery owns durable metadata, absolute deadline repair and intervention
+                // work. The Android adapter must never rebuild from configuration alone.
+                session.reconcileScheduledWork(recoverStalePosting = true)
             }
         }
     }

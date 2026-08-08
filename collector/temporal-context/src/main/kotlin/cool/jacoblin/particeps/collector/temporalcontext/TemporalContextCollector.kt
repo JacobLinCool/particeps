@@ -7,7 +7,6 @@ import android.content.IntentFilter
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import cool.jacoblin.particeps.core.collector.AccessRequirement
 import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
@@ -37,13 +36,9 @@ class TemporalContextCollectorPlugin(context: Context) : CollectorPlugin {
         id = TemporalContextConfiguration.ID,
         displayName = "Temporal context",
         privacyClass = PrivacyClass.SENSITIVE,
+        accessKinds = emptySet(),
         eventContract = requireNotNull(ProtocolEventContracts[TemporalContextConfiguration.ID]),
     )
-
-    override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
-        require(configuration is TemporalContextConfiguration) { "Invalid temporal-context configuration" }
-        return emptySet()
-    }
 
     override fun create(configuration: CollectorConfiguration, context: CollectorContext): Collector {
         require(configuration is TemporalContextConfiguration) { "Invalid temporal-context configuration" }

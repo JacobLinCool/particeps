@@ -1,6 +1,7 @@
 package cool.jacoblin.particeps
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -11,7 +12,7 @@ import androidx.activity.viewModels
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import cool.jacoblin.particeps.platform.InterventionWorker
-import cool.jacoblin.particeps.core.collector.AccessKind
+import cool.jacoblin.particeps.core.collector.SetupAction
 import cool.jacoblin.particeps.core.protocol.JoinLink
 import cool.jacoblin.particeps.core.protocol.SignedConfigurationCodec
 import java.time.Instant
@@ -44,7 +45,24 @@ class MainActivity : ComponentActivity() {
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { viewModel.refreshAccess() }
+    ) { grants ->
+        val result = when {
+            Manifest.permission.POST_NOTIFICATIONS in grants ->
+                SetupAction.RuntimePermission.NOTIFICATIONS to Manifest.permission.POST_NOTIFICATIONS
+            Manifest.permission.ACCESS_FINE_LOCATION in grants ->
+                SetupAction.RuntimePermission.FOREGROUND_LOCATION to Manifest.permission.ACCESS_FINE_LOCATION
+            else -> null
+        }
+        result?.let { (action, permission) ->
+            val granted = grants.getValue(permission)
+            collectorApplication.accessManager.recordRuntimePermissionResult(
+                action = action,
+                granted = granted,
+                canRequestAgain = granted || shouldShowRequestPermissionRationale(permission),
+            )
+        }
+        viewModel.refreshAccess()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,6 +97,14 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshAccess()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // The system input-method picker is a window, not another Activity, so onResume is not a
+        // reliable completion signal. Regaining focus is the first authoritative point at which
+        // the selected keyboard can be re-inspected.
+        if (hasFocus) viewModel.refreshAccess()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -128,25 +154,33 @@ class MainActivity : ComponentActivity() {
         { viewModel.importSignedConfiguration { load(resources) } }
     }
 
-    private fun requestAccess(kind: AccessKind) {
-        when (kind) {
-            AccessKind.FINE_LOCATION -> permissionLauncher.launch(
-                arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION),
-            )
-            AccessKind.BACKGROUND_LOCATION -> permissionLauncher.launch(
-                arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
-            )
-            AccessKind.NOTIFICATIONS -> permissionLauncher.launch(
-                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-            )
-            AccessKind.RESEARCH_KEYBOARD_SELECTED -> collectorApplication.accessManager.showInputMethodPicker()
-            AccessKind.USAGE_ACCESS,
-            AccessKind.RESEARCH_KEYBOARD_ENABLED -> collectorApplication.accessManager.settingsIntent(kind)?.let(::startActivity)
-                ?: viewModel.reportMessage("ACCESS_SETTINGS_UNAVAILABLE")
-            AccessKind.ACCELEROMETER_HARDWARE,
-            AccessKind.GYROSCOPE_HARDWARE,
-            AccessKind.AMBIENT_LIGHT_HARDWARE,
-            AccessKind.PROXIMITY_HARDWARE -> Unit
+    private fun requestAccess(action: SetupAction) {
+        when (action) {
+            is SetupAction.RuntimePermission -> when (action) {
+                SetupAction.RuntimePermission.FOREGROUND_LOCATION -> permissionLauncher.launch(
+                    arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION),
+                )
+                SetupAction.RuntimePermission.NOTIFICATIONS -> permissionLauncher.launch(
+                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                )
+            }
+            is SetupAction.SystemSettings -> {
+                val settingsIntent = collectorApplication.accessManager.settingsIntent(action)
+                if (settingsIntent == null) {
+                    viewModel.reportMessage("ACCESS_SETTINGS_UNAVAILABLE")
+                    return
+                }
+                try {
+                    startActivity(settingsIntent)
+                } catch (_: ActivityNotFoundException) {
+                    viewModel.reportMessage("ACCESS_SETTINGS_UNAVAILABLE")
+                    viewModel.refreshAccess()
+                } catch (_: SecurityException) {
+                    viewModel.reportMessage("ACCESS_SETTINGS_UNAVAILABLE")
+                    viewModel.refreshAccess()
+                }
+            }
+            SetupAction.ShowInputMethodPicker -> collectorApplication.accessManager.showInputMethodPicker()
         }
     }
 

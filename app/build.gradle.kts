@@ -116,6 +116,7 @@ dependencies {
     debugImplementation(libs.compose.ui.test.manifest)
 
     testImplementation(libs.junit4)
+    testImplementation(libs.concurrent.futures)
     // Only to read the shared Protocol v1 corpus in a test; no production code parses JSON this way.
     testImplementation(libs.gson)
 

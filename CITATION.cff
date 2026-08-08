@@ -33,5 +33,5 @@ license: MIT
 # (v1.0.0-rc.1 through v1.0.0-rc.3) carry the pre-rename identity, a different applicationId, and
 # different file formats; they are unsupported and are not versions of this software. Keep both
 # fields in step with the tag at every release.
-version: 1.0.0-rc.5
-date-released: "2026-08-07"
+version: 1.0.0-rc.6
+date-released: "2026-08-09"

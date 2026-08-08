@@ -26,6 +26,7 @@ import java.time.ZoneId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -111,9 +112,9 @@ class InterventionSchedulePlannerTest {
         val configuration = configuration(OneTimeSchedule(15, RelativeClock.CALENDAR_TIME))
         val metadata = runningMetadata()
         val first = planner.next(configuration, metadata, at(1), ZoneId.of("UTC"))
-        val afterProcessDeath = planner.next(configuration, metadata, at(2, "new-boot"), ZoneId.of("UTC"))
-        assertEquals(first.single().occurrenceId, afterProcessDeath.single().occurrenceId)
-        assertEquals(first.single().scheduledFor.wallTimeUtcMillis, afterProcessDeath.single().scheduledFor.wallTimeUtcMillis)
+        val afterProcessRestart = planner.next(configuration, metadata, at(2), ZoneId.of("UTC"))
+        assertEquals(first.single().occurrenceId, afterProcessRestart.single().occurrenceId)
+        assertEquals(first.single().scheduledFor.wallTimeUtcMillis, afterProcessRestart.single().scheduledFor.wallTimeUtcMillis)
 
         val completed = metadata.copy(state = ExperimentState.COMPLETED)
         assertTrue(planner.next(configuration, completed, at(2), ZoneId.of("UTC")).isEmpty())
@@ -157,7 +158,7 @@ class InterventionSchedulePlannerTest {
 
         val persisted = metadata.copy(occurrences = mapOf(first.occurrenceId to first))
         val afterProcessDeath = InterventionSchedulePlanner { 0 }
-            .next(configuration, persisted, at(5, "new-boot"), ZoneId.of("Pacific/Kiritimati"))
+            .next(configuration, persisted, at(5), ZoneId.of("Pacific/Kiritimati"))
             .single()
         assertEquals(first, afterProcessDeath)
 
@@ -169,6 +170,18 @@ class InterventionSchedulePlannerTest {
             .single()
         assertEquals("random:2026-01-01:0:1", second.scheduleKey)
         assertEquals(at(11 * 60 + 59).wallTimeUtcMillis, second.scheduledFor.wallTimeUtcMillis)
+    }
+
+    @Test
+    fun plannerCannotManufactureActiveWorkAcrossABootBoundary() {
+        assertThrows(IllegalArgumentException::class.java) {
+            planner.next(
+                configuration(OneTimeSchedule(15, RelativeClock.CALENDAR_TIME)),
+                runningMetadata(),
+                at(2, "new-boot"),
+                ZoneId.of("UTC"),
+            )
+        }
     }
 
     @Test

@@ -2,6 +2,7 @@ package cool.jacoblin.particeps.core.runtime
 
 import cool.jacoblin.particeps.core.collector.AdmissionToken
 internal class EventAdmissionGate {
+    private val identity = Any()
     private var epoch = 0L
     private var mode = Mode.CLOSED
     private var drainBoundaryElapsedNanos = Long.MIN_VALUE
@@ -12,11 +13,11 @@ internal class EventAdmissionGate {
         epoch += 1
         mode = Mode.ACTIVE
         drainBoundaryElapsedNanos = Long.MIN_VALUE
-        return EpochToken(epoch)
+        return EpochToken(identity, epoch)
     }
 
     @Synchronized
-    fun capture(): AdmissionToken? = if (mode == Mode.ACTIVE) EpochToken(epoch) else null
+    fun capture(): AdmissionToken? = if (mode == Mode.ACTIVE) EpochToken(identity, epoch) else null
 
     @Synchronized
     fun beginDrain(boundaryElapsedNanos: Long): AdmissionToken {
@@ -24,14 +25,7 @@ internal class EventAdmissionGate {
         require(boundaryElapsedNanos >= 0) { "Drain boundary must be non-negative" }
         mode = Mode.DRAINING
         drainBoundaryElapsedNanos = boundaryElapsedNanos
-        return EpochToken(epoch)
-    }
-
-    @Synchronized
-    fun restoreActive(token: AdmissionToken) {
-        check(token.epoch() == epoch && mode == Mode.DRAINING) { "Cannot restore a stale admission epoch" }
-        mode = Mode.ACTIVE
-        drainBoundaryElapsedNanos = Long.MIN_VALUE
+        return EpochToken(identity, epoch)
     }
 
     @Synchronized
@@ -57,9 +51,15 @@ internal class EventAdmissionGate {
         drainBoundaryElapsedNanos = Long.MIN_VALUE
     }
 
-    private fun AdmissionToken.epoch(): Long = (this as? EpochToken)?.epoch ?: Long.MIN_VALUE
+    private fun AdmissionToken.epoch(): Long = (this as? EpochToken)
+        ?.takeIf { it.owner === identity }
+        ?.epoch
+        ?: Long.MIN_VALUE
 
-    private data class EpochToken(val epoch: Long) : AdmissionToken
+    private class EpochToken(
+        val owner: Any,
+        val epoch: Long,
+    ) : AdmissionToken
 
     private enum class Mode {
         CLOSED,

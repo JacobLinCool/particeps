@@ -305,7 +305,14 @@ class ResearchExportTest {
         override suspend fun initialize(metadata: StudyMetadata) { this.metadata = metadata }
         override suspend fun saveMetadata(metadata: StudyMetadata) { this.metadata = metadata }
         override suspend fun appendEvent(event: RecordedEvent) = error("Not supported")
-        override suspend fun appendEventAtomically(event: RecordedEvent, metadata: StudyMetadata) = error("Not supported")
+        override suspend fun appendEventAtomically(
+            event: RecordedEvent,
+            metadata: StudyMetadata,
+            failureTime: ResearchTime,
+        ) = error("Not supported")
+        override suspend fun resolvePendingAppendFailure(
+            reason: cool.jacoblin.particeps.core.model.TransitionReason,
+        ): StudyMetadata? = null
         override suspend fun readEvents(fromSequenceInclusive: Long, upToSequenceInclusive: Long,
             consume: (RecordedEvent) -> Unit) {
             events.filter { it.sequenceNumber in fromSequenceInclusive..upToSequenceInclusive }.forEach(consume)

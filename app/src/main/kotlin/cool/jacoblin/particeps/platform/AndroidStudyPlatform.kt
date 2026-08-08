@@ -1,7 +1,6 @@
 package cool.jacoblin.particeps.platform
 
 import android.Manifest
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -15,35 +14,50 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.Operation
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.await
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import cool.jacoblin.particeps.CollectionService
 import cool.jacoblin.particeps.DailyStatusWorker
 import cool.jacoblin.particeps.ExperimentDeadlineWorker
 import cool.jacoblin.particeps.MainActivity
+import cool.jacoblin.particeps.ParticepsNotificationChannels
 import cool.jacoblin.particeps.R
+import cool.jacoblin.particeps.SafetyPauseWorker
 import cool.jacoblin.particeps.SurveyActivity
 import cool.jacoblin.particeps.UploadWorker
 import cool.jacoblin.particeps.core.application.StudyCollectionHost
 import cool.jacoblin.particeps.core.application.StudyWorkScheduler
+import cool.jacoblin.particeps.core.application.participantStartedAt
+import cool.jacoblin.particeps.core.application.studyLifetime
 import cool.jacoblin.particeps.core.definition.StudyConfiguration
 import cool.jacoblin.particeps.core.definition.SurveyAction
 import cool.jacoblin.particeps.core.definition.UploadConfiguration
 import cool.jacoblin.particeps.core.model.InterventionOccurrence
+import cool.jacoblin.particeps.core.model.ExperimentState
+import cool.jacoblin.particeps.core.model.ResearchTime
+import cool.jacoblin.particeps.core.model.SafetyPauseReason
+import cool.jacoblin.particeps.core.model.StudyMetadata
+import cool.jacoblin.particeps.core.model.TransitionReason
 import cool.jacoblin.particeps.core.runtime.OccurrenceClaimResult
 import cool.jacoblin.particeps.core.runtime.OccurrenceExpiryResult
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 class AndroidStudyCollectionHost(
     private val context: Context,
 ) : StudyCollectionHost {
-    override fun start(studyTitle: String, usesLocation: Boolean) {
+    override suspend fun start(studyTitle: String, usesLocation: Boolean) {
         CollectionService.start(context, studyTitle, usesLocation)
         retractStaleDailyReminder()
     }
@@ -75,29 +89,44 @@ class AndroidStudyWorkScheduler(
     private val workManager = WorkManager.getInstance(context.applicationContext)
     private val notificationManager = context.getSystemService(NotificationManager::class.java)
 
-    override fun schedule(configuration: StudyConfiguration) {
-        val deadline = OneTimeWorkRequestBuilder<ExperimentDeadlineWorker>()
-            .setInitialDelay(configuration.durationHours.toLong(), TimeUnit.HOURS)
-            .setInputData(
-                Data.Builder()
-                    .putString(ExperimentDeadlineWorker.KEY_EXPERIMENT_ID, configuration.experimentId)
-                    .build(),
-            )
-            .build()
-        workManager.enqueueUniqueWork(
-            deadlineWorkName(configuration.experimentId),
-            ExistingWorkPolicy.REPLACE,
-            deadline,
-        )
-        configuration.upload?.let {
-            scheduleUpload(
-                configuration.experimentId,
-                configuration.configurationId,
-                it,
-                ExistingWorkPolicy.REPLACE,
-            )
+    override suspend fun ensureCollectionWork(
+        configuration: StudyConfiguration,
+        metadata: StudyMetadata,
+        observedAt: ResearchTime,
+    ) {
+        val plan = collectionWorkPlan(configuration, metadata, observedAt)
+        val mutations = mutableListOf<() -> Operation>()
+        plan.deadlineDelayMillis?.let { deadlineDelayMillis ->
+            val deadline = OneTimeWorkRequestBuilder<ExperimentDeadlineWorker>()
+                .setInitialDelay(deadlineDelayMillis, TimeUnit.MILLISECONDS)
+                .setInputData(
+                    Data.Builder()
+                        .putString(ExperimentDeadlineWorker.KEY_EXPERIMENT_ID, configuration.experimentId)
+                        .build(),
+                )
+                .build()
+            mutations += {
+                workManager.enqueueUniqueWork(
+                    deadlineWorkName(configuration.experimentId),
+                    plan.deadlinePolicy,
+                    deadline,
+                )
+            }
         }
-        scheduleDailyStatus()
+        if (plan.scheduleDailyStatus) {
+            mutations += ::scheduleDailyStatus
+        }
+        if (plan.scheduleUpload) configuration.upload?.let { upload ->
+            mutations += {
+                uploadOperation(
+                    configuration.experimentId,
+                    configuration.configurationId,
+                    upload,
+                    ExistingWorkPolicy.KEEP,
+                )
+            }
+        }
+        awaitWorkMutations(mutations)
     }
 
     /**
@@ -114,7 +143,7 @@ class AndroidStudyWorkScheduler(
      * already-posted notification is a separate matter: pausing retracts it, because it states a
      * state that has just stopped being true. See [AndroidStudyCollectionHost].
      */
-    private fun scheduleDailyStatus() {
+    private fun scheduleDailyStatus(): Operation =
         workManager.enqueueUniquePeriodicWork(
             DAILY_STATUS_WORK_NAME,
             ExistingPeriodicWorkPolicy.KEEP,
@@ -122,37 +151,41 @@ class AndroidStudyWorkScheduler(
                 .setInitialDelay(1, TimeUnit.DAYS)
                 .build(),
         )
-    }
 
-    override fun replaceInterventionWork(
+    override suspend fun replaceInterventionWork(
         configuration: StudyConfiguration,
         deliveries: List<InterventionOccurrence>,
         expiries: List<InterventionOccurrence>,
     ) {
-        workManager.cancelAllWorkByTag(InterventionWorkIdentity.deliveryTag(configuration.experimentId))
-        workManager.cancelAllWorkByTag(InterventionWorkIdentity.expiryTag(configuration.experimentId))
-        deliveries.forEach { enqueueDelivery(configuration, it, ExistingWorkPolicy.REPLACE) }
-        expiries.forEach { enqueueExpiry(configuration, it, ExistingWorkPolicy.REPLACE) }
+        awaitWorkMutations(
+            listOf(
+                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.deliveryTag(configuration.experimentId)) },
+                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.expiryTag(configuration.experimentId)) },
+            ),
+        )
+        awaitWorkMutations(
+            deliveries.map { occurrence ->
+                { enqueueDelivery(configuration, occurrence, ExistingWorkPolicy.REPLACE) }
+            } + expiries.map { occurrence ->
+                { enqueueExpiry(configuration, occurrence, ExistingWorkPolicy.REPLACE) }
+            },
+        )
     }
 
-    override fun enqueueOccurrence(configuration: StudyConfiguration, occurrence: InterventionOccurrence) {
-        enqueueOccurrence(configuration, occurrence, ExistingWorkPolicy.KEEP)
-    }
-
-    private fun enqueueOccurrence(
-        configuration: StudyConfiguration,
-        occurrence: InterventionOccurrence,
-        policy: ExistingWorkPolicy,
-    ) {
-        enqueueDelivery(configuration, occurrence, policy)
-        enqueueExpiry(configuration, occurrence, policy)
+    override suspend fun enqueueOccurrence(configuration: StudyConfiguration, occurrence: InterventionOccurrence) {
+        awaitWorkMutations(
+            listOf(
+                { enqueueDelivery(configuration, occurrence, ExistingWorkPolicy.KEEP) },
+                { enqueueExpiry(configuration, occurrence, ExistingWorkPolicy.KEEP) },
+            ),
+        )
     }
 
     private fun enqueueDelivery(
         configuration: StudyConfiguration,
         occurrence: InterventionOccurrence,
         policy: ExistingWorkPolicy,
-    ) {
+    ): Operation {
         val now = System.currentTimeMillis()
         val delay = (occurrence.scheduledFor.wallTimeUtcMillis - now).coerceAtLeast(0)
         val request = OneTimeWorkRequestBuilder<InterventionWorker>()
@@ -160,7 +193,7 @@ class AndroidStudyWorkScheduler(
             .setInputData(Data.Builder().putString(InterventionWorker.KEY_OCCURRENCE_ID, occurrence.occurrenceId).build())
             .addTag(InterventionWorkIdentity.deliveryTag(configuration.experimentId))
             .build()
-        workManager.enqueueUniqueWork(
+        return workManager.enqueueUniqueWork(
             InterventionWorkIdentity.deliveryName(configuration.experimentId, occurrence.occurrenceId),
             policy,
             request,
@@ -171,14 +204,14 @@ class AndroidStudyWorkScheduler(
         configuration: StudyConfiguration,
         occurrence: InterventionOccurrence,
         policy: ExistingWorkPolicy,
-    ) {
+    ): Operation {
         val now = System.currentTimeMillis()
         val expiry = OneTimeWorkRequestBuilder<InterventionExpiryWorker>()
             .setInitialDelay((occurrence.expiresAtUtcMillis - now).coerceAtLeast(0), TimeUnit.MILLISECONDS)
             .setInputData(Data.Builder().putString(InterventionWorker.KEY_OCCURRENCE_ID, occurrence.occurrenceId).build())
             .addTag(InterventionWorkIdentity.expiryTag(configuration.experimentId))
             .build()
-        workManager.enqueueUniqueWork(
+        return workManager.enqueueUniqueWork(
             InterventionWorkIdentity.expiryName(configuration.experimentId, occurrence.occurrenceId),
             policy,
             expiry,
@@ -193,14 +226,24 @@ class AndroidStudyWorkScheduler(
      * self-renewing one-time chain honours whatever the signed configuration asked for.
      *
      * The cost of the chain is that it has no platform-side repetition to fall back on, so
-     * [reschedulePendingWork] re-establishes it whenever a session initialises.
+     * [ensureCollectionWork] re-establishes it on Start, Resume, same-boot reconciliation, and
+     * terminal upload-tail repair.
      */
-    fun scheduleUpload(
+    internal suspend fun scheduleUpload(
         experimentId: String,
         configurationId: String,
         upload: UploadConfiguration,
         policy: ExistingWorkPolicy,
     ) {
+        awaitWorkMutations(listOf({ uploadOperation(experimentId, configurationId, upload, policy) }))
+    }
+
+    private fun uploadOperation(
+        experimentId: String,
+        configurationId: String,
+        upload: UploadConfiguration,
+        policy: ExistingWorkPolicy,
+    ): Operation {
         val constraints = Constraints.Builder()
             // Default to Wi-Fi. Uploading a study over a participant's mobile data is a cost they
             // did not agree to unless the signed configuration says so.
@@ -221,49 +264,88 @@ class AndroidStudyWorkScheduler(
             )
             .addTag(uploadTag(experimentId))
             .build()
-        workManager.enqueueUniqueWork(uploadWorkName(experimentId, configurationId), policy, request)
+        return workManager.enqueueUniqueWork(uploadWorkName(experimentId, configurationId), policy, request)
     }
 
-    /**
-     * Re-establishes the delivery chain after a process restart. KEEP, so a link already waiting
-     * is left alone rather than having its delay reset on every app start.
-     */
-    fun reschedulePendingWork(configuration: StudyConfiguration) {
-        // Also covers a study that was already under way before the reminder existed, and one
-        // whose periodic work a force stop cleared.
-        scheduleDailyStatus()
-        configuration.upload?.let {
-            scheduleUpload(
-                configuration.experimentId,
-                configuration.configurationId,
-                it,
-                ExistingWorkPolicy.KEEP,
-            )
-        }
-    }
-
-    override fun cancelInterventionWork(experimentId: String, occurrenceIds: Set<String>) {
-        workManager.cancelAllWorkByTag(InterventionWorkIdentity.deliveryTag(experimentId))
-        workManager.cancelAllWorkByTag(InterventionWorkIdentity.expiryTag(experimentId))
-        cancelInterventionNotifications(occurrenceIds)
+    override suspend fun cancelInterventionWork(experimentId: String, occurrenceIds: Set<String>) {
+        awaitCleanupMutations(
+            notificationCleanup = { cancelInterventionNotifications(occurrenceIds) },
+            mutations = listOf(
+                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.deliveryTag(experimentId)) },
+                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.expiryTag(experimentId)) },
+            ),
+        )
     }
 
     override fun cancelInterventionNotifications(occurrenceIds: Set<String>) {
         occurrenceIds.forEach { notificationManager.cancel(it, 0) }
     }
 
-    override fun cancelCollectionWork(experimentId: String, occurrenceIds: Set<String>) {
-        cancelInterventionWork(experimentId, occurrenceIds)
-        workManager.cancelUniqueWork(deadlineWorkName(experimentId))
-        // Finished or withdrawn: the reminder has nothing left to remind anyone of, and today's
-        // notification would otherwise sit in the shade after the study it describes has ended.
-        workManager.cancelUniqueWork(DAILY_STATUS_WORK_NAME)
-        notificationManager.cancel(DailyStatusWorker.NOTIFICATION_TAG, 0)
+    override suspend fun scheduleSafetyPauseRetry(experimentId: String, reason: SafetyPauseReason) {
+        val request = OneTimeWorkRequestBuilder<SafetyPauseWorker>()
+            .also { builder ->
+                SafetyPauseWorkIdentity.tags(experimentId, reason).forEach(builder::addTag)
+            }
+            .setInputData(
+                Data.Builder()
+                    .putString(SafetyPauseWorker.KEY_EXPERIMENT_ID, experimentId)
+                    .putString(SafetyPauseWorker.KEY_REASON, reason.name)
+                    .build(),
+            )
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
+            .build()
+        awaitWorkMutations(
+            listOf({
+                workManager.enqueueUniqueWork(
+                    SafetyPauseWorkIdentity.workName(experimentId, reason),
+                    ExistingWorkPolicy.REPLACE,
+                    request,
+                )
+            }),
+        )
     }
 
-    override fun cancel(experimentId: String) {
-        cancelCollectionWork(experimentId, emptySet())
-        workManager.cancelAllWorkByTag(uploadTag(experimentId))
+    override suspend fun pendingSafetyPauseReason(experimentId: String): SafetyPauseReason? =
+        withContext(Dispatchers.IO) {
+            val active = workManager.getWorkInfosByTag(SafetyPauseWorkIdentity.COMMON_TAG).get()
+                .filterNot { it.state.isFinished }
+            SafetyPauseWorkIdentity.activeReason(experimentId, active.map { it.tags })
+        }
+
+    override suspend fun cancelSafetyPauseRetry() {
+        withContext(NonCancellable) {
+            awaitWorkMutations(listOf({ workManager.cancelAllWorkByTag(SafetyPauseWorkIdentity.COMMON_TAG) }))
+        }
+    }
+
+    override suspend fun cancelCollectionWork(experimentId: String, occurrenceIds: Set<String>) {
+        awaitCleanupMutations(
+            notificationCleanup = {
+                cancelInterventionNotifications(occurrenceIds)
+                // Finished or withdrawn: the reminder has nothing left to remind anyone of, and
+                // today's notification must not outlive the study it describes.
+                notificationManager.cancel(DailyStatusWorker.NOTIFICATION_TAG, 0)
+            },
+            mutations = listOf(
+                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.deliveryTag(experimentId)) },
+                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.expiryTag(experimentId)) },
+                { workManager.cancelUniqueWork(deadlineWorkName(experimentId)) },
+                { workManager.cancelUniqueWork(DAILY_STATUS_WORK_NAME) },
+            ),
+        )
+    }
+
+    override suspend fun cancel(experimentId: String) {
+        awaitCleanupMutations(
+            notificationCleanup = { notificationManager.cancel(DailyStatusWorker.NOTIFICATION_TAG, 0) },
+            mutations = listOf(
+                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.deliveryTag(experimentId)) },
+                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.expiryTag(experimentId)) },
+                { workManager.cancelUniqueWork(deadlineWorkName(experimentId)) },
+                { workManager.cancelUniqueWork(DAILY_STATUS_WORK_NAME) },
+                { workManager.cancelAllWorkByTag(uploadTag(experimentId)) },
+            ),
+        )
     }
 
     private fun deadlineWorkName(experimentId: String) = "particeps-deadline-$experimentId"
@@ -273,6 +355,152 @@ class AndroidStudyWorkScheduler(
         fun uploadWorkName(experimentId: String, configurationId: String) =
             "particeps-upload-$experimentId-$configurationId"
     }
+}
+
+internal data class CollectionWorkPlan(
+    val deadlineDelayMillis: Long?,
+    val deadlinePolicy: ExistingWorkPolicy,
+    val scheduleDailyStatus: Boolean,
+    val scheduleUpload: Boolean,
+)
+
+/** Pure, auditable policy used by every start, resume and recovery scheduling acknowledgement. */
+internal fun collectionWorkPlan(
+    configuration: StudyConfiguration,
+    metadata: StudyMetadata,
+    observedAt: ResearchTime,
+): CollectionWorkPlan {
+    require(metadata.experimentId == configuration.experimentId) { "Experiment ID mismatch" }
+    require(metadata.configurationId == configuration.configurationId) { "Configuration ID mismatch" }
+    val started = metadata.state in STARTED_STUDY_STATES
+    if (!started) {
+        require(metadata.transitions.none { it.reason == TransitionReason.PARTICIPANT_STARTED }) {
+            "Pre-start study contains a participant start"
+        }
+        return CollectionWorkPlan(
+            deadlineDelayMillis = null,
+            deadlinePolicy = ExistingWorkPolicy.REPLACE,
+            scheduleDailyStatus = false,
+            scheduleUpload = false,
+        )
+    }
+    participantStartedAt(metadata)
+    val active = metadata.state in ACTIVE_STUDY_STATES
+    if (!active) {
+        return CollectionWorkPlan(
+            deadlineDelayMillis = null,
+            deadlinePolicy = ExistingWorkPolicy.REPLACE,
+            scheduleDailyStatus = false,
+            scheduleUpload = configuration.upload != null,
+        )
+    }
+    val lifetime = studyLifetime(configuration, metadata, observedAt)
+    return CollectionWorkPlan(
+        // REPLACE is intentional: same-boot TIME_CHANGED/process recovery and rc5's reset deadline
+        // must be corrected from the immutable participant-start boundary on every acknowledged
+        // ensure. Cross-boot active repair is rejected by studyLifetime before reaching this plan.
+        deadlineDelayMillis = lifetime.remainingMillis.takeIf { active },
+        deadlinePolicy = ExistingWorkPolicy.REPLACE,
+        scheduleDailyStatus = active,
+        scheduleUpload = configuration.upload != null,
+    )
+}
+
+private val ACTIVE_STUDY_STATES = setOf(ExperimentState.RUNNING, ExperimentState.PAUSED)
+private val STARTED_STUDY_STATES = ACTIVE_STUDY_STATES + setOf(
+    ExperimentState.COMPLETED,
+    ExperimentState.WITHDRAWN,
+)
+
+/** Does not report a retry boundary as durable until WorkManager commits its transaction. */
+internal suspend fun awaitWorkPersistence(operation: Operation) {
+    operation.await()
+}
+
+/** Invokes every mutation and awaits every returned transaction before surfacing any failure. */
+internal suspend fun awaitWorkMutations(mutations: List<() -> Operation>) {
+    var firstFailure: Throwable? = null
+    val operations = buildList {
+        mutations.forEach { mutation ->
+            try {
+                add(mutation())
+            } catch (failure: Throwable) {
+                val existing = firstFailure
+                if (existing == null) firstFailure = failure else existing.addSuppressed(failure)
+            }
+        }
+    }
+    operations.forEach { operation ->
+        try {
+            awaitWorkPersistence(operation)
+        } catch (failure: Throwable) {
+            val existing = firstFailure
+            if (existing == null) firstFailure = failure else existing.addSuppressed(failure)
+        }
+    }
+    firstFailure?.let { throw it }
+}
+
+/** Notification cleanup cannot prevent any WorkManager cancellation from being attempted. */
+internal suspend fun awaitCleanupMutations(
+    notificationCleanup: () -> Unit,
+    mutations: List<() -> Operation>,
+) = withContext(NonCancellable) {
+    var firstFailure: Throwable? = try {
+        notificationCleanup()
+        null
+    } catch (failure: Throwable) {
+        failure
+    }
+    try {
+        awaitWorkMutations(mutations)
+    } catch (failure: Throwable) {
+        val existing = firstFailure
+        if (existing == null) firstFailure = failure else existing.addSuppressed(failure)
+    }
+    firstFailure?.let { throw it }
+}
+
+internal object SafetyPauseWorkIdentity {
+    const val COMMON_TAG = "particeps-safety-pause"
+    private const val STUDY_TAG_PREFIX = "particeps-safety-pause-study:"
+    private const val REASON_TAG_PREFIX = "particeps-safety-pause-reason:"
+
+    fun workName(experimentId: String, reason: SafetyPauseReason) =
+        "particeps-safety-pause-${studyIdentity(experimentId)}-${reason.name}"
+
+    fun tags(experimentId: String, reason: SafetyPauseReason): Set<String> = setOf(
+        COMMON_TAG,
+        studyTag(experimentId),
+        "$REASON_TAG_PREFIX${reason.name}",
+    )
+
+    fun activeReason(experimentId: String, activeWorkTags: List<Set<String>>): SafetyPauseReason? {
+        val decoded = activeWorkTags.map { tags ->
+            check(COMMON_TAG in tags) { "Active safety-pause work is missing its common tag" }
+            val studyTags = tags.filter { it.startsWith(STUDY_TAG_PREFIX) }
+            val reasonTags = tags.filter { it.startsWith(REASON_TAG_PREFIX) }
+            check(studyTags.size == 1 && reasonTags.size == 1) {
+                "Active safety-pause work has malformed identity tags"
+            }
+            val reasonName = reasonTags.single().removePrefix(REASON_TAG_PREFIX)
+            val reason = SafetyPauseReason.entries.singleOrNull { it.name == reasonName }
+                ?: error("Active safety-pause work has an unknown reason")
+            studyTags.single() to reason
+        }
+        val reasons = decoded
+            .filter { (tag, _) -> tag == studyTag(experimentId) }
+            .mapTo(mutableSetOf()) { (_, reason) -> reason }
+        check(reasons.size <= 1) { "Multiple active safety-pause reasons exist for one study" }
+        return reasons.singleOrNull()
+    }
+
+    private fun studyTag(experimentId: String) = "$STUDY_TAG_PREFIX${studyIdentity(experimentId)}"
+
+    private fun studyIdentity(experimentId: String): String = MessageDigest
+        .getInstance("SHA-256")
+        .digest(experimentId.toByteArray(Charsets.UTF_8))
+        .joinToString("") { byte -> "%02x".format(byte) }
 }
 
 internal object InterventionWorkIdentity {
@@ -395,17 +623,10 @@ class InterventionWorker(
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
         var finalized = false
         try {
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    applicationContext.getString(R.string.intervention_channel),
-                    NotificationManager.IMPORTANCE_DEFAULT,
-                ),
-            )
             manager.notify(
                 occurrenceId,
                 0,
-                android.app.Notification.Builder(applicationContext, CHANNEL_ID)
+                android.app.Notification.Builder(applicationContext, ParticepsNotificationChannels.INTERVENTIONS)
                     .setSmallIcon(android.R.drawable.ic_dialog_info)
                     .setContentTitle(dispatch.action.notificationTitle)
                     .setContentText(dispatch.action.notificationMessage)
@@ -440,7 +661,6 @@ class InterventionWorker(
     companion object {
         const val KEY_OCCURRENCE_ID = "occurrence_id"
         const val ACTION_OPEN_OCCURRENCE = "cool.jacoblin.particeps.OPEN_OCCURRENCE"
-        private const val CHANNEL_ID = "research-interventions-v1"
     }
 }
 

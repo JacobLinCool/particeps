@@ -8,11 +8,28 @@ All workflows live in [`.github/workflows`](../../.github/workflows). The two th
 
 **`Android CI`** (`ci.yml`) runs on pushes to `main`, on pull requests, and on manual dispatch. It
 runs unit tests, Android lint, Protocol/catalog conformance, Collector capability checks, and debug
-and release builds. Successful runs retain the debug APK as an artifact for 14 days.
+and release builds. A dependent job then runs the complete connected suite on an API 34 Google APIs
+emulator. Successful runs retain the debug APK as an artifact for 14 days.
 
 **`Android Release`** (`release.yml`) accepts only `v<SemVer>` tags that are reachable from `main` — for example `v0.1.0`. A tag with a prerelease suffix produces a GitHub prerelease.
 
-The release workflow reconstructs the same `.signing` configuration used locally and re-runs tests and lint. It writes the tag into `versionName` and the workflow run number into `versionCode`, then verifies the APK that Gradle signed with `apksigner verify`. The GitHub release carries both the APK and its SHA-256 checksum. Any test, signing, or verification failure stops the release; nothing is published.
+The release workflow first runs the complete connected suite on an API 34 Google APIs emulator. Only
+after that gate passes does the dependent release job reconstruct the same `.signing` configuration
+used locally and re-run host-side tests plus debug and release lint. It writes the tag into
+`versionName` and the workflow run number into `versionCode`, then verifies the APK that Gradle signed
+with `apksigner verify`. Verification must report exactly one signer certificate and its SHA-256 must
+match the checked-in production identity anchor; printing certificate details is not sufficient. The
+GitHub release carries both the APK and its SHA-256 checksum. Any device test, host-side test,
+signing, identity, or verification failure stops the release; nothing is published and signing
+secrets are not materialized before the device gate succeeds.
+
+Permissions are job-scoped. The instrumented gate, including the third-party emulator action, gets
+only `contents: read`; only the dependent release job gets `contents: write` to create or update the
+GitHub Release.
+
+Particeps is distributed directly as that signed APK. A Play listing, Play release track, and AAB
+are not prerequisites for this release process; do not replace the verified APK artifact with an
+unsigned APK or an unrelated bundle build.
 
 ## The published site
 
@@ -39,36 +56,57 @@ Two unrelated keys are involved, and they must never be interchanged.
 
 Losing the Android signing private key means no future build can update a directly installed app under the same identity. Keep an offline, encrypted backup.
 
-### No release so far can be updated in place
+The sole repository source of truth for the production Android certificate identity is
+[`.github/android-release-signing-certificate.sha256`](../../.github/android-release-signing-certificate.sha256).
+It is the lowercase SHA-256 of the rc.5 signing **certificate**, not the APK checksum, keystore
+checksum, or public-key digest. `tools/verify_release_apk.py` requires exactly one APK signer and
+compares its certificate digest with that anchor. Do not change the anchor to make a mismatched build
+pass: a deliberate certificate rotation breaks direct update continuity and requires an explicit new
+application-distribution plan.
 
-No release published so far can be updated in place. The application ID moved twice and the release
-signing key was rotated, and a device accepts an update only when both are unchanged.
-[CHANGELOG.md](../../CHANGELOG.md) records which release carries which application ID, and states
-that consequence once for every reader.
+### Update compatibility
+
+`v1.0.0-rc.5` established the current `cool.jacoblin.particeps` application ID and the certificate in
+the repository identity anchor. `v1.0.0-rc.6` keeps both, so it updates rc.5 in place. Earlier
+candidates used another application ID, another certificate, or incompatible file identities and
+cannot update directly to the current build. [CHANGELOG.md](../../CHANGELOG.md) records the action
+required from each release.
 
 The key was rotated to correct the certificate's subject, which named the pre-rename product. A
 certificate is signed over its own subject, so changing it means issuing a new one. That was
-affordable only because every tag published to that point was a pre-1.0 release candidate and
-Developer Verification had not yet been registered. It stops being affordable the moment a
-participant is running a released build, so it does not happen again.
+affordable only before the current identity and key were handed to testers. It stops being
+affordable once a participant is running rc.5 or later, so it does not happen again.
 
-Say this in the release notes. A tester expecting an in-place update reads a correct install as a
-failed one. The notes for `v1.0.0-rc.4` do not say it, so it still has to reach testers another
-way.
+State update compatibility in every release note. In particular, rc.5 updates in place to rc.6;
+rc.4 and earlier do not.
 
 ## Android Developer Verification
 
-Google's Developer Verification binds a verified developer identity to the package names that developer distributes and the certificates those packages are signed with. Registration is per package name, and no name this project has used was ever registered. `cool.jacoblin.particeps` therefore needs its own entry from scratch. Register it against the fingerprint of the **current** keystore — the rotation above means any fingerprint recorded before it is wrong.
+The maintainer has confirmed that the developer identity in Android Developer Console is verified.
+That is distinct from proving that a particular package name and signing certificate are registered:
+this repository contains no authoritative evidence of the package-registration status. Before
+relying on Developer Verification for distribution, check the console entry for
+`cool.jacoblin.particeps` and confirm that it carries the fingerprint of the **current** keystore.
+Register the package/certificate pair there if it is absent; do not infer this step from identity
+verification alone.
 
 ```bash
-apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk
+python3 tools/verify_release_apk.py \
+  "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" \
+  app/build/outputs/apk/release/app-release.apk
 ```
 
-The programme's requirements and deadlines are Google's and change; check the current rules when a release actually depends on them rather than trusting this paragraph.
+Developer Verification does not make Google Play the distribution channel. This project continues
+to publish its signed APK directly. The programme's requirements and deadlines are Google's and
+change; check the current rules when a release actually depends on them rather than trusting this
+paragraph.
 
 ## Local signing material
 
-`assembleRelease` produces a signed APK when `.signing/release-signing.properties` exists locally, and an unsigned release APK otherwise. The whole `.signing/` directory is git-ignored and must stay that way.
+`assembleRelease` produces the direct-distribution signed APK when
+`.signing/release-signing.properties` exists locally, and an unsigned release APK otherwise. The
+whole `.signing/` directory is git-ignored and must stay that way. This process does not require
+`bundleRelease` or an AAB.
 
 ## GitHub secrets
 
@@ -78,6 +116,9 @@ Create four repository secrets under Settings → Secrets and variables → Acti
 - `ANDROID_KEYSTORE_PASSWORD`
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
+
+The keystore and alias selected by these secrets must produce the anchored certificate. The workflow
+rejects an otherwise valid APK when it is signed by any other certificate or by multiple signers.
 
 On macOS you can pipe the keystore straight to the GitHub CLI without leaving a copy in the working directory:
 
@@ -96,7 +137,12 @@ git tag -a v0.1.0 -m "v0.1.0"
 git push origin v0.1.0
 ```
 
-Before tagging, update `version` and `date-released` in [`CITATION.cff`](../../CITATION.cff). Both fields are present again and name `1.0.0-rc.4`, the first post-rename tag. They were absent before it because every tag up to `v1.0.0-rc.3` carries the old identity. The file named no version rather than attributing one of those releases to Particeps. Keep both fields in step with the tag at every release.
+Before tagging, update `version` and `date-released` in
+[`CITATION.cff`](../../CITATION.cff). Keep both fields in step with the tag at every release.
+Add exactly one non-empty `## <tag> — YYYY-MM-DD` section to
+[`CHANGELOG.md`](../../CHANGELOG.md), including explicit update or fresh-install instructions. The
+workflow extracts that exact section as the GitHub Release notes and fails before publishing if the
+section is missing, duplicated, malformed, or empty; it does not substitute generated notes.
 
 ### One-off: the Particeps cutover
 
@@ -108,8 +154,9 @@ The rename is not a recurring step, and it is not finished when the code lands e
 
 What remains:
 
-- Register `cool.jacoblin.particeps` under Developer Verification against the current keystore fingerprint, as above.
-- The release notes for `v1.0.0-rc.4` are the generated changelog and do not say that it is a fresh install rather than an update. Say it to testers by some other route, and in the notes of the next tag.
+- Confirm the `cool.jacoblin.particeps` package/certificate entry in Android Developer Console as
+  described above. Developer identity verification is complete; package registration is not marked
+  complete without console evidence.
 - Reissue any join link or QR that pointed at the old Pages path, as the section above describes. This is per study rather than a single step: it is finished only when no issued link and no printed QR still points there.
 
 ## Pinned signers

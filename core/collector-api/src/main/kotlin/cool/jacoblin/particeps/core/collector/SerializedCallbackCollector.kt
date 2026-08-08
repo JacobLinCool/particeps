@@ -45,6 +45,12 @@ abstract class SerializedCallbackCollector(
         }
     }
 
+    final override suspend fun onAdmissionOpened() {
+        checkNotNull(consumerJob) { "Collector is not started" }
+        check(sourceState == SourceState.REGISTERED) { "Collector source is not registered" }
+        onSourceAdmitted()
+    }
+
     final override suspend fun pause() {
         checkNotNull(consumerJob) { "Collector is not started" }
         val failure = runCatching { unregister() }.exceptionOrNull()
@@ -115,6 +121,10 @@ abstract class SerializedCallbackCollector(
     }
 
     protected abstract suspend fun registerSource(): SourceRegistrationResult
+
+    /** Publishes source state that must be observed once, after runtime admission is open. */
+    protected open suspend fun onSourceAdmitted() = Unit
+
     /**
      * Returns only when a fresh source generation is safe. An exception means physical teardown is
      * uncertain, so the base class deliberately keeps the logical registration and blocks resume.

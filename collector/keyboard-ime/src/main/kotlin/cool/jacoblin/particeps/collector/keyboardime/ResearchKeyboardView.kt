@@ -34,7 +34,7 @@ internal class ResearchKeyboardView(
         "ZXCVBNM".map { KeyboardKey(it.toString().lowercase(), KeyCategory.LETTER) },
         listOf(
             KeyboardKey("⌫", KeyCategory.BACKSPACE),
-            KeyboardKey("space", KeyCategory.SPACE),
+            KeyboardKey(context.getString(R.string.keyboard_key_space), KeyCategory.SPACE),
             KeyboardKey("↵", KeyCategory.ENTER),
         ),
     ).flatten()
@@ -103,7 +103,13 @@ internal class ResearchKeyboardView(
             resources.displayMetrics,
         )
         canvas.drawText(
-            if (collectionAllowed) "Research touch capture active" else "Touch capture disabled for this field",
+            context.getString(
+                if (collectionAllowed) {
+                    R.string.keyboard_capture_active
+                } else {
+                    R.string.keyboard_capture_disabled
+                },
+            ),
             width / 2f,
             STATUS_BASELINE_DP * density,
             statusPaint,

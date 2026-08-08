@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="keyboard_capture_active">Research touch capture active</string>
+    <string name="keyboard_capture_disabled">Touch capture disabled for this field</string>
+    <string name="keyboard_key_space">space</string>
+</resources>

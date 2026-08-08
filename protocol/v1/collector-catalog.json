@@ -690,11 +690,15 @@
       "access": [
         {
           "kind": "BACKGROUND_LOCATION",
-          "mode": "runtime_permission"
+          "mode": "participant_setting"
         },
         {
           "kind": "FINE_LOCATION",
           "mode": "runtime_permission"
+        },
+        {
+          "kind": "LOCATION_SERVICES",
+          "mode": "participant_setting"
         }
       ],
       "configuration": {

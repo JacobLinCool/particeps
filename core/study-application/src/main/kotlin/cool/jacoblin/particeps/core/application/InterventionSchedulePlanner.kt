@@ -36,6 +36,12 @@ class InterventionSchedulePlanner(
         if (metadata.state != ExperimentState.RUNNING) return emptyList()
         val firstStart = metadata.transitions.firstOrNull { it.reason == TransitionReason.PARTICIPANT_STARTED }?.time
             ?: return emptyList()
+        require(now.bootSessionId == firstStart.bootSessionId) {
+            "Cannot plan active study work across an untrusted boot-time boundary"
+        }
+        require(now.elapsedRealtimeNanos >= firstStart.elapsedRealtimeNanos) {
+            "Active study monotonic clock moved behind participant Start"
+        }
         val effectiveStartWallUtcMillis = now.wallTimeUtcMillis - elapsedMillis(firstStart, now)
         val lifetimeEnd = effectiveStartWallUtcMillis +
             configuration.durationHours * HOUR_MILLIS
@@ -249,14 +255,9 @@ class InterventionSchedulePlanner(
         return ResearchTime(wallMillis, reference.elapsedRealtimeNanos + deltaNanos, reference.bootSessionId)
     }
 
-    /** Uses the monotonic clock whenever both endpoints belong to one boot, so wall-clock edits do
-     * not turn paused time into active study time. Across boots wall time is the only shared base. */
+    /** Both endpoints are proven to belong to one boot before this monotonic subtraction. */
     private fun elapsedMillis(start: ResearchTime, end: ResearchTime): Long =
-        if (start.bootSessionId == end.bootSessionId && end.elapsedRealtimeNanos >= start.elapsedRealtimeNanos) {
-            (end.elapsedRealtimeNanos - start.elapsedRealtimeNanos) / 1_000_000
-        } else {
-            (end.wallTimeUtcMillis - start.wallTimeUtcMillis).coerceAtLeast(0)
-        }
+        (end.elapsedRealtimeNanos - start.elapsedRealtimeNanos) / 1_000_000
 
     private fun occurrenceId(
         configuration: StudyConfiguration,

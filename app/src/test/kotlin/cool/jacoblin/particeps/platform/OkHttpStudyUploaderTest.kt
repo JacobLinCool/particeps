@@ -321,7 +321,14 @@ class OkHttpStudyUploaderTest {
         override suspend fun initialize(metadata: StudyMetadata) = error("unused")
         override suspend fun saveMetadata(metadata: StudyMetadata) = error("unused")
         override suspend fun appendEvent(event: RecordedEvent) = error("unused")
-        override suspend fun appendEventAtomically(event: RecordedEvent, metadata: StudyMetadata) = error("unused")
+        override suspend fun appendEventAtomically(
+            event: RecordedEvent,
+            metadata: StudyMetadata,
+            failureTime: ResearchTime,
+        ) = error("unused")
+        override suspend fun resolvePendingAppendFailure(
+            reason: cool.jacoblin.particeps.core.model.TransitionReason,
+        ): StudyMetadata? = error("unused")
         override suspend fun readEvents(
             fromSequenceInclusive: Long,
             upToSequenceInclusive: Long,
@@ -385,7 +392,14 @@ class OkHttpStudyUploaderTest {
             override suspend fun initialize(metadata: StudyMetadata) = error("unused")
             override suspend fun saveMetadata(metadata: StudyMetadata) = error("unused")
             override suspend fun appendEvent(event: RecordedEvent) = error("unused")
-            override suspend fun appendEventAtomically(event: RecordedEvent, metadata: StudyMetadata) = error("unused")
+            override suspend fun appendEventAtomically(
+                event: RecordedEvent,
+                metadata: StudyMetadata,
+                failureTime: ResearchTime,
+            ) = error("unused")
+            override suspend fun resolvePendingAppendFailure(
+                reason: cool.jacoblin.particeps.core.model.TransitionReason,
+            ): StudyMetadata? = error("unused")
             override suspend fun readEvents(
                 fromSequenceInclusive: Long,
                 upToSequenceInclusive: Long,

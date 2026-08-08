@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="keyboard_capture_active">研究觸控資料收集中</string>
+    <string name="keyboard_capture_disabled">此欄位已停用觸控資料收集</string>
+    <string name="keyboard_key_space">空白</string>
+</resources>

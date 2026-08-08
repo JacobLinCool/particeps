@@ -68,6 +68,34 @@ class ProtocolConformanceTest {
     }
 
     @Test
+    fun requiredAccessPauseSharedBundleIsAcceptedByKotlin() {
+        val valid = corpus.objectAt("valid")
+        val signed = valid.objectAt("signed_configuration")
+        val configuration = StudyConfigurationCodec.decode(
+            signed.hexAt("canonical_jcs_utf8_hex"),
+        )
+        val bundle = valid.objectAt("bundle")
+        val plaintext = ByteArrayOutputStream()
+        val header = ResearchExport.decrypt(
+            bundle.hexAt("container_hex").inputStream(),
+            plaintext,
+            bundle.base64UrlAt("researcher_private_key_base64url"),
+            configuration,
+        )
+
+        ResearchBundleVerifier.verify(plaintext.toByteArray(), header, configuration)
+        assertArrayEquals(bundle.hexAt("document_jcs_utf8_hex"), plaintext.toByteArray())
+        val experiment = JsonParser.parseString(plaintext.toString(Charsets.UTF_8))
+            .asJsonObject
+            .objectAt("experiment")
+        assertEquals("PAUSED", experiment.stringAt("state"))
+        val transition = experiment.getAsJsonArray("transitions").last().asJsonObject
+        assertEquals("RUNNING", transition.stringAt("from"))
+        assertEquals("PAUSED", transition.stringAt("to"))
+        assertEquals("REQUIRED_ACCESS_MISSING", transition.stringAt("reason"))
+    }
+
+    @Test
     fun everyHostileVectorFailsItsKotlinEntrypoint() {
         val valid = corpus.objectAt("valid")
         val signed = valid.objectAt("signed_configuration")

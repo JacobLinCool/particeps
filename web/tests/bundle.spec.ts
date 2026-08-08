@@ -27,6 +27,120 @@ describe('PTCEXP01 Protocol v1 reader', () => {
     expect(canonicalize(JSON.parse(result.bundle.text))).toBe(result.bundle.text);
   });
 
+  it('accepts required-access loss as a legal RUNNING-to-PAUSED transition', async () => {
+    const configuration = validConfiguration();
+    const bytes = await sealBundle(configuration, SIGNING.privateKey, {
+      document: (value) => {
+        const changed = clone(value);
+        const transitions = changed.experiment.transitions;
+        const time = transitions[transitions.length - 1].time;
+        changed.experiment.state = 'PAUSED';
+        transitions.push({
+          from: 'RUNNING',
+          to: 'PAUSED',
+          reason: 'REQUIRED_ACCESS_MISSING',
+          time
+        });
+        return changed;
+      }
+    });
+
+    const result = await openBundle(bytes, configuration, HPKE.privateKey);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.bundle.document.experiment.state).toBe('PAUSED');
+    const transitions = result.bundle.document.experiment.transitions;
+    expect(transitions[transitions.length - 1]).toMatchObject({
+      from: 'RUNNING',
+      to: 'PAUSED',
+      reason: 'REQUIRED_ACCESS_MISSING'
+    });
+  });
+
+  it('accepts collection-host failure as a legal RUNNING-to-PAUSED transition', async () => {
+    const configuration = validConfiguration();
+    const bytes = await sealBundle(configuration, SIGNING.privateKey, {
+      document: (value) => {
+        const changed = clone(value);
+        const transitions = changed.experiment.transitions;
+        const time = transitions[transitions.length - 1].time;
+        changed.experiment.state = 'PAUSED';
+        transitions.push({
+          from: 'RUNNING',
+          to: 'PAUSED',
+          reason: 'COLLECTION_HOST_FAILURE',
+          time
+        });
+        return changed;
+      }
+    });
+
+    const result = await openBundle(bytes, configuration, HPKE.privateKey);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.bundle.document.experiment.transitions.at(-1)).toMatchObject({
+      from: 'RUNNING',
+      to: 'PAUSED',
+      reason: 'COLLECTION_HOST_FAILURE'
+    });
+  });
+
+  it('accepts collection teardown failure as a legal RUNNING-to-PAUSED transition', async () => {
+    const configuration = validConfiguration();
+    const bytes = await sealBundle(configuration, SIGNING.privateKey, {
+      document: (value) => {
+        const changed = clone(value);
+        const transitions = changed.experiment.transitions;
+        const time = transitions[transitions.length - 1].time;
+        changed.experiment.state = 'PAUSED';
+        transitions.push({
+          from: 'RUNNING',
+          to: 'PAUSED',
+          reason: 'COLLECTION_TEARDOWN_FAILURE',
+          time
+        });
+        return changed;
+      }
+    });
+
+    const result = await openBundle(bytes, configuration, HPKE.privateKey);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.bundle.document.experiment.transitions.at(-1)).toMatchObject({
+      from: 'RUNNING',
+      to: 'PAUSED',
+      reason: 'COLLECTION_TEARDOWN_FAILURE'
+    });
+  });
+
+  it('accepts work scheduling failure as a legal RUNNING-to-PAUSED transition', async () => {
+    const configuration = validConfiguration();
+    const bytes = await sealBundle(configuration, SIGNING.privateKey, {
+      document: (value) => {
+        const changed = clone(value);
+        const transitions = changed.experiment.transitions;
+        const time = transitions[transitions.length - 1].time;
+        changed.experiment.state = 'PAUSED';
+        transitions.push({
+          from: 'RUNNING',
+          to: 'PAUSED',
+          reason: 'WORK_SCHEDULING_FAILURE',
+          time
+        });
+        return changed;
+      }
+    });
+
+    const result = await openBundle(bytes, configuration, HPKE.privateKey);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.bundle.document.experiment.transitions.at(-1)).toMatchObject({
+      from: 'RUNNING',
+      to: 'PAUSED',
+      reason: 'WORK_SCHEDULING_FAILURE'
+    });
+  });
+
   it('uses one JCS context for HPKE info and content AAD', () => {
     expect(
       new TextDecoder().decode(

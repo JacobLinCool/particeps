@@ -2,10 +2,68 @@
 
 What changed between releases, and what each change asks of someone who already installed one.
 
-This project is pre-1.0. Every release so far is a release candidate, and each one below changed
-something that a device treats as identity — the application ID, the file formats, or the signing
-certificate. None of them can update an earlier install in place. That is stated once here rather
-than in each document that touches it.
+This project is pre-1.0. Several early release candidates changed something that a device treats as
+identity — the application ID, the file formats, or the signing certificate. Do not infer update
+compatibility from the version number; each release below states what an existing installation
+must do.
+
+## Unreleased
+
+## v1.0.0-rc.6 — 2026-08-09
+
+- Notification access is required for every study because the daily status reminder and ongoing
+  collection notification are app-level guarantees, not features that depend on interventions.
+  The app checks the Android permission, the app-wide notification switch, and each channel the
+  study needs. It rechecks required access before both start and resume and from the running
+  foreground service. A failed setup, Start, or Resume preflight leaves `ACCESS_SETUP`, `READY`, or
+  `PAUSED` unchanged; required access lost after the study is already `RUNNING` creates the typed
+  safety pause. An optional source is blocked and resumed independently.
+- Collector access capabilities now live in each collector's static descriptor. The access step
+  keeps the collector owners when shared access is de-duplicated, orders dependent operations, and
+  shows app-authored English and Traditional Chinese instructions for background location, Usage
+  Access, and research-keyboard setup.
+- Background location is no longer requested through an Android runtime dialog that cannot grant
+  it. After precise location is granted, Particeps first verifies the signed study's exact Fused
+  Location request against Android settings, then explains the background behaviour and opens the
+  app's Android settings page for the participant to choose Android's localized background option
+  manually.
+- Start and Resume now wait until Android has acknowledged the foreground service with its exact
+  service types before any source may emit. A whole-study safety loss closes admission and records
+  its closed reason in an identity-free typed marker; reason-bearing WorkManager retry survives a
+  process restart, and each optional source has its own fail-closed event gate. Required access uses
+  `REQUIRED_ACCESS_MISSING`. Once a study is durably running, losing every acknowledged foreground
+  host during a type change uses `COLLECTION_HOST_FAILURE`; an untrustworthy store mutation uses
+  `STORAGE_FAILURE`; and a failed or cancelled source release uses `COLLECTION_TEARDOWN_FAILURE`.
+  An unacknowledged deadline, reminder, upload, intervention, or retry mutation uses
+  `WORK_SCHEDULING_FAILURE`. WorkManager enqueue and cancellation must be acknowledged before the App treats
+  the durable handoff or retry retirement as complete, so Resume cannot race a stale safety worker.
+- The signed duration is now an absolute ceiling measured from the one durable participant Start.
+  Resume, time change, and same-boot process recovery recompute and replace the deadline from that
+  boundary; they cannot grant a fresh duration. Collector and occurrence admission independently
+  reject every observation at or beyond the exact monotonic deadline, and the deadline worker
+  rechecks due-ness before completing, so delayed or early WorkManager execution cannot widen or
+  shorten the signed window. The app trusts only the monotonic clock from the
+  participant-start boot. Any active study observed in another boot session fails closed with
+  `WORK_SCHEDULING_FAILURE` before a foreground service or collector can reopen; wall time is never
+  used as a cross-boot fallback.
+- Safety-critical documents no longer rely on Android `AtomicFile`, which can log an `fsync` or
+  rename failure without returning it. The repo-owned acknowledged writer keeps independently
+  durable `.pending` and `.replacement` copies, preserves the first as an uncertainty witness while
+  atomically replacing the base with the second, and acknowledges only after exact readback and
+  directory sync. Any leftover witness or unknown event-directory entry blocks recovery instead of
+  being guessed away.
+- The release workflow now requires the final APK to have exactly one signer whose certificate
+  matches the [rc.5 production identity anchor](.github/android-release-signing-certificate.sha256).
+  A different or additional certificate stops publication. The emulator gate has read-only repository
+  permission; only the dependent APK publication job receives write permission.
+
+**Coming from `v1.0.0-rc.5`:** install the signed rc.6 APK over the existing app. The application ID
+and release signing certificate are unchanged, so Android accepts it as an in-place update and the
+active study and its local data remain in place. Do not uninstall rc.5 first.
+
+**Coming from `v1.0.0-rc.4` or earlier:** none of those builds can update to rc.6 in place. Follow
+the release-specific note below and export anything worth retaining with tooling that supports that
+release before uninstalling it.
 
 ## v1.0.0-rc.5 — 2026-08-07
 
@@ -14,8 +72,9 @@ than in each document that touches it.
   product. Either change alone stops a device accepting the build as an update; both apply.
 - The status line reports when a pause started and how long it has lasted.
 - One low-importance notification a day states whether the study is still collecting, or is paused
-  and since when. It names the application, never the study, so it discloses nothing to someone
-  reading a lock screen. Starting or stopping collection retracts a standing one.
+  and since when. It names the application and collection state, never the study; a lock-screen
+  reader can still infer that the phone uses Particeps. Starting or stopping collection retracts a
+  standing one.
 
 **Coming from `v1.0.0-rc.4`:** uninstall it. Its data cannot be migrated, and its exports are in the
 current format, so export anything worth keeping before you remove it and current tooling will read

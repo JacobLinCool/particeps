@@ -21,4 +21,8 @@ kotlin {
 
 dependencies {
     api(project(":core:collector-api"))
+    implementation(libs.coroutines.play.services)
+    implementation(libs.play.services.location)
+    testImplementation(libs.coroutines.test)
+    testImplementation(libs.junit4)
 }

@@ -2,7 +2,6 @@ package cool.jacoblin.particeps.collector.keyboardime
 
 import cool.jacoblin.particeps.core.model.EventDraft
 import cool.jacoblin.particeps.core.collector.AccessKind
-import cool.jacoblin.particeps.core.collector.AccessRequirement
 import cool.jacoblin.particeps.core.definition.CollectorConfiguration
 import cool.jacoblin.particeps.core.definition.KeyboardTouchConfiguration
 import cool.jacoblin.particeps.core.collector.PrivacyClass
@@ -20,17 +19,12 @@ class KeyboardTouchCollectorPlugin : CollectorPlugin {
         id = KeyboardTouchConfiguration.ID,
         displayName = "Research keyboard touch",
         privacyClass = PrivacyClass.RESTRICTED,
+        accessKinds = setOf(
+            AccessKind.RESEARCH_KEYBOARD_ENABLED,
+            AccessKind.RESEARCH_KEYBOARD_SELECTED,
+        ),
         eventContract = requireNotNull(ProtocolEventContracts[KeyboardTouchConfiguration.ID]),
     )
-
-    override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
-        val typed = configuration as? KeyboardTouchConfiguration
-            ?: throw IllegalArgumentException("Invalid keyboard-touch configuration")
-        return setOf(
-            AccessRequirement(AccessKind.RESEARCH_KEYBOARD_ENABLED, typed.required),
-            AccessRequirement(AccessKind.RESEARCH_KEYBOARD_SELECTED, typed.required),
-        )
-    }
 
     override fun create(
         configuration: CollectorConfiguration,

@@ -7,7 +7,8 @@ import cool.jacoblin.particeps.platform.InterventionDeliveryCoordinator
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-class BootRecoveryReceiver : BroadcastReceiver() {
+/** Reconciles durable work after boot, clock, or time-zone changes. */
+class ScheduledWorkRecoveryReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action !in RECOVERY_ACTIONS) return
         val pending = goAsync()
@@ -17,10 +18,10 @@ class BootRecoveryReceiver : BroadcastReceiver() {
                 application.session.snapshot.first { it.initialized }
                 if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
                     InterventionDeliveryCoordinator.recoverStalePosting {
-                        application.session.rescheduleInterventions(recoverStalePosting = true)
+                        application.session.reconcileScheduledWork(recoverStalePosting = true)
                     }
                 } else {
-                    application.session.rescheduleInterventions()
+                    application.session.reconcileScheduledWork()
                 }
             } finally {
                 pending.finish()
@@ -29,6 +30,10 @@ class BootRecoveryReceiver : BroadcastReceiver() {
     }
 
     private companion object {
-        val RECOVERY_ACTIONS = setOf(Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED)
+        val RECOVERY_ACTIONS = setOf(
+            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_TIME_CHANGED,
+            Intent.ACTION_TIMEZONE_CHANGED,
+        )
     }
 }

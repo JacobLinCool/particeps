@@ -9,7 +9,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
-import cool.jacoblin.particeps.core.collector.AccessRequirement
 import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
@@ -37,13 +36,9 @@ class BatteryStateCollectorPlugin(context: Context) : CollectorPlugin {
         id = BatteryStateConfiguration.ID,
         displayName = "Battery state",
         privacyClass = PrivacyClass.SENSITIVE,
+        accessKinds = emptySet(),
         eventContract = requireNotNull(ProtocolEventContracts[BatteryStateConfiguration.ID]),
     )
-
-    override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
-        require(configuration is BatteryStateConfiguration) { "Invalid battery-state configuration" }
-        return emptySet()
-    }
 
     override fun create(configuration: CollectorConfiguration, context: CollectorContext): Collector {
         require(configuration is BatteryStateConfiguration) { "Invalid battery-state configuration" }

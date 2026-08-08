@@ -21,7 +21,7 @@ What the name does not grant is authorship of the study. The collector set, the 
 1. **Generate your keys.** One Ed25519 pair to sign study configurations, one X25519 HPKE pair to decrypt bundles. `researcher-tools` writes raw 32-byte keys as unpadded base64url.
 2. **Write the study.** A strict Protocol v1 RFC 8785 JSON file naming collectors, reusable surveys, scheduled interventions, anonymous or assigned-code identity mode, duration, storage quota, consent text, and signing/export public keys.
 3. **Sign it.** `researcher-tools sign` produces a `.partcfg` file that any build of the app can verify, with no change to the app.
-4. **Distribute.** Participants install the app and import your `.partcfg`, or open a `particeps://join/v1` link that names where those exact bytes are served and pins their SHA-256. Setup is five steps, one screen each: the study details, what each enabled collector records and does not record, the consent text with the signer's key fingerprint, the Android access your collectors need, and the start button. Collection begins only when they press the start button.
+4. **Distribute.** Participants install the app and import your `.partcfg`, or open a `particeps://join/v1` link that names where those exact bytes are served and pins their SHA-256. Setup is five steps, one screen each: the study details, what each enabled collector records and does not record, the consent text with the signer's key fingerprint, the Android access the study and its collectors need, and the start button. Collection begins only when they press the start button.
 5. **Collect.** Events are written to encrypted on-device storage. Participants can pause, resume, finish early, or withdraw.
 6. **Export and analyse.** The participant exports an encrypted bundle and sends it to you. If the study declares an upload endpoint, the app also delivers immutable ciphertext bundles to an R2 receiver on a schedule. `particeps-analysis` inventories, verifies, decrypts, reassembles, and writes typed Parquet offline.
 
@@ -69,8 +69,9 @@ Studies collect from people's personal phones, so the platform is built to suppo
 - **Separated participant identities.** Every import gets a fresh random instance UUID. A configuration may additionally carry an opaque researcher-assigned code; both appear in the encrypted document. Upload URLs and headers contain no participant, assigned, experiment, or configuration ID. Their bundle UUID, configuration digest, researcher key ID, exact range/count, size, and digest are untrusted routing claims, not participant authentication.
 - **Encrypted, participant-directed export.** Getting data to the research team is an export the participant performs and directs, encrypted with a fresh key per export and wrapped to your HPKE public key. The app never holds your private key.
 - **Scheduled upload, when the study asks for it.** A configuration may name an HTTPS endpoint, interval, and metered-network policy. The endpoint host, cadence, and network condition are shown before consent. Before HTTP starts, the app durably stages one immutable ciphertext bundle in no-backup storage: about 16 MiB of plaintext and at most 32 MiB on the wire. Retries send those exact bytes with fixed length and digest. A bundle counts as delivered only when the receiver returns a receipt that matches the staged bundle exactly, so any other response leaves those events undelivered. [Protocol v1](protocol/v1/README.md) defines the receipt and which responses may advance the watermark. Finishing or withdrawing leaves delivery running until the tail arrives. Undelivered events are never reclaimed to make room.
-- **Participant control over the lifecycle.** Collection starts only on an explicit action and can be paused, finished, or withdrawn. Pausing takes a monotonic boundary, so delayed callbacks cannot leak post-pause data into the dataset.
-- **Storage failures stop collection.** Quota exhaustion or a write failure fail-closes the study to `PAUSED` rather than silently dropping events, so a dataset is complete over the window it declares or absent.
+- **Participant control over the lifecycle.** Collection starts only on an explicit action and can be paused, finished, or withdrawn. The runtime takes a monotonic boundary, asks sources to release their callbacks, closes admission, waits for writes already admitted before that boundary, and only then commits the participant transition. A failed or cancelled teardown leaves a typed durable cleanup witness instead of reporting a clean boundary.
+- **Storage failures stop collection.** Quota exhaustion or a write failure closes every event gate and persists a typed safety witness before the failing mutation returns. The study moves to `PAUSED` rather than silently dropping events, so a dataset is complete over the window it declares or absent.
+- **The duration is an admission ceiling.** The deadline is derived from the one durable participant Start. Every collector and occurrence write rechecks its original observation time against that same-boot monotonic boundary, so a delayed WorkManager wake cannot admit post-deadline data. Resume, wall-clock change, and same-boot process recovery repair the completion job from the same origin. An active study found in another boot session cannot prove elapsed time, so it fails closed with `WORK_SCHEDULING_FAILURE` before collection reopens; wall time is never a fallback.
 
 ### Who published the study
 
@@ -158,7 +159,7 @@ materialization in
 The [session](core/study-application/src/main/kotlin/cool/jacoblin/particeps/core/application/StudyApplication.kt)
 persists the occurrence before scheduling. The Android delivery and expiry workers in
 [`AndroidStudyPlatform.kt`](app/src/main/kotlin/cool/jacoblin/particeps/platform/AndroidStudyPlatform.kt)
-and [`BootRecoveryReceiver`](app/src/main/kotlin/cool/jacoblin/particeps/BootRecoveryReceiver.kt)
+and [`ScheduledWorkRecoveryReceiver`](app/src/main/kotlin/cool/jacoblin/particeps/ScheduledWorkRecoveryReceiver.kt)
 reconcile the same ID after retries, reboot, clock, or time-zone changes. The adjacent planner,
 runtime, session, and app policy tests make each boundary executable.
 
@@ -185,11 +186,12 @@ New collectors are the main contribution path — see [CONTRIBUTING.md](CONTRIBU
 
 ## Coming from an earlier release candidate
 
-Every release candidate published so far runs under a different application ID from the current
-build, and the release signing key has since been rotated. Android treats each as an unrelated
-application, so there is no upgrade and no migration. The older build keeps running under its own
-name until it is removed. Uninstalling it destroys its Keystore key and everything encrypted under
-it, so export whatever is still wanted first. Artifacts from before the rename are unsupported
+`v1.0.0-rc.5` established the current application ID and the production signing certificate recorded
+in the repository's [auditable identity anchor](.github/android-release-signing-certificate.sha256),
+so rc.6 updates rc.5 in place. Rc.4 and earlier use another application ID, signing certificate, or
+file identity and cannot update directly to the current build. Those older apps keep running under
+their own identity until removed. Uninstalling destroys their Keystore key and everything encrypted
+under it, so export whatever is still wanted first. Artifacts from before the rename are unsupported
 input to every current implementation, and there is no converter.
 [CHANGELOG.md](CHANGELOG.md) says which release carries which identity, which spellings it retired,
 and what each release asks of an existing install.

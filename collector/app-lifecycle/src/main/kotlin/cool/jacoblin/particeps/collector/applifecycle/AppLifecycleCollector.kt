@@ -8,7 +8,6 @@ import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
 import cool.jacoblin.particeps.core.collector.CollectorPlugin
-import cool.jacoblin.particeps.core.collector.AccessRequirement
 import cool.jacoblin.particeps.core.collector.SerializedCallbackCollector
 import cool.jacoblin.particeps.core.collector.SourceRegistrationResult
 import cool.jacoblin.particeps.core.collector.SourceTeardownResult
@@ -26,13 +25,9 @@ class AppLifecycleCollectorPlugin(
         id = COLLECTOR_ID,
         displayName = "Own-app lifecycle",
         privacyClass = PrivacyClass.SENSITIVE,
+        accessKinds = emptySet(),
         eventContract = requireNotNull(ProtocolEventContracts[COLLECTOR_ID]),
     )
-
-    override fun accessRequirements(configuration: CollectorConfiguration): Set<AccessRequirement> {
-        require(configuration is AppLifecycleConfiguration) { "Invalid app-lifecycle configuration" }
-        return emptySet()
-    }
 
     override fun create(
         configuration: CollectorConfiguration,

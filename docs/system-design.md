@@ -79,7 +79,7 @@ flowchart LR
 | `:core:protocol` | Signed envelope, immutable join URI, signature verification, optional signer pinning, validity-window and version checks |
 | `:core:collector-api` | Collector lifecycle, health, registry, access contract, and the shared callback dispatcher |
 | `:core:crypto` | Protocol v1 raw-key Ed25519 verification and fixed-suite RFC 9180 HPKE over raw X25519 keys; Tink remains internal only, never a wire keyset |
-| `:core:access` | Runtime permission, Usage Access, input-method, and hardware preflight |
+| `:core:access` | Closed Android access rules: semantic order, prerequisites, runtime-permission/settings/picker actions, Usage Access, input-method state, and hardware preflight |
 | `:core:experiment-runtime` | Command serialization, state machine, collector supervision, event admission gate, durable occurrence lifecycle, and atomic survey submission |
 | `:core:study-application` | The single active-study session; recovery and coordination of storage/access/host/work/export/upload ports, schedule reconciliation, and the upload watermark |
 | `:core:storage` | Android Keystore, encrypted metadata, appended event segments, reclaiming delivered ones, and strict one-event journal recovery |
@@ -95,6 +95,67 @@ only. It cannot see storage or the runtime, change state directly, write files, 
 permissions.
 `CollectorRegistry` rejects an ID that is not compiled in, and rejects duplicate IDs at
 construction.
+
+### Access planning and acquisition
+
+Access declaration, study policy, Android acquisition, and presentation are deliberately separate.
+Each `CollectorDescriptor` carries a closed `Set<AccessKind>` alongside its event contract. A
+collector plugin has no `accessRequirements` callback and cannot provide a permission string,
+`Intent`, UI text, or action. For each configured collector, `CollectorRegistry` combines those
+descriptor capabilities with the configuration's `required` flag and emits
+`CollectorAccessRequirement` values that retain the descriptor ID as owner.
+
+`StudyAccessPolicy` adds one unconditional required `NOTIFICATIONS` owner for the study's status,
+ongoing collection, and scheduled activities, then groups all requirements by `AccessKind`. The
+group keeps every `StudyAccessOwner`; its merged requirement is required when any owner is required.
+Shared Usage Access for `network_usage.v1` and `usage_events.v1` is therefore acquired once without
+losing which collector requested it or either collector's optionality.
+
+`:core:access` owns an exhaustive `AccessRules` entry for every `AccessKind`. A rule fixes semantic
+order, prerequisites, an optional closed `SetupAction`, and optional app-authored guidance. Fine
+location precedes request-specific Android location-service readiness, which precedes background
+location; background location remains blocked until both earlier capabilities are satisfied and
+then uses the system App details screen. Enabling the research keyboard precedes
+selecting it; the first uses input-method settings and the second the system input-method picker.
+Notifications and foreground location are runtime-permission actions, Usage Access uses its system
+settings screen, and hardware capabilities have no action. Settings intents are resolved to a
+system component; a missing handler becomes explicit `SYSTEM_HANDLER_MISSING`, never a different
+fallback action.
+
+`AccessInspectionRequest` carries the plan plus two app-derived, closed contexts: the exact five
+fields of a configured Location request and notification purposes rather than raw channel IDs.
+`AccessManager.inspect` is suspendable so `GooglePlayLocationSettingsProbe` can call
+`SettingsClient.checkLocationSettings` using the same accuracy, intervals, batching, and distance as
+the collector. It combines that result with the global location toggle and resolves each rule to
+`Satisfied`, `ActionRequired`, `BlockedByPrerequisites`, or an explicit `Unavailable`; neither an
+unavailable provider nor a failed check is treated as degraded success. Notification inspection
+always checks the collection and daily-status channels and checks the intervention channel only
+when the configuration has interventions.
+
+`StudySessionManager` re-inspects the whole plan before completing access setup, before Start, and
+before Resume. The running `CollectionService` waits 25 seconds between reconciliation attempts,
+independent of Activity lifecycle. A location-settings probe has its own five-second deadline, giving
+that code path a nominal 30-second budget after the preceding completed check. This is not a strict
+wall-clock SLA: Android can delay process and coroutine execution.
+At setup, first Start, or Resume, an unsatisfied required capability rejects that command and leaves
+`ACCESS_SETUP`, `READY`, or `PAUSED` unchanged. During a `RUNNING` reconciliation, the same finding
+begins a typed fail-closed safety pause: the application closes every event gate, records
+`REQUIRED_ACCESS_MISSING` in an identity-free marker in app-private no-backup storage, and persists
+`PAUSED`. Foreground-host loss uses `COLLECTION_HOST_FAILURE`; a
+failed or cancelled source release uses `COLLECTION_TEARDOWN_FAILURE`; and an untrustworthy mutable
+store operation uses `STORAGE_FAILURE`. Failure to establish or retire background work uses
+`WORK_SCHEDULING_FAILURE`. Runtime storage and teardown failures invoke the app-owned
+`SafetyPauseWitness` before the failing operation returns: it must either persist the marker or await
+WorkManager's database acknowledgement for unique work carrying the same reason. Process recovery,
+Start, Resume, and running reconciliation merge the marker with active retry work before starting
+any host or collector. Conflicting or unreadable reasons keep recovery closed. After `PAUSED` and
+cleanup are durable, one non-cancellable completion section clears the marker, awaits retry
+cancellation, and only then clears in-memory pending state, so a stale worker cannot race a resumed
+study. A cleanup failure that happens after an earlier participant pause does not rewrite that
+historical transition; its private typed witness records the later cleanup obligation.
+Optional-only loss closes only the affected collectors' admission gates before pausing their sources
+and marks them `BLOCKED_ACCESS`; each gate reopens only after that source starts or resumes
+successfully.
 
 ### The participant interface
 
@@ -118,6 +179,15 @@ rather than a separate field. The collectors whose template does not carry one s
 about what the source cannot see. The per-collector statement of what a source cannot establish is
 the table in [`researcher-guide.md`](researcher-guide.md), which is documentation for the researcher
 designing the study and not something the app renders.
+
+The access step renders one `AccessCard` per deduplicated capability. Every card lists the
+collector or study-feature owners and marks optional owners; a card is optional only when every
+owner is optional. Missing special access shows numbered guidance, and actionable states expose one
+explicit button for the closed `SetupAction`. Prerequisite-blocked cards name the earlier item and
+have no action; unavailable hardware or system settings show an explicit explanation. Labels,
+owner descriptions, manual steps, and action labels are exhaustive English and Traditional Chinese
+resources in `AccessPresentation.kt` and `res/values*`. Neither the signed configuration nor a
+collector can inject setup text or an Android action.
 
 Every participant-facing string is a resource; none is written into Kotlin. The app ships English
 (the default) and Traditional Chinese, declared in `res/xml/locales_config.xml` and referenced by
@@ -223,6 +293,24 @@ stateDiagram-v2
 Every transition is persisted encrypted before the UI is updated. `ExperimentRuntime` serializes
 commands behind a mutex, and an illegal transition returns a fixed reason code. Study time is
 recorded three ways at once: UTC wall clock, `elapsedRealtimeNanos`, and a boot session ID.
+The application layer re-inspects required Android access before the `ACCESS_SETUP → READY`,
+`READY → RUNNING`, and `PAUSED → RUNNING` commands; a missing grant leaves the state unchanged.
+After `RUNNING`, the foreground-service monitor can persist
+`RUNNING → PAUSED / REQUIRED_ACCESS_MISSING` when required access is lost. If an in-run service-type
+change leaves no acknowledged foreground host, the same safety boundary persists
+`RUNNING → PAUSED / COLLECTION_HOST_FAILURE`. If a mutable store operation becomes untrustworthy,
+the runtime closes every event gate and synchronously establishes a marker or acknowledged
+WorkManager witness for `RUNNING → PAUSED / STORAGE_FAILURE` before that failing operation returns.
+An unacknowledged deadline, reminder, upload, intervention, or retry mutation similarly persists
+`RUNNING → PAUSED / WORK_SCHEDULING_FAILURE` rather than assuming WorkManager committed it.
+
+These names belong to separate closed taxonomies. A protocol `TransitionReason` explains one
+authenticated lifecycle edge. `SafetyPauseReason` is exactly the five safety reasons above and is
+also the payload of the private marker or retry; it becomes a transition reason only when the
+durable source state is `RUNNING`. A failed access preflight during setup, first Start, or Resume
+does not manufacture a `PAUSED` edge: the state remains `ACCESS_SETUP`, `READY`, or `PAUSED` and the
+UI exposes a fixed incident code. Collector-health reason codes and upload-failure codes are
+diagnostic fields, not lifecycle transition reasons.
 
 There is no `EXPORTED` state. Export availability is:
 
@@ -239,24 +327,38 @@ the participant has already exported to external storage are outside the app's c
 
 ## 5. Runtime and the pause boundary
 
-Each entry into `RUNNING` mints a new epoch token in the admission gate. A collector must hold the
-token before it can emit an event, and each event carries its original observation time. On pause,
-finish, or withdraw:
+Each entry into `RUNNING` mints a new epoch token in the study-wide admission gate. Every collector
+also has a separate gate, and its private `EventSink` returns a composite token from both gates. An
+event is accepted only while both the study epoch and that collector's epoch remain valid, and each
+event carries its original observation time. A participant pause or terminal command uses this
+ordered boundary:
 
 1. Capture a monotonic boundary and switch the gate to `DRAINING`.
-2. Persist the state transition first.
-3. Stop callbacks and polling, then flush already-queued events.
-4. Accept only events from the same epoch whose observation time precedes the boundary.
-5. Close the epoch. Older tokens are permanently invalid.
+2. Ask every source to pause or stop, then close each collector epoch and the study epoch.
+3. Await every write already admitted at the boundary.
+4. During that drain, accept only events whose study and collector tokens are current and whose observation time
+   precedes the boundary.
+5. Persist the participant pause or terminal transition only after source release and admitted writes
+   succeed. A failed or cancelled release persists `COLLECTION_TEARDOWN_FAILURE` instead; a terminal
+   transition is not claimed, and a participant pause is reported as a safety pause rather than a
+   clean participant boundary.
 
-This is why a pause cannot be polluted by new events arriving through a delayed callback queue. A
-storage failure closes the gate immediately, records a fixed incident code, and attempts to fail
-closed into `PAUSED`.
+This is why a pause cannot be polluted by new events arriving through a delayed callback queue. An
+untrustworthy storage append closes the study gate and every collector gate while still holding the
+metadata serialization lock and records a fixed incident code. Before the append returns failure,
+the runtime calls the synchronous `SafetyPauseWitness`; marker failure falls back only to an awaited,
+reason-bearing WorkManager enqueue. The session then completes durable `PAUSED` and cleanup. It
+clears the runtime request only after either that transition and cleanup succeed or WorkManager has
+confirmed the typed retry is durable; otherwise the closed request remains observable and is
+retried. Required-access and host safety loss are stricter than a participant drain: they force-close
+admission immediately, then wait for any already-executing store mutation before committing `PAUSED`.
 
 Each collector maintains its own health state: `STOPPED`, `ACTIVE`, `PAUSED`, `BLOCKED_ACCESS`, or
-`FAILED`. A missing optional permission blocks only the collector that needs it. A missing required
-permission prevents preflight from completing at all. One collector's failure does not stop the
-others.
+`FAILED`. A missing capability owned only by optional collectors closes each affected collector's
+gate before source teardown while leaving the study gate and unrelated collector gates open. On
+restoration, a fresh collector epoch opens only after source start or resume succeeds. A capability
+shared with any required collector is required for preflight, while all owners remain visible in the
+access plan. One collector's failure does not stop the others.
 
 ## 6. Implemented collectors
 
@@ -272,8 +374,12 @@ others.
 | `network_state.v1` | Default network availability, transport, validated, metered, roaming, VPN, optional bandwidth estimates | `ACCESS_NETWORK_STATE` (a manifest normal permission) |
 | `network_usage.v1` | Device-total Wi‑Fi and mobile rx/tx bytes and packets, plus the interval the query covers | Usage Access |
 | `usage_events.v1` | App resumed/paused/stopped, screen, keyguard, and startup/shutdown raw events, including the foreground app's `package_name` when the platform reports one | Usage Access |
-| `location.v1` | Fused Location fixes: latitude, longitude, source time, accuracy, speed, altitude, bearing, mock flag | Fine and background location, per the `required` flags in the configuration |
+| `location.v1` | Fused Location fixes: latitude, longitude, source time, accuracy, speed, altitude, bearing, mock flag | Fine location, exact configured Android location-service readiness, and background location; all inherit this collector configuration's `required` flag |
 | `keyboard_touch.v1` | Touch position relative to the bounds of the pressed key, timing, pressure, size, orientation, tool type, key category | The study input method must be enabled and selected |
+
+In addition to collector-owned capabilities, every study has one required Notifications capability.
+It is a study-feature owner rather than a synthetic collector and remains required when the
+configuration contains no interventions.
 
 Network usage is the coarse device total from Android's `NetworkStatsManager.querySummaryForDevice`
 with `subscriberId=null`. It is not an instantaneous rate and not a per-app attribution.
@@ -294,7 +400,8 @@ The manifest disables backup, and the cloud-backup and device-transfer rules exc
 The app neither requests StrongBox nor verifies hardware backing, so this is a Keystore isolation
 claim, not an absolute hardware-protection claim.
 
-- Metadata: an `AtomicFile` in the format `PTCMET01 | random 96-bit IV | ciphertext+tag`. `PTCMET01`
+- Metadata: a repo-owned acknowledged atomic document in the format
+  `PTCMET01 | random 96-bit IV | ciphertext+tag`. `PTCMET01`
   carries the fresh-per-import instance ID, optional researcher-assigned ID, upload watermark,
   retained floor, and durable intervention occurrence states. It also holds
   `last_events`, the most recent event per collector, which is why opening a study needs no scan of
@@ -309,14 +416,32 @@ claim, not an absolute hardware-protection claim.
   checks against the index in the filename.
 - Each frame: `sequence(u64) | ciphertextLength(u32) | random IV(12) | ciphertext+tag`.
 - The AAD binds the event format, the opaque study locator, and the sequence number.
-- Every event append is followed by an `fsync`; metadata is committed through `AtomicFile`.
+- Every event append is followed by an `fsync`. Metadata, the transaction journal, the active-study
+  envelope or deletion tombstone, safety-pause markers, and new segment headers use
+  `AcknowledgedAtomicFile`. It writes and closes two independently `fsync`ed same-directory copies,
+  `.pending` and `.replacement`, then directory-syncs both. The checked atomic rename consumes only
+  `.replacement`; `.pending` remains as an uncertainty witness until exact base-file readback and a
+  second parent-directory sync acknowledge the replacement. Only then is witness deletion attempted
+  and directory-synced. A cleanup failure may leave the witness and conservatively block a later
+  read, but cannot retroactively turn an acknowledged base mutation into a reported failed commit.
+  Any unresolved witness, rc.5 framework-`AtomicFile` `.new`/`.bak` residue, or unknown event-directory
+  entry blocks recovery; the app never guesses whether to promote or parse incomplete bytes. Only a
+  later explicit write of caller-supplied known bytes may retire and directory-sync all stale
+  artifacts before beginning a new two-copy replacement. New segment creation is directory-synced
+  before append can succeed. Reclaim is different: its authoritative retained floor commits first;
+  physical unlink and its directory sync are best-effort cleanup that stops at the first failure and
+  is retried later, because every affected segment was already confirmed delivered.
 - An event plus its resulting metadata is one recoverable commit. Before appending, the store writes
-  an encrypted `PTCTXN01` journal containing the resulting metadata before the event append.
-  If the journal is one boundary ahead and its event is durable, recovery authenticates that exact
-  tail event and commits the journal metadata. If the event is absent, it discards the prepared
-  journal. A same-boundary leftover is discarded with main metadata authoritative. Any other
-  boundary, malformed journal, or event mismatch fails closed. This is the one write path used for
-  occurrence lifecycle events and survey submissions; there is no independent draft store.
+  an encrypted `PTCTXN01` journal containing the proposed successor plus a synthetic
+  `RUNNING -> PAUSED / STORAGE_FAILURE` boundary before touching an event byte. If the exact event is
+  durable, recovery authenticates that tail and keeps it in the PAUSED boundary; if the event is
+  absent or only a truncated final frame exists, recovery removes the partial tail and keeps the
+  prior event boundary PAUSED. The journal remains as provenance until the runtime resolves it with
+  the application-owned first winning safety reason; that lets a pre-existing access, host, work,
+  or teardown marker replace the synthetic storage reason even across repeated process deaths.
+  Only a later acknowledged main-metadata mutation can prove a same-boundary journal stale. Any
+  other boundary, malformed journal, or event mismatch fails closed. This is the one write path used
+  for occurrence lifecycle events and survey submissions; there is no independent draft store.
 - The active signed configuration is held separately, under its own Keystore key, as
   `PTCACT01 | random 96-bit IV | ciphertext+tag`.
 - The local quota comes from the configuration and is bounded to 8 MiB-8 GiB. Encoded metadata is
@@ -385,11 +510,13 @@ has been reclaimed. `eventCount` stays the lifetime total, and `nextSequenceNumb
 persisted metadata rather than being recomputed from the scan, so a sequence number is never
 reissued after reclaiming. The readable window is `[retainedFromSequence, eventCount]`.
 
-The floor is persisted before the segments below it are unlinked. A crash in between leaves more on
-disk than the floor claims, which is harmless. The load path adopts the first sequence it actually
-finds, and the next pass finishes the job. Finding *less* on disk than the floor claims is fatal on
-load — `Event segments below the retained floor are missing` — because it is indistinguishable from
-a prefix having been tampered away.
+The floor is persisted and made authoritative in memory before the segments below it are unlinked;
+a later metadata save is forbidden from moving it backwards. Physical cleanup stops at its first
+unlink failure, so the files that remain are one contiguous suffix. A crash or partial cleanup can
+therefore leave more on disk than the floor claims, which is harmless: the load path adopts the first
+sequence it actually finds, and a later pass can finish the prefix cleanup. Finding *less* on disk
+than the floor claims is fatal on load — `Event segments below the retained floor are missing` —
+because it is indistinguishable from a prefix having been tampered away.
 
 `StudyStore` exposes this as two methods: `storageUsage(): StorageUsage`, and
 `evictThrough(metadata, targetBytes): StudyMetadata`, which returns the metadata unchanged when
@@ -480,23 +607,57 @@ the same way.
 
 ## 9. Background execution, interventions, and recovery
 
-- `CollectionService` runs as a `specialUse` foreground service on start and resume. The `location`
-  service type is added when a location collector is present and fine location has been granted.
+- Start and Resume ask `CollectionService` to enter the foreground and wait up to five seconds for
+  its acknowledgement. The service acknowledges only after Android accepts the app-authored
+  notification and requested foreground-service types; collectors start or resume only after that
+  acknowledgement.
+- A service intent redelivered from a prior process first enters the foreground as `specialUse` with
+  a short-lived, app-authored neutral restoration notification that contains no study title. After
+  session initialization it revalidates durable `RUNNING` state and current access, then replaces
+  that notification through a fresh acknowledged start with the exact service types and reconciles
+  collectors, or removes it while stopping the stale service without activating them.
+- The access monitor waits 25 seconds between reconciliation attempts. It covers notification
+  channels, location settings, Usage Access, keyboard state, and hardware without an Activity
+  callback; the exact configured location probe has a five-second deadline. The resulting nominal
+  code-path budget is 30 seconds, although Android scheduling can extend wall-clock detection time.
+- `CollectionService` normally uses `specialUse`. When optional Location access returns, the host
+  first obtains and acknowledges the additional `location` type and only then starts or resumes the
+  Location collector. When that access is lost, the runtime first closes the affected per-collector
+  gate and pauses the source, then downgrades the host to `specialUse`. A failed promotion may keep
+  unrelated collectors running only after a non-location fallback host is acknowledged. If both
+  attempts fail, or a demotion fails, every event gate closes and the study enters the typed
+  `COLLECTION_HOST_FAILURE` safety pause.
 - Pause, finish, withdraw, and delete stop the foreground service.
+- Whole-study safety loss closes admission and writes an app-private marker containing only the
+  closed reason, never a study or participant identity. Required-access loss, acknowledged-host
+  loss, source teardown failure/cancellation, storage failure, and an unacknowledged background-work
+  mutation use `REQUIRED_ACCESS_MISSING`, `COLLECTION_HOST_FAILURE`,
+  `COLLECTION_TEARDOWN_FAILURE`, `STORAGE_FAILURE`, and `WORK_SCHEDULING_FAILURE`, respectively. A
+  uniquely identified WorkManager retry carries that same reason
+  and completes durable `PAUSED` persistence, collector teardown, and service cleanup even after
+  `CollectionService` has stopped. Enqueue and cancellation are not considered complete until
+  WorkManager acknowledges their database operations. Recovery, Start, Resume, and running
+  reconciliation merge the marker with active work before opening any gate; conflicts or inspection
+  failures remain closed. After cleanup, a non-cancellable completion sequence clears the marker,
+  awaits retry retirement, and only then clears the in-memory pending state.
 - `BOOT_COMPLETED` triggers process-scoped session initialization. The same recovery path
   re-verifies the signed envelope and loads the encrypted metadata. Collectors are constructed on
   every initialization, but the admission gate, collector activation, and the foreground service are
-  restored only when the persisted state was `RUNNING`.
+  restored only when the persisted state was `RUNNING` and the participant-start boundary is
+  provable in the current boot. A boot-session change instead establishes the typed scheduling
+  safety pause described below.
 - `DailyStatusWorker` posts one low-importance notification a day while the study is `RUNNING` or
   `PAUSED`. It says either that collection is still running or that the study is paused and since
   when, and nothing else: no counts and no collector names. The title line is the application's own
   name rather than the study title, because this arrives every day and a lock screen is readable by
   whoever is holding the phone. One notification tag, so today's reminder replaces yesterday's. A
-  run in any other state, or with no configuration, posts nothing. Without `POST_NOTIFICATIONS` the
-  run succeeds without posting rather than retrying.
-- `AndroidStudyWorkScheduler.scheduleDailyStatus` enqueues it as unique periodic work with a one-day
-  period and a one-day initial delay, from `schedule` when a study starts and from
-  `reschedulePendingWork` whenever a session initialises. Periodic rather than a chain: a day is far
+  run in any other state, or with no configuration, posts nothing. `POST_NOTIFICATIONS` is a
+  required setup item for every study and is rechecked before Start and Resume. The worker still
+  treats a later revocation defensively: that run succeeds without posting rather than retrying.
+- For a `RUNNING` or `PAUSED` study,
+  `AndroidStudyWorkScheduler.ensureCollectionWork` enqueues the reminder as unique periodic work
+  with a one-day period and a one-day initial delay whenever Start, Resume, or same-boot recovery
+  establishes the study's work set. Periodic rather than a chain: a day is far
   above the 15-minute floor, so nothing is silently clamped, and the platform re-establishes
   periodic work across reboots. `ExistingPeriodicWorkPolicy.KEEP`, so a session initialising again
   does not push the next reminder a full day away.
@@ -535,8 +696,17 @@ the same way.
   action from durable state. Survey answers validate against stable survey/question/option IDs and
   commit as one immutable `SURVEY_SUBMITTED` event plus terminal occurrence state. Closing the UI
   before that commit persists no answer or draft.
-- The study deadline is a unique WorkManager job. On expiry it moves `RUNNING` or `PAUSED` to
-  `COMPLETED`.
+- The study deadline is a unique WorkManager job measured from the one durable
+  `PARTICIPANT_STARTED` transition, never from Resume or process recovery. Same-boot repair uses the
+  participant-start monotonic clock. An active study observed under any other boot-session ID cannot
+  prove elapsed time and fails closed with `WORK_SCHEDULING_FAILURE`; it never falls back to wall
+  time and never reopens a host or collector. Every same-boot active-state ensure replaces the
+  deadline with its recomputed remaining duration, so time-change and process recovery also repair a
+  stale existing WorkSpec. An already-expired same-boot study reaches `COMPLETED` before any host or
+  collector is reopened. WorkManager is not the data boundary: collector and occurrence admission
+  compare every original observation time with the exact same-boot monotonic deadline and reject
+  values at or beyond it. The worker rechecks due-ness, retrying an early wake instead of completing
+  early; a delayed wake can postpone the visible `COMPLETED` transition but cannot widen the dataset.
 - `UploadWorker` is a self-renewing chain of unique one-time work rather than a
   `PeriodicWorkRequest`. Each link is enqueued with an initial delay of the configuration's
   `interval_minutes` and enqueues its successor when it finishes. The reason is that WorkManager's
@@ -546,9 +716,14 @@ the same way.
 - Constraints are `NetworkType.UNMETERED` — `CONNECTED` when `allow_metered` is true — and
   `requiresBatteryNotLow`, with exponential backoff from 1 minute.
 - The cost of a chain is that it has no platform-side repetition to fall back on. So
-  `AndroidStudyWorkScheduler.reschedulePendingWork` re-establishes it whenever a session
-  initialises, including after a boot, with `ExistingWorkPolicy.KEEP` so a link already waiting does
-  not have its delay reset on every app start.
+  `AndroidStudyWorkScheduler.ensureCollectionWork` re-establishes it on Start, Resume, and recovery
+  with `ExistingWorkPolicy.KEEP` so a link already waiting does not have its
+  delay reset on every app start. Every WorkManager mutation is awaited; constructing a request is
+  not treated as proof that WorkManager committed its database transaction.
+- The ensure policy is state-exact. `RUNNING` and `PAUSED` request deadline `REPLACE`, daily-status
+  `KEEP`, and upload `KEEP` when configured. `COMPLETED` and `WITHDRAWN` request only the undelivered
+  upload tail, after `cancelCollectionWork` has retired deadline, reminder, and intervention work.
+  Pre-start states request none. A cross-boot active plan fails before issuing any mutation.
 - The worker acts in `RUNNING`, `PAUSED`, `COMPLETED`, and `WITHDRAWN`. It no-ops in every other
   state, and when the active study is not the one the job was scheduled for. Finishing or
   withdrawing cancels interventions and the deadline but leaves delivery running, so a study that
@@ -624,7 +799,8 @@ delivered segments first, a study under its target keeping everything, undeliver
 segment, the newest segment and a single-segment store never being reclaimed, and the chosen set always being a contiguous leading run. The encrypted store
 adds instrumentation tests, on real Android Keystore, for segment rollover, reclaiming and reloading
 from the new floor, appending after a reclaim without reusing a sequence, reclaimed events no longer
-being readable, and a missing prefix that was not reclaimed refusing to open.
+being readable, a partial unlink preserving a contiguous suffix and rejecting stale-floor rollback,
+and a missing prefix that was not reclaimed refusing to open.
 
 Collector admission has two complementary checks. The runtime enforces each descriptor's
 `maximumEncodedEventBytes` before append, while CI executes the source, bytecode, and dependency
@@ -642,13 +818,23 @@ reasons [`researcher-tools/examples/README.md`](../researcher-tools/examples/REA
 scrolls to the export control but does not perform an export. It has to actually run on an emulator
 or a device; assembling the test APK is not a device-test pass.
 
+Access has several narrower regression layers. `StudyAccessPolicyTest` proves Notifications is
+unconditionally required and shared collector capabilities are deduplicated without losing owners.
+`AccessRulesTest` proves every `AccessKind` has one closed rule, compound flows have prerequisite
+order, and a missing system handler has no fallback. `GooglePlayLocationSettingsProbeTest` verifies
+the exact request fields and all four SettingsClient outcomes; request tests prove notification
+feature selection never exposes channel IDs. `AccessCardTest` renders the Compose cards to verify app-authored manual
+steps, prerequisite gating, one shared Usage Access action, and every owner shown to the
+participant.
+
 Two narrower Android regressions sit beside that UI flow. `AndroidConfigurationImportTest`
 proves raw-key Ed25519 demo import on Android itself, so a JCA provider-order
 regression cannot hide behind JVM-only protocol tests. `P2CollectorEmulatorTest` creates the five P2
 plugins against real Android broadcast and `SensorManager` surfaces, validates every emitted draft
 against its Protocol v1 descriptor, and checks pause/resume/stop boundaries. It skips when the test
 device lacks gyro, light, or proximity hardware. Its explicit `p2SyntheticInputs=true` mode requires
-host-side emulator injection and checks the fixed readings documented in the root README.
+host-side emulator injection and checks the fixed readings documented in
+[`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 Before real recruitment, a study still needs study-specific testing on the target physical devices
 and OEMs: permissions, background restrictions, battery, storage volume, location accuracy, Usage

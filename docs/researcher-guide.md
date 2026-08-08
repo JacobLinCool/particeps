@@ -239,7 +239,9 @@ Constraints enforced by
   daily triggers use `HH:mm` in the device's current time zone. Offsets must fall inside the study,
   availability is 1–525,600 minutes, and the signed study is capped at 512 total occurrences so
   durable idempotency metadata remains inside its encrypted 1 MiB bound.
-  WorkManager timing is best effort, not an exact alarm. Any intervention requires notification access.
+  WorkManager timing is best effort, not an exact alarm. Every study requires notification access
+  during setup, whether or not it declares an intervention; interventions use that already-required
+  capability when present.
 - `storage.maximum_local_bytes` is 8 MiB–8 GiB (8,388,608–8,589,934,592).
 - `signer` carries exactly `key_id` and `public_key`. `public_key` is the raw 32-byte Ed25519
   public half encoded as unpadded base64url. `key_id` must equal the
@@ -336,7 +338,7 @@ Per-collector configuration:
 | `network_state.v1` | `include_bandwidth_estimates` boolean |
 | `network_usage.v1` | `transports` non-empty subset of `wifi`/`mobile`; `poll_interval_minutes` 1–1,440 |
 | `usage_events.v1` | `poll_interval_minutes` 1–1,440 |
-| `location.v1` | `interval_millis` 1,000–3,600,000; `minimum_interval_millis` 500 to `interval_millis`; `maximum_batch_delay_millis` 0–86,400,000; `minimum_displacement_millimeters` 0–10,000,000; `priority` `BALANCED` or `HIGH_ACCURACY`. This collector always requires precise location; `priority` trades power against accuracy within it, and there is no coarse-only mode. |
+| `location.v1` | `interval_millis` 1,000–3,600,000; `minimum_interval_millis` 500 to `interval_millis`; `maximum_batch_delay_millis` 0–86,400,000; `minimum_displacement_millimeters` 0–10,000,000; `priority` `BALANCED` or `HIGH_ACCURACY`. This collector declares precise location, request-specific Android location-service readiness, and background location; its `required` flag decides whether they block setup. `priority` trades power against accuracy within precise location, and there is no coarse-only mode. |
 | `keyboard_touch.v1` | `trajectory_sampling_hz` 1–120 |
 
 Both polling collectors, and scheduled delivery, accept a one-minute floor. That floor exists
@@ -346,10 +348,17 @@ neither does. Treat a minute as a diagnostic setting rather than a study setting
 battery, and for `network_usage.v1` it does not buy resolution: Android's own accounting is
 coarse and lags, so a one-minute poll gives you finer windows without giving you finer truth.
 
-`required: true` means the study cannot start until that access is granted. An optional
-collector still appears in the data step described below, marked *Optional*, and on the
-participant dashboard. When its access is missing it is shown as blocked. The app does not
+`required: true` makes that collector a required owner of every capability declared by its
+descriptor. The app deduplicates capabilities shared by collectors, preserves every owner, and
+makes the resulting access card required when at least one owner is required. Thus a required
+`network_usage.v1` and optional `usage_events.v1` produce one required Usage access card that names
+both collectors and marks only the latter owner Optional. An optional collector still appears in
+the data step and participant dashboard. When its unshared access is missing it is shown as
+blocked. Optionality is not an independent collector toggle: if its capability is already granted,
+including because a required collector shares it, the optional collector can run. The app does not
 substitute, interpolate, or synthesise data for a blocked collector.
+Notification access is a separate, unconditional required study capability; collector optionality
+cannot make it optional.
 
 ### What the app tells participants each collector does
 
@@ -369,6 +378,14 @@ Collectors without configuration fields read the same in every study. The exact 
 [`app/src/main/res/values/strings.xml`](../app/src/main/res/values/strings.xml) and its
 `values-zh-rTW` counterpart; read it before you write your consent summary, because your
 participants will.
+
+The Access step follows the same integrity boundary. It renders one card per deduplicated Android
+capability, lists every collector or study feature that owns it, and marks optional owners. The app
+alone supplies the English and Traditional Chinese labels, numbered manual steps, prerequisites,
+and the explicit Allow, Open Android settings, or Choose keyboard action. Neither a signed
+configuration nor a collector plugin can supply arbitrary setup text, a permission name, an
+`Intent`, or a callback. Your consent and support materials may explain why the study needs an
+item, but they must not claim to replace or alter the app's acquisition path.
 
 **This is a floor, not a substitute for your consent summary** — the same argument made for
 the upload disclosure under *Scheduled upload* below. What the data step gives a participant
@@ -615,15 +632,20 @@ already been distributed.
 
 ## 6. Build and distribute
 
-Build and check the app with the command block in
-[`CONTRIBUTING.md`](../CONTRIBUTING.md), which is the same one CI runs.
+Build and check the app with both the host-side and attached-device command blocks in
+[`CONTRIBUTING.md`](../CONTRIBUTING.md). CI runs the connected debug instrumentation suite on an API
+34 emulator as well as the host-side tests, lint, and builds.
 
 Debug APKs are for internal testing only. For real deployment use the tag-triggered GitHub
 Actions release workflow; the required secrets and setup are described in the repository
-[`README.md`](../README.md). The workflow publishes only APKs that have passed
-`apksigner verify`, and the keystore is never committed. Sideloading uses the signed APK;
-Google Play distribution uses the corresponding AAB and track process. Building the app is
-not part of issuing a study: the same build verifies any correctly signed `.partcfg`.
+[`docs/maintainers/release.md`](maintainers/release.md). On a release tag, the API 34 `connectedDebugAndroidTest` gate must pass
+before the dependent job builds and signs the release APK. The workflow publishes only an APK that
+has then passed `apksigner verify`, has exactly one signer, and matches the rc.5 production certificate
+in the repository's [auditable identity anchor](../.github/android-release-signing-certificate.sha256).
+It publishes that APK together with its SHA-256 checksum, and the keystore is never committed.
+Particeps is distributed directly as this signed APK. This release process has no
+Google Play listing or track prerequisite and does not publish or require an AAB. Building the app
+is not part of issuing a study: the same build verifies any correctly signed `.partcfg`.
 
 Participants can import the `.partcfg` through the system file picker, or open an immutable
 `particeps://join/v1` link / QR generated by the Web authoring surface. Join hosting is transport
@@ -730,14 +752,60 @@ OEM hardware:
   purpose, contact, consent summary — reads correctly beside translated app text, and that a
   participant whose phone is set to the other language still receives a configuration written
   in theirs.
-- Consent; every required and optional access; behaviour after a denial; revoking access
-  mid-study.
-- Start, pause, resume, finish, and withdraw for every configured collector.
-- The daily status reminder: that it arrives, that it says the study is paused after a pause and
-  collecting again after a resume, and that finishing or withdrawing stops it. Reminders are a
-  day apart, so a pilot that runs for an afternoon will not show you one. If your study schedules
-  no interventions, grant notification access yourself first — the access step does not ask for
-  it, and without it nothing is posted.
+- Consent; every required and optional access card; every Used by owner; behaviour after a denial;
+  and revoking access mid-study. Confirm required access is re-inspected at Done, Start study, and
+  Resume rather than relying on stale setup state.
+- Start and Resume for every configured collector, including an instrumented foreground-service
+  failure: the host acknowledgement has a five-second timeout, the state stays `READY` or `PAUSED`
+  when it fails, and no collector starts before Android has accepted the notification and exact
+  service types. Then exercise pause, finish, and withdraw.
+- During a run, turn off each required capability without returning to the Activity. The service
+  waits 25 seconds between reconciliations; the exact Location probe may use up to five more seconds,
+  giving a nominal 30-second code-path budget. Do not treat that as a wall-clock SLA because Android
+  can delay process execution. Confirm the study and collector gates close, an identity-free typed
+  marker records `REQUIRED_ACCESS_MISSING`, the matching `RUNNING → PAUSED` transition is persisted,
+  and remediation cards appear. Inject marker, metadata, and collector-teardown failures and verify
+  that reason-bearing WorkManager work retries after the foreground service stops. Kill the process
+  with only that work record remaining and confirm recovery pauses before starting any host or source;
+  conflicting or corrupt reasons must keep recovery closed.
+- Inject an atomic event-append failure while sources are producing events. Confirm every admission
+  gate closes before the typed `STORAGE_FAILURE` request is exposed. Then fail marker and metadata
+  persistence together and confirm WorkManager's acknowledged retry is sufficient, by itself, to
+  keep a fresh process from starting the foreground host or any collector. Finally, delay and fail
+  retry cancellation: Resume must wait for acknowledged retirement, and a failed cancellation must
+  leave the safety pause pending with an autonomous retry witness.
+- Cancel Pause, Finish, duration completion, and Withdraw while a source is releasing callbacks.
+  Confirm `COLLECTION_TEARDOWN_FAILURE` is durable before cancellation returns, a fresh process enters
+  `PAUSED` before any host or source starts, and a teardown failure attempted from an already paused
+  study does not rewrite the earlier participant-pause reason or timestamp.
+- Repeat for optional-only access while both affected and unaffected sources are producing events.
+  Confirm only the affected per-collector gate closes before source pause, no later event from that
+  collector is accepted, unrelated collectors continue, and a fresh gate opens only after successful
+  restoration. For optional Location specifically, confirm the service acknowledges the `location`
+  type before the collector resumes, and confirm revocation gates and pauses the collector before the
+  service drops that type.
+- Inject an in-run Location host promotion failure. A confirmed non-location fallback may keep only
+  unrelated collectors running; promotion plus fallback failure must close every gate and persist
+  `COLLECTION_HOST_FAILURE`. A demotion failure must reach the same typed safety pause.
+- Inject failures and caller cancellation into deadline, daily-status, upload, intervention, and
+  safety-retry WorkManager mutations. The operation must be acknowledged before Start, Resume, or
+  recovery succeeds; otherwise `WORK_SCHEDULING_FAILURE` remains durable and a fresh process must
+  not reopen the host or any source. Repeat after a terminal transition and confirm stale deadline,
+  reminder, and intervention work is retired while undelivered terminal upload work remains.
+- Change wall time within one boot and leave an intentionally stale deadline WorkSpec. Confirm the
+  one `PARTICIPANT_STARTED` transition remains the duration origin, monotonic elapsed time is used,
+  and same-boot recovery replaces the stale deadline rather than granting a new duration. Then
+  reboot with both forward and backward wall-clock values: either cross-boot case must establish
+  `WORK_SCHEDULING_FAILURE` and keep every host and collector closed, because wall time is never a
+  lifetime fallback.
+- At the duration boundary, inject collector and occurrence observations immediately before and
+  exactly at the monotonic deadline. The former must persist and the latter must be rejected. Wake
+  the deadline worker early and late: an early wake retries without completing, while a late wake
+  may delay the visible terminal state but must not admit any post-deadline observation.
+- The unconditional Notifications card, including a study with no interventions; denial must block
+  setup/start/resume. Then verify that the daily status reminder arrives, says the study is paused
+  after a pause and collecting again after a resume, and stops after finishing or withdrawing.
+  Reminders are a day apart, so a pilot that runs for an afternoon will not show you one.
 - Two exports and two successful decryptions from each of `RUNNING`, `PAUSED`,
   `COMPLETED`, and `WITHDRAWN`.
 - If the study uploads: the consent step's upload block against your consent document, a
@@ -749,13 +817,22 @@ OEM hardware:
 - Fail-closed behaviour with the wrong private key, the wrong configuration, and truncated
   or modified ciphertext.
 - Reboot, force stop, low storage, wall-clock changes, Doze, long uptime, and the OEM's
-  foreground-service restrictions.
+  foreground-service restrictions. For a redelivered service intent, confirm the notification first
+  presents a short-lived neutral restoration state with no study title, then either revalidates
+  durable `RUNNING` plus current access and replaces it through a fresh exact-type acknowledgement
+  before collectors activate, or removes it while stopping the stale service.
 - Real accuracy, batching, and battery cost of your location and accelerometer parameters
-  on the target hardware.
+  on the target hardware. Verify the order Precise location → Android location services →
+  Background location. The middle card must check the exact signed Fused Location request rather
+  than only the global location toggle. Then verify that Background location opens Particeps App
+  info for the participant to choose the background option Android localizes on that device,
+  rather than issuing a second runtime permission request.
 - Usage Events and NetworkStats latency, gaps, multi-window, VPN, Wi-Fi/mobile handover,
   and zero-traffic windows.
-- Research keyboard: the sensitive-field cut-off, editors in different apps, switching
-  keyboards, and the risk of a participant leaving it enabled by mistake.
+- Research keyboard: Enable must precede Select; then test the sensitive-field cut-off, editors in
+  different apps, switching keyboards, and the risk of a participant leaving it enabled by mistake.
+- Shared Usage access: one card and one system grant for `network_usage.v1` plus
+  `usage_events.v1`, with both owners and their individual required/optional state visible.
 - Peak event rate against the quota you chose, export time and memory, and whether the participant
   screens are comprehensible to someone outside your team.
 
@@ -768,10 +845,14 @@ a row of dots showing how far along they are:
 2. **Data** — every enabled collector, described by the app from your parameters.
 3. **Consent** — your `consent.summary`, then the signature and upload blocks the app
    asserts itself, then the agreement checkbox.
-4. **Access** — the Android access the configured collectors need, one row each. Tapping an
-   outstanding row opens the screen that grants it, except the motion-sensor check, which is
-   hardware and nothing to grant. Optional ones are labelled, and only the required ones
-   block the next step.
+4. **Access** — one card per deduplicated Android capability, with a Used by list naming every
+   collector or study feature that owns it. Notifications are required in every study. Missing
+   items provide an explicit Allow, Open Android settings, or Choose keyboard button; special
+   settings also show app-authored numbered instructions. Hardware checks have no action, and
+   prerequisite cards wait for Precise location and configured location-service readiness before
+   Background location, and Enable keyboard
+   before Select keyboard. A card is required when any owner is required, and only cards whose
+   owners are all optional may be skipped.
 5. **Start** — importing collects nothing; this press is what starts collection.
 
 Re-entering the consent state returns to the data step, so nobody reaches the checkbox
@@ -793,13 +874,21 @@ own, and no configuration field switches it off, rewords it, or adds to it. The 
 arrives about a day after the start press. Starting or stopping collection retracts a reminder
 already on screen rather than posting a replacement, so a paused study is never left asserting that
 it is still collecting. Finishing, completing on the duration deadline, and withdrawing cancel the
-schedule and clear the standing notification. It needs notification access, which the access step
-requires only when your study schedules interventions. In a study without them it therefore reaches
-only the participants who granted notifications for some other reason. None of that makes the
+schedule and clear the standing notification. Notification access is an unconditional required
+setup item for every study, not a consequence of configuring interventions. None of that makes the
 reminder a guarantee that a participant has been reminded. Its timing is best effort rather than an
 exact alarm, and a force stop blocks it until the app is opened again. A participant can also turn
-its channel off in Android's notification settings or revoke notification access, either of which
-stops the reminder without stopping the study.
+its channel off in Android's notification settings, which stops the reminder without changing the
+permission. The app verifies the collection and daily-status channels for every study and the
+intervention channel only when the signed configuration contains interventions. Revoking the
+permission or disabling a required channel during a run is detected by the foreground service;
+the next reconciliation begins after the service's 25-second wait (the five-second probe extension is
+specific to Location), closes admission, and pauses collection. The private typed safety marker and
+matching WorkManager retry keep that fail-closed transition moving even though the foreground service
+is then stopped; process recovery, Start, Resume, and running reconciliation read both before opening
+an event gate. Resume remains blocked until notification state is restored, stale retry work has
+retired with an acknowledged WorkManager cancellation, and the service has acknowledged startup
+again.
 
 Researchers must not:
 
