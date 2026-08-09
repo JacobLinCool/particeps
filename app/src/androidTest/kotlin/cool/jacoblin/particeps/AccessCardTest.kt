@@ -204,7 +204,6 @@ class AccessCardTest {
         start = {},
         pause = {},
         resume = {},
-        finish = {},
         withdraw = {},
         export = {},
         delete = {},

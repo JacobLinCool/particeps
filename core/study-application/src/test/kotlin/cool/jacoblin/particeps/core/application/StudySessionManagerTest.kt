@@ -102,12 +102,12 @@ class StudySessionManagerTest {
         assertEquals(1, fixture.host.stopCount)
         assertEquals(CommandResult.Success, manager.resume())
         assertEquals(2, fixture.host.startCount)
-        assertEquals(CommandResult.Success, manager.finish())
+        assertEquals(CommandResult.Success, fixture.completeDurationCommand())
         runCurrent()
 
         assertEquals(ExperimentState.COMPLETED, manager.snapshot.value.runtime.metadata?.state)
         assertEquals(2, fixture.host.stopCount)
-        // Finishing retires reminders and the deadline but leaves delivery scheduled, so a study
+        // Completion retires reminders and the deadline but leaves delivery scheduled, so a study
         // that ends with an undelivered backlog still gets it to the researcher.
         assertEquals(1, fixture.work.cancelInterventionCount)
         assertEquals(1, fixture.work.cancelCollectionCount)
@@ -193,7 +193,7 @@ class StudySessionManagerTest {
         manager.acceptConsent()
         manager.completeAccessSetup()
         manager.start()
-        manager.finish()
+        fixture.completeDurationCommand()
         uploader.clearFailure = IllegalStateException("outbox unavailable")
 
         val failure = runCatching { manager.deleteLocalData() }.exceptionOrNull()
@@ -267,7 +267,7 @@ class StudySessionManagerTest {
             fixture.manager.acceptConsent()
             fixture.manager.completeAccessSetup()
             fixture.manager.start()
-            fixture.manager.finish()
+            fixture.completeDurationCommand()
             when (failingStep) {
                 "host" -> fixture.host.stopFailure = IllegalStateException(failingStep)
                 "work" -> fixture.work.cancelFailure = IllegalStateException(failingStep)
@@ -920,7 +920,6 @@ class StudySessionManagerTest {
     fun runningCommandMetadataFailuresAllCreateTypedStorageSafetyWitnesses() = runTest {
         val commands = listOf<Pair<String, suspend (Fixture) -> CommandResult>>(
             "pause" to { it.manager.pause() },
-            "finish" to { it.manager.finish() },
             "duration" to { it.completeDurationCommand() },
             "withdraw" to { it.manager.withdraw() },
         )
@@ -1624,7 +1623,7 @@ class StudySessionManagerTest {
     }
 
     @Test
-    fun pauseFinishAndWithdrawCancelVisibleOccurrenceNotifications() = runTest {
+    fun pauseCompletionAndWithdrawCancelVisibleOccurrenceNotifications() = runTest {
         val intervention = InterventionConfiguration(
             "notice-one",
             NotificationAction("Study check-in", "Check in"),
@@ -1648,12 +1647,12 @@ class StudySessionManagerTest {
         assertEquals(setOf("f".repeat(64)), paused.work.cancelledNotificationIds)
         assertEquals(1, paused.work.cancelInterventionCount)
 
-        listOf<suspend (StudySessionManager) -> CommandResult>(
-            { it.finish() },
-            { it.withdraw() },
+        listOf<suspend (Fixture) -> CommandResult>(
+            { it.completeDurationCommand() },
+            { it.manager.withdraw() },
         ).forEach { terminate ->
             val fixture = fixtureWithPostedOccurrence()
-            assertEquals(CommandResult.Success, terminate(fixture.manager))
+            assertEquals(CommandResult.Success, terminate(fixture))
             assertEquals(setOf("f".repeat(64)), fixture.work.cancelledNotificationIds)
             assertEquals(1, fixture.work.cancelCollectionCount)
         }
@@ -1745,7 +1744,7 @@ class StudySessionManagerTest {
     }
 
     @Test
-    fun finishedStudyStillDeliversItsBacklogAndThenReportsDrained() = runTest {
+    fun completedStudyStillDeliversItsBacklogAndThenReportsDrained() = runTest {
         val upload = UploadConfiguration("https://intake.example.invalid/v1", 60, false)
         val uploader = FakeUploader()
         val fixture = fixture(configuration(upload = upload), uploader = uploader)
@@ -1760,7 +1759,7 @@ class StudySessionManagerTest {
         runCurrent()
 
         // The study ends before anything was delivered.
-        assertEquals(CommandResult.Success, manager.finish())
+        assertEquals(CommandResult.Success, fixture.completeDurationCommand())
         runCurrent()
         assertTrue(uploader.ranges.isEmpty())
         assertTrue(!manager.uploadDrained())
@@ -2081,7 +2080,6 @@ class StudySessionManagerTest {
     fun cancellationAfterPrearmAcknowledgementEntersTypedSafetyPauseBeforePropagation() = runTest {
         val commands = listOf<Pair<String, suspend (Fixture) -> CommandResult>>(
             "pause" to { it.manager.pause() },
-            "finish" to { it.manager.finish() },
             "duration" to { it.completeDurationCommand() },
             "withdraw" to { it.manager.withdraw() },
         )
@@ -2196,7 +2194,7 @@ class StudySessionManagerTest {
         fixture.work.cancelCollectionEntered = CompletableDeferred()
         fixture.work.cancelCollectionGate = CompletableDeferred()
 
-        val finish = async { fixture.manager.finish() }
+        val completion = async { fixture.completeDurationCommand() }
         fixture.work.cancelCollectionEntered?.await()
         assertEquals(ExperimentState.COMPLETED, fixture.store.metadata?.state)
         val recovered = fixture(
@@ -2222,13 +2220,12 @@ class StudySessionManagerTest {
         assertEquals(ExperimentState.COMPLETED, recovered.work.ensuredMetadata.last().state)
 
         fixture.work.cancelCollectionGate?.complete(Unit)
-        assertEquals(CommandResult.Success, finish.await())
+        assertEquals(CommandResult.Success, completion.await())
     }
 
     @Test
     fun terminalCleanupFailureKeepsWitnessUntilStateAwareWorkerCancellationSucceeds() = runTest {
         val commands = listOf<Triple<String, ExperimentState, suspend (Fixture) -> CommandResult>>(
-            Triple("finish", ExperimentState.COMPLETED) { it.manager.finish() },
             Triple("duration", ExperimentState.COMPLETED) { it.completeDurationCommand() },
             Triple("withdraw", ExperimentState.WITHDRAWN) { it.manager.withdraw() },
         )

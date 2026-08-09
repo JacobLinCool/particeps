@@ -326,7 +326,7 @@ class ExperimentRuntimeTest {
         assertTrue(plugin.emit("ACTIVITY_STARTED") is EmitResult.Accepted)
         assertEquals(listOf(1L, 2L), store.events.map { it.sequenceNumber })
 
-        assertEquals(CommandResult.Success, runtime.finishEarly())
+        assertEquals(CommandResult.Success, runtime.completeAfterDuration())
         assertEquals(ExperimentState.COMPLETED, runtime.snapshot.value.metadata?.state)
         assertEquals(1, plugin.collector.stopCount)
         assertEquals(CollectorStatus.STOPPED, plugin.collector.health.value.status)
@@ -573,7 +573,7 @@ class ExperimentRuntimeTest {
         start(runtime)
         plugin.collector.failNextStopWithOwnedResources = true
 
-        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), runtime.finishEarly())
+        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), runtime.completeAfterDuration())
         assertEquals(1, plugin.collector.stopCount)
         assertTrue(plugin.collector.requiresStop)
         assertEquals(ExperimentState.RUNNING, runtime.snapshot.value.metadata?.state)
@@ -868,7 +868,6 @@ class ExperimentRuntimeTest {
     @Test
     fun terminalCommandsWaitForAdmittedWritesAndAbortOnStorageFailure() = runTest {
         val commands = listOf<Pair<String, suspend ExperimentRuntime.() -> CommandResult>>(
-            "finish" to { finishEarly() },
             "duration" to { completeAfterDuration() },
             "withdraw" to { withdraw() },
         )
@@ -930,14 +929,14 @@ class ExperimentRuntimeTest {
 
         val emission = async { collector.emit("ACTIVITY_RESUMED") }
         store.appendEntered?.await()
-        val finish = async { runtime.finishEarly() }
+        val completion = async { runtime.completeAfterDuration() }
         runCurrent()
-        assertFalse(finish.isCompleted)
+        assertFalse(completion.isCompleted)
 
         emission.cancelAndJoin()
         runCurrent()
 
-        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), finish.await())
+        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), completion.await())
         assertEquals(ExperimentState.RUNNING, runtime.snapshot.value.metadata?.state)
         assertEquals(SafetyPauseReason.STORAGE_FAILURE, runtime.snapshot.value.pendingSafetyPauseReason)
         assertEquals(listOf(SafetyPauseReason.STORAGE_FAILURE), witness.persistedReasons)
@@ -960,7 +959,7 @@ class ExperimentRuntimeTest {
         start(runtime)
         plugin.collector.failNextStopWithOwnedResources = true
 
-        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), runtime.finishEarly())
+        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), runtime.completeAfterDuration())
 
         assertEquals(ExperimentState.RUNNING, runtime.snapshot.value.metadata?.state)
         assertEquals(
@@ -978,7 +977,7 @@ class ExperimentRuntimeTest {
             runtime.retrySafetyPause(SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE),
         )
         assertTrue(runtime.acknowledgeSafetyPauseRequest(SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE))
-        assertEquals(CommandResult.Success, runtime.finishEarly())
+        assertEquals(CommandResult.Success, runtime.completeAfterDuration())
         assertEquals(ExperimentState.COMPLETED, runtime.snapshot.value.metadata?.state)
         assertEquals(2, plugin.collector.stopCount)
     }
@@ -986,7 +985,7 @@ class ExperimentRuntimeTest {
     @Test
     fun terminalTeardownFailureFromPausedPreservesTheEarlierParticipantPause() = runTest {
         val terminalCommands = listOf<Pair<String, suspend (ExperimentRuntime) -> CommandResult>>(
-            "finish" to { runtime -> runtime.finishEarly() },
+            "duration" to { runtime -> runtime.completeAfterDuration() },
             "withdraw" to { runtime -> runtime.withdraw() },
         )
         terminalCommands.forEach { (name, terminalCommand) ->
@@ -1044,7 +1043,6 @@ class ExperimentRuntimeTest {
         )
         val commands = listOf(
             CancelledDrain("pause", true) { runtime -> runtime.pause() },
-            CancelledDrain("finish", false) { runtime -> runtime.finishEarly() },
             CancelledDrain("duration", false) { runtime -> runtime.completeAfterDuration() },
             CancelledDrain("withdraw", false) { runtime -> runtime.withdraw() },
         )
@@ -1422,10 +1420,10 @@ class ExperimentRuntimeTest {
     }
 
     @Test
-    fun pausedFinishedAndWithdrawnStudiesRejectEveryInterventionMutation() = runTest {
+    fun pausedCompletedAndWithdrawnStudiesRejectEveryInterventionMutation() = runTest {
         val lifecycleCases = listOf<Pair<String, suspend (ExperimentRuntime) -> CommandResult>>(
             "pause" to { it.pause() },
-            "finish" to { it.finishEarly() },
+            "duration" to { it.completeAfterDuration() },
             "withdraw" to { it.withdraw() },
         )
         lifecycleCases.forEach { (name, transition) ->

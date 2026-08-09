@@ -78,7 +78,6 @@ object UiTags {
     const val START = "start"
     const val PAUSE = "pause"
     const val RESUME = "resume"
-    const val FINISH = "finish"
     const val WITHDRAW = "withdraw"
     const val EXPORT = "export"
     const val EVENT_COUNT = "event_count"
@@ -101,7 +100,6 @@ data class StudyUiActions(
     val start: () -> Unit,
     val pause: () -> Unit,
     val resume: () -> Unit,
-    val finish: () -> Unit,
     val withdraw: () -> Unit,
     val export: () -> Unit,
     val delete: () -> Unit,
@@ -143,7 +141,6 @@ fun CollectorApp(
                 Dashboard(
                     state = state,
                     actions = actions.copy(
-                        finish = { confirmAction = ConfirmAction.FINISH },
                         withdraw = { confirmAction = ConfirmAction.WITHDRAW },
                         delete = { confirmAction = ConfirmAction.DELETE },
                     ),
@@ -162,7 +159,6 @@ fun CollectorApp(
                 onConfirm = {
                     confirmAction = null
                     when (action) {
-                        ConfirmAction.FINISH -> actions.finish()
                         ConfirmAction.WITHDRAW -> actions.withdraw()
                         ConfirmAction.DELETE -> actions.delete()
                     }
@@ -826,11 +822,11 @@ private fun CollectionPanel(study: StudyUiState.ActiveStudy, actions: StudyUiAct
         )
         EventMeter(study)
         when (state) {
-            ExperimentState.RUNNING -> CollectionControls(
-                stringResource(R.string.action_pause), UiTags.PAUSE, actions.pause, actions.finish, busy,
+            ExperimentState.RUNNING -> CollectionControl(
+                stringResource(R.string.action_pause), UiTags.PAUSE, actions.pause, busy,
             )
-            ExperimentState.PAUSED -> CollectionControls(
-                stringResource(R.string.action_resume), UiTags.RESUME, actions.resume, actions.finish, busy,
+            ExperimentState.PAUSED -> CollectionControl(
+                stringResource(R.string.action_resume), UiTags.RESUME, actions.resume, busy,
             )
             else -> Unit
         }
@@ -1009,25 +1005,17 @@ private fun DetailRow(label: String, value: String) {
 }
 
 @Composable
-private fun CollectionControls(
-    primaryLabel: String,
-    primaryTag: String,
-    onPrimary: () -> Unit,
-    onFinish: () -> Unit,
+private fun CollectionControl(
+    label: String,
+    tag: String,
+    onClick: () -> Unit,
     busy: Boolean,
 ) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Button(
-            onClick = onPrimary,
-            enabled = !busy,
-            modifier = Modifier.weight(1f).testTag(primaryTag),
-        ) { Text(primaryLabel) }
-        OutlinedButton(
-            onClick = onFinish,
-            enabled = !busy,
-            modifier = Modifier.weight(1f).testTag(UiTags.FINISH),
-        ) { Text(stringResource(R.string.action_finish)) }
-    }
+    Button(
+        onClick = onClick,
+        enabled = !busy,
+        modifier = Modifier.fillMaxWidth().testTag(tag),
+    ) { Text(label) }
 }
 
 @Composable
@@ -1076,7 +1064,6 @@ private fun ConfirmDialog(
 ) {
     // Irreversible actions are exactly where text earns its place.
     val (title, body) = when (action) {
-        ConfirmAction.FINISH -> R.string.confirm_finish_title to R.string.confirm_finish_body
         ConfirmAction.WITHDRAW -> R.string.confirm_withdraw_title to R.string.confirm_withdraw_body
         ConfirmAction.DELETE -> R.string.confirm_delete_title to R.string.confirm_delete_body
     }
@@ -1186,7 +1173,7 @@ private fun Alert(code: String) {
     }
 }
 
-private enum class ConfirmAction { FINISH, WITHDRAW, DELETE }
+private enum class ConfirmAction { WITHDRAW, DELETE }
 
 @Composable
 private fun stateTint(state: ExperimentState): Color = when (state) {

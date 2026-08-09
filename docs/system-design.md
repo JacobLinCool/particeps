@@ -24,7 +24,7 @@ explains how the current modules realize those contracts.
   wrapped to the researcher's HPKE key. Upload is a property of the study, not a participant
   setting, and it is disclosed on the consent screen from the signed bytes.
 - Collection begins only after the participant explicitly starts it. The participant can pause,
-  resume, finish early, withdraw, export, and delete. Collection never depends on upload
+  resume, withdraw, export, and delete. Collection never depends on upload
   succeeding.
 - `RUNNING`, `PAUSED`, `COMPLETED`, and `WITHDRAWN` can all be exported, repeatedly. Export is not a
   study state.
@@ -627,7 +627,7 @@ the same way.
   unrelated collectors running only after a non-location fallback host is acknowledged. If both
   attempts fail, or a demotion fails, every event gate closes and the study enters the typed
   `COLLECTION_HOST_FAILURE` safety pause.
-- Pause, finish, withdraw, and delete stop the foreground service.
+- Pause, duration completion, withdraw, and delete stop the foreground service.
 - Whole-study safety loss closes admission and writes an app-private marker containing only the
   closed reason, never a study or participant identity. Required-access loss, acknowledged-host
   loss, source teardown failure/cancellation, storage failure, and an unacknowledged background-work
@@ -663,8 +663,8 @@ the same way.
   does not push the next reminder a full day away.
 - The schedule is deliberately not cancelled on pause, since a paused study is the case the
   reminder exists for. `cancelCollectionWork` cancels both the schedule and any standing
-  notification when the study reaches a terminal state — finished early, completed at its
-  deadline, or withdrawn. Deleting local data cancels it as well. Starting or stopping collection
+  notification when the study reaches a terminal state — completed at its deadline or withdrawn.
+  Deleting local data cancels it as well. Starting or stopping collection
   retracts a standing reminder without posting a replacement: it states a state that has just
   stopped being true, and the next daily run posts the truth. Since pause stops the
   foreground service and cancels visible prompt notifications, this is the only notification that
@@ -725,8 +725,8 @@ the same way.
   upload tail, after `cancelCollectionWork` has retired deadline, reminder, and intervention work.
   Pre-start states request none. A cross-boot active plan fails before issuing any mutation.
 - The worker acts in `RUNNING`, `PAUSED`, `COMPLETED`, and `WITHDRAWN`. It no-ops in every other
-  state, and when the active study is not the one the job was scheduled for. Finishing or
-  withdrawing cancels interventions and the deadline but leaves delivery running, so a study that
+  state, and when the active study is not the one the job was scheduled for. Duration completion or
+  withdrawal cancels interventions and the deadline but leaves delivery running, so a study that
   has ended still sends its undelivered tail. The chain is simply not renewed once
   `uploadDrained()` reports that a terminal study has nothing outstanding. Deleting local data
   cancels it outright.
@@ -809,7 +809,7 @@ capability policy.
 The instrumentation test defines the full Compose participation flow: importing the demo study under
 the shipped empty anchor map, the study step, a Continue through the data step, consent, access
 setup, start, pause with an assertion that no events are admitted during the pause, resume, and
-finish through its confirmation dialog. It drives the setup steps by test tag, because the header
+withdraw through its confirmation dialog. It drives the setup steps by test tag, because the header
 shows a position rather than a state name. The two places it does assert on text — the confirmation
 button and the terminal state — read it back through `getString`. The test therefore passes in
 whatever language the device is set to rather than pinning one locale's wording. It runs against

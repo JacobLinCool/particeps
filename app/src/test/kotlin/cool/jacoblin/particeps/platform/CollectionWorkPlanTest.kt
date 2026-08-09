@@ -109,7 +109,7 @@ class CollectionWorkPlanTest {
             ExperimentState.COMPLETED -> transitions += ExperimentTransition(
                 from = ExperimentState.RUNNING,
                 to = ExperimentState.COMPLETED,
-                reason = TransitionReason.PARTICIPANT_FINISHED_EARLY,
+                reason = TransitionReason.STUDY_DURATION_ELAPSED,
                 time = start.copy(
                     wallTimeUtcMillis = start.wallTimeUtcMillis + 1,
                     elapsedRealtimeNanos = start.elapsedRealtimeNanos + 1,

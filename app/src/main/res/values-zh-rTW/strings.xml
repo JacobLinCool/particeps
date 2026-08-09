@@ -13,7 +13,7 @@
     <string name="collection_notification_title">研究資料收集中</string>
     <string name="collection_recovery_notification_text">正在確認是否應繼續收集</string>
     <string name="collection_recovery_notification_title">正在確認研究狀態</string>
-    <string name="daily_running">仍在收集中。開啟 App 可以暫停、匯出或提前結束。</string>
+    <string name="daily_running">仍在收集中。開啟 App 可以暫停、匯出或退出研究。</string>
     <string name="daily_paused_since">自 %1$s 暫停中。在你重新開始之前不會收集任何資料。</string>
     <string name="daily_paused_unknown">目前暫停中。在你重新開始之前不會收集任何資料。</string>
     <string name="survey_title">問卷</string>
@@ -55,7 +55,6 @@
     <string name="action_start">開始研究</string>
     <string name="action_pause">暫停</string>
     <string name="action_resume">繼續收集</string>
-    <string name="action_finish">提早完成</string>
     <string name="action_export">匯出加密資料</string>
     <string name="action_withdraw">退出研究</string>
     <string name="action_delete">刪除本機資料</string>
@@ -232,8 +231,6 @@
     <string name="details_last_export">上次匯出</string>
     <string name="details_last_export_value">%1$s 筆 · %2$s</string>
 
-    <string name="confirm_finish_title">提早完成研究？</string>
-    <string name="confirm_finish_body">完成後無法重新開始，但仍可多次匯出資料。</string>
     <string name="confirm_withdraw_title">確定退出研究？</string>
     <string name="confirm_withdraw_body">App 將永久停止收集資料。在刪除本機資料前，你仍可匯出既有資料。</string>
     <string name="confirm_delete_title">永久刪除本機資料？</string>

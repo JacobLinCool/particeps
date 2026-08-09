@@ -420,22 +420,6 @@ class ExperimentRuntime(
         }
     }
 
-    suspend fun finishEarly(): CommandResult = executeCommand {
-        val state = requireMetadata().state
-        if (state == ExperimentState.RUNNING) {
-            drainAndTransition(
-                to = ExperimentState.COMPLETED,
-                reason = TransitionReason.PARTICIPANT_FINISHED_EARLY,
-                stopCollectors = true,
-            )
-        } else {
-            stopAndTransitionFromClosed(
-                ExperimentState.COMPLETED,
-                TransitionReason.PARTICIPANT_FINISHED_EARLY,
-            )
-        }
-    }
-
     suspend fun completeAfterDuration(): CommandResult = executeCommand {
         val state = requireMetadata().state
         if (state == ExperimentState.RUNNING) {

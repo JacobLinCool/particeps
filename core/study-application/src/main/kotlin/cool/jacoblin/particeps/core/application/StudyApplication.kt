@@ -687,8 +687,6 @@ class StudySessionManager(
     suspend fun surveySubmissionEvent(occurrenceId: String) =
         sessionMutex.withLock { requireRuntime().surveySubmissionEvent(occurrenceId) }
 
-    suspend fun finish(): CommandResult = terminalCommand { it.finishEarly() }
-
     /**
      * Completes an active study only after proving the exact same-boot monotonic deadline is due.
      *

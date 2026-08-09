@@ -63,7 +63,7 @@ class ExperimentStateMachineTest {
         metadata = stateMachine.transition(
             metadata,
             ExperimentState.COMPLETED,
-            TransitionReason.PARTICIPANT_FINISHED_EARLY,
+            TransitionReason.STUDY_DURATION_ELAPSED,
             time,
         )
 

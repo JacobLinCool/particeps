@@ -109,6 +109,11 @@ class CoreFlowTest {
             )
         }
 
+        composeRule.onNodeWithTag(UiTags.PAUSE).performScrollTo()
+        val pauseWidth = composeRule.onNodeWithTag(UiTags.PAUSE).fetchSemanticsNode().boundsInRoot.width
+        composeRule.onNodeWithTag(UiTags.EXPORT).performScrollTo()
+        val fullRowWidth = composeRule.onNodeWithTag(UiTags.EXPORT).fetchSemanticsNode().boundsInRoot.width
+        assertEquals("Pause should occupy a full control row", fullRowWidth, pauseWidth, 1f)
         composeRule.onNodeWithTag(UiTags.PAUSE).performScrollTo().performClick()
         composeRule.waitUntil(TIMEOUT_MILLIS) {
             session.snapshot.value.runtime.metadata?.state == ExperimentState.PAUSED &&
@@ -147,18 +152,18 @@ class CoreFlowTest {
         composeRule.waitUntil(TIMEOUT_MILLIS) {
             session.snapshot.value.runtime.metadata?.state == ExperimentState.RUNNING
         }
-        waitUntilExactlyOneNode(hasTestTag(UiTags.FINISH) and isEnabled())
-        composeRule.onNodeWithTag(UiTags.FINISH).performScrollTo().performClick()
+        waitUntilExactlyOneNode(hasTestTag(UiTags.WITHDRAW) and isEnabled())
+        composeRule.onNodeWithTag(UiTags.WITHDRAW).performScrollTo().performClick()
         val confirm = composeRule.activity.getString(R.string.action_confirm)
         waitUntilExactlyOneNode(hasText(confirm))
         composeRule.onNodeWithText(confirm).performClick()
         composeRule.waitUntil(TIMEOUT_MILLIS) {
-            session.snapshot.value.runtime.metadata?.state == ExperimentState.COMPLETED
+            session.snapshot.value.runtime.metadata?.state == ExperimentState.WITHDRAWN
         }
 
         assertTrue(countAtPause > 0)
         composeRule.onNodeWithTag(UiTags.STATE)
-            .assertTextEquals(composeRule.activity.getString(R.string.state_completed))
+            .assertTextEquals(composeRule.activity.getString(R.string.state_withdrawn))
         composeRule.onNodeWithTag(UiTags.EXPORT).performScrollTo()
         runBlocking { session.deleteLocalData() }
     }

@@ -82,7 +82,6 @@ class MainActivity : ComponentActivity() {
                     start = viewModel::start,
                     pause = viewModel::pause,
                     resume = viewModel::resume,
-                    finish = viewModel::finish,
                     withdraw = viewModel::withdraw,
                     export = {
                         val id = (state as? StudyUiState.ActiveStudy)?.configuration?.experimentId ?: "research"

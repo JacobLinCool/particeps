@@ -462,7 +462,7 @@ battery that is not low. Those constraints are why `interval_minutes` is a floor
 promise: a phone on mobile data all week delivers nothing until it reaches Wi-Fi.
 
 Delivery continues while the study is `PAUSED`, for data collected before the pause, and it
-continues after the study ends. Finishing, completing on the duration deadline, and withdrawing
+continues after the study ends. Completing on the duration deadline and withdrawing
 cancel future interventions and the study deadline, but they leave delivery running, so an
 undelivered tail still reaches you. The chain stops renewing once the study is `COMPLETED` or `WITHDRAWN` and
 everything it collected has been delivered. Deleting local data cancels delivery outright, so
@@ -758,7 +758,7 @@ OEM hardware:
 - Start and Resume for every configured collector, including an instrumented foreground-service
   failure: the host acknowledgement has a five-second timeout, the state stays `READY` or `PAUSED`
   when it fails, and no collector starts before Android has accepted the notification and exact
-  service types. Then exercise pause, finish, and withdraw.
+  service types. Then exercise pause, duration completion, and withdraw.
 - During a run, turn off each required capability without returning to the Activity. The service
   waits 25 seconds between reconciliations; the exact Location probe may use up to five more seconds,
   giving a nominal 30-second code-path budget. Do not treat that as a wall-clock SLA because Android
@@ -774,7 +774,7 @@ OEM hardware:
   keep a fresh process from starting the foreground host or any collector. Finally, delay and fail
   retry cancellation: Resume must wait for acknowledged retirement, and a failed cancellation must
   leave the safety pause pending with an autonomous retry witness.
-- Cancel Pause, Finish, duration completion, and Withdraw while a source is releasing callbacks.
+- Cancel Pause, duration completion, and Withdraw while a source is releasing callbacks.
   Confirm `COLLECTION_TEARDOWN_FAILURE` is durable before cancellation returns, a fresh process enters
   `PAUSED` before any host or source starts, and a teardown failure attempted from an already paused
   study does not rewrite the earlier participant-pause reason or timestamp.
@@ -804,7 +804,7 @@ OEM hardware:
   may delay the visible terminal state but must not admit any post-deadline observation.
 - The unconditional Notifications card, including a study with no interventions; denial must block
   setup/start/resume. Then verify that the daily status reminder arrives, says the study is paused
-  after a pause and collecting again after a resume, and stops after finishing or withdrawing.
+  after a pause and collecting again after a resume, and stops after duration completion or withdrawal.
   Reminders are a day apart, so a pilot that runs for an afternoon will not show you one.
 - Two exports and two successful decryptions from each of `RUNNING`, `PAUSED`,
   `COMPLETED`, and `WITHDRAWN`.
@@ -857,7 +857,7 @@ a row of dots showing how far along they are:
 
 Re-entering the consent state returns to the data step, so nobody reaches the checkbox
 without the list of sources having been on screen. Afterwards participants can pause, resume,
-finish early, withdraw, export repeatedly, and delete local data; the irreversible ones ask
+withdraw, export repeatedly, and delete local data; the irreversible ones ask
 for confirmation. See [`participant-guide.md`](participant-guide.md) for what they are told.
 
 From the start press onward the app posts one status reminder a day, for as long as the study is
@@ -873,7 +873,7 @@ Plan participant contact around it. It is not one of your interventions: the app
 own, and no configuration field switches it off, rewords it, or adds to it. The first one
 arrives about a day after the start press. Starting or stopping collection retracts a reminder
 already on screen rather than posting a replacement, so a paused study is never left asserting that
-it is still collecting. Finishing, completing on the duration deadline, and withdrawing cancel the
+it is still collecting. Completing on the duration deadline and withdrawing cancel the
 schedule and clear the standing notification. Notification access is an unconditional required
 setup item for every study, not a consequence of configuring interventions. None of that makes the
 reminder a guarantee that a participant has been reminded. Its timing is best effort rather than an

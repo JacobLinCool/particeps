@@ -97,7 +97,6 @@ class StudyViewModel(
     fun start() = command(session::start)
     fun pause() = command(session::pause)
     fun resume() = command(session::resume)
-    fun finish() = command(session::finish)
     fun withdraw() = command(session::withdraw)
 
     fun export(openDestination: () -> OutputStream) = operation(INCIDENT_EXPORT_FAILED) {

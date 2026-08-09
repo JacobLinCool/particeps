@@ -483,7 +483,7 @@ export const en: Messages = {
       },
       control: {
         title: 'You can stop at any time',
-        body: 'Pause, finish early, or withdraw. No reason is required and the app does not ask for one. Afterwards you can still export what was collected, and delete all of it from the phone. What has already left the phone can only be dealt with by asking the research team.'
+        body: 'Pause or withdraw. No reason is required and the app does not ask for one. Afterwards you can still export what was collected, and delete all of it from the phone. What has already left the phone can only be dealt with by asking the research team.'
       }
     },
     flow: {

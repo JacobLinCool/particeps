@@ -15,7 +15,7 @@ section 5 covers the keyboard. A source the study marks required prevents setup,
 resuming while its access is missing instead of being silently ignored. Data that has already
 reached the research team cannot be taken back.
 
-What you can always do is decline, pause, finish early, withdraw, and — once you have finished or withdrawn — permanently delete the study data on your phone. The app never asks why.
+What you can always do is decline, pause, withdraw, and — once the study has completed or you have withdrawn — permanently delete the study data on your phone. The app never asks why.
 
 This guide describes what the app does on your phone. It does not replace the consent document approved for your study. Where this guide and that document disagree, the consent document and your research team's answers come first. If anything is unclear, do not start. Ask first.
 
@@ -54,12 +54,12 @@ label in this guide against them.
 - Data is encrypted and kept on your phone. It stays there unless you export and send it yourself, or the study you imported says it sends data automatically.
 - **Whether a study sends data automatically is shown to you before you consent.** If it does, the consent screen carries a block naming where it sends to, how often, and which networks it may use. If there is no such block, the study does not send anything. Section 2 shows you the exact screen.
 - A study that sends automatically sends the same encrypted package you would export by hand. Only the research team's own key can open it — not the company that runs the network, not whoever runs the receiving computer.
-- Automatic sending is part of the study, not a separate setting you can switch off on its own. Pausing, finishing and withdrawing all stop collection, but data already collected is still sent afterwards. Deleting the local data is what stops that. Section 7 sets out exactly what each one does.
+- Automatic sending is part of the study, not a separate setting you can switch off on its own. Pausing and withdrawing stop collection, but data already collected is still sent afterwards. Deleting the local data is what stops that. Section 7 sets out exactly what each one does.
 - In a study that sends data automatically, your phone keeps its own copy too, so you can still export it yourself. If the space the study is allowed runs low, the phone may remove events the research team has already received. It never removes anything still waiting to be sent, and the app tells you when a removal has happened. Section 6 explains it.
-- You can pause, resume, finish early, or withdraw. You never have to explain the reason to the app.
+- You can pause, resume, or withdraw. You never have to explain the reason to the app.
 - You can export your data while the study is Collecting (收集中), Paused (已暫停), Completed (已完成), or Withdrawn (已退出), and you can export as many times as you like.
 - Exporting does not change the study's state and does not mean the research team has received anything. You choose whether and how to send the file.
-- After finishing or withdrawing, you can permanently delete the study data on your phone. That does not delete export files you already saved elsewhere or already sent to someone.
+- After the study completes or you withdraw, you can permanently delete the study data on your phone. That does not delete export files you already saved elsewhere or already sent to someone.
 
 ## 1. Install only a version you trust
 
@@ -99,7 +99,7 @@ The link names the file it expects: the address to fetch it from, the exact cont
 
 The app fetches the file once and never goes back for another. A link cannot change a study you have already imported, and a research team that needs to change anything has to sign a new file and give you a new link for it.
 
-A link is accepted only when your phone holds no study at all. A study you have finished or withdrawn from but not yet deleted still counts, and so does a deletion that has not finished. When a link is refused for that reason the app shows the code `JOIN_ACTIVE_STUDY`, which reports the situation rather than a fault.
+A link is accepted only when your phone holds no study at all. A study that has completed or that you have withdrawn from but not yet deleted still counts, and so does a deletion that has not finished. When a link is refused for that reason the app shows the code `JOIN_ACTIVE_STUDY`, which reports the situation rather than a fault.
 
 Arriving this way also changes what checking the signer's fingerprint can prove. **Who signed the study**, below, explains how.
 
@@ -172,7 +172,7 @@ The app builds this block from the signed configuration, not from the research t
 
 Sending happens in the background. It does not need you to do anything, and your phone keeps its own copy, so you can still export by hand at any time. If the space the study is allowed runs low, the phone frees some by removing events the research team has already received; section 6 describes exactly what that looks like on screen.
 
-One detail the block states briefly and section 7 explains in full. Pausing, finishing and withdrawing all stop *collection*, but data already collected and not yet sent still goes to the research team afterwards. The only thing that stops that is deleting the local study data, which is offered once the study has finished or you have withdrawn.
+One detail the block states briefly and section 7 explains in full. Pausing and withdrawing stop *collection*, but data already collected and not yet sent still goes to the research team afterwards. The only thing that stops that is deleting the local study data, which is offered once the study has completed or you have withdrawn.
 
 ## 3. What a study can collect
 
@@ -448,7 +448,7 @@ which are final, is set out in the [Protocol v1 contract](../protocol/v1/README.
 
 You do not need to interpret the code. If one is still on screen after several days, quote it to your research team as it appears; it tells them where the attempt failed and contains none of your collected data.
 
-**The controls.** While the study is collecting, Pause (暫停) and Finish early (提早完成) sit side by side; while it is paused, Resume (繼續收集) takes the place of Pause. Once the study is completed or withdrawn, neither is there. Below them, Export encrypted data (匯出加密資料) is always available. Delete local data (刪除本機資料) appears only after the study is completed or withdrawn. Withdraw (退出研究) is last, and is there for as long as you have not already withdrawn. Section 7 covers all of them.
+**The controls.** While the study is collecting, Pause (暫停) fills its own row; while it is paused, Resume (繼續收集) takes its place. Once the study is completed or withdrawn, neither is there. Below it, Export encrypted data (匯出加密資料) is always available. Delete local data (刪除本機資料) appears only after the study is completed or withdrawn. Withdraw (退出研究) is last, and is there for as long as you have not already withdrawn. Section 7 covers all of them.
 
 **The chevron.** At the very bottom, a small arrowhead pointing down, centred, with nothing beside it. Tap it and the technical identifiers unfold above it; the arrowhead flips to point up, and tapping again folds them away.
 
@@ -481,21 +481,16 @@ In a study that sends data automatically, this is what each control does to the 
 | Control | Collection | Automatic sending |
 | --- | --- | --- |
 | Pause (暫停) | Stops until you resume | Continues, for data collected before the pause |
-| Finish early (提早完成) | Stops permanently | Continues until everything already collected has been sent, then stops on its own |
 | Withdraw (退出研究) | Stops permanently | Continues until everything already collected has been sent, then stops on its own |
 | Delete local data (刪除本機資料) | Already stopped | Stops immediately; anything not yet sent is destroyed with the rest |
 
-Finishing or withdrawing does not strand data the research team was already owed. The app keeps sending what it collected before you stopped, and gives up scheduling once there is nothing left. If you would rather it not be sent, delete the local study data. That is offered once you have finished or withdrawn, and it removes what has not gone out yet.
+Duration completion or withdrawal does not strand data the research team was already owed. The app keeps sending what it collected before collection stopped, and gives up scheduling once there is nothing left. If you would rather it not be sent, delete the local study data. That is offered once the study has completed or you have withdrawn, and it removes what has not gone out yet.
 
 ### Pause and resume
 
 When you press Pause (暫停), the app takes a pause boundary, stops the sources, closes their event gates, waits for events already admitted before that boundary, and then saves the paused state. If a source cannot stop cleanly, the app records a safety pause and keeps retrying cleanup instead of reporting an ordinary participant pause. Once the status line shows Paused (已暫停), no new study events are accepted for the period you are paused. The line under it tells you when the pause started and how long it has lasted. Data already collected stays on your phone, encrypted. The ongoing notification and any visible scheduled-activity notification go away, and the daily reminder starts saying you are paused instead. A survey cannot be opened or submitted while paused.
 
 Pressing Resume (繼續收集) starts a new collection interval. Data volume and app and screen use are not backfilled: the app does not go back and collect what happened while you were paused. Calendar time and scheduled-activity availability still pass during a pause, so the app expires missed activities and reconciles any remaining ones when you resume.
-
-### Finish early
-
-Finish early (提早完成) stops collection permanently and moves the study to Completed (已完成). The confirmation dialog is headed Finish this study early? (提早完成研究？) and says: You cannot restart it afterwards, but you can still export as many times as you like. (完成後不能重新開始，但仍可重複匯出。) Its buttons are Confirm (確認) and Cancel (取消). This cannot be reversed. The data you already have can still be exported as many times as you want, or deleted.
 
 ### Withdraw
 
@@ -552,7 +547,7 @@ Uninstalling the app or clearing its app data also destroys the local keys and d
 | The interface is in a language you cannot read | Tap the globe at the top right of the header and pick a language; it is the same setting as Android Settings → Apps → Particeps → Language |
 | The configuration file will not import | Check the file, the client build/platform, and the study's validity period; do not modify the `.partcfg`, and contact the research team |
 | `JOIN_LINK_INVALID` after opening a link or QR code | The link is not a complete `particeps://join/v1` link. Nothing was fetched and nothing was imported; ask your research team to send the link again rather than retyping or editing it |
-| `JOIN_ACTIVE_STUDY` after opening a link or QR code | Not a fault: the phone still holds a study, so the link was not acted on. A study you have finished or withdrawn from but not yet deleted counts, and so does a deletion that has not finished. Open the link again once the phone holds no study |
+| `JOIN_ACTIVE_STUDY` after opening a link or QR code | Not a fault: the phone still holds a study, so the link was not acted on. A study that has completed or that you have withdrawn from but not yet deleted counts, and so does a deletion that has not finished. Open the link again once the phone holds no study |
 | `JOIN_IMPORT_FAILED` after opening a link or QR code | The study file did not arrive intact or did not pass its checks: the fetch failed, what arrived was not the file the link names, it was not signed by the key the link names, or one of the checks in section 1 failed. Nothing was imported; quote the code to your research team |
 | `STUDY_IMPORT_FAILED` | The app's own record that an import did not finish, whether it came from a link or from a file. Nothing was imported and nothing already on the phone changed |
 | Check this against the fingerprint your research team published (請與研究團隊公佈的金鑰指紋核對) | Ordinary for most studies; compare the fingerprint on the Configuration signature (設定檔簽章) block with the one your research team published, and if you do not have one, ask before consenting |
@@ -583,8 +578,8 @@ A study moves through nine states internally, but the screen names only four of 
 | `CONSENT_PENDING` | Dot 2 then dot 3 of 5, the Data panel then the Consent panel | You are reading what would be collected and deciding whether to take part |
 | `ACCESS_SETUP` | Dot 4 of 5, the Access panel | You are completing the required Android access |
 | `READY` | Dot 5 of 5, the Start panel | Waiting for you to press Start study (開始研究); nothing is being collected |
-| `RUNNING` | Collecting (收集中), teal dot | Sources can receive events; you can pause, finish, withdraw, or export |
-| `PAUSED` | Paused (已暫停), grey dot | No new events accepted; you can resume, finish, withdraw, or export |
+| `RUNNING` | Collecting (收集中), teal dot | Sources can receive events; you can pause, withdraw, or export |
+| `PAUSED` | Paused (已暫停), grey dot | No new events accepted; you can resume, withdraw, or export |
 | `COMPLETED` | Completed (已完成), grey dot | Permanently stopped; you can export, withdraw, or delete |
 | `WITHDRAWN` | Withdrawn (已退出), grey dot | Permanently stopped; you can export or delete |
 

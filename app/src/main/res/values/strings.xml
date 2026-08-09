@@ -23,7 +23,7 @@
     <string name="collection_notification_title">Research collection active</string>
     <string name="collection_recovery_notification_text">Checking whether collection should continue</string>
     <string name="collection_recovery_notification_title">Restoring research status</string>
-    <string name="daily_running">Still collecting. Open the app to pause, export, or finish early.</string>
+    <string name="daily_running">Still collecting. Open the app to pause, export, or withdraw.</string>
     <!-- %1$s is a locale-formatted date and time. -->
     <string name="daily_paused_since">Paused since %1$s. Nothing is being collected until you resume.</string>
     <string name="daily_paused_unknown">Paused. Nothing is being collected until you resume.</string>
@@ -77,7 +77,6 @@
     <string name="action_start">Start study</string>
     <string name="action_pause">Pause</string>
     <string name="action_resume">Resume</string>
-    <string name="action_finish">Finish early</string>
     <string name="action_export">Export encrypted data</string>
     <string name="action_withdraw">Withdraw</string>
     <string name="action_delete">Delete local data</string>
@@ -272,8 +271,6 @@
     <string name="details_last_export_value">%1$s events · %2$s</string>
 
     <!-- Irreversible actions are exactly where text earns its place -->
-    <string name="confirm_finish_title">Finish this study early?</string>
-    <string name="confirm_finish_body">You cannot restart it afterwards, but you can still export as many times as you like.</string>
     <string name="confirm_withdraw_title">Withdraw from this study?</string>
     <string name="confirm_withdraw_body">All collection stops permanently. You can still export what was already collected, until you delete it.</string>
     <string name="confirm_delete_title">Delete local data permanently?</string>
