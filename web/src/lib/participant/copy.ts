@@ -138,7 +138,7 @@ export const en: ParticipantCopy = {
   hero: {
     title: 'On your phone, and under your control',
     lead: 'This app records only what your study lists, keeps it encrypted on your phone, and starts only after you agree.',
-    download: 'Download Android App',
+    download: 'Download App',
     caption:
       'Sources feed into a phone, and what they record is encrypted inside it. Whether anything leaves on its own is stated on your consent screen, before you agree.',
     disclaimer:
@@ -265,7 +265,7 @@ export const zhTW: ParticipantCopy = {
   hero: {
     title: '手機裡的資料由你掌控',
     lead: '這個 App 只會記錄研究中列出的項目，並在資料寫入手機時立即加密。只有在你同意後，App 才會開始收集。',
-    download: '下載 Android App',
+    download: '下載 App',
     caption: 'App 會將各資料來源的紀錄加密儲存在手機中。同意畫面會在你同意前清楚說明資料是否會自動傳送。',
     disclaimer: '本頁不是研究同意書。若內容不一致，請以同意書及研究團隊的說明為準。',
     naming: {

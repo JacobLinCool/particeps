@@ -14,6 +14,7 @@
   border-radius: var(--r-field);
   font-size: var(--type-body);
   font-weight: var(--w-medium);
+  text-decoration: none;
   color: var(--ink);
   background: var(--surface);
   box-shadow: var(--shadow-rest);

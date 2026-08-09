@@ -15,8 +15,8 @@ describe('participant page structure', () => {
     expect(ANDROID_APK_URL).toBe(
       'https://github.com/JacobLinCool/particeps/releases/download/v1.0.0-rc.6/particeps-v1.0.0-rc.6.apk'
     );
-    expect(en.hero.download).toBe('Download Android App');
-    expect(zhTW.hero.download).toBe('下載 Android App');
+    expect(en.hero.download).toBe('Download App');
+    expect(zhTW.hero.download).toBe('下載 App');
   });
 });
 
