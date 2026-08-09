@@ -1,6 +1,6 @@
 <script lang="ts">
-  /** Six one-line reasons to stop. With the fingerprint mismatch, this is the only place on the
-   *  page in the error colour, which is what makes it worth reading. */
+  /** Six one-line reasons to stop. This is the only place on the page in the error colour, which
+   *  is what makes it worth reading. */
   import Mark from '$lib/ui/Mark.svelte';
   import { m, type MessageKey } from './messages.svelte';
 

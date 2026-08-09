@@ -1,5 +1,5 @@
 <script lang="ts">
-  /** The ten-second summary and the navigation at once: four ordinary anchors, each naming a
+  /** The ten-second summary and the navigation at once: two ordinary anchors, each naming a
    *  section by its glyph before its words. */
   import Glyph from '$lib/ui/Glyph.svelte';
   import { m, type MessageKey } from './messages.svelte';

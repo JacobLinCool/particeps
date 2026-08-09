@@ -1,14 +1,15 @@
 <script lang="ts">
   /**
-   * The drawing, one headline, one sentence, and the four chips. Nothing below the fold is needed
-   * to reach the takeaway: it is collected on your phone, you see the full list before you agree,
-   * you check one fingerprint, you can stop at any time.
+   * The drawing, one headline, one sentence, and two chips. Nothing below the fold is needed to
+   * reach the takeaway: collection happens on your phone, you see the full list before agreeing,
+   * and the consent screen says whether the study sends anything automatically.
    *
    * The disclaimer sits here rather than in the footer because it frames everything after it.
-   */
+  */
+  import Button from '$lib/ui/Button.svelte';
   import GlanceRow from './GlanceRow.svelte';
   import PhoneDiagram from './PhoneDiagram.svelte';
-  import { GLANCE } from './content';
+  import { ANDROID_APK_URL, GLANCE } from './content';
   import { m } from './messages.svelte';
 </script>
 
@@ -16,6 +17,13 @@
   <div class="lede-block__text">
     <h1>{m('hero.title')}</h1>
     <p class="lede">{m('hero.lead')}</p>
+    <Button
+      href={ANDROID_APK_URL}
+      variant="primary"
+      icon="download"
+      label={m('hero.download')}
+      testid="download-android-app"
+    />
     <GlanceRow items={GLANCE} />
     <!-- The name and its limits stay together: the first paragraph alone would read as a claim
          about who is in charge, which is the one thing the second paragraph exists to deny. -->

@@ -2,11 +2,9 @@
   /**
    * The participant page: one column, no tabs, no accordions, in the order the questions arrive.
    *
-   * Sections 2 to 6 are also the order the phone asks them in, so reading the page is a rehearsal
-   * of the app. There is one deviation. On the consent panel the signature block sits above the
-   * upload block; here *where it goes* comes first, because that is a question the visitor already
-   * has, whereas the fingerprint is a task the page has to teach — and a task lands better once
-   * the stakes are set.
+   * The setup section follows the five steps the phone asks in, so reading it is a rehearsal of
+   * the app. The sections after it answer what the study records, where the data goes, and when a
+   * participant should stop and ask for help.
    *
    * Nothing here depicts the app with a screenshot. A screenshot is a picture of English text a
    * Traditional Chinese reader cannot read, and it is wrong on the next release; every drawing on
@@ -22,16 +20,11 @@
   import SetupPreview from '$lib/participant/SetupPreview.svelte';
   import SourceGrid from '$lib/participant/SourceGrid.svelte';
   import DeliveryCard from '$lib/participant/DeliveryCard.svelte';
-  import FingerprintCheck from '$lib/participant/FingerprintCheck.svelte';
-  import ControlMatrix from '$lib/participant/ControlMatrix.svelte';
   import FlagList from '$lib/participant/FlagList.svelte';
   import PageFooter from '$lib/participant/PageFooter.svelte';
   import {
-    CANDIDATES,
-    CONTROLS,
     FLAGS,
     PARTICIPANT_GUIDE,
-    PUBLISHED_FINGERPRINT,
     SOURCES
   } from '$lib/participant/content';
   import { m } from '$lib/participant/messages.svelte';
@@ -80,25 +73,6 @@
       <p class="fine">{m('delivery.sealed')}</p>
       <p class="fine">{m('delivery.exportable')}</p>
     </div>
-  </Section>
-
-  <Section
-    id="fingerprint"
-    icon="fingerprint"
-    title={m('fingerprint.title')}
-    lead={m('fingerprint.lead')}
-  >
-    <FingerprintCheck published={PUBLISHED_FINGERPRINT} candidates={CANDIDATES} />
-  </Section>
-
-  <Section
-    id="stop"
-    icon="exit"
-    variant="raised"
-    title={m('controls.title')}
-    lead={m('controls.lead')}
-  >
-    <ControlMatrix entries={CONTROLS} />
   </Section>
 
   <Section id="flags" icon="alert" title={m('flags.title')}>

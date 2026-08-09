@@ -8,23 +8,23 @@
  *
  * Three rules the wording is held to, all of them from `docs/threat-model.md`:
  *
- *   - No claim that a signature shows who wrote a file. The whole of section 5 exists because it
- *     does not.
+ *   - No claim that a signature or fingerprint identifies who wrote a file.
  *   - Collector limits shown by the app must be narrow guarantees grounded in the implementation,
  *     not an exhaustive threat model. The data dictionary remains the complete field reference.
  *   - No "anonymous", no hardware-backed key, and nothing about a research team's intentions.
  *     The install code is pseudonymous, the app requests no StrongBox, and this page cannot know
  *     anything at all about the team that recruited its reader.
  *
- * Where the app already has the sentence — a collector description, a consent-screen block, a
- * button — it is transcribed verbatim from the app's `strings.xml` in both languages, so the page
- * and the phone say the same words rather than two paraphrases of them.
+ * Where the app already has the sentence — a collector description, a consent-screen block, or a
+ * setup-step label — it is transcribed verbatim from the app's `strings.xml` in both languages, so
+ * the page and the phone say the same words rather than two paraphrases of them.
  */
 
 export interface ParticipantCopy {
   hero: {
     title: string;
     lead: string;
+    download: string;
     caption: string;
     disclaimer: string;
     /**
@@ -39,8 +39,6 @@ export interface ParticipantCopy {
   glance: {
     collect: string;
     where: string;
-    fingerprint: string;
-    stop: string;
   };
 
   setup: {
@@ -112,52 +110,6 @@ export interface ParticipantCopy {
     exportable: string;
   };
 
-  fingerprint: {
-    title: string;
-    lead: string;
-    publishedTitle: string;
-    publishedNote: string;
-    /** Nothing here is authoritative, and the drawing says so too. */
-    sample: string;
-    pick: string;
-    cardTitle: string;
-    compare: string;
-    unverified: string;
-    match: string;
-    mismatch: string;
-    normal: string;
-  };
-
-  controls: {
-    title: string;
-    lead: string;
-    axis: { collection: string; sending: string };
-    effect: {
-      continues: string;
-      stops: string;
-      drainsThenStops: string;
-      alreadyStopped: string;
-      none: string;
-    };
-    label: {
-      export: string;
-      pause: string;
-      finish: string;
-      withdraw: string;
-      delete: string;
-    };
-    note: {
-      export: string;
-      pause: string;
-      finish: string;
-      withdraw: string;
-      delete: string;
-    };
-    sending: string;
-    recall: string;
-    irreversible: string;
-  };
-
   flags: {
     title: string;
     fingerprint: string;
@@ -179,7 +131,6 @@ export interface ParticipantCopy {
 
   a11y: {
     sample: string;
-    result: string;
   };
 }
 
@@ -187,6 +138,7 @@ export const en: ParticipantCopy = {
   hero: {
     title: 'On your phone, and under your control',
     lead: 'This app records only what your study lists, keeps it encrypted on your phone, and starts only after you agree.',
+    download: 'Download Android App',
     caption:
       'Sources feed into a phone, and what they record is encrypted inside it. Whether anything leaves on its own is stated on your consent screen, before you agree.',
     disclaimer:
@@ -200,9 +152,7 @@ export const en: ParticipantCopy = {
 
   glance: {
     collect: 'What it records',
-    where: 'Where it goes',
-    fingerprint: 'The one check',
-    stop: 'Stopping'
+    where: 'Where it goes'
   },
 
   setup: {
@@ -287,56 +237,6 @@ export const en: ParticipantCopy = {
     exportable: 'You can export a copy yourself, as often as you like, in either kind of study.'
   },
 
-  fingerprint: {
-    title: 'One thing to check yourself',
-    lead: 'A signature proves the file has not been altered since it was signed. It does not prove who wrote it. The fingerprint is what ties a study to the team that recruited you.',
-    publishedTitle: 'Published by your research team',
-    publishedNote:
-      'from the sheet or the message you already had — not from the app, and not from this page',
-    sample: 'Every fingerprint here is an example.',
-    pick: 'Two studies. Pick one and compare it, group by group.',
-    cardTitle: 'Configuration signature',
-    compare: 'Check this against the fingerprint your research team published.',
-    unverified:
-      'A signature shows the file has not been altered since it was signed. It does not show who wrote it.',
-    match: 'Same key. This is the file they published.',
-    mismatch:
-      'Different key. Do not consent — contact your team using details you already had, not details from the study screen.',
-    normal: 'Most studies show “check this”. That is ordinary, not a warning.'
-  },
-
-  controls: {
-    title: 'Stopping, exporting, deleting',
-    lead: 'Every one of these is yours, and none of them asks you for a reason.',
-    axis: { collection: 'Collection', sending: 'Sending' },
-    effect: {
-      continues: 'continues',
-      stops: 'stops',
-      drainsThenStops: 'what is already collected still goes, then stops',
-      alreadyStopped: 'already stopped',
-      none: 'unchanged'
-    },
-    label: {
-      export: 'Export encrypted data',
-      pause: 'Pause',
-      finish: 'Finish early',
-      withdraw: 'Withdraw',
-      delete: 'Delete local data'
-    },
-    note: {
-      export: 'Available in every state, as often as you like.',
-      pause: 'Resume whenever you want.',
-      finish: 'Ends the study. You cannot restart it.',
-      withdraw: 'Ends the study permanently.',
-      delete: 'Removes the encrypted events and the study from this phone.'
-    },
-    sending:
-      'Pausing, finishing and withdrawing stop collection. In a study that sends automatically, what was already collected still goes. Deleting is what stops that.',
-    recall:
-      'Withdrawing does not recall what already left your phone. To have the research team delete their copy, ask them.',
-    irreversible: 'Deletion cannot be undone. Export first if you want your own copy.'
-  },
-
   flags: {
     title: 'Stop and ask if…',
     fingerprint: 'the fingerprint does not match, or you were never given one',
@@ -357,8 +257,7 @@ export const en: ParticipantCopy = {
   },
 
   a11y: {
-    sample: 'Every value in this card is an example. Yours are on your consent screen.',
-    result: 'Comparison result'
+    sample: 'Every value in this card is an example. Yours are on your consent screen.'
   }
 };
 
@@ -366,6 +265,7 @@ export const zhTW: ParticipantCopy = {
   hero: {
     title: '手機裡的資料由你掌控',
     lead: '這個 App 只會記錄研究中列出的項目，並在資料寫入手機時立即加密。只有在你同意後，App 才會開始收集。',
+    download: '下載 Android App',
     caption: 'App 會將各資料來源的紀錄加密儲存在手機中。同意畫面會在你同意前清楚說明資料是否會自動傳送。',
     disclaimer: '本頁不是研究同意書。若內容不一致，請以同意書及研究團隊的說明為準。',
     naming: {
@@ -377,9 +277,7 @@ export const zhTW: ParticipantCopy = {
 
   glance: {
     collect: '記錄什麼',
-    where: '資料去哪',
-    fingerprint: '核對指紋',
-    stop: '如何停止'
+    where: '資料去哪'
   },
 
   setup: {
@@ -460,52 +358,6 @@ export const zhTW: ParticipantCopy = {
     exportable: '無論採用哪種傳送方式，你都可以不限次數自行匯出資料。'
   },
 
-  fingerprint: {
-    title: '有一件事需要你親自核對',
-    lead: '簽章只能證明設定檔在簽署後未被修改，無法證明簽署者的身分。你必須核對金鑰指紋，才能確認設定檔是否來自邀請你的研究團隊。',
-    publishedTitle: '研究團隊公布的指紋',
-    publishedNote: '應來自你原本收到的紙本或訊息，而不是 App 或本頁',
-    sample: '這裡的每一組指紋都只是範例。',
-    pick: '請從兩個研究中選擇一個，再逐組核對指紋。',
-    cardTitle: '設定檔簽章',
-    compare: '請與研究團隊公布的金鑰指紋核對。',
-    unverified: '簽章證明設定檔在簽署後未被竄改，但無法證明簽署者的真實身分。',
-    match: '指紋相同，表示這份設定檔由研究團隊公布的金鑰簽署。',
-    mismatch: '指紋不同，請勿同意。請使用原有的聯絡方式聯繫研究團隊，不要使用研究畫面中的聯絡資訊。',
-    normal: '大多數研究都會顯示「請核對」，這是常態，不是警告。'
-  },
-
-  controls: {
-    title: '停止、匯出、刪除',
-    lead: '以下每一項都是你的權利，而且 App 不會問你理由。',
-    axis: { collection: '收集', sending: '傳送' },
-    effect: {
-      continues: '繼續',
-      stops: '停止',
-      drainsThenStops: '傳送完已收集的資料後停止',
-      alreadyStopped: '早已停止',
-      none: '不受影響'
-    },
-    label: {
-      export: '匯出加密資料',
-      pause: '暫停',
-      finish: '提早完成',
-      withdraw: '退出研究',
-      delete: '刪除本機資料'
-    },
-    note: {
-      export: '無論研究處於哪種狀態，都可以不限次數匯出。',
-      pause: '準備好後可以繼續收集。',
-      finish: '研究結束後無法重新開始。',
-      withdraw: '永久結束研究。',
-      delete: '從手機刪除已加密的資料與研究設定檔。'
-    },
-    sending:
-      '暫停、提早完成與退出研究都會停止收集。若研究會自動傳送資料，先前收集的資料仍會傳送。只有刪除本機資料才能停止傳送。',
-    recall: '退出研究無法收回已離開手機的資料。若要刪除研究團隊持有的副本，必須直接向研究團隊提出要求。',
-    irreversible: '刪除後無法復原。若要保留副本，請先匯出。'
-  },
-
   flags: {
     title: '遇到以下情況，先停下來問清楚',
     fingerprint: '指紋不符，或研究團隊從未提供指紋',
@@ -526,8 +378,7 @@ export const zhTW: ParticipantCopy = {
   },
 
   a11y: {
-    sample: '卡片中的所有內容都只是範例，實際設定請以同意畫面為準。',
-    result: '核對結果'
+    sample: '卡片中的所有內容都只是範例，實際設定請以同意畫面為準。'
   }
 };
 
