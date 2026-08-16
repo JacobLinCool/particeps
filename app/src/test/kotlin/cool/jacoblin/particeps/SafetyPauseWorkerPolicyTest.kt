@@ -2,6 +2,8 @@ package cool.jacoblin.particeps
 
 import cool.jacoblin.particeps.core.application.SafetyPauseStatus
 import cool.jacoblin.particeps.core.application.StudySessionSnapshot
+import cool.jacoblin.particeps.core.application.RecoveryFailureCode
+import cool.jacoblin.particeps.core.application.RecoveryStatus
 import cool.jacoblin.particeps.core.definition.AppLifecycleConfiguration
 import cool.jacoblin.particeps.core.definition.ExportConfiguration
 import cool.jacoblin.particeps.core.definition.SignerIdentity
@@ -30,7 +32,7 @@ class SafetyPauseWorkerPolicyTest {
     fun blockedRecoveryAndTypedMarkerRetainWorkWithoutConfiguration() {
         val recoveryFailure = StudySessionSnapshot(
             initialized = true,
-            recoveryBlocked = true,
+            recoveryStatus = RecoveryStatus.ActionRequired(RecoveryFailureCode.ACTIVE_RECORD_INVALID),
             incidentCode = "STUDY_IMPORT_FAILED",
         )
         val pendingMarker = StudySessionSnapshot(

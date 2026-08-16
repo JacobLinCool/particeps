@@ -238,4 +238,15 @@
 
     <string name="language_title">語言</string>
     <string name="language_system">跟隨系統</string>
+    <string name="recovery_channel">研究恢復</string>
+    <string name="recovery_channel_description">安全恢復研究收集所需的重要處理通知。</string>
+    <string name="recovery_notification_title">研究收集需要處理</string>
+    <string name="recovery_notification_body">請開啟 Particeps 以安全恢復收集。</string>
+    <string name="recovery_panel_title">資料收集已安全暫停</string>
+    <string name="recovery_panel_body">Particeps 無法完成自動恢復。請處理 Android 顯示的權限需求後再試一次。下方代碼不含研究或參與者資訊。</string>
+    <string name="action_retry_recovery">再次嘗試</string>
+    <string name="action_copy_diagnostic">複製診斷代碼</string>
+    <string name="action_reset_and_restart">刪除舊資料並重新開始</string>
+    <string name="confirm_reset_title">刪除舊研究資料並重新開始？</string>
+    <string name="confirm_reset_body">這會永久刪除目前的研究 instance 與所有尚未匯出的資料。若設定檔仍在有效期限內，你需要重新閱讀研究內容、同意並設定權限，系統會建立新的安裝代碼與完整研究期限。此操作無法復原。</string>
 </resources>

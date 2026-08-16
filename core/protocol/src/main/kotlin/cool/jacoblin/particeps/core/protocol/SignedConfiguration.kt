@@ -98,7 +98,10 @@ class ConfigurationVerifier(
         decodeSigningKey(encoded)
     }
 
-    fun verify(envelopeBytes: ByteArray): VerifiedConfiguration {
+    fun verify(
+        envelopeBytes: ByteArray,
+        purpose: ConfigurationVerificationPurpose = ConfigurationVerificationPurpose.FRESH_IMPORT,
+    ): VerifiedConfiguration {
         val envelope = SignedConfigurationCodec.decode(envelopeBytes)
         val configuration = StudyConfigurationCodec.decode(envelope.configurationBytes)
         require(configuration.signer.keyId == envelope.signerKeyId) {
@@ -121,9 +124,11 @@ class ConfigurationVerifier(
             signature = envelope.signature,
         )
         require(valid) { "Invalid configuration signature" }
-        val instant = now()
-        require(!instant.isBefore(configuration.issuedAt)) { "Configuration is not active yet" }
-        require(instant.isBefore(configuration.expiresAt)) { "Configuration has expired" }
+        if (purpose == ConfigurationVerificationPurpose.FRESH_IMPORT) {
+            val instant = now()
+            require(!instant.isBefore(configuration.issuedAt)) { "Configuration is not active yet" }
+            require(instant.isBefore(configuration.expiresAt)) { "Configuration has expired" }
+        }
         require(configuration.platform == StudyConfiguration.ANDROID_PLATFORM) { "Configuration targets another platform" }
         require(clientVersion >= configuration.minimumClientVersion) { "Client version is too old" }
         return VerifiedConfiguration(
@@ -145,6 +150,11 @@ class ConfigurationVerifier(
     )
 
     private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+}
+
+enum class ConfigurationVerificationPurpose {
+    FRESH_IMPORT,
+    ACCEPTED_ACTIVE_STUDY_RECOVERY,
 }
 
 sealed interface ActiveStudyRecord {
@@ -175,3 +185,14 @@ interface ActiveStudyStore {
     suspend fun markDeletionPending(experimentId: String, maximumLocalBytes: Long)
     suspend fun clear()
 }
+
+enum class ActiveStudyRecoveryFailure {
+    KEY_UNAVAILABLE,
+    RECORD_INVALID,
+    CANDIDATE_CONFLICT,
+}
+
+class ActiveStudyRecoveryException(
+    val failure: ActiveStudyRecoveryFailure,
+    cause: Throwable? = null,
+) : java.io.IOException("Active-study recovery failed: ${failure.name}", cause)

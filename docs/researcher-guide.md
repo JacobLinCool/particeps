@@ -795,9 +795,11 @@ OEM hardware:
 - Change wall time within one boot and leave an intentionally stale deadline WorkSpec. Confirm the
   one `PARTICIPANT_STARTED` transition remains the duration origin, monotonic elapsed time is used,
   and same-boot recovery replaces the stale deadline rather than granting a new duration. Then
-  reboot with both forward and backward wall-clock values: either cross-boot case must establish
-  `WORK_SCHEDULING_FAILURE` and keep every host and collector closed, because wall time is never a
-  lifetime fallback.
+  reboot with network time, automatic wall time, automatic time disabled, and a later trusted-time
+  rollback. A previously running study must first record `DEVICE_REBOOT`; trusted time either
+  completes it or permits `AUTOMATIC_RECOVERY` after access/work/host checks. Without trusted time it
+  stays paused and retries. The accumulated lifetime never decreases, the reboot gap never increases
+  active-collection time, and `PARTICIPANT_PAUSED` never auto-resumes.
 - At the duration boundary, inject collector and occurrence observations immediately before and
   exactly at the monotonic deadline. The former must persist and the latter must be rejected. Wake
   the deadline worker early and late: an early wake retries without completing, while a late wake

@@ -30,6 +30,9 @@ import cool.jacoblin.particeps.core.model.RecordedEvent
 import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.core.model.SafetyPauseReason
 import cool.jacoblin.particeps.core.model.StudyMetadata
+import cool.jacoblin.particeps.core.model.StudyTimeline
+import cool.jacoblin.particeps.core.model.StudyTimelineAdvance
+import cool.jacoblin.particeps.core.model.TrustedStudyTimeUnavailable
 import cool.jacoblin.particeps.core.model.StudyStore
 import cool.jacoblin.particeps.core.model.StudyStoreMutationFailedClosed
 import cool.jacoblin.particeps.core.model.TransitionReason
@@ -103,6 +106,11 @@ sealed interface SurveyAnswer {
 
 enum class SurveySubmissionResult { ACCEPTED, ALREADY_SUBMITTED, EXPIRED, INVALID }
 
+sealed interface TimelineRefreshResult {
+    data class Updated(val crossedBoot: Boolean) : TimelineRefreshResult
+    data object TrustedUtcRequired : TimelineRefreshResult
+}
+
 /** Persists a closed safety reason without acquiring any runtime or application session lock. */
 fun interface SafetyPauseWitness {
     suspend fun persist(reason: SafetyPauseReason)
@@ -117,6 +125,7 @@ class ExperimentRuntime(
     private val safetyPauseWitness: SafetyPauseWitness,
 ) {
     private val stateMachine = ExperimentStateMachine()
+    private val studyTimeline = StudyTimeline(configuration.durationHours.toLong() * MILLIS_PER_HOUR)
     private val admissionGate = EventAdmissionGate()
     private val pendingSafetyPause = AtomicReference<SafetyPauseReason?>(null)
     private val commandMutex = Mutex()
@@ -132,6 +141,7 @@ class ExperimentRuntime(
     val snapshot: StateFlow<RuntimeSnapshot> = mutableSnapshot.asStateFlow()
 
     fun now() = clocks.now()
+    fun trustedUtcMillis() = clocks.trustedUtcMillis()
 
     /** Loads durable state and creates collectors without starting any process resource. */
     suspend fun initialize(
@@ -151,6 +161,21 @@ class ExperimentRuntime(
         check(loaded.experimentId == configuration.experimentId) { "Experiment ID mismatch" }
         check(loaded.configurationId == configuration.configurationId) { "Configuration ID mismatch" }
         check(loaded.assignedParticipantId == configuration.assignedParticipantId) { "Assigned participant ID mismatch" }
+        if (loaded.hasStarted() && loaded.clockCheckpoint == null) {
+            val observedAt = clocks.now()
+            val migrated = when (
+                val result = studyTimeline.migrateCurrentV1(
+                    loaded,
+                    observedAt,
+                    clocks.trustedUtcMillis(),
+                )
+            ) {
+                is StudyTimelineAdvance.Advanced -> result.checkpoint
+                StudyTimelineAdvance.TrustedUtcRequired -> studyTimeline.currentV1Baseline(loaded)
+            }
+            loaded = loaded.copy(clockCheckpoint = migrated)
+            store.saveMetadata(loaded)
+        }
         currentMetadata = loaded
         createCollectors()
         mutableSnapshot.update {
@@ -173,6 +198,61 @@ class ExperimentRuntime(
         }
         admissionGate.open()
         activateCollectors(availableAccess)
+    }
+
+    /** Persists the reboot boundary before any platform recovery side effect is attempted. */
+    suspend fun pauseRecoveredForDeviceReboot(): CommandResult = executeCommand {
+        val metadata = requireMetadata()
+        check(metadata.state == ExperimentState.RUNNING) {
+            "Only a durably running study can enter reboot recovery"
+        }
+        val boundary = clocks.now()
+        check(requireNotNull(metadata.clockCheckpoint).anchor.bootSessionId != boundary.bootSessionId) {
+            "Device-reboot pause requires a changed boot session"
+        }
+        closeAllAdmission()
+        transitionTo(ExperimentState.PAUSED, TransitionReason.DEVICE_REBOOT, boundary)
+    }
+
+    /** Reopens only the reboot pause after all application/platform validations were acknowledged. */
+    suspend fun resumeAutomatically(availableAccess: Set<AccessKind>): CommandResult = executeCommand {
+        val metadata = requireMetadata()
+        check(
+            metadata.state == ExperimentState.PAUSED &&
+                metadata.transitions.lastOrNull()?.reason == TransitionReason.DEVICE_REBOOT,
+        ) { "Automatic recovery requires the durable device-reboot pause" }
+        check(pendingSafetyPause.get() == null) { "A safety pause prevents automatic recovery" }
+        transitionTo(ExperimentState.RUNNING, TransitionReason.AUTOMATIC_RECOVERY)
+        admissionGate.open()
+        activateCollectors(availableAccess)
+    }
+
+    /** Advances and persists the one timeline used by deadline, admission and planning. */
+    suspend fun refreshTimeline(): TimelineRefreshResult = commandMutex.withLock {
+        metadataMutex.withLock {
+            val metadata = requireMetadata()
+            if (!metadata.hasStarted()) return@withLock TimelineRefreshResult.Updated(crossedBoot = false)
+            val checkpoint = requireNotNull(metadata.clockCheckpoint)
+            when (
+                val result = studyTimeline.advance(
+                    checkpoint,
+                    metadata.state,
+                    clocks.now(),
+                    clocks.trustedUtcMillis(),
+                )
+            ) {
+                StudyTimelineAdvance.TrustedUtcRequired -> TimelineRefreshResult.TrustedUtcRequired
+                is StudyTimelineAdvance.Advanced -> {
+                    val updated = metadata.copy(clockCheckpoint = result.checkpoint)
+                    if (updated != metadata) {
+                        performStoreMutation { store.saveMetadata(updated) }
+                        currentMetadata = updated
+                        publishMetadata(updated)
+                    }
+                    TimelineRefreshResult.Updated(result.crossedBoot)
+                }
+            }
+        }
     }
 
     /** Converts a stale durable RUNNING state to its typed safety pause before activation. */
@@ -518,7 +598,9 @@ class ExperimentRuntime(
         if (remaining > 0) return@withLock OccurrenceClaimResult.NotDue(remaining)
         val claimed = if (occurrence.state == OccurrenceState.SCHEDULED) {
             occurrence.copy(state = OccurrenceState.POSTING).also { next ->
-                val updated = metadata.copy(occurrences = metadata.occurrences + (occurrenceId to next))
+                val updated = advanceCheckpoint(metadata, now).copy(
+                    occurrences = metadata.occurrences + (occurrenceId to next),
+                )
                 performStoreMutation { store.saveMetadata(updated) }
                 currentMetadata = updated
                 publishMetadata(updated)
@@ -759,7 +841,7 @@ class ExperimentRuntime(
                     payloadType = event.payloadType,
                     fields = event.fields.toSortedMap(),
                 )
-                val updated = metadata.copy(
+                val updated = advanceCheckpoint(metadata, event.observedTime).copy(
                     eventCount = metadata.eventCount + 1,
                     nextSequenceNumber = metadata.nextSequenceNumber + 1,
                     lastEvents = metadata.lastEvents + (recorded.collectorId to recorded),
@@ -812,24 +894,9 @@ class ExperimentRuntime(
         collectorGate.accepts(collectorToken, observedAt.elapsedRealtimeNanos) &&
         withinSignedDuration(observedAt)
 
-    /**
-     * Uses the participant's one signed start transition as the immutable admission boundary.
-     *
-     * Wall time is deliberately irrelevant: it can jump while Android is running. A timestamp
-     * from another boot, before the start, or at/after the exact monotonic deadline is not
-     * admissible. Returning false rather than estimating across a reboot preserves fail-closed
-     * recovery semantics.
-     */
     private fun withinSignedDuration(observedAt: ResearchTime): Boolean {
-        val start = currentMetadata?.transitions?.singleOrNull {
-            it.reason == TransitionReason.PARTICIPANT_STARTED
-        } ?: return false
-        if (start.from != ExperimentState.READY || start.to != ExperimentState.RUNNING) return false
-        if (start.time.bootSessionId != observedAt.bootSessionId) return false
-        if (observedAt.elapsedRealtimeNanos < start.time.elapsedRealtimeNanos) return false
-        val elapsedNanos = observedAt.elapsedRealtimeNanos - start.time.elapsedRealtimeNanos
-        val durationNanos = configuration.durationHours.toLong() * NANOS_PER_HOUR
-        return elapsedNanos < durationNanos
+        val checkpoint = currentMetadata?.clockCheckpoint ?: return false
+        return studyTimeline.admits(checkpoint, observedAt)
     }
 
     private suspend fun latestEvent(collectorId: String): RecordedEvent? = metadataMutex.withLock {
@@ -1091,7 +1158,27 @@ class ExperimentRuntime(
             } else {
                 reason
             }
-            val updated = stateMachine.transition(requireMetadata(), state, effectiveReason, time)
+            val before = requireMetadata()
+            val transitioned = stateMachine.transition(before, state, effectiveReason, time)
+            val updated = if (effectiveReason == TransitionReason.PARTICIPANT_STARTED) {
+                transitioned.copy(
+                    clockCheckpoint = studyTimeline.startedAt(time, clocks.trustedUtcMillis()),
+                )
+            } else if (!before.hasStarted()) {
+                transitioned
+            } else {
+                when (effectiveReason) {
+                    TransitionReason.DEVICE_REBOOT -> {
+                        when (val result = advanceCheckpointResult(before, time)) {
+                            is StudyTimelineAdvance.Advanced -> transitioned.copy(clockCheckpoint = result.checkpoint)
+                            // The PAUSED reboot boundary is still authoritative without UTC. Keep
+                            // the old anchor so a later trusted reading can account for the gap.
+                            StudyTimelineAdvance.TrustedUtcRequired -> transitioned
+                        }
+                    }
+                    else -> transitioned.copy(clockCheckpoint = advanceCheckpoint(before, time).clockCheckpoint)
+                }
+            }
             performStoreMutation(mayHaveCommittedRunning = state == ExperimentState.RUNNING) {
                 store.saveMetadata(updated)
             }
@@ -1101,6 +1188,25 @@ class ExperimentRuntime(
     }
 
     private fun requireMetadata(): StudyMetadata = checkNotNull(currentMetadata) { "Runtime is not initialized" }
+
+    private fun StudyMetadata.hasStarted(): Boolean =
+        transitions.any { it.reason == TransitionReason.PARTICIPANT_STARTED }
+
+    private fun advanceCheckpoint(metadata: StudyMetadata, observedAt: ResearchTime): StudyMetadata =
+        when (val result = advanceCheckpointResult(metadata, observedAt)) {
+            is StudyTimelineAdvance.Advanced -> metadata.copy(clockCheckpoint = result.checkpoint)
+            StudyTimelineAdvance.TrustedUtcRequired -> throw TrustedStudyTimeUnavailable()
+        }
+
+    private fun advanceCheckpointResult(
+        metadata: StudyMetadata,
+        observedAt: ResearchTime,
+    ): StudyTimelineAdvance = studyTimeline.advance(
+        requireNotNull(metadata.clockCheckpoint) { "Started study is missing its clock checkpoint" },
+        metadata.state,
+        observedAt,
+        clocks.trustedUtcMillis(),
+    )
 
     private fun intervention(occurrence: InterventionOccurrence) =
         configuration.interventions.first { it.id == occurrence.interventionId }
@@ -1160,7 +1266,7 @@ class ExperimentRuntime(
             payloadType = draft.payloadType,
             fields = draft.fields.toSortedMap(),
         )
-        val updated = metadataAfterState.copy(
+        val updated = advanceCheckpoint(metadataAfterState, observedAt).copy(
             eventCount = event.sequenceNumber,
             nextSequenceNumber = event.sequenceNumber + 1,
             lastEvents = metadataAfterState.lastEvents + (event.collectorId to event),
@@ -1460,7 +1566,7 @@ class ExperimentRuntime(
         const val INCIDENT_COLLECTOR_PAUSE_FAILED = "COLLECTOR_PAUSE_FAILED"
         const val MAXIMUM_SURVEY_ANSWERS_BYTES = 60 * 1024
         const val INTERVENTION_COLLECTOR_ID = "interventions.v1"
-        const val NANOS_PER_HOUR = 60L * 60L * 1_000_000_000L
+        const val MILLIS_PER_HOUR = 60L * 60L * 1_000L
     }
 }
 

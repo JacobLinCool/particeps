@@ -11,6 +11,8 @@ import cool.jacoblin.particeps.core.model.StorageUsage
 import cool.jacoblin.particeps.core.model.StudyMetadata
 import cool.jacoblin.particeps.core.model.StudyStore
 import cool.jacoblin.particeps.core.model.StudyStoreMutationFailedClosed
+import cool.jacoblin.particeps.core.model.StudyStoreRecoveryException
+import cool.jacoblin.particeps.core.model.StudyStoreRecoveryFailure
 import cool.jacoblin.particeps.core.model.TransitionReason
 import java.io.File
 import java.io.RandomAccessFile
@@ -72,60 +74,69 @@ class EncryptedExperimentStore internal constructor(
 
     override suspend fun loadMetadata(): StudyMetadata? = withContext(Dispatchers.IO) {
         mutex.withLock {
-            appendRecoveryRequired = transactionFile.exists()
             if (!metadataFile.exists()) {
                 require(eventDirectoryEntries().isEmpty()) { "Event segments exist without metadata" }
-                require(!appendRecoveryRequired) { "Append transaction exists without metadata" }
+                require(!transactionFile.exists()) { "Append transaction exists without metadata" }
                 persistedMetadata = null
                 persistedSequenceBoundary = 0
                 persistedRetainedFrom = 1
                 return@withLock null
             }
-            val key = existingKey() ?: error("Encrypted experiment key is unavailable")
+            val key = existingKey()
+                ?: throw StudyStoreRecoveryException(StudyStoreRecoveryFailure.KEY_UNAVAILABLE)
+            try {
+                repairEventSegmentResidue(key)
+            } catch (failure: Throwable) {
+                throw StudyStoreRecoveryException(StudyStoreRecoveryFailure.EVENT_LOG_INVALID, failure)
+            }
             // Framing and contiguity come from plaintext frame headers. Normal opening decrypts no
             // event payload; the unique journal+durable-tail recovery state authenticates only the
             // last one through readDurableTail below.
-            val scan = scanEvents(
+            val scan = try {
+                scanEvents(
+                    key,
+                    fromSequenceInclusive = 1,
+                    Long.MAX_VALUE,
+                    recoverTail = true,
+                    decryptPayloads = false,
+                )
+            } catch (failure: Throwable) {
+                throw StudyStoreRecoveryException(StudyStoreRecoveryFailure.EVENT_LOG_INVALID, failure)
+            }
+            val mainCandidates = decodeDocumentCandidates(
+                metadataFile,
                 key,
-                fromSequenceInclusive = 1,
-                Long.MAX_VALUE,
-                recoverTail = true,
-                decryptPayloads = false,
+                METADATA_HEADER,
+                StudyStoreRecoveryFailure.METADATA_INVALID,
             )
-            val mainMetadata = StudyDataJsonCodec.decodeMetadata(
-                decryptMetadata(metadataFile.readFully(), key),
-            )
-            val hasTransaction = appendRecoveryRequired
-            val transactionMetadata = if (hasTransaction) {
-                StudyDataJsonCodec.decodeMetadata(
-                    decryptDocument(transactionFile.readFully(), key, TRANSACTION_HEADER),
+            val transactionCandidates = if (transactionFile.exists()) {
+                decodeDocumentCandidates(
+                    transactionFile,
+                    key,
+                    TRANSACTION_HEADER,
+                    StudyStoreRecoveryFailure.TRANSACTION_INVALID,
                 )
             } else {
-                null
+                emptyList()
             }
-            val durableTail = if (
-                transactionMetadata != null && transactionMetadata.eventCount == scan.lastSequence
-            ) {
-                readDurableTail(key, scan.lastSequence)
-            } else {
-                null
-            }
-            val recovery = AppendTransactionRecovery.recover(
-                main = mainMetadata,
-                transaction = transactionMetadata,
-                durableLastSequence = scan.lastSequence,
-                durableTail = durableTail,
-            )
-            val metadata = StudyDataJsonCodec.reconcileMetadata(
-                recovery.metadata,
-                scan.firstSequence,
-                scan.lastSequence,
-            )
-            if (recovery.rewriteMetadata || metadata != recovery.metadata) {
-                writeMetadata(encryptDocument(StudyDataJsonCodec.encodeMetadata(metadata), key, METADATA_HEADER))
-            }
-            if (hasTransaction && !recovery.failureResolutionRequired) {
-                retireTransactionAfterCommit()
+            val recovery = convergeCandidates(mainCandidates, transactionCandidates, scan, key)
+            val metadata = recovery.metadata
+            // Even an otherwise unchanged v1 base is immediately canonicalized to the one v2
+            // layout. Residues are likewise retired only after convergence proved these bytes.
+            val requiresMetadataRewrite = recovery.rewriteMetadata ||
+                mainCandidates.any { it.decoded.migratedFromV1 } ||
+                mainCandidates.size != 1 ||
+                mainCandidates.single().candidate.role != AcknowledgedFileCandidateRole.BASE
+            if (requiresMetadataRewrite) writeMetadataDocument(metadata, key)
+
+            if (recovery.failureResolutionRequired) {
+                // Preserve a clean fail-closed journal until the application supplies the winning
+                // typed safety reason. This replaces every validated transaction residue.
+                transactionFile.write(
+                    encryptDocument(StudyDataJsonCodec.encodeMetadata(metadata), key, TRANSACTION_HEADER),
+                )
+            } else if (transactionCandidates.isNotEmpty()) {
+                transactionFile.delete()
             }
             require(metadata.experimentId == experimentId) { "Encrypted experiment ID mismatch" }
             // The lifetime counter comes from metadata, not from the scan: reclaimed events are
@@ -136,6 +147,94 @@ class EncryptedExperimentStore internal constructor(
             appendRecoveryRequired = recovery.failureResolutionRequired
             metadata
         }
+    }
+
+    private fun decodeDocumentCandidates(
+        file: AcknowledgedFile,
+        key: SecretKey,
+        header: ByteArray,
+        failureCode: StudyStoreRecoveryFailure,
+    ): List<DecodedDocumentCandidate> = try {
+        file.candidates().map { candidate ->
+            val decoded = StudyDataJsonCodec.decodeMetadataDocument(
+                decryptDocument(candidate.bytes, key, header),
+            )
+            require(decoded.metadata.experimentId == experimentId) { "Encrypted experiment ID mismatch" }
+            DecodedDocumentCandidate(candidate, decoded)
+        }.also { require(it.isNotEmpty()) { "Atomic document has no readable candidate" } }
+    } catch (failure: Throwable) {
+        if (failure is StudyStoreRecoveryException) throw failure
+        throw StudyStoreRecoveryException(failureCode, failure)
+    }
+
+    private fun convergeCandidates(
+        mains: List<DecodedDocumentCandidate>,
+        transactions: List<DecodedDocumentCandidate>,
+        scan: EventScan,
+        key: SecretKey,
+    ): AppendRecoveryResult {
+        val transactionOptions: List<DecodedDocumentCandidate?> =
+            if (transactions.isEmpty()) listOf(null) else transactions
+        val valid = mutableListOf<CandidateRecovery>()
+        mains.forEach { main ->
+            transactionOptions.forEach { transaction ->
+                val candidate = runCatching {
+                    val transactionMetadata = transaction?.decoded?.metadata
+                    val durableTail = if (
+                        transactionMetadata != null && transactionMetadata.eventCount == scan.lastSequence
+                    ) {
+                        readDurableTail(key, scan.lastSequence)
+                    } else {
+                        null
+                    }
+                    val recovered = AppendTransactionRecovery.recover(
+                        main = main.decoded.metadata,
+                        transaction = transactionMetadata,
+                        durableLastSequence = scan.lastSequence,
+                        durableTail = durableTail,
+                    )
+                    val reconciled = StudyDataJsonCodec.reconcileMetadata(
+                        recovered.metadata,
+                        scan.firstSequence,
+                        scan.lastSequence,
+                    )
+                    CandidateRecovery(
+                        main = main,
+                        transaction = transaction,
+                        result = recovered.copy(
+                            metadata = reconciled,
+                            rewriteMetadata = recovered.rewriteMetadata || reconciled != recovered.metadata,
+                        ),
+                    )
+                }.getOrNull()
+                candidate?.let(valid::add)
+            }
+        }
+        if (valid.isEmpty()) {
+            val failure = if (mains.size == 1 && transactions.isEmpty()) {
+                // One authenticated metadata document that disagrees with the only durable event
+                // sequence is an event-log failure, not an ambiguity between atomic candidates.
+                StudyStoreRecoveryFailure.EVENT_LOG_INVALID
+            } else {
+                StudyStoreRecoveryFailure.CANDIDATE_CONFLICT
+            }
+            throw StudyStoreRecoveryException(failure)
+        }
+        require(mains.all { main -> valid.any { it.main === main } }) {
+            "A metadata candidate cannot be reconciled with the durable event tail"
+        }
+        require(transactions.all { transaction -> valid.any { it.transaction === transaction } }) {
+            "A transaction candidate cannot be reconciled with the durable event tail"
+        }
+        val authoritative = valid.first().result
+        if (valid.drop(1).any {
+                it.result.metadata != authoritative.metadata ||
+                    it.result.failureResolutionRequired != authoritative.failureResolutionRequired
+            }
+        ) {
+            throw StudyStoreRecoveryException(StudyStoreRecoveryFailure.CANDIDATE_CONFLICT)
+        }
+        return authoritative.copy(rewriteMetadata = valid.any { it.result.rewriteMetadata })
     }
 
     override suspend fun initialize(metadata: StudyMetadata) = withContext(Dispatchers.IO) {
@@ -610,6 +709,71 @@ class EncryptedExperimentStore internal constructor(
         return Segment(index, file)
     }
 
+    /**
+     * Resolves segment-creation residue without guessing. A staged header may be a strict prefix of
+     * an acknowledged base because events are append-only after segment creation; any other byte
+     * disagreement is corruption.
+     */
+    private fun repairEventSegmentResidue(key: SecretKey) {
+        val residueIndices = eventDirectoryEntries().mapNotNull { file ->
+            (SEGMENT_PENDING_PATTERN.matchEntire(file.name)
+                ?: SEGMENT_REPLACEMENT_PATTERN.matchEntire(file.name))
+                ?.groupValues?.get(1)?.toInt()
+        }.toSet()
+        residueIndices.forEach { index ->
+            val base = eventDirectory.resolve("events-${index.toString().padStart(8, '0')}.ptcs")
+            val atomic = AcknowledgedAtomicFile(base, fileSystem)
+            val candidates = atomic.candidates()
+            require(candidates.isNotEmpty()) { "Segment residue has no candidate bytes" }
+            candidates.forEach { candidate -> validateSegmentCandidate(candidate.bytes, index, key) }
+            val authoritative = candidates.maxBy { it.bytes.size }
+            require(candidates.all { candidate -> authoritative.bytes.hasPrefix(candidate.bytes) }) {
+                "Event segment candidates do not share one append-only history"
+            }
+            atomic.write(authoritative.bytes)
+        }
+    }
+
+    private fun validateSegmentHeader(bytes: ByteArray, expectedIndex: Int) {
+        require(bytes.size >= SEGMENT_HEADER_BYTES) { "Event segment candidate is truncated" }
+        val buffer = ByteBuffer.wrap(bytes)
+        val header = ByteArray(SEGMENT_HEADER.size).also(buffer::get)
+        require(header.contentEquals(SEGMENT_HEADER)) { "Unsupported event segment format" }
+        require(buffer.int == expectedIndex) { "Event segment index mismatch" }
+    }
+
+    /** Authenticates every complete frame before a segment candidate may influence authority. */
+    private fun validateSegmentCandidate(bytes: ByteArray, expectedIndex: Int, key: SecretKey) {
+        validateSegmentHeader(bytes, expectedIndex)
+        val buffer = ByteBuffer.wrap(bytes).apply { position(SEGMENT_HEADER_BYTES) }
+        var previousSequence: Long? = null
+        while (buffer.hasRemaining()) {
+            // An interrupted event append may leave only the final frame incomplete. The normal
+            // scan truncates that tail after candidate convergence; every complete record still
+            // authenticates here before its bytes can be selected.
+            if (buffer.remaining() < Long.SIZE_BYTES + Int.SIZE_BYTES) return
+            val sequenceNumber = buffer.long
+            val ciphertextBytes = buffer.int
+            require(ciphertextBytes in MINIMUM_CIPHERTEXT_BYTES..MAXIMUM_CIPHERTEXT_BYTES) {
+                "Invalid encrypted event size"
+            }
+            if (buffer.remaining() < IV_BYTES + ciphertextBytes) return
+            val iv = ByteArray(IV_BYTES).also(buffer::get)
+            val ciphertext = ByteArray(ciphertextBytes).also(buffer::get)
+            val event = StudyDataJsonCodec.decodeEvent(
+                decryptEvent(iv, ciphertext, sequenceNumber, key),
+            )
+            require(event.sequenceNumber == sequenceNumber) { "Encrypted event sequence mismatch" }
+            previousSequence?.let { previous ->
+                require(sequenceNumber == previous + 1) { "Event sequence is not contiguous" }
+            }
+            previousSequence = sequenceNumber
+        }
+    }
+
+    private fun ByteArray.hasPrefix(prefix: ByteArray): Boolean =
+        size >= prefix.size && prefix.indices.all { index -> this[index] == prefix[index] }
+
     private fun segments(): List<Segment> = eventDirectoryEntries()
         .map { file ->
             val incomplete = SEGMENT_PENDING_PATTERN.matchEntire(file.name)
@@ -750,6 +914,17 @@ class EncryptedExperimentStore internal constructor(
     private data class EncryptedEvent(
         val iv: ByteArray,
         val ciphertext: ByteArray,
+    )
+
+    private data class DecodedDocumentCandidate(
+        val candidate: AcknowledgedFileCandidate,
+        val decoded: DecodedStudyMetadata,
+    )
+
+    private data class CandidateRecovery(
+        val main: DecodedDocumentCandidate,
+        val transaction: DecodedDocumentCandidate?,
+        val result: AppendRecoveryResult,
     )
 
     /** Sequence range actually present on disk; both zero when no segment exists. */

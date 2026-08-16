@@ -4,6 +4,10 @@ import cool.jacoblin.particeps.core.definition.StudyConfiguration
 import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.core.model.StudyMetadata
+import cool.jacoblin.particeps.core.model.StudyClockCheckpoint
+import cool.jacoblin.particeps.core.model.StudyTimeline
+import cool.jacoblin.particeps.core.model.StudyTimelineAdvance
+import cool.jacoblin.particeps.core.model.TrustedStudyTimeUnavailable
 import cool.jacoblin.particeps.core.model.TransitionReason
 
 /** The durable, absolute study lifetime derived from the participant's one explicit start. */
@@ -11,6 +15,7 @@ data class StudyLifetime(
     val participantStartedAt: ResearchTime,
     val elapsedMillis: Long,
     val remainingMillis: Long,
+    val checkpoint: StudyClockCheckpoint,
 ) {
     val elapsed: Boolean get() = remainingMillis == 0L
 }
@@ -18,33 +23,33 @@ data class StudyLifetime(
 /**
  * Derives the signed study duration from durable transition history without resetting it on resume.
  *
- * Android's monotonic clock is authoritative only while both observations belong to one boot.
- * Wall time cannot safely bridge a reboot: it may have moved backwards without crossing the
- * participant-start wall timestamp, which would extend the signed duration. Callers therefore
- * fail closed after a reboot instead of manufacturing a later deadline from an untrusted clock.
+ * Same-boot advancement is monotonic. Cross-boot advancement is accepted only with [trustedUtcMillis]
+ * and is derived from the durable absolute deadline, so a clock rollback can never extend duration.
  */
 fun studyLifetime(
     configuration: StudyConfiguration,
     metadata: StudyMetadata,
     observedAt: ResearchTime,
+    trustedUtcMillis: Long? = null,
 ): StudyLifetime {
     require(metadata.experimentId == configuration.experimentId) { "Experiment ID mismatch" }
     require(metadata.configurationId == configuration.configurationId) { "Configuration ID mismatch" }
     require(metadata.state in STARTED_STUDY_STATES) { "Study has not started" }
     val start = participantStartedAt(metadata)
-    require(start.bootSessionId == observedAt.bootSessionId) {
-        "Study duration cannot be proven across boot sessions"
-    }
-    require(observedAt.elapsedRealtimeNanos >= start.elapsedRealtimeNanos) {
-        "Monotonic study clock moved backwards"
-    }
-    val elapsedMillis =
-        (observedAt.elapsedRealtimeNanos - start.elapsedRealtimeNanos) / NANOS_PER_MILLISECOND
     val durationMillis = configuration.durationHours.toLong() * MILLIS_PER_HOUR
+    val timeline = StudyTimeline(durationMillis)
+    val checkpoint = requireNotNull(metadata.clockCheckpoint) {
+        "Started study is missing its v2 clock checkpoint"
+    }
+    val advanced = when (val result = timeline.advance(checkpoint, metadata.state, observedAt, trustedUtcMillis)) {
+        is StudyTimelineAdvance.Advanced -> result.checkpoint
+        StudyTimelineAdvance.TrustedUtcRequired -> throw TrustedStudyTimeUnavailable()
+    }
     return StudyLifetime(
         participantStartedAt = start,
-        elapsedMillis = elapsedMillis,
-        remainingMillis = (durationMillis - elapsedMillis).coerceAtLeast(0L),
+        elapsedMillis = advanced.studyElapsedNanos / NANOS_PER_MILLISECOND,
+        remainingMillis = timeline.remainingMillis(advanced),
+        checkpoint = advanced,
     )
 }
 

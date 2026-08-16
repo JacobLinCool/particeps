@@ -21,6 +21,8 @@ import cool.jacoblin.particeps.core.application.StudyExporter
 import cool.jacoblin.particeps.core.application.StudySessionManager
 import cool.jacoblin.particeps.core.application.StudyStoreFactory
 import cool.jacoblin.particeps.core.application.StudyVerifier
+import cool.jacoblin.particeps.core.application.AcceptedStudyVerifier
+import cool.jacoblin.particeps.core.application.RecoveryStatus
 import cool.jacoblin.particeps.core.collector.CollectorRegistry
 import cool.jacoblin.particeps.core.definition.StudyConfiguration
 import cool.jacoblin.particeps.core.export.BundleKind
@@ -28,9 +30,12 @@ import cool.jacoblin.particeps.core.export.BundleProducer
 import cool.jacoblin.particeps.core.export.ExportSnapshot
 import cool.jacoblin.particeps.core.export.ResearchExport
 import cool.jacoblin.particeps.core.protocol.ConfigurationVerifier
+import cool.jacoblin.particeps.core.protocol.ConfigurationVerificationPurpose
 import cool.jacoblin.particeps.core.runtime.ExperimentRuntime
 import cool.jacoblin.particeps.core.storage.EncryptedActiveStudyStore
 import cool.jacoblin.particeps.core.storage.EncryptedExperimentStore
+import cool.jacoblin.particeps.core.storage.EncryptedStudyResetStore
+import cool.jacoblin.particeps.core.storage.EncryptedStudyStorageResetter
 import cool.jacoblin.particeps.platform.AndroidResearchClocks
 import cool.jacoblin.particeps.platform.AndroidStudyCollectionHost
 import cool.jacoblin.particeps.platform.AndroidStudyWorkScheduler
@@ -91,6 +96,12 @@ class CollectorApplication : Application() {
             verifier = StudyVerifier { bytes ->
                 configurationVerifier().verify(bytes).also { ResearchExport.validate(it.configuration) }
             },
+            acceptedStudyVerifier = AcceptedStudyVerifier { bytes ->
+                configurationVerifier().verify(
+                    bytes,
+                    ConfigurationVerificationPurpose.ACCEPTED_ACTIVE_STUDY_RECOVERY,
+                ).also { ResearchExport.validate(it.configuration) }
+            },
             storeFactory = StudyStoreFactory { experimentId, maximumLocalBytes ->
                 EncryptedExperimentStore(this, experimentId, maximumLocalBytes)
             },
@@ -107,6 +118,9 @@ class CollectorApplication : Application() {
             collectorRegistry = registry,
             accessGateway = accessManager,
             collectionHost = AndroidStudyCollectionHost(this),
+            recoveryReporter = AndroidRecoveryReporter(this),
+            resetStore = EncryptedStudyResetStore(this),
+            storageResetter = EncryptedStudyStorageResetter(this),
             safetyPauseStore = AtomicSafetyPauseStore(this),
             workScheduler = workScheduler,
             exporter = StudyExporter { verified, metadata, events, destination ->
@@ -135,10 +149,12 @@ class CollectorApplication : Application() {
         )
         applicationScope.launch {
             session.initialize()
-            InterventionDeliveryCoordinator.recoverStalePosting {
-                // Session recovery owns durable metadata, absolute deadline repair and intervention
-                // work. The Android adapter must never rebuild from configuration alone.
-                session.reconcileScheduledWork(recoverStalePosting = true)
+            if (session.snapshot.value.recoveryStatus !is RecoveryStatus.ActionRequired) {
+                InterventionDeliveryCoordinator.recoverStalePosting {
+                    // Session recovery owns durable metadata, absolute deadline repair and intervention
+                    // work. The Android adapter must never rebuild from configuration alone.
+                    session.reconcileScheduledWork(recoverStalePosting = true)
+                }
             }
         }
     }

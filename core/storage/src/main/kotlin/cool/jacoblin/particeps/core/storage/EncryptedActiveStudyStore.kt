@@ -4,6 +4,8 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import cool.jacoblin.particeps.core.protocol.ActiveStudyRecord
+import cool.jacoblin.particeps.core.protocol.ActiveStudyRecoveryException
+import cool.jacoblin.particeps.core.protocol.ActiveStudyRecoveryFailure
 import cool.jacoblin.particeps.core.protocol.ActiveStudyStore
 import java.nio.ByteBuffer
 import java.security.KeyStore
@@ -41,13 +43,44 @@ class EncryptedActiveStudyStore private constructor(
     override suspend fun load(): ActiveStudyRecord? = withContext(Dispatchers.IO) {
         mutex.withLock {
             if (!atomicFile.exists()) return@withLock null
-            val bytes = atomicFile.readFully()
-            require(bytes.size in MINIMUM_ENCODED_BYTES..MAXIMUM_ENCODED_BYTES) {
-                "Encrypted active-study file has an invalid size"
-            }
             val key = keyStore.getKey(KEY_ALIAS, null) as? SecretKey
-                ?: error("Active-study encryption key is unavailable")
-            decodeRecord(decrypt(bytes, key))
+                ?: throw ActiveStudyRecoveryException(ActiveStudyRecoveryFailure.KEY_UNAVAILABLE)
+            val decoded = try {
+                atomicFile.candidates().map { candidate ->
+                    require(candidate.bytes.size in MINIMUM_ENCODED_BYTES..MAXIMUM_ENCODED_BYTES) {
+                        "Encrypted active-study file has an invalid size"
+                    }
+                    DecodedCandidate(candidate, decodeRecord(decrypt(candidate.bytes, key)))
+                }
+            } catch (failure: Throwable) {
+                if (failure is ActiveStudyRecoveryException) throw failure
+                throw ActiveStudyRecoveryException(ActiveStudyRecoveryFailure.RECORD_INVALID, failure)
+            }
+            if (decoded.isEmpty()) return@withLock null
+
+            val deletions = decoded.filter { it.record is ActiveStudyRecord.DeletionPending }
+            val authoritative = if (deletions.isNotEmpty()) {
+                val distinct = deletions.map { it.record as ActiveStudyRecord.DeletionPending }.distinct()
+                if (distinct.size != 1) {
+                    throw ActiveStudyRecoveryException(ActiveStudyRecoveryFailure.CANDIDATE_CONFLICT)
+                }
+                deletions.first()
+            } else {
+                val active = decoded.map { it.record as ActiveStudyRecord.Active }
+                if (active.drop(1).any { !it.envelopeBytes.contentEquals(active.first().envelopeBytes) }) {
+                    throw ActiveStudyRecoveryException(ActiveStudyRecoveryFailure.CANDIDATE_CONFLICT)
+                }
+                decoded.first()
+            }
+            if (
+                decoded.size != 1 ||
+                decoded.single().candidate.role != AcknowledgedFileCandidateRole.BASE
+            ) {
+                // Authority was established above from authenticated plaintext. Rewriting the exact
+                // authenticated ciphertext cleans both residue names without inventing new state.
+                atomicFile.write(authoritative.candidate.bytes)
+            }
+            authoritative.record
         }
     }
 
@@ -127,6 +160,11 @@ class EncryptedActiveStudyStore private constructor(
             else -> throw IllegalArgumentException("Unsupported active-study record")
         }
     }
+
+    private data class DecodedCandidate(
+        val candidate: AcknowledgedFileCandidate,
+        val record: ActiveStudyRecord,
+    )
 
     private fun decrypt(
         encoded: ByteArray,

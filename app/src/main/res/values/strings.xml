@@ -279,4 +279,15 @@
     <!-- Language -->
     <string name="language_title">Language</string>
     <string name="language_system">System default</string>
+    <string name="recovery_channel">Study recovery</string>
+    <string name="recovery_channel_description">Important actions needed to safely restore research collection.</string>
+    <string name="recovery_notification_title">Research collection needs attention</string>
+    <string name="recovery_notification_body">Open Particeps to safely restore collection.</string>
+    <string name="recovery_panel_title">Collection is safely paused</string>
+    <string name="recovery_panel_body">Particeps could not finish automatic recovery. Fix any requested Android access, then try again. The code below contains no study or participant details.</string>
+    <string name="action_retry_recovery">Try again</string>
+    <string name="action_copy_diagnostic">Copy diagnostic code</string>
+    <string name="action_reset_and_restart">Delete old data and restart</string>
+    <string name="confirm_reset_title">Delete old study data and restart?</string>
+    <string name="confirm_reset_body">This permanently deletes the existing study instance and all data that has not been exported. If the configuration is still valid, you will review consent and permissions again with a new installation code and a full study duration. This cannot be undone.</string>
 </resources>

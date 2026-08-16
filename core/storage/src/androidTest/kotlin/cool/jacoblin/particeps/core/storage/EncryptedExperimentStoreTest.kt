@@ -6,15 +6,24 @@ import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.model.ExperimentStateMachine
 import cool.jacoblin.particeps.core.model.RecordedEvent
 import cool.jacoblin.particeps.core.model.ResearchTime
+import cool.jacoblin.particeps.core.model.StudyClockCheckpoint
 import cool.jacoblin.particeps.core.model.StudyMetadata
+import cool.jacoblin.particeps.core.model.StudyStoreRecoveryException
+import cool.jacoblin.particeps.core.model.StudyStoreRecoveryFailure
 import cool.jacoblin.particeps.core.model.StudyStoreMutationFailedClosed
 import cool.jacoblin.particeps.core.model.TransitionReason
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.security.KeyStore
 import java.security.MessageDigest
+import javax.crypto.Cipher
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -120,10 +129,7 @@ class EncryptedExperimentStoreTest {
         )
         try {
             partialStore.clear()
-            partialStore.initialize(
-                StudyMetadata.initial(partialExperimentId, "encrypted-store-config")
-                    .copy(state = ExperimentState.RUNNING),
-            )
+            partialStore.initialize(runningMetadata(partialExperimentId))
             val padding = "x".repeat(PADDING_BYTES)
             (1L..THREE_SEGMENTS_EVENT_COUNT).forEach { sequence ->
                 partialStore.appendEvent(event(sequence, mapOf("activity_class" to padding)))
@@ -248,9 +254,10 @@ class EncryptedExperimentStoreTest {
         val oldest = segmentFiles().minByOrNull(File::getName)!!
         assertTrue(oldest.delete())
 
-        assertThrows(IllegalArgumentException::class.java) {
+        val failure = assertThrows(StudyStoreRecoveryException::class.java) {
             runBlocking { store.loadMetadata() }
         }
+        assertEquals(StudyStoreRecoveryFailure.EVENT_LOG_INVALID, failure.failure)
         Unit
     }
 
@@ -263,9 +270,10 @@ class EncryptedExperimentStoreTest {
         )
         transaction.writeBytes(byteArrayOf(0x01))
 
-        assertThrows(IllegalArgumentException::class.java) {
+        val failure = assertThrows(StudyStoreRecoveryException::class.java) {
             runBlocking { store.loadMetadata() }
         }
+        assertEquals(StudyStoreRecoveryFailure.TRANSACTION_INVALID, failure.failure)
         assertTrue("a corrupt journal must remain available for diagnosis", transaction.exists())
     }
 
@@ -282,14 +290,13 @@ class EncryptedExperimentStoreTest {
         )
         try {
             faultStore.clear()
-            val initial = StudyMetadata.initial(faultId, "encrypted-store-config")
-                .copy(state = ExperimentState.RUNNING)
+            val initial = runningMetadata(faultId)
             faultStore.initialize(initial)
             operations.renameFailureSuffix = ".metadata.ptc"
 
             assertThrows(IOException::class.java) {
                 runBlocking {
-                    faultStore.saveMetadata(initial.copy(state = ExperimentState.PAUSED))
+                    faultStore.saveMetadata(pausedMetadata(initial, TransitionReason.PARTICIPANT_PAUSED))
                 }
             }
 
@@ -301,9 +308,10 @@ class EncryptedExperimentStoreTest {
                 deleteSegment = File::delete,
                 fileSystem = operations,
             )
-            assertThrows(IncompleteAtomicWrite::class.java) {
+            val failure = assertThrows(StudyStoreRecoveryException::class.java) {
                 runBlocking { reopened.loadMetadata() }
             }
+            assertEquals(StudyStoreRecoveryFailure.CANDIDATE_CONFLICT, failure.failure)
 
             // An explicit new store mutation is the only operation allowed to retire the pending
             // evidence. It must use the old authoritative in-memory metadata, not the failed copy.
@@ -331,10 +339,7 @@ class EncryptedExperimentStoreTest {
         )
         try {
             faultStore.clear()
-            faultStore.initialize(
-                StudyMetadata.initial(faultId, "encrypted-store-config")
-                    .copy(state = ExperimentState.RUNNING),
-            )
+            faultStore.initialize(runningMetadata(faultId))
             operations.renameFailureSuffix = ".transaction.ptc"
 
             assertThrows(IOException::class.java) {
@@ -349,9 +354,9 @@ class EncryptedExperimentStoreTest {
                 deleteSegment = File::delete,
                 fileSystem = operations,
             )
-            assertThrows(IncompleteAtomicWrite::class.java) {
-                runBlocking { reopened.loadMetadata() }
-            }
+            val recovered = requireNotNull(reopened.loadMetadata())
+            assertEquals(ExperimentState.PAUSED, recovered.state)
+            assertEquals(TransitionReason.STORAGE_FAILURE, recovered.transitions.last().reason)
 
             assertThrows(IllegalStateException::class.java) {
                 runBlocking { faultStore.appendEvent(event(1)) }
@@ -364,57 +369,7 @@ class EncryptedExperimentStoreTest {
     }
 
     @Test
-    fun rc5FrameworkAtomicFileMetadataResidueBlocksRecovery() = runBlocking {
-        val legacyId = "$experimentId-rc5-metadata"
-        val legacyStore = EncryptedExperimentStore(context, legacyId, QUOTA_BYTES)
-        try {
-            legacyStore.clear()
-            legacyStore.initialize(
-                StudyMetadata.initial(legacyId, "encrypted-store-config")
-                    .copy(state = ExperimentState.RUNNING),
-            )
-            val metadata = experimentFile(legacyId, ".metadata.ptc")
-            requireNotNull(metadata.parentFile)
-                .resolve("${metadata.name}.new")
-                .writeText("unresolved rc.5 metadata")
-
-            val reopened = EncryptedExperimentStore(context, legacyId, QUOTA_BYTES)
-            assertThrows(IncompleteAtomicWrite::class.java) {
-                runBlocking { reopened.loadMetadata() }
-            }
-        } finally {
-            legacyStore.clear()
-        }
-        Unit
-    }
-
-    @Test
-    fun rc5FrameworkAtomicFileJournalResidueBlocksRecovery() = runBlocking {
-        val legacyId = "$experimentId-rc5-journal"
-        val legacyStore = EncryptedExperimentStore(context, legacyId, QUOTA_BYTES)
-        try {
-            legacyStore.clear()
-            legacyStore.initialize(
-                StudyMetadata.initial(legacyId, "encrypted-store-config")
-                    .copy(state = ExperimentState.RUNNING),
-            )
-            val metadata = experimentFile(legacyId, ".metadata.ptc")
-            requireNotNull(metadata.parentFile)
-                .resolve(metadata.name.replace(".metadata.ptc", ".transaction.ptc.new"))
-                .writeText("unresolved rc.5 journal")
-
-            val reopened = EncryptedExperimentStore(context, legacyId, QUOTA_BYTES)
-            assertThrows(IncompleteAtomicWrite::class.java) {
-                runBlocking { reopened.loadMetadata() }
-            }
-        } finally {
-            legacyStore.clear()
-        }
-        Unit
-    }
-
-    @Test
-    fun metadataPostRenameDirectorySyncFailureCannotReopenRunning() = runBlocking {
+    fun metadataPostRenameDirectorySyncFailureRepairsWhenEveryAuthenticatedCandidateConverges() = runBlocking {
         val faultId = "$experimentId-metadata-commit-sync"
         val operations = TargetedFaultFileSystem()
         val faultStore = EncryptedExperimentStore(
@@ -426,13 +381,13 @@ class EncryptedExperimentStoreTest {
         )
         try {
             faultStore.clear()
-            val ready = StudyMetadata.initial(faultId, "encrypted-store-config")
-                .copy(state = ExperimentState.READY)
+            val ready = readyMetadata(faultId)
+            val running = startedMetadata(ready)
             faultStore.initialize(ready)
             operations.failRootDirectorySyncAt = operations.rootDirectorySyncAttempts + 2
 
             assertThrows(IOException::class.java) {
-                runBlocking { faultStore.saveMetadata(ready.copy(state = ExperimentState.RUNNING)) }
+                runBlocking { faultStore.saveMetadata(running) }
             }
 
             operations.failRootDirectorySyncAt = null
@@ -443,9 +398,7 @@ class EncryptedExperimentStoreTest {
                 deleteSegment = File::delete,
                 fileSystem = operations,
             )
-            assertThrows(IncompleteAtomicWrite::class.java) {
-                runBlocking { reopened.loadMetadata() }
-            }
+            assertEquals(ExperimentState.RUNNING, reopened.loadMetadata()?.state)
         } finally {
             operations.clearFailures()
             faultStore.clear()
@@ -476,8 +429,7 @@ class EncryptedExperimentStoreTest {
     @Test
     fun retainedAppendJournalPreservesFirstSafetyReasonAcrossTwoProcessDeaths() = runBlocking {
         val faultId = "$experimentId-double-reopen-first-reason"
-        val initial = StudyMetadata.initial(faultId, "encrypted-store-config")
-            .copy(state = ExperimentState.RUNNING)
+        val initial = runningMetadata(faultId)
         val faultStore = EncryptedExperimentStore(
             context = context,
             experimentId = faultId,
@@ -521,8 +473,7 @@ class EncryptedExperimentStoreTest {
     @Test
     fun failedInlineRecoveryKeepsEveryLaterMutationClosed() = runBlocking {
         val faultId = "$experimentId-double-append-failure"
-        val initial = StudyMetadata.initial(faultId, "encrypted-store-config")
-            .copy(state = ExperimentState.RUNNING)
+        val initial = runningMetadata(faultId)
         val operations = TargetedFaultFileSystem()
         val faultStore = EncryptedExperimentStore(
             context = context,
@@ -568,9 +519,9 @@ class EncryptedExperimentStoreTest {
                 deleteSegment = File::delete,
                 fileSystem = operations,
             )
-            assertThrows(IncompleteAtomicWrite::class.java) {
-                runBlocking { reopened.loadMetadata() }
-            }
+            val recovered = requireNotNull(reopened.loadMetadata())
+            assertEquals(ExperimentState.PAUSED, recovered.state)
+            assertEquals(TransitionReason.STORAGE_FAILURE, recovered.transitions.last().reason)
         } finally {
             operations.clearFailures()
             faultStore.clear()
@@ -595,10 +546,7 @@ class EncryptedExperimentStoreTest {
         )
         try {
             faultStore.clear()
-            faultStore.initialize(
-                StudyMetadata.initial(faultId, "encrypted-store-config")
-                    .copy(state = ExperimentState.RUNNING),
-            )
+            faultStore.initialize(runningMetadata(faultId))
             val padding = "x".repeat(PADDING_BYTES)
             (1L..THREE_SEGMENTS_EVENT_COUNT).forEach { sequence ->
                 faultStore.appendEvent(event(sequence, mapOf("activity_class" to padding)))
@@ -633,10 +581,7 @@ class EncryptedExperimentStoreTest {
         )
         try {
             faultStore.clear()
-            faultStore.initialize(
-                StudyMetadata.initial(faultId, "encrypted-store-config")
-                    .copy(state = ExperimentState.RUNNING),
-            )
+            faultStore.initialize(runningMetadata(faultId))
             operations.failEventDirectorySync = true
 
             assertThrows(IOException::class.java) {
@@ -652,9 +597,9 @@ class EncryptedExperimentStoreTest {
                 deleteSegment = File::delete,
                 fileSystem = operations,
             )
-            assertThrows(IncompleteAtomicWrite::class.java) {
-                runBlocking { reopened.loadMetadata() }
-            }
+            val recovered = requireNotNull(reopened.loadMetadata())
+            assertEquals(ExperimentState.PAUSED, recovered.state)
+            assertEquals(TransitionReason.STORAGE_FAILURE, recovered.transitions.last().reason)
         } finally {
             operations.clearFailures()
             faultStore.clear()
@@ -663,7 +608,7 @@ class EncryptedExperimentStoreTest {
     }
 
     @Test
-    fun incompleteSegmentRenameEvidenceBlocksProcessDeathRecovery() = runBlocking {
+    fun incompleteSegmentRenameEvidenceRepairsToTheValidatedEventBoundary() = runBlocking {
         val faultId = "$experimentId-segment-rename-fault"
         val operations = TargetedFaultFileSystem()
         val faultStore = EncryptedExperimentStore(
@@ -675,10 +620,7 @@ class EncryptedExperimentStoreTest {
         )
         try {
             faultStore.clear()
-            faultStore.initialize(
-                StudyMetadata.initial(faultId, "encrypted-store-config")
-                    .copy(state = ExperimentState.RUNNING),
-            )
+            faultStore.initialize(runningMetadata(faultId))
             operations.renameFailureSuffix = ".ptcs"
 
             assertThrows(IOException::class.java) {
@@ -693,10 +635,9 @@ class EncryptedExperimentStoreTest {
                 deleteSegment = File::delete,
                 fileSystem = operations,
             )
-            assertThrows(IncompleteAtomicWrite::class.java) {
-                runBlocking { reopened.loadMetadata() }
-            }
-            Unit
+            val recovered = requireNotNull(reopened.loadMetadata())
+            assertEquals(ExperimentState.PAUSED, recovered.state)
+            assertEquals(TransitionReason.STORAGE_FAILURE, recovered.transitions.last().reason)
         } finally {
             operations.clearFailures()
             faultStore.clear()
@@ -716,10 +657,7 @@ class EncryptedExperimentStoreTest {
         )
         try {
             faultStore.clear()
-            faultStore.initialize(
-                StudyMetadata.initial(faultId, "encrypted-store-config")
-                    .copy(state = ExperimentState.RUNNING),
-            )
+            faultStore.initialize(runningMetadata(faultId))
             faultStore.appendEvent(event(1))
             operations.failEventDirectoryListing = true
 
@@ -730,9 +668,10 @@ class EncryptedExperimentStoreTest {
                 deleteSegment = File::delete,
                 fileSystem = operations,
             )
-            assertThrows(IllegalStateException::class.java) {
+            val failure = assertThrows(StudyStoreRecoveryException::class.java) {
                 runBlocking { reopened.loadMetadata() }
             }
+            assertEquals(StudyStoreRecoveryFailure.EVENT_LOG_INVALID, failure.failure)
             Unit
         } finally {
             operations.clearFailures()
@@ -740,8 +679,104 @@ class EncryptedExperimentStoreTest {
         }
     }
 
-    private fun runningMetadata() = StudyMetadata.initial(experimentId, "encrypted-store-config")
-        .copy(state = ExperimentState.RUNNING)
+    @Test
+    fun exactCurrentV1MetadataWithCurrentResidueMigratesOnceToCleanV2() = runBlocking {
+        val migrationId = "$experimentId-v1-migration"
+        val migrationStore = EncryptedExperimentStore(context, migrationId, QUOTA_BYTES)
+        try {
+            migrationStore.clear()
+            val metadata = StudyMetadata.initial(migrationId, "encrypted-store-config")
+            migrationStore.initialize(metadata)
+            val v1 = JSONObject(StudyDataJsonCodec.encodeMetadata(metadata).toString(Charsets.UTF_8))
+                .apply {
+                    remove("layout_version")
+                    remove("clock_checkpoint")
+                }
+                .toString()
+                .toByteArray(Charsets.UTF_8)
+            val encryptedV1 = encryptMetadataForTest(migrationId, v1)
+            val base = experimentFile(migrationId, ".metadata.ptc")
+            base.writeBytes(encryptedV1)
+            val pending = requireNotNull(base.parentFile).resolve(".${base.name}.pending")
+            pending.writeBytes(encryptedV1)
+
+            val recovered = EncryptedExperimentStore(context, migrationId, QUOTA_BYTES).loadMetadata()
+
+            assertEquals(metadata, recovered)
+            val rewritten = JSONObject(
+                decryptMetadataForTest(migrationId, base.readBytes()).toString(Charsets.UTF_8),
+            )
+            assertEquals(2, rewritten.getInt("layout_version"))
+            assertTrue(rewritten.isNull("clock_checkpoint"))
+            assertFalse(pending.exists())
+        } finally {
+            migrationStore.clear()
+        }
+    }
+
+    private fun readyMetadata(targetExperimentId: String = experimentId): StudyMetadata {
+        val stateMachine = ExperimentStateMachine()
+        var metadata = StudyMetadata.initial(targetExperimentId, "encrypted-store-config")
+        var tick = 0L
+        fun advance(state: ExperimentState, reason: TransitionReason) {
+            tick += 1
+            metadata = stateMachine.transition(
+                metadata,
+                state,
+                reason,
+                ResearchTime(100 + tick, 100 + tick, "boot-test"),
+            )
+        }
+        advance(ExperimentState.CONFIG_VERIFIED, TransitionReason.CONFIGURATION_SIGNATURE_VERIFIED)
+        advance(ExperimentState.CONSENT_PENDING, TransitionReason.CONSENT_REVIEW_OPENED)
+        advance(ExperimentState.ACCESS_SETUP, TransitionReason.CONSENT_ACCEPTED)
+        advance(ExperimentState.READY, TransitionReason.ACCESS_PREFLIGHT_PASSED)
+        return metadata
+    }
+
+    private fun startedMetadata(ready: StudyMetadata): StudyMetadata {
+        val previous = ready.transitions.last().time
+        val start = ResearchTime(
+            previous.wallTimeUtcMillis + 1,
+            previous.elapsedRealtimeNanos + 1,
+            previous.bootSessionId,
+        )
+        val metadata = ExperimentStateMachine().transition(
+            ready,
+            ExperimentState.RUNNING,
+            TransitionReason.PARTICIPANT_STARTED,
+            start,
+        )
+        return metadata.copy(
+            clockCheckpoint = StudyClockCheckpoint(
+                studyElapsedNanos = 0,
+                activeCollectionElapsedNanos = 0,
+                anchor = start,
+                deadlineUtcMillis = start.wallTimeUtcMillis + 3_600_000,
+                deadlineUtcTrusted = true,
+            ),
+        )
+    }
+
+    private fun runningMetadata(targetExperimentId: String = experimentId): StudyMetadata =
+        startedMetadata(readyMetadata(targetExperimentId))
+
+    private fun pausedMetadata(
+        running: StudyMetadata,
+        reason: TransitionReason,
+    ): StudyMetadata {
+        val previous = running.transitions.last().time
+        return ExperimentStateMachine().transition(
+            running,
+            ExperimentState.PAUSED,
+            reason,
+            ResearchTime(
+                previous.wallTimeUtcMillis + 1,
+                previous.elapsedRealtimeNanos + 1,
+                previous.bootSessionId,
+            ),
+        )
+    }
 
     private fun event(
         sequence: Long,
@@ -778,6 +813,43 @@ class EncryptedExperimentStoreTest {
         return context.noBackupFilesDir.resolve("experiments/$opaqueId$suffix")
     }
 
+    private fun encryptMetadataForTest(experimentId: String, plaintext: ByteArray): ByteArray {
+        val key = experimentKey(experimentId)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
+            init(Cipher.ENCRYPT_MODE, key)
+            updateAAD(METADATA_HEADER)
+        }
+        val ciphertext = cipher.doFinal(plaintext)
+        return ByteBuffer.allocate(METADATA_HEADER.size + cipher.iv.size + ciphertext.size)
+            .put(METADATA_HEADER)
+            .put(cipher.iv)
+            .put(ciphertext)
+            .array()
+    }
+
+    private fun decryptMetadataForTest(experimentId: String, encoded: ByteArray): ByteArray {
+        val buffer = ByteBuffer.wrap(encoded)
+        val header = ByteArray(METADATA_HEADER.size).also(buffer::get)
+        check(header.contentEquals(METADATA_HEADER))
+        val iv = ByteArray(GCM_IV_BYTES).also(buffer::get)
+        val ciphertext = ByteArray(buffer.remaining()).also(buffer::get)
+        return Cipher.getInstance("AES/GCM/NoPadding").run {
+            init(Cipher.DECRYPT_MODE, experimentKey(experimentId), GCMParameterSpec(128, iv))
+            updateAAD(METADATA_HEADER)
+            doFinal(ciphertext)
+        }
+    }
+
+    private fun experimentKey(experimentId: String): SecretKey {
+        val opaqueId = MessageDigest.getInstance("SHA-256")
+            .digest(experimentId.toByteArray(Charsets.UTF_8))
+            .joinToString(separator = "") { byte -> "%02x".format(byte) }
+        return requireNotNull(
+            KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+                .getKey("particeps-core-$opaqueId", null) as? SecretKey,
+        )
+    }
+
     private suspend fun verifyUnacknowledgedEventRecovery(
         writeCompleteFrame: Boolean,
         resumeAndAppend: Boolean,
@@ -789,8 +861,7 @@ class EncryptedExperimentStoreTest {
             else -> "partial-event-write"
         }
         val faultId = "$experimentId-$suffix"
-        val initial = StudyMetadata.initial(faultId, "encrypted-store-config")
-            .copy(state = ExperimentState.RUNNING)
+        val initial = runningMetadata(faultId)
         var failNextAppend = true
         val faultStore = EncryptedExperimentStore(
             context = context,
@@ -831,7 +902,9 @@ class EncryptedExperimentStoreTest {
                     failClosed,
                     ExperimentState.RUNNING,
                     TransitionReason.PARTICIPANT_RESUMED,
-                    ResearchTime(10_000, 10_000, "boot-test"),
+                    // Equal to the recovered failure boundary and no later than the next event;
+                    // metadata candidates must preserve same-boot monotonic ordering.
+                    ResearchTime(1_001, 2_001, "boot-test"),
                 )
                 faultStore.saveMetadata(resumed)
                 faultStore.appendEvent(event(resumed.nextSequenceNumber))
@@ -930,6 +1003,8 @@ class EncryptedExperimentStoreTest {
     private companion object {
         const val QUOTA_BYTES = 64L * 1024 * 1024
         const val PADDING_BYTES = 60 * 1024
+        const val GCM_IV_BYTES = 12
+        val METADATA_HEADER = "PTCMET01".toByteArray(Charsets.US_ASCII)
 
         /** Enough 60 KiB events to fill three 4 MiB segments with room to spare. */
         const val THREE_SEGMENTS_EVENT_COUNT = 180L

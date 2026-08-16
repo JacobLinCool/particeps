@@ -19,6 +19,7 @@ import cool.jacoblin.particeps.core.model.ExperimentTransition
 import cool.jacoblin.particeps.core.model.OccurrenceState
 import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.core.model.StudyMetadata
+import cool.jacoblin.particeps.core.model.StudyClockCheckpoint
 import cool.jacoblin.particeps.core.model.TransitionReason
 import java.time.Instant
 import java.time.LocalDate
@@ -45,6 +46,12 @@ class InterventionSchedulePlannerTest {
                 transition(ExperimentState.READY, ExperimentState.RUNNING, TransitionReason.PARTICIPANT_STARTED, 0),
                 transition(ExperimentState.RUNNING, ExperimentState.PAUSED, TransitionReason.PARTICIPANT_PAUSED, 30),
                 transition(ExperimentState.PAUSED, ExperimentState.RUNNING, TransitionReason.PARTICIPANT_RESUMED, 90),
+            ),
+            clockCheckpoint = StudyClockCheckpoint(
+                studyElapsedNanos = 90 * 60_000_000_000L,
+                activeCollectionElapsedNanos = 30 * 60_000_000_000L,
+                anchor = at(90),
+                deadlineUtcMillis = at(0).wallTimeUtcMillis + 48 * 60 * 60_000L,
             ),
         )
         assertEquals(at(60).wallTimeUtcMillis, plan(OneTimeSchedule(60, RelativeClock.CALENDAR_TIME), paused, 100).scheduledFor.wallTimeUtcMillis)
@@ -104,7 +111,39 @@ class InterventionSchedulePlannerTest {
             wallJumpedForward,
             ZoneId.of("UTC"),
         ).single()
-        assertEquals(at(210).wallTimeUtcMillis, calendar.scheduledFor.wallTimeUtcMillis)
+        assertEquals(at(60).wallTimeUtcMillis, calendar.scheduledFor.wallTimeUtcMillis)
+    }
+
+    @Test
+    fun calendarAndDailySchedulesUseTheCheckpointReanchoredStart() {
+        val effectiveStartMinutes = 26 * 60L
+        val nowMinutes = effectiveStartMinutes + 60
+        val durationMillis = 48L * 60 * 60_000
+        val metadata = runningMetadata().copy(
+            clockCheckpoint = StudyClockCheckpoint(
+                studyElapsedNanos = 60 * 60_000_000_000L,
+                activeCollectionElapsedNanos = 60 * 60_000_000_000L,
+                anchor = at(nowMinutes),
+                deadlineUtcMillis = at(effectiveStartMinutes).wallTimeUtcMillis + durationMillis,
+                deadlineUtcTrusted = true,
+            ),
+        )
+
+        val calendar = planner.next(
+            configuration(OneTimeSchedule(60, RelativeClock.CALENDAR_TIME)),
+            metadata,
+            at(nowMinutes),
+            ZoneId.of("UTC"),
+        ).single()
+        val daily = planner.next(
+            configuration(DailyLocalSchedule("08:00")),
+            metadata,
+            at(nowMinutes),
+            ZoneId.of("UTC"),
+        ).single()
+
+        assertEquals(at(nowMinutes).wallTimeUtcMillis, calendar.scheduledFor.wallTimeUtcMillis)
+        assertEquals(at(32 * 60).wallTimeUtcMillis, daily.scheduledFor.wallTimeUtcMillis)
     }
 
     @Test
@@ -261,9 +300,9 @@ class InterventionSchedulePlannerTest {
             .next(configuration(schedule), runningMetadata(start), afterRollback, ZoneId.of("UTC"))
             .single()
 
-        assertEquals("random:2026-01-01:0:0", occurrence.scheduleKey)
+        assertEquals("random:2026-01-02:0:0", occurrence.scheduleKey)
         assertEquals(
-            Instant.parse("2026-01-01T09:00:00Z").toEpochMilli(),
+            Instant.parse("2026-01-02T09:00:00Z").toEpochMilli(),
             occurrence.scheduledFor.wallTimeUtcMillis,
         )
     }
@@ -398,7 +437,7 @@ class InterventionSchedulePlannerTest {
     fun dailyLocalAlsoSkipsDstGapInsteadOfShiftingOutsideTheSignedTime() {
         val zone = ZoneId.of("America/New_York")
         val start = researchTime(Instant.parse("2026-03-07T05:00:00Z"))
-        val metadata = runningMetadata(start)
+        val metadata = runningMetadata(start, durationHours = 72)
         val configuration = configuration(DailyLocalSchedule("02:30"), durationHours = 72)
         val first = planner.next(configuration, metadata, start, zone).single()
         assertEquals(Instant.parse("2026-03-07T07:30:00Z").toEpochMilli(), first.scheduledFor.wallTimeUtcMillis)
@@ -419,7 +458,10 @@ class InterventionSchedulePlannerTest {
     private fun plan(schedule: InterventionSchedule, metadata: StudyMetadata, nowMinutes: Long) =
         planner.next(configuration(schedule), metadata, at(nowMinutes), ZoneId.of("UTC")).single()
 
-    private fun runningMetadata(start: ResearchTime = at(0)) = StudyMetadata.initial("schedule-test", "schedule-config").copy(
+    private fun runningMetadata(
+        start: ResearchTime = at(0),
+        durationHours: Int = 48,
+    ) = StudyMetadata.initial("schedule-test", "schedule-config").copy(
         state = ExperimentState.RUNNING,
         transitions = listOf(
             ExperimentTransition(
@@ -428,6 +470,12 @@ class InterventionSchedulePlannerTest {
                 TransitionReason.PARTICIPANT_STARTED,
                 start,
             ),
+        ),
+        clockCheckpoint = StudyClockCheckpoint(
+            studyElapsedNanos = 0,
+            activeCollectionElapsedNanos = 0,
+            anchor = start,
+            deadlineUtcMillis = start.wallTimeUtcMillis + durationHours * 60L * 60_000L,
         ),
     )
 

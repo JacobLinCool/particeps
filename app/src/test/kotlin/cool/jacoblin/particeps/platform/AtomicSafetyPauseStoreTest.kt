@@ -2,6 +2,8 @@ package cool.jacoblin.particeps.platform
 
 import cool.jacoblin.particeps.core.model.SafetyPauseReason
 import cool.jacoblin.particeps.core.storage.AcknowledgedFile
+import cool.jacoblin.particeps.core.storage.AcknowledgedFileCandidate
+import cool.jacoblin.particeps.core.storage.AcknowledgedFileCandidateRole
 import cool.jacoblin.particeps.core.storage.IncompleteAtomicWrite
 import java.io.File
 import java.io.IOException
@@ -63,6 +65,10 @@ class AtomicSafetyPauseStoreTest {
             if (incompleteWrite) throw IncompleteAtomicWrite(baseFile)
             return requireNotNull(bytes).copyOf()
         }
+
+        override fun candidates(): List<AcknowledgedFileCandidate> = bytes?.let {
+            listOf(AcknowledgedFileCandidate(AcknowledgedFileCandidateRole.BASE, it.copyOf()))
+        } ?: emptyList()
 
         override fun write(bytes: ByteArray) {
             writeFailure?.let { throw it }

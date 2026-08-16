@@ -7,7 +7,31 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
-## Unreleased
+## v1.0.0-rc.7 — 2026-08-17
+
+- Running studies now recover automatically after a device reboot. The app durably records
+  `RUNNING → PAUSED / DEVICE_REBOOT`, advances one metadata-v2 timeline with trusted cross-boot UTC,
+  validates the deadline, access, WorkManager, and foreground service, then records
+  `PAUSED → RUNNING / AUTOMATIC_RECOVERY`. Participant pauses never auto-resume. Missing trusted time
+  or any failed check stays paused and produces a generic repair notification with a safe diagnostic
+  code.
+- Existing `PTCCFG01` `.partcfg` files remain valid. Recovery of an already accepted active study
+  still verifies framing, schema, signature, Android platform, and minimum client build, but does not
+  reinterpret the configuration's import-only `expires_at` as an early study deadline. Fresh import
+  and destructive reset reuse continue to enforce the complete validity window.
+- Active-study, metadata, and append-journal atomic residues are now authenticated as separate base,
+  pending, and replacement candidates. Recovery proceeds only when every valid combination
+  converges; deletion tombstones take priority and conflicts remain typed hard failures. The exact
+  previously shipped metadata layout migrates once to v2, which adds the shared lifetime and
+  active-collection checkpoint.
+- The recovery screen can retry the same closed validation path or, after an irreversible warning,
+  durably reset old storage and keys. A still-valid signed envelope restarts consent and access with
+  a new participant instance and full duration; an unreadable or expired one returns to file import.
+
+**Coming from `v1.0.0-rc.5` or `v1.0.0-rc.6`:** install the signed rc.7 APK directly over the
+existing app. Keep the same application ID and production signing certificate, and publish it with a
+higher `versionCode`; do not uninstall first. First launch performs the one-time metadata migration
+and strict residue repair.
 
 ## v1.0.0-rc.6 — 2026-08-09
 

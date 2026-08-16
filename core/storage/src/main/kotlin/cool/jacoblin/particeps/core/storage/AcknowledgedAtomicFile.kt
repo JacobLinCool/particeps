@@ -23,10 +23,20 @@ interface AcknowledgedFile {
 
     fun readFully(): ByteArray
 
+    /** All kernel-visible candidates, without assigning authority to any one of them. */
+    fun candidates(): List<AcknowledgedFileCandidate>
+
     fun write(bytes: ByteArray)
 
     fun delete()
 }
+
+enum class AcknowledgedFileCandidateRole { BASE, PENDING, REPLACEMENT }
+
+data class AcknowledgedFileCandidate(
+    val role: AcknowledgedFileCandidateRole,
+    val bytes: ByteArray,
+)
 
 /** Durable evidence that a prior writer died or failed before the atomic replace was acknowledged. */
 class IncompleteAtomicWrite(file: File) : IOException(
@@ -46,26 +56,26 @@ class AcknowledgedAtomicFile internal constructor(
     private val replacementFile: File
         get() = requireNotNull(baseFile.parentFile).resolve(".${baseFile.name}.replacement")
 
-    /**
-     * Android's framework AtomicFile used these names before this repository took ownership of the
-     * acknowledgement protocol. An in-place rc.5 -> rc.6 update can therefore encounter either
-     * artifact after a process death. They are evidence of an unresolved write, not alternate
-     * inputs that this implementation may guess how to promote.
-     */
-    private val legacyStagedFiles: List<File>
-        get() = listOf(
-            requireNotNull(baseFile.parentFile).resolve("${baseFile.name}.new"),
-            requireNotNull(baseFile.parentFile).resolve("${baseFile.name}.bak"),
-        )
-
     private val unresolvedFiles: List<File>
-        get() = listOf(stagedFile, replacementFile) + legacyStagedFiles
+        get() = listOf(stagedFile, replacementFile)
 
     override fun exists(): Boolean = fileSystem.exists(baseFile) || unresolvedFiles.any(fileSystem::exists)
 
     override fun readFully(): ByteArray {
         if (unresolvedFiles.any(fileSystem::exists)) throw IncompleteAtomicWrite(baseFile)
         return fileSystem.readFully(baseFile)
+    }
+
+    override fun candidates(): List<AcknowledgedFileCandidate> = buildList {
+        if (fileSystem.exists(baseFile)) {
+            add(AcknowledgedFileCandidate(AcknowledgedFileCandidateRole.BASE, fileSystem.readFully(baseFile)))
+        }
+        if (fileSystem.exists(stagedFile)) {
+            add(AcknowledgedFileCandidate(AcknowledgedFileCandidateRole.PENDING, fileSystem.readFully(stagedFile)))
+        }
+        if (fileSystem.exists(replacementFile)) {
+            add(AcknowledgedFileCandidate(AcknowledgedFileCandidateRole.REPLACEMENT, fileSystem.readFully(replacementFile)))
+        }
     }
 
     override fun write(bytes: ByteArray) {

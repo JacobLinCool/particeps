@@ -1,6 +1,8 @@
 package cool.jacoblin.particeps
 
 import android.text.format.DateUtils
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -54,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import cool.jacoblin.particeps.core.application.StudyAccessFeature
+import cool.jacoblin.particeps.core.application.RecoveryStatus
 import cool.jacoblin.particeps.core.application.StudyAccessOwner
 import cool.jacoblin.particeps.core.application.StudyAccessStatus
 import cool.jacoblin.particeps.core.collector.AccessKind
@@ -82,6 +85,9 @@ object UiTags {
     const val EXPORT = "export"
     const val EVENT_COUNT = "event_count"
     const val PAUSED_SINCE = "paused_since"
+    const val RECOVERY_RETRY = "recovery_retry"
+    const val RECOVERY_COPY = "recovery_copy"
+    const val RECOVERY_RESET = "recovery_reset"
 
     fun accessItem(kind: AccessKind) = "access_item_${kind.name}"
     fun accessOwners(kind: AccessKind) = "access_owners_${kind.name}"
@@ -103,6 +109,8 @@ data class StudyUiActions(
     val withdraw: () -> Unit,
     val export: () -> Unit,
     val delete: () -> Unit,
+    val retryRecovery: () -> Unit,
+    val resetAndRestart: () -> Unit,
 )
 
 /**
@@ -143,6 +151,7 @@ fun CollectorApp(
                     actions = actions.copy(
                         withdraw = { confirmAction = ConfirmAction.WITHDRAW },
                         delete = { confirmAction = ConfirmAction.DELETE },
+                        resetAndRestart = { confirmAction = ConfirmAction.RESET },
                     ),
                     onOpenLanguage = { languageOpen = true },
                     modifier = Modifier.padding(padding),
@@ -161,6 +170,7 @@ fun CollectorApp(
                     when (action) {
                         ConfirmAction.WITHDRAW -> actions.withdraw()
                         ConfirmAction.DELETE -> actions.delete()
+                        ConfirmAction.RESET -> actions.resetAndRestart()
                     }
                 },
             )
@@ -205,6 +215,10 @@ private fun Dashboard(
         state.message?.let { Alert(it) }
 
         if (state is StudyUiState.Initializing) return@Column
+        (state.recoveryStatus as? RecoveryStatus.ActionRequired)?.let { recovery ->
+            RecoveryPanel(recovery, study, actions, state.busy)
+            return@Column
+        }
         if (study == null || metadata == null) {
             NoStudyPanel(actions)
             return@Column
@@ -239,6 +253,55 @@ private fun Dashboard(
                 null -> CollectionPanel(study, actions, state.busy)
             }
         }
+    }
+}
+
+@Composable
+private fun RecoveryPanel(
+    recovery: RecoveryStatus.ActionRequired,
+    study: StudyUiState.ActiveStudy?,
+    actions: StudyUiActions,
+    busy: Boolean,
+) {
+    val context = LocalContext.current
+    val diagnosticCode = "RECOVERY_${recovery.code.name}"
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(stringResource(R.string.recovery_panel_title), style = MaterialTheme.typography.titleLarge)
+        Text(stringResource(R.string.recovery_panel_body))
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                diagnosticCode,
+                modifier = Modifier.padding(12.dp),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        Button(
+            onClick = actions.retryRecovery,
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth().testTag(UiTags.RECOVERY_RETRY),
+        ) { Text(stringResource(R.string.action_retry_recovery)) }
+        OutlinedButton(
+            onClick = {
+                context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(
+                    ClipData.newPlainText("Particeps recovery diagnostic", diagnosticCode),
+                )
+            },
+            modifier = Modifier.fillMaxWidth().testTag(UiTags.RECOVERY_COPY),
+        ) { Text(stringResource(R.string.action_copy_diagnostic)) }
+        if (recovery.code == cool.jacoblin.particeps.core.application.RecoveryFailureCode.ACCESS_MISSING) {
+            study?.access
+                ?.filter { it.requirement.required && !it.granted }
+                ?.forEach { check -> AccessCard(study.configuration, check, actions, busy) }
+        }
+        TextButton(
+            onClick = actions.resetAndRestart,
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth().testTag(UiTags.RECOVERY_RESET),
+        ) { Text(stringResource(R.string.action_reset_and_restart)) }
     }
 }
 
@@ -1066,6 +1129,7 @@ private fun ConfirmDialog(
     val (title, body) = when (action) {
         ConfirmAction.WITHDRAW -> R.string.confirm_withdraw_title to R.string.confirm_withdraw_body
         ConfirmAction.DELETE -> R.string.confirm_delete_title to R.string.confirm_delete_body
+        ConfirmAction.RESET -> R.string.confirm_reset_title to R.string.confirm_reset_body
     }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1173,7 +1237,7 @@ private fun Alert(code: String) {
     }
 }
 
-private enum class ConfirmAction { WITHDRAW, DELETE }
+private enum class ConfirmAction { WITHDRAW, DELETE, RESET }
 
 @Composable
 private fun stateTint(state: ExperimentState): Color = when (state) {

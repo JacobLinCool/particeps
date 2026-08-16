@@ -21,8 +21,16 @@ import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.core.model.SafetyPauseReason
 import cool.jacoblin.particeps.core.model.StudyMetadata
 import cool.jacoblin.particeps.core.model.StudyStore
+import cool.jacoblin.particeps.core.model.StudyStoreRecoveryException
+import cool.jacoblin.particeps.core.model.StudyStoreRecoveryFailure
+import cool.jacoblin.particeps.core.model.StudyResetMarker
+import cool.jacoblin.particeps.core.model.StudyResetStore
+import cool.jacoblin.particeps.core.model.StudyStorageResetter
+import cool.jacoblin.particeps.core.model.TransitionReason
 import cool.jacoblin.particeps.core.protocol.ActiveStudyStore
 import cool.jacoblin.particeps.core.protocol.ActiveStudyRecord
+import cool.jacoblin.particeps.core.protocol.ActiveStudyRecoveryException
+import cool.jacoblin.particeps.core.protocol.ActiveStudyRecoveryFailure
 import cool.jacoblin.particeps.core.protocol.JoinLink
 import cool.jacoblin.particeps.core.protocol.VerifiedConfiguration
 import cool.jacoblin.particeps.core.runtime.CommandResult
@@ -54,6 +62,8 @@ import kotlinx.coroutines.withContext
 
 fun interface StudyVerifier { fun verify(envelopeBytes: ByteArray): VerifiedConfiguration }
 
+fun interface AcceptedStudyVerifier { fun verify(envelopeBytes: ByteArray): VerifiedConfiguration }
+
 fun interface StudyStoreFactory {
     fun create(experimentId: String, maximumLocalBytes: Long): StudyStore
 }
@@ -70,6 +80,11 @@ interface StudyCollectionHost {
     /** Returns only after the platform has acknowledged the requested foreground-service type. */
     suspend fun start(studyTitle: String, usesLocation: Boolean)
     fun stop()
+}
+
+interface RecoveryReporter {
+    fun actionRequired(code: RecoveryFailureCode, failure: Throwable?)
+    fun clear()
 }
 
 /** App-private typed marker for any fail-closed pause that must survive process death. */
@@ -110,6 +125,12 @@ interface StudyWorkScheduler {
     suspend fun pendingSafetyPauseReason(experimentId: String): SafetyPauseReason?
 
     suspend fun cancelSafetyPauseRetry()
+
+    suspend fun scheduleRecoveryRetry()
+
+    suspend fun cancelRecoveryRetry()
+
+    suspend fun cancelAllForReset()
 
     /**
      * Cancels interventions, reminders and the study deadline, leaving the upload tail in place.
@@ -276,10 +297,38 @@ data class StudySessionSnapshot(
     val deletionPending: Boolean = false,
     /** A safety boundary is pending; unreadable marker state is closed and never activates a study. */
     val safetyPauseStatus: SafetyPauseStatus? = null,
-    /** Recovery failed closed; ordinary study actions cannot clear this process-lifetime latch. */
-    val recoveryBlocked: Boolean = false,
+    val recoveryStatus: RecoveryStatus? = null,
     val incidentCode: String? = null,
-)
+) {
+    val recoveryBlocked: Boolean
+        get() = recoveryStatus is RecoveryStatus.ActionRequired && configuration == null
+}
+
+sealed interface RecoveryStatus {
+    data object Recovering : RecoveryStatus
+    data object RecoveredAutomatically : RecoveryStatus
+    data class ActionRequired(val code: RecoveryFailureCode) : RecoveryStatus
+}
+
+enum class RecoveryFailureCode {
+    ACTIVE_RECORD_INVALID,
+    ACTIVE_KEY_UNAVAILABLE,
+    STUDY_KEY_UNAVAILABLE,
+    METADATA_INVALID,
+    TRANSACTION_INVALID,
+    EVENT_LOG_INVALID,
+    STORAGE_CANDIDATE_CONFLICT,
+    TIME_UNTRUSTED,
+    ACCESS_MISSING,
+    WORK_SCHEDULING_FAILED,
+    FOREGROUND_SERVICE_FAILED,
+    UNKNOWN,
+}
+
+private class RecoveryValidationException(
+    val code: RecoveryFailureCode,
+    cause: Throwable,
+) : IllegalStateException("Recovery validation failed: ${code.name}", cause)
 
 sealed interface SafetyPauseStatus {
     data class Pending(val reason: SafetyPauseReason) : SafetyPauseStatus
@@ -317,11 +366,15 @@ class StudyAccessPolicy {
 class StudySessionManager(
     private val activeStudyStore: ActiveStudyStore,
     private val verifier: StudyVerifier,
+    private val acceptedStudyVerifier: AcceptedStudyVerifier,
     private val storeFactory: StudyStoreFactory,
     private val runtimeFactory: ExperimentRuntimeFactory,
     private val collectorRegistry: CollectorRegistry,
     private val accessGateway: StudyAccessGateway,
     private val collectionHost: StudyCollectionHost,
+    private val recoveryReporter: RecoveryReporter,
+    private val resetStore: StudyResetStore,
+    private val storageResetter: StudyStorageResetter,
     private val safetyPauseStore: SafetyPauseStore,
     private val workScheduler: StudyWorkScheduler,
     private val exporter: StudyExporter,
@@ -347,13 +400,17 @@ class StudySessionManager(
     private var runtimeObservation: Job? = null
     private var deletionPending = false
     private var safetyPauseStatus: SafetyPauseStatus? = null
-    private var recoveryBlocked = false
     private var collectionHostStarted = false
     private var collectionHostUsesLocation = false
+    private var activeEnvelopeBytes: ByteArray? = null
 
     suspend fun initialize() = sessionMutex.withLock {
         check(!mutableSnapshot.value.initialized) { "Study session is already initialized" }
         try {
+            resetStore.load()?.let { marker ->
+                completeResetLocked(marker)
+                return@withLock
+            }
             safetyPauseStatus = try {
                 safetyPauseStore.pendingReason()?.let(SafetyPauseStatus::Pending)
             } catch (failure: Throwable) {
@@ -365,9 +422,16 @@ class StudySessionManager(
             when (val saved = activeStudyStore.load()) {
                 null -> {
                     clearSafetyPauseLocked()
+                    clearRecoveryLocked()
                     mutableSnapshot.value = StudySessionSnapshot(initialized = true)
                 }
-                is ActiveStudyRecord.Active -> activate(saved.envelopeBytes, persistEnvelope = false, joinLink = null)
+                is ActiveStudyRecord.Active -> {
+                    // Keep the signed bytes available to the explicit reset path even if metadata,
+                    // transaction, time, access, work, or host recovery fails later in activate().
+                    activeEnvelopeBytes = saved.envelopeBytes.copyOf()
+                    mutableSnapshot.value = StudySessionSnapshot(recoveryStatus = RecoveryStatus.Recovering)
+                    activate(saved.envelopeBytes, persistEnvelope = false, joinLink = null)
+                }
                 is ActiveStudyRecord.DeletionPending -> {
                     deletionPending = true
                     mutableSnapshot.value = StudySessionSnapshot(
@@ -381,21 +445,22 @@ class StudySessionManager(
             }
         } catch (failure: Throwable) {
             failure.rethrowCancellation()
-            recoveryBlocked = true
+            val code = classifyRecoveryFailure(failure)
             mutableSnapshot.update {
                 it.copy(
                     initialized = true,
                     deletionPending = deletionPending,
                     safetyPauseStatus = safetyPauseStatus,
-                    recoveryBlocked = true,
-                    incidentCode = INCIDENT_STUDY_RECOVERY_FAILED,
+                    recoveryStatus = RecoveryStatus.ActionRequired(code),
+                    incidentCode = code.safeDiagnosticCode(),
                 )
             }
+            publishRecoveryFailureLocked(code, failure)
         }
     }
 
     suspend fun importSignedConfiguration(bytes: ByteArray, joinLink: JoinLink? = null) = sessionMutex.withLock {
-        check(!recoveryBlocked) {
+        check(!mutableSnapshot.value.recoveryBlocked) {
             "Repair the blocked active-study recovery before importing another study"
         }
         check(runtime == null && !deletionPending) {
@@ -516,11 +581,37 @@ class StudySessionManager(
     }
     suspend fun resume(): CommandResult = sessionMutex.withLock {
         val current = requireRuntime()
+        val durablePauseReason = current.snapshot.value.metadata?.transitions?.lastOrNull()?.reason
+        if (durablePauseReason == TransitionReason.DEVICE_REBOOT) {
+            return@withLock retryAutomaticRecoveryLocked(current)
+        }
         if (!retrySafetyPauseLocked(current.configuration.experimentId)) {
             return@withLock CommandResult.Failed(INCIDENT_SAFETY_PAUSE_PENDING)
         }
+        val timelineRefresh = try {
+            current.refreshTimeline()
+        } catch (failure: Throwable) {
+            return@withLock containCommandActivationFailureLocked(
+                current = current,
+                failure = failure,
+                defaultReason = SafetyPauseReason.STORAGE_FAILURE,
+                defaultIncidentCode = INCIDENT_STORAGE_WRITE_FAILED,
+            )
+        }
+        when (timelineRefresh) {
+            cool.jacoblin.particeps.core.runtime.TimelineRefreshResult.TrustedUtcRequired -> {
+                publishRecoveryFailureLocked(RecoveryFailureCode.TIME_UNTRUSTED, null)
+                return@withLock CommandResult.Failed(RecoveryFailureCode.TIME_UNTRUSTED.safeDiagnosticCode())
+            }
+            is cool.jacoblin.particeps.core.runtime.TimelineRefreshResult.Updated -> Unit
+        }
         val lifetime = try {
-            studyLifetime(current.configuration, requireNotNull(current.snapshot.value.metadata), current.now())
+            studyLifetime(
+                current.configuration,
+                requireNotNull(current.snapshot.value.metadata),
+                current.now(),
+                current.trustedUtcMillis(),
+            )
         } catch (failure: Throwable) {
             return@withLock containCommandActivationFailureLocked(
                 current = current,
@@ -602,10 +693,26 @@ class StudySessionManager(
 
     suspend fun reconcileScheduledWork(recoverStalePosting: Boolean = false) = sessionMutex.withLock {
         runtime?.let { current ->
-            val metadata = current.snapshot.value.metadata ?: return@let
+            var metadata = current.snapshot.value.metadata ?: return@let
             try {
+                if (metadata.state in ACTIVE_STUDY_STATES) {
+                    when (current.refreshTimeline()) {
+                        cool.jacoblin.particeps.core.runtime.TimelineRefreshResult.TrustedUtcRequired -> {
+                            publishRecoveryFailureLocked(RecoveryFailureCode.TIME_UNTRUSTED, null)
+                            return@let
+                        }
+                        is cool.jacoblin.particeps.core.runtime.TimelineRefreshResult.Updated -> {
+                            metadata = requireNotNull(current.snapshot.value.metadata)
+                        }
+                    }
+                }
                 if (metadata.state in ACTIVE_STUDY_STATES &&
-                    studyLifetime(current.configuration, metadata, current.now()).elapsed
+                    studyLifetime(
+                        current.configuration,
+                        metadata,
+                        current.now(),
+                        current.trustedUtcMillis(),
+                    ).elapsed
                 ) {
                     completeExpiredStudyLocked(current)
                 } else if (
@@ -700,7 +807,12 @@ class StudySessionManager(
             return@withLock DurationCompletionResult.Inactive
         }
         val lifetime = try {
-            studyLifetime(current.configuration, metadata, current.now())
+            studyLifetime(
+                current.configuration,
+                metadata,
+                current.now(),
+                current.trustedUtcMillis(),
+            )
         } catch (failure: Throwable) {
             val result = containCommandActivationFailureLocked(
                 current = current,
@@ -940,10 +1052,204 @@ class StudySessionManager(
                 runtime = null
                 studyStore = null
                 verifiedConfiguration = null
+                activeEnvelopeBytes = null
                 runtimeObservation = null
                 deletionPending = false
                 mutableSnapshot.value = StudySessionSnapshot(initialized = true)
             }
+        }
+    }
+
+    /** Explicit, irreversible recovery reset. The marker is durable before any old byte is erased. */
+    suspend fun resetAndRestart() = uploadMutex.withLock {
+        sessionMutex.withLock {
+            val marker = StudyResetMarker(activeEnvelopeBytes?.copyOf())
+            resetStore.mark(marker.retainedEnvelopeBytes)
+            completeResetLocked(marker)
+        }
+    }
+
+    private suspend fun completeResetLocked(marker: StudyResetMarker) {
+        var firstFailure: Throwable? = null
+        suspend fun attempt(block: suspend () -> Unit) {
+            try {
+                block()
+            } catch (failure: Throwable) {
+                failure.rethrowCancellation()
+                val existing = firstFailure
+                if (existing == null) firstFailure = failure else existing.addSuppressed(failure)
+            }
+        }
+        runtimeObservation?.cancel()
+        attempt { runtime?.shutdown() }
+        attempt { stopCollectionHostLocked() }
+        attempt { workScheduler.cancelAllForReset() }
+        attempt { uploader.prepareDeletion() }
+        attempt { uploader.clear() }
+        attempt { safetyPauseStore.clear() }
+        attempt { storageResetter.clearAll() }
+        attempt { activeStudyStore.clear() }
+        firstFailure?.let { failure ->
+            publishRecoveryFailureLocked(RecoveryFailureCode.UNKNOWN, failure)
+            throw failure
+        }
+
+        runtime = null
+        studyStore = null
+        verifiedConfiguration = null
+        runtimeObservation = null
+        activeEnvelopeBytes = null
+        deletionPending = false
+
+        val reusable = marker.retainedEnvelopeBytes?.takeIf { envelope ->
+            runCatching { verifier.verify(envelope) }.isSuccess
+        }
+        if (reusable != null) {
+            // New active key and a fresh participant instance are created only after every old
+            // study byte/key/work item has been cleared.
+            activeStudyStore.save(reusable)
+            activate(reusable, persistEnvelope = false, joinLink = null)
+        } else {
+            clearRecoveryLocked()
+            mutableSnapshot.value = StudySessionSnapshot(initialized = true)
+        }
+        resetStore.clear()
+    }
+
+    /** Shared entry point for UI, permission return, app open and the autonomous retry worker. */
+    suspend fun retryRecovery(): CommandResult = sessionMutex.withLock {
+        mutableSnapshot.update { it.copy(recoveryStatus = RecoveryStatus.Recovering, incidentCode = null) }
+        val current = runtime
+        if (current != null) {
+            return@withLock try {
+                retryAutomaticRecoveryLocked(current)
+            } catch (failure: Throwable) {
+                failure.rethrowCancellation()
+                val code = classifyRecoveryFailure(failure)
+                publishRecoveryFailureLocked(code, failure)
+                CommandResult.Failed(code.safeDiagnosticCode())
+            }
+        }
+        return@withLock try {
+            when (val saved = activeStudyStore.load()) {
+                is ActiveStudyRecord.Active -> {
+                    activeEnvelopeBytes = saved.envelopeBytes.copyOf()
+                    activate(saved.envelopeBytes, persistEnvelope = false, joinLink = null)
+                    CommandResult.Success
+                }
+                is ActiveStudyRecord.DeletionPending -> {
+                    completePendingDeletion(saved)
+                    clearRecoveryLocked()
+                    mutableSnapshot.value = StudySessionSnapshot(initialized = true)
+                    CommandResult.Success
+                }
+                null -> {
+                    clearRecoveryLocked()
+                    mutableSnapshot.value = StudySessionSnapshot(initialized = true)
+                    CommandResult.Success
+                }
+            }
+        } catch (failure: Throwable) {
+            failure.rethrowCancellation()
+            val code = classifyRecoveryFailure(failure)
+            publishRecoveryFailureLocked(code, failure)
+            CommandResult.Failed(code.safeDiagnosticCode())
+        }
+    }
+
+    private suspend fun retryAutomaticRecoveryLocked(current: ExperimentRuntime): CommandResult {
+        val metadata = requireNotNull(current.snapshot.value.metadata)
+        val pauseReason = metadata.transitions.lastOrNull()?.reason
+        if (metadata.state != ExperimentState.PAUSED || pauseReason !in RECOVERY_RETRYABLE_PAUSE_REASONS) {
+            clearRecoveryLocked()
+            mutableSnapshot.update { it.copy(recoveryStatus = null) }
+            return CommandResult.Failed(INCIDENT_COMMAND_REJECTED)
+        }
+        when (current.refreshTimeline()) {
+            cool.jacoblin.particeps.core.runtime.TimelineRefreshResult.TrustedUtcRequired -> {
+                publishRecoveryFailureLocked(RecoveryFailureCode.TIME_UNTRUSTED, null)
+                return CommandResult.Failed(RecoveryFailureCode.TIME_UNTRUSTED.safeDiagnosticCode())
+            }
+            is cool.jacoblin.particeps.core.runtime.TimelineRefreshResult.Updated -> Unit
+        }
+        val refreshed = requireNotNull(current.snapshot.value.metadata)
+        val lifetime = studyLifetime(
+            current.configuration,
+            refreshed,
+            current.now(),
+            current.trustedUtcMillis(),
+        )
+        if (lifetime.elapsed) {
+            val result = completeExpiredStudyLocked(current)
+            if (result == CommandResult.Success) {
+                clearRecoveryLocked()
+                mutableSnapshot.update { it.copy(recoveryStatus = null, incidentCode = null) }
+            }
+            return result
+        }
+        if (pauseReason == TransitionReason.PARTICIPANT_PAUSED) {
+            return try {
+                ensureCollectionWorkLocked(current)
+                workScheduler.cancelInterventionWork(
+                    current.configuration.experimentId,
+                    refreshed.occurrences.keys,
+                )
+                clearRecoveryLocked()
+                mutableSnapshot.update { it.copy(recoveryStatus = null, incidentCode = null) }
+                CommandResult.Success
+            } catch (failure: Throwable) {
+                failure.rethrowCancellation()
+                publishRecoveryFailureLocked(RecoveryFailureCode.WORK_SCHEDULING_FAILED, failure)
+                CommandResult.Failed(RecoveryFailureCode.WORK_SCHEDULING_FAILED.safeDiagnosticCode())
+            }
+        }
+        try {
+            refreshAccessLocked()
+        } catch (failure: Throwable) {
+            failure.rethrowCancellation()
+            publishRecoveryFailureLocked(RecoveryFailureCode.ACCESS_MISSING, failure)
+            return CommandResult.Failed(RecoveryFailureCode.ACCESS_MISSING.safeDiagnosticCode())
+        }
+        if (!requiredAccessReady()) {
+            publishRecoveryFailureLocked(RecoveryFailureCode.ACCESS_MISSING, null)
+            return CommandResult.Failed(RecoveryFailureCode.ACCESS_MISSING.safeDiagnosticCode())
+        }
+        try {
+            ensureCollectionWorkLocked(current)
+        } catch (failure: Throwable) {
+            failure.rethrowCancellation()
+            publishRecoveryFailureLocked(RecoveryFailureCode.WORK_SCHEDULING_FAILED, failure)
+            return CommandResult.Failed(RecoveryFailureCode.WORK_SCHEDULING_FAILED.safeDiagnosticCode())
+        }
+        val available = currentGrantedKinds()
+        try {
+            ensureCollectionHostLocked(current.configuration.title, usesLocation(available))
+        } catch (failure: Throwable) {
+            failure.rethrowCancellation()
+            publishRecoveryFailureLocked(RecoveryFailureCode.FOREGROUND_SERVICE_FAILED, failure)
+            return CommandResult.Failed(RecoveryFailureCode.FOREGROUND_SERVICE_FAILED.safeDiagnosticCode())
+        }
+        val resumed = current.resumeAutomatically(available)
+        if (resumed != CommandResult.Success) {
+            publishRecoveryFailureLocked(RecoveryFailureCode.FOREGROUND_SERVICE_FAILED, null)
+            return resumed
+        }
+        return try {
+            syncInterventionsLocked(current)
+            clearRecoveryLocked()
+            mutableSnapshot.update {
+                it.copy(recoveryStatus = RecoveryStatus.RecoveredAutomatically, incidentCode = null)
+            }
+            CommandResult.Success
+        } catch (failure: Throwable) {
+            containCommandActivationFailureLocked(
+                current,
+                failure,
+                SafetyPauseReason.WORK_SCHEDULING_FAILURE,
+                INCIDENT_WORK_SCHEDULING_FAILED,
+            )
+            publishRecoveryFailureLocked(RecoveryFailureCode.WORK_SCHEDULING_FAILED, failure)
+            CommandResult.Failed(RecoveryFailureCode.WORK_SCHEDULING_FAILED.safeDiagnosticCode())
         }
     }
 
@@ -988,6 +1294,16 @@ class StudySessionManager(
     }
 
     suspend fun reconcileAccess() = sessionMutex.withLock {
+        runtime?.takeIf { current ->
+            current.snapshot.value.metadata?.let { metadata ->
+                metadata.state == ExperimentState.PAUSED &&
+                    metadata.transitions.lastOrNull()?.reason ==
+                    cool.jacoblin.particeps.core.model.TransitionReason.DEVICE_REBOOT
+            } == true
+        }?.let { current ->
+            retryAutomaticRecoveryLocked(current)
+            return@withLock
+        }
         runtime?.let { current ->
             current.snapshot.value.pendingSafetyPauseReason?.let { reason ->
                 if (!handleRuntimeSafetyPauseRequestLocked(current, reason)) {
@@ -1004,7 +1320,12 @@ class StudySessionManager(
         val metadata = current.snapshot.value.metadata
         if (metadata != null && metadata.state in ACTIVE_STUDY_STATES) {
             val lifetime = try {
-                studyLifetime(current.configuration, metadata, current.now())
+                studyLifetime(
+                    current.configuration,
+                    metadata,
+                    current.now(),
+                    current.trustedUtcMillis(),
+                )
             } catch (failure: Throwable) {
                 containCommandActivationFailureLocked(
                     current = current,
@@ -1447,7 +1768,16 @@ class StudySessionManager(
                 .joinToString("") { "%02x".format(it) }
             require(actual == expected.artifactSha256) { "Join artifact digest mismatch" }
         }
-        val verified = verifier.verify(envelopeBytes)
+        val verified = if (persistEnvelope) {
+            verifier.verify(envelopeBytes)
+        } else {
+            try {
+                acceptedStudyVerifier.verify(envelopeBytes)
+            } catch (failure: Throwable) {
+                failure.rethrowCancellation()
+                throw RecoveryValidationException(RecoveryFailureCode.ACTIVE_RECORD_INVALID, failure)
+            }
+        }
         joinLink?.let { expected ->
             require(verified.configuration.signer.fingerprint == expected.displayFingerprint()) {
                 "Join signer fingerprint mismatch"
@@ -1455,7 +1785,12 @@ class StudySessionManager(
         }
         val configuration = verified.configuration
         val markerReason = (safetyPauseStatus as? SafetyPauseStatus.Pending)?.reason
-        val workReason = workScheduler.pendingSafetyPauseReason(configuration.experimentId)
+        val workReason = try {
+            workScheduler.pendingSafetyPauseReason(configuration.experimentId)
+        } catch (failure: Throwable) {
+            failure.rethrowCancellation()
+            throw RecoveryValidationException(RecoveryFailureCode.WORK_SCHEDULING_FAILED, failure)
+        }
         check(markerReason == null || workReason == null || markerReason == workReason) {
             "Safety-pause marker and active retry have conflicting reasons"
         }
@@ -1466,7 +1801,6 @@ class StudySessionManager(
         configuration.collectors.forEach(collectorRegistry::pluginFor)
         val plan = accessPlan(configuration)
         val inspectionRequest = accessInspectionRequest(configuration, plan)
-        val access = inspectAccess(plan, inspectionRequest)
         val createdStore = storeFactory.create(configuration.experimentId, configuration.maximumLocalBytes)
         var createdRuntime: ExperimentRuntime? = null
         var recoveredSafetyPause: SafetyPauseReason? = null
@@ -1483,13 +1817,46 @@ class StudySessionManager(
                 "Runtime initialization failed"
             }
             if (persistEnvelope) activeStudyStore.save(envelopeBytes)
-            val recoveredState = created.snapshot.value.metadata?.state
+            var recoveredState = created.snapshot.value.metadata?.state
             val pendingReason = recoveredPendingReason
             var recoveredRunningAccess: Set<AccessKind>? = null
+            var automaticRecovery = false
+            var recoveredIncidentCode: String? = null
+            var recoveredFailureCode: RecoveryFailureCode? = null
+            if (
+                recoveredState == ExperimentState.RUNNING &&
+                pendingReason == null &&
+                requireNotNull(created.snapshot.value.metadata?.clockCheckpoint)
+                    .anchor.bootSessionId != created.now().bootSessionId
+            ) {
+                check(created.pauseRecoveredForDeviceReboot() == CommandResult.Success) {
+                    "Recovered running study could not persist its device-reboot pause"
+                }
+                automaticRecovery = true
+                recoveredState = ExperimentState.PAUSED
+            }
+            // A process may die after the reboot pause commits but before validation or automatic
+            // resume finishes. Reopening that exact durable boundary must re-enter the same strict
+            // recovery path; no new reboot transition is needed and participant pauses stay inert.
+            if (
+                recoveredState == ExperimentState.PAUSED &&
+                created.snapshot.value.metadata?.transitions?.lastOrNull()?.reason ==
+                    TransitionReason.DEVICE_REBOOT
+            ) {
+                automaticRecovery = true
+            }
+            // The reboot boundary is durable before touching Android permissions or settings.
+            val access = try {
+                inspectAccess(plan, inspectionRequest)
+            } catch (failure: Throwable) {
+                failure.rethrowCancellation()
+                throw RecoveryValidationException(RecoveryFailureCode.ACCESS_MISSING, failure)
+            }
+            val availableAccess = access.filter(StudyAccessStatus::granted)
+                .mapTo(mutableSetOf()) { it.requirement.kind }
+            val requiredAccessMissing = access.any { it.requirement.required && !it.granted }
+            if (automaticRecovery) recoveredRunningAccess = availableAccess
             if (recoveredState == ExperimentState.RUNNING) {
-                val availableAccess = access.filter(StudyAccessStatus::granted)
-                    .mapTo(mutableSetOf()) { it.requirement.kind }
-                val requiredAccessMissing = access.any { it.requirement.required && !it.granted }
                 val reason = pendingReason ?: SafetyPauseReason.REQUIRED_ACCESS_MISSING.takeIf {
                     requiredAccessMissing
                 }
@@ -1530,9 +1897,27 @@ class StudySessionManager(
                 clearSafetyPauseLocked(configuration.experimentId)
             }
             var recoveredMetadata = requireNotNull(created.snapshot.value.metadata)
+            var timelineReady = true
             if (recoveredMetadata.state in ACTIVE_STUDY_STATES) {
-                val lifetime = try {
-                    studyLifetime(configuration, recoveredMetadata, created.now())
+                when (created.refreshTimeline()) {
+                    is cool.jacoblin.particeps.core.runtime.TimelineRefreshResult.Updated ->
+                        recoveredMetadata = requireNotNull(created.snapshot.value.metadata)
+                    cool.jacoblin.particeps.core.runtime.TimelineRefreshResult.TrustedUtcRequired -> {
+                        timelineReady = false
+                        recoveredRunningAccess = null
+                        recoveredIncidentCode = INCIDENT_RECOVERY_TIME_UNTRUSTED
+                        recoveredFailureCode = RecoveryFailureCode.TIME_UNTRUSTED
+                    }
+                }
+            }
+            if (recoveredMetadata.state in ACTIVE_STUDY_STATES) {
+                val lifetime = if (timelineReady) try {
+                    studyLifetime(
+                        configuration,
+                        recoveredMetadata,
+                        created.now(),
+                        created.trustedUtcMillis(),
+                    )
                 } catch (failure: Throwable) {
                     containCommandActivationFailureLocked(
                         current = created,
@@ -1544,7 +1929,7 @@ class StudySessionManager(
                     recoveredSafetyPause = SafetyPauseReason.WORK_SCHEDULING_FAILURE
                     recoveredMetadata = requireNotNull(created.snapshot.value.metadata)
                     null
-                }
+                } else null
                 if (lifetime?.elapsed == true) {
                     check(completeExpiredStudyLocked(created) == CommandResult.Success) {
                         "Expired recovered study could not complete"
@@ -1563,15 +1948,24 @@ class StudySessionManager(
                             )
                         }
                     } catch (failure: Throwable) {
-                        if (recoveredMetadata.state != ExperimentState.RUNNING) throw failure
-                        containCommandActivationFailureLocked(
-                            current = created,
-                            failure = failure,
-                            defaultReason = SafetyPauseReason.WORK_SCHEDULING_FAILURE,
-                            defaultIncidentCode = INCIDENT_WORK_SCHEDULING_FAILED,
-                        )
                         recoveredRunningAccess = null
-                        recoveredSafetyPause = SafetyPauseReason.WORK_SCHEDULING_FAILURE
+                        if (recoveredMetadata.state == ExperimentState.PAUSED) {
+                            // The existing pause is already the authoritative collection boundary.
+                            // Keep it intact so a later retry can resume DEVICE_REBOOT only, while
+                            // reporting the failed WorkManager validation with its precise type.
+                            recoveredFailureCode = RecoveryFailureCode.WORK_SCHEDULING_FAILED
+                        } else {
+                            containCommandActivationFailureLocked(
+                                current = created,
+                                failure = failure,
+                                defaultReason = SafetyPauseReason.WORK_SCHEDULING_FAILURE,
+                                defaultIncidentCode = INCIDENT_WORK_SCHEDULING_FAILED,
+                            )
+                            recoveredSafetyPause = SafetyPauseReason.WORK_SCHEDULING_FAILURE
+                            if (automaticRecovery) {
+                                recoveredFailureCode = RecoveryFailureCode.WORK_SCHEDULING_FAILED
+                            }
+                        }
                     }
                 }
             } else if (recoveredMetadata.hasParticipantStarted()) {
@@ -1586,10 +1980,21 @@ class StudySessionManager(
             }
             recoveredRunningAccess?.let { availableAccess ->
                 try {
+                    if (automaticRecovery && requiredAccessMissing) {
+                        recoveredIncidentCode = INCIDENT_REQUIRED_ACCESS_MISSING
+                        recoveredFailureCode = RecoveryFailureCode.ACCESS_MISSING
+                        return@let
+                    }
                     ensureCollectionHostLocked(configuration.title, usesLocation(availableAccess))
-                    check(created.activateRecoveredRunning(availableAccess) == CommandResult.Success) {
+                    val activation = if (automaticRecovery) {
+                        created.resumeAutomatically(availableAccess)
+                    } else {
+                        created.activateRecoveredRunning(availableAccess)
+                    }
+                    check(activation == CommandResult.Success) {
                         "Recovered running study could not reactivate collectors"
                     }
+                    if (automaticRecovery) syncInterventionsLocked(created)
                 } catch (failure: Throwable) {
                     containCommandActivationFailureLocked(
                         current = created,
@@ -1598,11 +2003,15 @@ class StudySessionManager(
                         defaultIncidentCode = INCIDENT_COLLECTION_HOST_FAILED,
                     )
                     recoveredSafetyPause = SafetyPauseReason.COLLECTION_HOST_FAILURE
+                    if (automaticRecovery) {
+                        recoveredFailureCode = RecoveryFailureCode.FOREGROUND_SERVICE_FAILED
+                    }
                 }
             }
             runtime = created
             studyStore = createdStore
             verifiedConfiguration = verified
+            activeEnvelopeBytes = envelopeBytes.copyOf()
             mutableSnapshot.value = StudySessionSnapshot(
                 initialized = true,
                 configuration = configuration,
@@ -1610,8 +2019,16 @@ class StudySessionManager(
                 access = access,
                 signerAnchored = verified.signerAnchored,
                 safetyPauseStatus = safetyPauseStatus,
-                incidentCode = recoveredSafetyPause?.incidentCode(),
+                recoveryStatus = when {
+                    recoveredFailureCode != null -> RecoveryStatus.ActionRequired(recoveredFailureCode)
+                    automaticRecovery -> RecoveryStatus.RecoveredAutomatically
+                    else -> null
+                },
+                incidentCode = recoveredIncidentCode ?: recoveredSafetyPause?.incidentCode(),
             )
+            recoveredFailureCode?.let { code ->
+                publishRecoveryFailureLocked(code, null)
+            } ?: clearRecoveryLocked()
             runtimeObservation?.cancel()
             runtimeObservation = scope.launch {
                 created.snapshot.collect { runtimeSnapshot ->
@@ -1965,6 +2382,7 @@ class StudySessionManager(
             buildSet {
                 add(NotificationAccessFeature.COLLECTION)
                 add(NotificationAccessFeature.DAILY_STATUS)
+                add(NotificationAccessFeature.RECOVERY)
                 if (configuration.interventions.isNotEmpty()) {
                     add(NotificationAccessFeature.INTERVENTIONS)
                 }
@@ -2095,6 +2513,52 @@ class StudySessionManager(
         mutableSnapshot.update { it.copy(safetyPauseStatus = null) }
     }
 
+    private suspend fun publishRecoveryFailureLocked(
+        code: RecoveryFailureCode,
+        failure: Throwable?,
+    ) {
+        mutableSnapshot.update {
+            it.copy(
+                initialized = true,
+                recoveryStatus = RecoveryStatus.ActionRequired(code),
+                incidentCode = code.safeDiagnosticCode(),
+            )
+        }
+        recoveryReporter.actionRequired(code, failure)
+        try {
+            workScheduler.scheduleRecoveryRetry()
+        } catch (schedulingFailure: Throwable) {
+            schedulingFailure.rethrowCancellation()
+            failure?.addSuppressed(schedulingFailure)
+            recoveryReporter.actionRequired(RecoveryFailureCode.WORK_SCHEDULING_FAILED, schedulingFailure)
+        }
+    }
+
+    private suspend fun clearRecoveryLocked() {
+        workScheduler.cancelRecoveryRetry()
+        recoveryReporter.clear()
+    }
+
+    private fun classifyRecoveryFailure(failure: Throwable): RecoveryFailureCode = when (failure) {
+        is RecoveryValidationException -> failure.code
+        is ActiveStudyRecoveryException -> when (failure.failure) {
+            ActiveStudyRecoveryFailure.KEY_UNAVAILABLE -> RecoveryFailureCode.ACTIVE_KEY_UNAVAILABLE
+            ActiveStudyRecoveryFailure.RECORD_INVALID -> RecoveryFailureCode.ACTIVE_RECORD_INVALID
+            ActiveStudyRecoveryFailure.CANDIDATE_CONFLICT -> RecoveryFailureCode.STORAGE_CANDIDATE_CONFLICT
+        }
+        is StudyStoreRecoveryException -> when (failure.failure) {
+            StudyStoreRecoveryFailure.KEY_UNAVAILABLE -> RecoveryFailureCode.STUDY_KEY_UNAVAILABLE
+            StudyStoreRecoveryFailure.METADATA_INVALID -> RecoveryFailureCode.METADATA_INVALID
+            StudyStoreRecoveryFailure.TRANSACTION_INVALID -> RecoveryFailureCode.TRANSACTION_INVALID
+            StudyStoreRecoveryFailure.EVENT_LOG_INVALID -> RecoveryFailureCode.EVENT_LOG_INVALID
+            StudyStoreRecoveryFailure.CANDIDATE_CONFLICT -> RecoveryFailureCode.STORAGE_CANDIDATE_CONFLICT
+        }
+        is cool.jacoblin.particeps.core.model.TrustedStudyTimeUnavailable -> RecoveryFailureCode.TIME_UNTRUSTED
+        else -> RecoveryFailureCode.UNKNOWN
+    }
+
+    private fun RecoveryFailureCode.safeDiagnosticCode(): String = "RECOVERY_${name}"
+
     private fun publish(result: CommandResult): CommandResult {
         mutableSnapshot.update {
             it.copy(incidentCode = (result as? CommandResult.Failed)?.reasonCode)
@@ -2121,6 +2585,10 @@ class StudySessionManager(
     private companion object {
         val TERMINAL_STATES = setOf(ExperimentState.COMPLETED, ExperimentState.WITHDRAWN)
         val ACTIVE_STUDY_STATES = setOf(ExperimentState.RUNNING, ExperimentState.PAUSED)
+        val RECOVERY_RETRYABLE_PAUSE_REASONS = setOf(
+            TransitionReason.DEVICE_REBOOT,
+            TransitionReason.PARTICIPANT_PAUSED,
+        )
         val LOCATION_COLLECTION_ACCESS = setOf(
             AccessKind.FINE_LOCATION,
             AccessKind.LOCATION_SERVICES,
@@ -2148,7 +2616,7 @@ class StudySessionManager(
             ExperimentState.COMPLETED,
             ExperimentState.WITHDRAWN,
         )
-        const val INCIDENT_STUDY_RECOVERY_FAILED = "STUDY_RECOVERY_FAILED"
+        const val INCIDENT_RECOVERY_TIME_UNTRUSTED = "RECOVERY_TIME_UNTRUSTED"
         const val INCIDENT_STUDY_IMPORT_FAILED = "STUDY_IMPORT_FAILED"
         const val INCIDENT_COMMAND_REJECTED = "COMMAND_REJECTED"
         const val INCIDENT_REQUIRED_ACCESS_MISSING = "REQUIRED_ACCESS_MISSING"

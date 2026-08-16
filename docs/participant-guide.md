@@ -382,17 +382,22 @@ While a study is collecting:
   Battery-saving scheduling can delay when that completed status appears, but every observation is
   checked against the exact same-boot Start deadline, so the delay cannot extend the data window.
 
-After you restart your phone, Particeps cannot safely use the adjustable wall clock to infer how much
-of an active study elapsed while the old boot was unavailable. It therefore keeps every source closed
-and moves a previously Collecting (收集中) study to a typed scheduling-failure pause; a study already
-Paused (已暫停) stays paused and cannot Resume across that boot boundary. It does not use wall time as
-a fallback or silently begin a new duration. Separately, Android can redeliver an earlier service
-request while Particeps rebuilds its process within the same boot. A short-lived neutral restoration
-notification with no study title may then appear. The app removes it while stopping the stale service
-unless the saved state, clock boundary, and current access all revalidate; only an acknowledged active
-notification with the exact service types can precede source activation. If you force stop the app,
-Android may block its work until you open it again. Open the app and check the status line if you are
-unsure.
+After you restart your phone, a study that had really been Collecting (收集中) is first recorded as
+Paused because of the device reboot. Particeps keeps every source closed while it validates the
+encrypted study, its signed configuration, the absolute deadline, required access, WorkManager, and
+the exact foreground-service type. It uses Android network time when available, or wall time only
+while Android's automatic time setting is enabled. If all checks succeed before the deadline, it
+records an automatic recovery and resumes collection. Reboot and repair waiting time still count
+toward the study duration, but are not counted as confirmed active-collection time. A study you
+paused yourself remains paused and is never automatically resumed.
+
+If a check cannot be completed, a generic recovery notification appears without a study name or
+diagnostic detail on the lock screen. Tapping it opens the repair screen. You can copy its safe
+diagnostic code and try again. The destructive reset option first warns you that old local data will
+be deleted. If the signed study file is still readable and within its import window, Particeps shows
+the study, consent, and access steps again and creates a new participant instance with the full
+duration. Otherwise it returns to the study-file chooser. Reset has no undo. If you force stop the
+app, Android may block its work until you open it again.
 
 ### Scheduled activities and surveys
 

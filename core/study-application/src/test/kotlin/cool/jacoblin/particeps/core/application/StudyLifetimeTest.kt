@@ -8,6 +8,8 @@ import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.model.ExperimentTransition
 import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.core.model.StudyMetadata
+import cool.jacoblin.particeps.core.model.StudyClockCheckpoint
+import cool.jacoblin.particeps.core.model.TrustedStudyTimeUnavailable
 import cool.jacoblin.particeps.core.model.TransitionReason
 import java.time.Instant
 import org.junit.Assert.assertEquals
@@ -34,7 +36,7 @@ class StudyLifetimeTest {
     fun rebootFailsClosedEvenWhenWallTimeStillFollowsTheParticipantStart() {
         val start = ResearchTime(10_000, 9_000_000_000, "boot-one")
 
-        assertThrows(IllegalArgumentException::class.java) {
+        assertThrows(TrustedStudyTimeUnavailable::class.java) {
             studyLifetime(
                 configuration(),
                 startedMetadata(start),
@@ -81,6 +83,12 @@ class StudyLifetimeTest {
                 reason = TransitionReason.PARTICIPANT_STARTED,
                 time = start,
             ),
+        ),
+        clockCheckpoint = StudyClockCheckpoint(
+            studyElapsedNanos = 0,
+            activeCollectionElapsedNanos = 0,
+            anchor = start,
+            deadlineUtcMillis = start.wallTimeUtcMillis + 3_600_000,
         ),
     )
 

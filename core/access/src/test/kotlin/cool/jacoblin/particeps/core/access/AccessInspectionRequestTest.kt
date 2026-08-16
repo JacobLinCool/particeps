@@ -55,6 +55,7 @@ class AccessInspectionRequestTest {
         val baseFeatures = setOf(
             NotificationAccessFeature.COLLECTION,
             NotificationAccessFeature.DAILY_STATUS,
+            NotificationAccessFeature.RECOVERY,
         )
         assertEquals(
             baseFeatures,

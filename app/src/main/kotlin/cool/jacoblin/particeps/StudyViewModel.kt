@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import cool.jacoblin.particeps.core.application.StudyAccessStatus
 import cool.jacoblin.particeps.core.application.StudySessionManager
+import cool.jacoblin.particeps.core.application.RecoveryStatus
 import cool.jacoblin.particeps.core.application.UploadStatus
 import cool.jacoblin.particeps.core.collector.CollectorHealth
 import cool.jacoblin.particeps.core.definition.StudyConfiguration
@@ -27,15 +28,18 @@ import kotlinx.coroutines.withContext
 sealed interface StudyUiState {
     val message: String?
     val busy: Boolean
+    val recoveryStatus: RecoveryStatus?
 
     data object Initializing : StudyUiState {
         override val message: String? = null
         override val busy: Boolean = true
+        override val recoveryStatus: RecoveryStatus? = RecoveryStatus.Recovering
     }
 
     data class NoStudy(
         override val message: String?,
         override val busy: Boolean,
+        override val recoveryStatus: RecoveryStatus?,
     ) : StudyUiState
 
     data class ActiveStudy(
@@ -48,6 +52,7 @@ sealed interface StudyUiState {
         val signerAnchored: Boolean,
         override val message: String?,
         override val busy: Boolean,
+        override val recoveryStatus: RecoveryStatus?,
     ) : StudyUiState
 }
 
@@ -66,7 +71,7 @@ class StudyViewModel(
         val configuration = snapshot.configuration
         when {
             !snapshot.initialized -> StudyUiState.Initializing
-            configuration == null -> StudyUiState.NoStudy(incident, operating)
+            configuration == null -> StudyUiState.NoStudy(incident, operating, snapshot.recoveryStatus)
             else -> StudyUiState.ActiveStudy(
                 configuration = configuration,
                 metadata = checkNotNull(snapshot.runtime.metadata) { "Active study metadata is unavailable" },
@@ -77,6 +82,7 @@ class StudyViewModel(
                 signerAnchored = snapshot.signerAnchored,
                 message = incident,
                 busy = operating,
+                recoveryStatus = snapshot.recoveryStatus,
             )
         }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, StudyUiState.Initializing)
@@ -98,6 +104,8 @@ class StudyViewModel(
     fun pause() = command(session::pause)
     fun resume() = command(session::resume)
     fun withdraw() = command(session::withdraw)
+    fun retryRecovery() = command(session::retryRecovery)
+    fun resetAndRestart() = operation(INCIDENT_RESET_FAILED) { session.resetAndRestart() }
 
     fun export(openDestination: () -> OutputStream) = operation(INCIDENT_EXPORT_FAILED) {
         val destination = withContext(Dispatchers.IO) { openDestination() }
@@ -156,6 +164,7 @@ class StudyViewModel(
         const val INCIDENT_JOIN_FAILED = "JOIN_IMPORT_FAILED"
         const val INCIDENT_EXPORT_FAILED = "EXPORT_FAILED"
         const val INCIDENT_DELETE_FAILED = "LOCAL_DATA_DELETE_FAILED"
+        const val INCIDENT_RESET_FAILED = "RECOVERY_RESET_FAILED"
         const val INCIDENT_COMMAND_FAILED = "COMMAND_FAILED"
         const val INCIDENT_ACCESS_INSPECTION_FAILED = "ACCESS_INSPECTION_FAILED"
     }

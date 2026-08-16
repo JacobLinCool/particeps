@@ -133,10 +133,13 @@ data class ResearchTime(
 ```
 
 Wall time can jump backwards when the participant or the network changes the device clock.
-`elapsedRealtimeNanos` is monotonic within a boot, and `bootSessionId` tells an analyst
-which boot an elapsed reading belongs to. Admission requires the same boot as the one durable
-`PARTICIPANT_STARTED` transition and compares that monotonic reading against both the current epoch
-and the exact signed duration; ordering and deadline decisions never depend on wall time.
+`elapsedRealtimeNanos` is monotonic within a boot, and `bootSessionId` tells an analyst which boot
+an elapsed reading belongs to. `StudyClockCheckpoint` is the shared lifetime, admission, deadline,
+and intervention timeline. Same-boot admission compares only monotonic values. A cross-boot
+checkpoint advances only from Android network time or from wall time while system automatic time is
+enabled, never from `ResearchTime.wallTimeUtcMillis` by itself; accumulated time can only increase.
+The reboot gap counts toward calendar duration but not active-collection duration because no source
+was confirmed active during that gap.
 
 ### Event sink
 

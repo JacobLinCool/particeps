@@ -42,6 +42,7 @@ data class AccessRequirement(
 enum class NotificationAccessFeature {
     COLLECTION,
     DAILY_STATUS,
+    RECOVERY,
     INTERVENTIONS,
 }
 
@@ -96,7 +97,7 @@ data class AccessInspectionRequest(
             "Notification features require notifications access"
         }
         require(!requestsNotifications || notificationFeatures.containsAll(BASE_NOTIFICATION_FEATURES)) {
-            "Notifications access requires collection and daily-status channels"
+            "Notifications access requires collection, daily-status, and recovery channels"
         }
     }
 
@@ -104,6 +105,7 @@ data class AccessInspectionRequest(
         val BASE_NOTIFICATION_FEATURES = setOf(
             NotificationAccessFeature.COLLECTION,
             NotificationAccessFeature.DAILY_STATUS,
+            NotificationAccessFeature.RECOVERY,
         )
     }
 }
@@ -446,6 +448,9 @@ data class CollectorContext(
 
 interface ResearchClocks {
     fun now(): cool.jacoblin.particeps.core.model.ResearchTime
+
+    /** UTC accepted for crossing a boot boundary; null keeps collection fail-closed. */
+    fun trustedUtcMillis(): Long? = null
 }
 
 interface CollectorPlugin {

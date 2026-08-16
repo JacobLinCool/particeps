@@ -88,6 +88,8 @@ class MainActivity : ComponentActivity() {
                         exportLauncher.launch("$id-${Instant.now().epochSecond}.partexp")
                     },
                     delete = viewModel::deleteLocalData,
+                    retryRecovery = viewModel::retryRecovery,
+                    resetAndRestart = viewModel::resetAndRestart,
                 ),
             )
         }

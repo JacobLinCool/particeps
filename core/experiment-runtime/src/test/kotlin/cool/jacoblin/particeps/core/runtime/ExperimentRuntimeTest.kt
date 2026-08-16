@@ -1493,8 +1493,49 @@ class ExperimentRuntimeTest {
             ExperimentState.WITHDRAWN,
         )
         exportable.forEach { state ->
+            val start = ResearchTime(1_000, 1_000, "boot-test")
+            val startTransition = cool.jacoblin.particeps.core.model.ExperimentTransition(
+                ExperimentState.READY,
+                ExperimentState.RUNNING,
+                TransitionReason.PARTICIPANT_STARTED,
+                start,
+            )
+            val transitions = when (state) {
+                ExperimentState.RUNNING -> listOf(startTransition)
+                ExperimentState.PAUSED -> listOf(
+                    startTransition,
+                    cool.jacoblin.particeps.core.model.ExperimentTransition(
+                        ExperimentState.RUNNING,
+                        ExperimentState.PAUSED,
+                        TransitionReason.PARTICIPANT_PAUSED,
+                        start,
+                    ),
+                )
+                ExperimentState.COMPLETED -> listOf(
+                    startTransition,
+                    cool.jacoblin.particeps.core.model.ExperimentTransition(
+                        ExperimentState.RUNNING,
+                        ExperimentState.COMPLETED,
+                        TransitionReason.STUDY_DURATION_ELAPSED,
+                        start,
+                    ),
+                )
+                ExperimentState.WITHDRAWN -> listOf(
+                    startTransition,
+                    cool.jacoblin.particeps.core.model.ExperimentTransition(
+                        ExperimentState.RUNNING,
+                        ExperimentState.WITHDRAWN,
+                        TransitionReason.PARTICIPANT_WITHDREW,
+                        start,
+                    ),
+                )
+                else -> error("Unexpected export state")
+            }
             val store = InMemoryStudyStore(
-                StudyMetadata.initial(EXPERIMENT_ID, CONFIGURATION_ID).copy(state = state),
+                StudyMetadata.initial(EXPERIMENT_ID, CONFIGURATION_ID).copy(
+                    state = state,
+                    transitions = transitions,
+                ),
             )
             val clocks = FakeClocks()
             val runtime = ExperimentRuntime(

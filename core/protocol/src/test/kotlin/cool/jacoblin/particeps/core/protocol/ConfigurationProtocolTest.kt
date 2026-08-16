@@ -147,6 +147,20 @@ class ConfigurationProtocolTest {
         assertThrows(IllegalArgumentException::class.java) {
             ConfigurationVerifier(emptyMap(), 7, now = { Instant.parse("2031-01-01T00:00:00Z") }).verify(envelope)
         }
+        val recovered = ConfigurationVerifier(
+            emptyMap(),
+            7,
+            now = { Instant.parse("2031-01-01T00:00:00Z") },
+        ).verify(envelope, ConfigurationVerificationPurpose.ACCEPTED_ACTIVE_STUDY_RECOVERY)
+        assertEquals("protocol-test", recovered.configuration.experimentId)
+
+        val tampered = envelope.copyOf().also { it[it.lastIndex] = (it.last() + 1).toByte() }
+        assertThrows(IllegalArgumentException::class.java) {
+            ConfigurationVerifier(emptyMap(), 7).verify(
+                tampered,
+                ConfigurationVerificationPurpose.ACCEPTED_ACTIVE_STUDY_RECOVERY,
+            )
+        }
     }
 
     private fun verifier(pinned: Map<String, String>) = ConfigurationVerifier(

@@ -3,6 +3,8 @@ package cool.jacoblin.particeps.core.storage
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import cool.jacoblin.particeps.core.protocol.ActiveStudyRecord
+import cool.jacoblin.particeps.core.protocol.ActiveStudyRecoveryException
+import cool.jacoblin.particeps.core.protocol.ActiveStudyRecoveryFailure
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -33,7 +35,7 @@ class EncryptedActiveStudyStoreTest {
     }
 
     @Test
-    fun deletionTombstoneRenameFailureLeavesCrashEvidenceThatBlocksTheOldActiveStudy() = runBlocking {
+    fun deletionTombstoneRenameFailureRepairsToTheAuthenticatedTombstone() = runBlocking {
         val envelope = "signed-study-envelope".toByteArray()
         store.save(envelope)
         operations.failure = Failure.ATOMIC_REPLACE
@@ -44,10 +46,10 @@ class EncryptedActiveStudyStoreTest {
 
         operations.failure = null
         val reopened = EncryptedActiveStudyStore(context, operations)
-        assertThrows(IncompleteAtomicWrite::class.java) {
-            runBlocking { reopened.load() }
-        }
-        Unit
+        val recovered = reopened.load() as ActiveStudyRecord.DeletionPending
+
+        org.junit.Assert.assertEquals("experiment-test", recovered.experimentId)
+        org.junit.Assert.assertEquals(16L * 1024 * 1024, recovered.maximumLocalBytes)
     }
 
     @Test
@@ -64,16 +66,50 @@ class EncryptedActiveStudyStoreTest {
     }
 
     @Test
-    fun rc5FrameworkAtomicFileResidueBlocksActiveStudyRecovery() = runBlocking {
+    fun tamperedCurrentCandidateIsNeverSelectedOrDiscarded() = runBlocking {
         store.save("signed-study-envelope".toByteArray())
-        context.noBackupFilesDir.resolve("active-study.ptc.new").writeText("unresolved rc.5 write")
+        val base = context.noBackupFilesDir.resolve("active-study.ptc")
+        val tampered = base.readBytes().also { it[it.lastIndex] = (it.last() + 1).toByte() }
+        context.noBackupFilesDir.resolve(".active-study.ptc.pending").writeBytes(tampered)
 
         val reopened = EncryptedActiveStudyStore(context, operations)
-
-        assertThrows(IncompleteAtomicWrite::class.java) {
+        val failure = assertThrows(ActiveStudyRecoveryException::class.java) {
             runBlocking { reopened.load() }
         }
-        Unit
+
+        org.junit.Assert.assertEquals(ActiveStudyRecoveryFailure.RECORD_INVALID, failure.failure)
+    }
+
+    @Test
+    fun conflictingAuthenticatedActiveCandidatesFailClosed() = runBlocking {
+        store.save("first-envelope".toByteArray())
+        val base = context.noBackupFilesDir.resolve("active-study.ptc")
+        val firstCiphertext = base.readBytes()
+        store.save("second-envelope".toByteArray())
+        context.noBackupFilesDir.resolve(".active-study.ptc.pending").writeBytes(firstCiphertext)
+
+        val failure = assertThrows(ActiveStudyRecoveryException::class.java) {
+            runBlocking { EncryptedActiveStudyStore(context, operations).load() }
+        }
+
+        org.junit.Assert.assertEquals(ActiveStudyRecoveryFailure.CANDIDATE_CONFLICT, failure.failure)
+    }
+
+    @Test
+    fun authenticatedDeletionTombstoneWinsOverAnActiveBase() = runBlocking {
+        store.save("active-envelope".toByteArray())
+        store.markDeletionPending("experiment-test", 16L * 1024 * 1024)
+        val base = context.noBackupFilesDir.resolve("active-study.ptc")
+        val tombstoneCiphertext = base.readBytes()
+        store.save("stale-active-envelope".toByteArray())
+        context.noBackupFilesDir.resolve(".active-study.ptc.pending").writeBytes(tombstoneCiphertext)
+
+        val recovered = EncryptedActiveStudyStore(context, operations).load()
+
+        org.junit.Assert.assertEquals(
+            ActiveStudyRecord.DeletionPending("experiment-test", 16L * 1024 * 1024),
+            recovered,
+        )
     }
 
     private enum class Failure {

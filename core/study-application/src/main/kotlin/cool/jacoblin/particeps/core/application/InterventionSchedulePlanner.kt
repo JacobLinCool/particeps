@@ -34,17 +34,20 @@ class InterventionSchedulePlanner(
         triggerId: String? = null,
     ): List<InterventionOccurrence> {
         if (metadata.state != ExperimentState.RUNNING) return emptyList()
-        val firstStart = metadata.transitions.firstOrNull { it.reason == TransitionReason.PARTICIPANT_STARTED }?.time
-            ?: return emptyList()
-        require(now.bootSessionId == firstStart.bootSessionId) {
-            "Cannot plan active study work across an untrusted boot-time boundary"
+        if (metadata.transitions.none { it.reason == TransitionReason.PARTICIPANT_STARTED }) {
+            return emptyList()
         }
-        require(now.elapsedRealtimeNanos >= firstStart.elapsedRealtimeNanos) {
-            "Active study monotonic clock moved behind participant Start"
+        val checkpoint = requireNotNull(metadata.clockCheckpoint) {
+            "Started study is missing its v2 clock checkpoint"
         }
-        val effectiveStartWallUtcMillis = now.wallTimeUtcMillis - elapsedMillis(firstStart, now)
-        val lifetimeEnd = effectiveStartWallUtcMillis +
-            configuration.durationHours * HOUR_MILLIS
+        require(now.bootSessionId == checkpoint.anchor.bootSessionId) {
+            "Cannot plan work before the reboot timeline is reconciled"
+        }
+        require(now.elapsedRealtimeNanos >= checkpoint.anchor.elapsedRealtimeNanos) {
+            "Active study monotonic clock moved behind its checkpoint"
+        }
+        val lifetimeEnd = checkpoint.deadlineUtcMillis
+        val effectiveStartWallUtcMillis = lifetimeEnd - configuration.durationHours * HOUR_MILLIS
         return configuration.interventions.flatMap { intervention ->
             intervention.triggers.filter { triggerId == null || it.id == triggerId }.mapNotNull { trigger ->
                 if (trigger.schedule is RandomWindowSchedule) {
@@ -61,16 +64,34 @@ class InterventionSchedulePlanner(
                 }
                 val candidates = when (val schedule = trigger.schedule) {
                     is OneTimeSchedule -> sequenceOf(
-                        relativeCandidate(schedule.offsetMinutes.toLong(), schedule.clock, metadata, firstStart, now) to
+                        relativeCandidate(
+                            schedule.offsetMinutes.toLong(),
+                            schedule.clock,
+                            metadata,
+                            effectiveStartWallUtcMillis,
+                            now,
+                        ) to
                             "relative:${schedule.offsetMinutes}",
                     )
                     is IntervalSchedule -> generateSequence(0) { it + 1 }
                         .map { index -> schedule.startOffsetMinutes + index.toLong() * schedule.intervalMinutes }
                         .takeWhile { it * MINUTE_MILLIS < configuration.durationHours * HOUR_MILLIS }
                         .map { target ->
-                            relativeCandidate(target, schedule.clock, metadata, firstStart, now) to "relative:$target"
+                            relativeCandidate(
+                                target,
+                                schedule.clock,
+                                metadata,
+                                effectiveStartWallUtcMillis,
+                                now,
+                            ) to "relative:$target"
                         }
-                    is DailyLocalSchedule -> dailyCandidates(firstStart, lifetimeEnd, schedule.localTime, zoneId)
+                    is DailyLocalSchedule -> dailyCandidates(
+                        effectiveStartWallUtcMillis,
+                        lifetimeEnd,
+                        schedule.localTime,
+                        zoneId,
+                        now,
+                    )
                         .mapIndexed { index, scheduled -> scheduled to "daily:$index" }
                     is RandomWindowSchedule -> error("Handled above")
                 }
@@ -196,58 +217,35 @@ class InterventionSchedulePlanner(
         offsetMinutes: Long,
         clock: RelativeClock,
         metadata: StudyMetadata,
-        firstStart: ResearchTime,
+        effectiveStartWallUtcMillis: Long,
         now: ResearchTime,
     ): ResearchTime {
         val offsetMillis = offsetMinutes * MINUTE_MILLIS
+        val checkpoint = requireNotNull(metadata.clockCheckpoint)
         if (clock == RelativeClock.CALENDAR_TIME) {
-            val wall = now.wallTimeUtcMillis - elapsedMillis(firstStart, now) + offsetMillis
+            val wall = effectiveStartWallUtcMillis + offsetMillis
             return estimateResearchTime(wall, now)
         }
-        val runningTransitions = metadata.transitions.filter {
-            it.to == ExperimentState.RUNNING || it.from == ExperimentState.RUNNING
-        }
-        var accumulated = 0L
-        var opened: ResearchTime? = null
-        runningTransitions.forEach { transition ->
-            if (transition.to == ExperimentState.RUNNING) opened = transition.time
-            if (transition.from == ExperimentState.RUNNING) {
-                val start = checkNotNull(opened)
-                val span = elapsedMillis(start, transition.time)
-                if (offsetMillis <= accumulated + span) {
-                    val delta = offsetMillis - accumulated
-                    return start.copy(
-                        wallTimeUtcMillis = start.wallTimeUtcMillis + delta,
-                        elapsedRealtimeNanos = start.elapsedRealtimeNanos + delta * 1_000_000,
-                    )
-                }
-                accumulated += span
-                opened = null
-            }
-        }
-        val activeStart = opened
-        val wall = if (activeStart != null) {
-            val accrued = accumulated + elapsedMillis(activeStart, now)
-            now.wallTimeUtcMillis + (offsetMillis - accrued).coerceAtLeast(0)
-        } else {
-            Long.MAX_VALUE
-        }
-        return if (wall == Long.MAX_VALUE) now.copy(wallTimeUtcMillis = wall) else estimateResearchTime(wall, now)
+        val sameBootActive = elapsedMillis(checkpoint.anchor, now)
+        val accrued = checkpoint.activeCollectionElapsedNanos / 1_000_000 + sameBootActive
+        val wall = now.wallTimeUtcMillis + (offsetMillis - accrued).coerceAtLeast(0)
+        return estimateResearchTime(wall, now)
     }
 
     private fun dailyCandidates(
-        firstStart: ResearchTime,
+        effectiveStartWallUtcMillis: Long,
         lifetimeEnd: Long,
         localTime: String,
         zoneId: ZoneId,
+        reference: ResearchTime,
     ): Sequence<ResearchTime> {
-        val firstDate = Instant.ofEpochMilli(firstStart.wallTimeUtcMillis).atZone(zoneId).toLocalDate()
+        val firstDate = Instant.ofEpochMilli(effectiveStartWallUtcMillis).atZone(zoneId).toLocalDate()
         val time = LocalTime.parse(localTime)
         return generateSequence(firstDate) { it.plusDays(1) }
             .mapNotNull { date -> localMinuteInstant(date, time.hour * 60 + time.minute, zoneId) }
-            .filter { it >= firstStart.wallTimeUtcMillis }
+            .filter { it >= effectiveStartWallUtcMillis }
             .takeWhile { it < lifetimeEnd }
-            .map { estimateResearchTime(it, firstStart) }
+            .map { estimateResearchTime(it, reference) }
     }
 
     private fun estimateResearchTime(wallMillis: Long, reference: ResearchTime): ResearchTime {

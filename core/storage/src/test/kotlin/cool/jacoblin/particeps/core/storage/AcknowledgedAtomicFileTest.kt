@@ -152,39 +152,6 @@ class AcknowledgedAtomicFileTest {
         )
     }
 
-    @Test
-    fun frameworkAtomicFileResidueBlocksRecoveryWithoutGuessing() {
-        listOf("new", "bak").forEach { suffix ->
-            val target = temporaryFolder.root.resolve("legacy-$suffix.ptc").apply { writeText("old") }
-            temporaryFolder.root.resolve("${target.name}.$suffix").writeText("unresolved")
-            val file = AcknowledgedAtomicFile(target, RecordingFileSystem())
-
-            assertTrue(file.exists())
-            assertThrows(IncompleteAtomicWrite::class.java) { file.readFully() }
-            assertArrayEquals("old".toByteArray(), target.readBytes())
-        }
-    }
-
-    @Test
-    fun explicitReplacementRetiresEveryKnownStagedLayoutBeforeWritingKnownBytes() {
-        val target = temporaryFolder.root.resolve("legacy.ptc").apply { writeText("old") }
-        temporaryFolder.root.resolve("legacy.ptc.new").writeText("new-residue")
-        temporaryFolder.root.resolve("legacy.ptc.bak").writeText("backup-residue")
-        val operations = RecordingFileSystem()
-
-        AcknowledgedAtomicFile(target, operations).write("replacement".toByteArray())
-
-        assertArrayEquals("replacement".toByteArray(), target.readBytes())
-        assertTrue(
-            operations.calls.containsSubsequence(
-                "delete:legacy.ptc.new",
-                "delete:legacy.ptc.bak",
-                "sync-directory:${temporaryFolder.root.name}",
-                "open:.legacy.ptc.pending",
-            ),
-        )
-    }
-
     private fun assertWriteFailsBeforeReplace(failurePoint: FailurePoint) {
         val target = temporaryFolder.root.resolve("record-${failurePoint.name}.ptc").apply {
             writeText("old")

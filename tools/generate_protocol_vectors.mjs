@@ -189,8 +189,20 @@ const documentValue = {
       },
       {
         from: 'RUNNING',
+        reason: 'DEVICE_REBOOT',
+        time: { boot_session_id: 'boot-vector-2', monotonic_time_nanos: '100', wall_time_utc_millis: '1500' },
+        to: 'PAUSED'
+      },
+      {
+        from: 'PAUSED',
+        reason: 'AUTOMATIC_RECOVERY',
+        time: { boot_session_id: 'boot-vector-2', monotonic_time_nanos: '200', wall_time_utc_millis: '1600' },
+        to: 'RUNNING'
+      },
+      {
+        from: 'RUNNING',
         reason: 'REQUIRED_ACCESS_MISSING',
-        time: { boot_session_id: 'boot-vector', monotonic_time_nanos: '3000', wall_time_utc_millis: '2000' },
+        time: { boot_session_id: 'boot-vector-2', monotonic_time_nanos: '3000', wall_time_utc_millis: '2000' },
         to: 'PAUSED'
       }
     ],

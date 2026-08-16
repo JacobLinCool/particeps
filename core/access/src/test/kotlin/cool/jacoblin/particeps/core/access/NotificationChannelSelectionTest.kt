@@ -7,13 +7,14 @@ import org.junit.Test
 
 class NotificationChannelSelectionTest {
     @Test
-    fun studiesWithoutInterventionsInspectOnlyCollectionAndDailyChannels() {
+    fun studiesWithoutInterventionsInspectCollectionDailyAndRecoveryChannels() {
         assertEquals(
-            setOf("collection", "daily"),
+            setOf("collection", "daily", "recovery"),
             notificationChannelIds(
                 features = setOf(
                     NotificationAccessFeature.COLLECTION,
                     NotificationAccessFeature.DAILY_STATUS,
+                    NotificationAccessFeature.RECOVERY,
                 ),
                 channels = channels(),
             ),
@@ -21,9 +22,9 @@ class NotificationChannelSelectionTest {
     }
 
     @Test
-    fun interventionStudiesAddOnlyTheClosedInterventionChannel() {
+    fun interventionStudiesAlsoInspectTheClosedInterventionChannel() {
         assertEquals(
-            setOf("collection", "daily", "interventions"),
+            setOf("collection", "daily", "recovery", "interventions"),
             notificationChannelIds(
                 features = NotificationAccessFeature.entries.toSet(),
                 channels = channels(),
@@ -54,6 +55,7 @@ class NotificationChannelSelectionTest {
     private fun channels() = mapOf(
         NotificationAccessFeature.COLLECTION to "collection",
         NotificationAccessFeature.DAILY_STATUS to "daily",
+        NotificationAccessFeature.RECOVERY to "recovery",
         NotificationAccessFeature.INTERVENTIONS to "interventions",
     )
 }

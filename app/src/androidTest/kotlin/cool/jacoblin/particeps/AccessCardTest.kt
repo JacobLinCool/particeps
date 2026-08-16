@@ -9,6 +9,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import cool.jacoblin.particeps.core.application.StudyAccessOwner
 import cool.jacoblin.particeps.core.application.StudyAccessStatus
+import cool.jacoblin.particeps.core.application.RecoveryFailureCode
+import cool.jacoblin.particeps.core.application.RecoveryStatus
 import cool.jacoblin.particeps.core.collector.AccessKind
 import cool.jacoblin.particeps.core.collector.AccessRequirement
 import cool.jacoblin.particeps.core.collector.AccessResolution
@@ -194,6 +196,36 @@ class AccessCardTest {
         assertEquals(expectedAction, launchedAction)
     }
 
+    @Test
+    fun recoveryScreenShowsSafeCodeRetryAndDestructiveConfirmation() {
+        var retries = 0
+        var resets = 0
+        val actions = actions().copy(
+            retryRecovery = { retries += 1 },
+            resetAndRestart = { resets += 1 },
+        )
+        composeRule.setContent {
+            CollectorApp(
+                state = StudyUiState.NoStudy(
+                    message = null,
+                    busy = false,
+                    recoveryStatus = RecoveryStatus.ActionRequired(RecoveryFailureCode.TIME_UNTRUSTED),
+                ),
+                actions = actions,
+            )
+        }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+
+        composeRule.onNodeWithText("RECOVERY_TIME_UNTRUSTED").assertExists()
+        composeRule.onNodeWithTag(UiTags.RECOVERY_RETRY).performClick()
+        assertEquals(1, retries)
+        composeRule.onNodeWithTag(UiTags.RECOVERY_RESET).performClick()
+        composeRule.onNodeWithText(context.getString(R.string.confirm_reset_title)).assertExists()
+        assertEquals(0, resets)
+        composeRule.onNodeWithText(context.getString(R.string.action_confirm)).performClick()
+        assertEquals(1, resets)
+    }
+
     private fun actions(requestAccess: (SetupAction) -> Unit = {}) = StudyUiActions(
         import = {},
         demo = null,
@@ -207,6 +239,8 @@ class AccessCardTest {
         withdraw = {},
         export = {},
         delete = {},
+        retryRecovery = {},
+        resetAndRestart = {},
     )
 
     private fun configuration(collectors: List<CollectorConfiguration>) = StudyConfiguration(

@@ -2,6 +2,7 @@ package cool.jacoblin.particeps
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.Notification
 import android.content.Context
 import cool.jacoblin.particeps.core.collector.NotificationAccessFeature
 
@@ -9,10 +10,12 @@ internal object ParticepsNotificationChannels {
     const val COLLECTION = "active-research-collection"
     const val DAILY_STATUS = "research-daily-status-v1"
     const val INTERVENTIONS = "research-interventions-v1"
+    const val RECOVERY = "research-recovery-v1"
 
     val idsByFeature: Map<NotificationAccessFeature, String> = mapOf(
         NotificationAccessFeature.COLLECTION to COLLECTION,
         NotificationAccessFeature.DAILY_STATUS to DAILY_STATUS,
+        NotificationAccessFeature.RECOVERY to RECOVERY,
         NotificationAccessFeature.INTERVENTIONS to INTERVENTIONS,
     )
 
@@ -41,6 +44,14 @@ internal object ParticepsNotificationChannels {
                     NotificationManager.IMPORTANCE_DEFAULT,
                 ).apply {
                     description = context.getString(R.string.intervention_channel_description)
+                },
+                NotificationChannel(
+                    RECOVERY,
+                    context.getString(R.string.recovery_channel),
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                ).apply {
+                    description = context.getString(R.string.recovery_channel_description)
+                    lockscreenVisibility = Notification.VISIBILITY_SECRET
                 },
             ),
         )

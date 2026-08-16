@@ -1,18 +1,25 @@
 package cool.jacoblin.particeps.core.storage
 
 import cool.jacoblin.particeps.core.model.ExperimentState
+import cool.jacoblin.particeps.core.model.ExperimentStateMachine
 import cool.jacoblin.particeps.core.model.ExperimentTransition
 import cool.jacoblin.particeps.core.model.InterventionOccurrence
 import cool.jacoblin.particeps.core.model.OccurrenceState
 import cool.jacoblin.particeps.core.model.RecordedEvent
 import cool.jacoblin.particeps.core.model.ResearchTime
+import cool.jacoblin.particeps.core.model.StudyClockCheckpoint
 import cool.jacoblin.particeps.core.model.StudyMetadata
 import cool.jacoblin.particeps.core.model.TransitionReason
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal data class DecodedStudyMetadata(
+    val metadata: StudyMetadata,
+    val migratedFromV1: Boolean,
+)
+
 internal object StudyDataJsonCodec {
-    private val METADATA_KEYS = setOf(
+    private val V1_METADATA_KEYS = setOf(
         "experiment_id",
         "configuration_id",
         "state",
@@ -25,8 +32,16 @@ internal object StudyDataJsonCodec {
         "retained_from_sequence",
         "last_events",
     )
+    private val METADATA_KEYS = V1_METADATA_KEYS + setOf("layout_version", "clock_checkpoint")
     private val TRANSITION_KEYS = setOf("from", "to", "reason", "time")
     private val TIME_KEYS = setOf("wall_time_utc_millis", "elapsed_realtime_nanos", "boot_session_id")
+    private val CLOCK_CHECKPOINT_KEYS = setOf(
+        "study_elapsed_nanos",
+        "active_collection_elapsed_nanos",
+        "anchor",
+        "deadline_utc_millis",
+        "deadline_utc_trusted",
+    )
     private val EVENT_KEYS = setOf(
         "sequence_number",
         "collector_id",
@@ -48,7 +63,10 @@ internal object StudyDataJsonCodec {
         "submission_sequence",
     )
 
-    fun encodeMetadata(metadata: StudyMetadata): ByteArray = JSONObject()
+    fun encodeMetadata(metadata: StudyMetadata): ByteArray {
+        validateMetadata(metadata, requireV2Clock = true)
+        return JSONObject()
+        .put("layout_version", METADATA_LAYOUT_VERSION)
         .put("experiment_id", metadata.experimentId)
         .put("configuration_id", metadata.configurationId)
         .put("state", metadata.state.name)
@@ -63,6 +81,7 @@ internal object StudyDataJsonCodec {
         })
         .put("uploaded_through_sequence", metadata.uploadedThroughSequence)
         .put("retained_from_sequence", metadata.retainedFromSequence)
+        .put("clock_checkpoint", metadata.clockCheckpoint?.let(::encodeClockCheckpoint) ?: JSONObject.NULL)
         // Durable rather than rebuilt by scanning, so opening a study never has to decrypt its
         // whole log. Polling collectors resume their query window from these.
         .put("last_events", JSONObject().apply {
@@ -70,13 +89,29 @@ internal object StudyDataJsonCodec {
                 put(collectorId, JSONObject(encodeEvent(event).toString(Charsets.UTF_8)))
             }
         })
-        .toString()
-        .toByteArray(Charsets.UTF_8)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+    }
 
     /** Decodes exactly the persisted boundary; append recovery reconciles it with the event log. */
-    fun decodeMetadata(bytes: ByteArray): StudyMetadata {
+    fun decodeMetadata(bytes: ByteArray): StudyMetadata = decodeMetadataDocument(bytes).metadata
+
+    /** Accepts only the exact currently deployed v1 layout for its one-time v2 migration. */
+    fun decodeMetadataDocument(bytes: ByteArray): DecodedStudyMetadata {
         val root = JSONObject(bytes.toString(Charsets.UTF_8))
-        root.requireExactKeys(METADATA_KEYS)
+        val actualKeys = root.keys().asSequence().toSet()
+        val migratedFromV1 = when (actualKeys) {
+            V1_METADATA_KEYS -> true
+            METADATA_KEYS -> false
+            else -> throw IllegalArgumentException(
+                "Unexpected JSON fields: expected current v1 or v2 metadata layout; actual=$actualKeys",
+            )
+        }
+        if (!migratedFromV1) {
+            require(root.getInt("layout_version") == METADATA_LAYOUT_VERSION) {
+                "Unsupported metadata layout version"
+            }
+        }
         val transitionsJson = root.getJSONArray("transitions")
         val storedNextSequence = root.getLong("next_sequence_number")
         val storedRetainedFrom = root.getLong("retained_from_sequence")
@@ -88,7 +123,7 @@ internal object StudyDataJsonCodec {
             "Experiment metadata claims an upload beyond the lifetime event count"
         }
 
-        return StudyMetadata(
+        val metadata = StudyMetadata(
             experimentId = root.getString("experiment_id"),
             configurationId = root.getString("configuration_id"),
             state = enumValueOf<ExperimentState>(root.getString("state")),
@@ -111,7 +146,14 @@ internal object StudyDataJsonCodec {
             },
             uploadedThroughSequence = uploadedThrough,
             retainedFromSequence = storedRetainedFrom,
+            clockCheckpoint = if (migratedFromV1 || root.isNull("clock_checkpoint")) {
+                null
+            } else {
+                decodeClockCheckpoint(root.getJSONObject("clock_checkpoint"))
+            },
         )
+        validateMetadata(metadata, requireV2Clock = !migratedFromV1)
+        return DecodedStudyMetadata(metadata, migratedFromV1)
     }
 
     /** Validates the recovered metadata boundary and reconciles an interrupted prefix eviction. */
@@ -212,6 +254,57 @@ internal object StudyDataJsonCodec {
         .put("elapsed_realtime_nanos", time.elapsedRealtimeNanos)
         .put("boot_session_id", time.bootSessionId)
 
+    private fun encodeClockCheckpoint(checkpoint: StudyClockCheckpoint): JSONObject = JSONObject()
+        .put("study_elapsed_nanos", checkpoint.studyElapsedNanos)
+        .put("active_collection_elapsed_nanos", checkpoint.activeCollectionElapsedNanos)
+        .put("anchor", encodeTime(checkpoint.anchor))
+        .put("deadline_utc_millis", checkpoint.deadlineUtcMillis)
+        .put("deadline_utc_trusted", checkpoint.deadlineUtcTrusted)
+
+    private fun decodeClockCheckpoint(json: JSONObject): StudyClockCheckpoint {
+        json.requireExactKeys(CLOCK_CHECKPOINT_KEYS)
+        return StudyClockCheckpoint(
+            studyElapsedNanos = json.getLong("study_elapsed_nanos"),
+            activeCollectionElapsedNanos = json.getLong("active_collection_elapsed_nanos"),
+            anchor = decodeTime(json.getJSONObject("anchor")),
+            deadlineUtcMillis = json.getLong("deadline_utc_millis"),
+            deadlineUtcTrusted = json.getBoolean("deadline_utc_trusted"),
+        )
+    }
+
+    private fun validateMetadata(metadata: StudyMetadata, requireV2Clock: Boolean) {
+        val stateMachine = ExperimentStateMachine()
+        var state = ExperimentState.IMPORTED
+        var previousTime: ResearchTime? = null
+        metadata.transitions.forEach { transition ->
+            require(transition.from == state) { "Experiment transition history is discontinuous" }
+            require(
+                transition.reason.destination == transition.to &&
+                    stateMachine.canTransition(transition.from, transition.to)
+            ) { "Experiment transition is invalid" }
+            require(transition.from in TRANSITION_SOURCES.getValue(transition.reason)) {
+                "Experiment transition reason has an invalid source"
+            }
+            previousTime?.takeIf { it.bootSessionId == transition.time.bootSessionId }?.let { previous ->
+                require(transition.time.elapsedRealtimeNanos >= previous.elapsedRealtimeNanos) {
+                    "Experiment transition monotonic time moved backwards"
+                }
+            }
+            previousTime = transition.time
+            state = transition.to
+        }
+        require(state == metadata.state) { "Experiment state does not match transition history" }
+        val started = metadata.transitions.count { it.reason == TransitionReason.PARTICIPANT_STARTED }
+        require(started in 0..1) { "Participant start transition must be unique" }
+        if (requireV2Clock) {
+            require((metadata.clockCheckpoint != null) == (started == 1)) {
+                "Version-2 clock checkpoint does not match participant-start history"
+            }
+        } else {
+            require(metadata.clockCheckpoint == null) { "Version-1 metadata cannot contain a clock checkpoint" }
+        }
+    }
+
     private fun decodeTime(json: JSONObject): ResearchTime {
         json.requireExactKeys(TIME_KEYS)
         return ResearchTime(
@@ -225,4 +318,27 @@ internal object StudyDataJsonCodec {
         val actual = keys().asSequence().toSet()
         require(actual == expected) { "Unexpected JSON fields: expected=$expected actual=$actual" }
     }
+
+    private const val METADATA_LAYOUT_VERSION = 2
+
+    private val TRANSITION_SOURCES = mapOf(
+        TransitionReason.CONFIGURATION_SIGNATURE_VERIFIED to setOf(ExperimentState.IMPORTED),
+        TransitionReason.CONSENT_REVIEW_OPENED to setOf(ExperimentState.CONFIG_VERIFIED),
+        TransitionReason.CONSENT_ACCEPTED to setOf(ExperimentState.CONSENT_PENDING),
+        TransitionReason.ACCESS_PREFLIGHT_PASSED to setOf(ExperimentState.ACCESS_SETUP),
+        TransitionReason.PARTICIPANT_STARTED to setOf(ExperimentState.READY),
+        TransitionReason.PARTICIPANT_PAUSED to setOf(ExperimentState.RUNNING),
+        TransitionReason.PARTICIPANT_RESUMED to setOf(ExperimentState.PAUSED),
+        TransitionReason.STUDY_DURATION_ELAPSED to setOf(ExperimentState.RUNNING, ExperimentState.PAUSED),
+        TransitionReason.PARTICIPANT_WITHDREW to ExperimentState.entries
+            .filterNot { it == ExperimentState.WITHDRAWN }
+            .toSet(),
+        TransitionReason.REQUIRED_ACCESS_MISSING to setOf(ExperimentState.RUNNING),
+        TransitionReason.COLLECTION_HOST_FAILURE to setOf(ExperimentState.RUNNING),
+        TransitionReason.WORK_SCHEDULING_FAILURE to setOf(ExperimentState.RUNNING),
+        TransitionReason.COLLECTION_TEARDOWN_FAILURE to setOf(ExperimentState.RUNNING),
+        TransitionReason.STORAGE_FAILURE to setOf(ExperimentState.RUNNING),
+        TransitionReason.DEVICE_REBOOT to setOf(ExperimentState.RUNNING),
+        TransitionReason.AUTOMATIC_RECOVERY to setOf(ExperimentState.PAUSED),
+    )
 }

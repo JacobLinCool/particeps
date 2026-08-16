@@ -10,6 +10,8 @@ import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.model.ExperimentTransition
 import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.core.model.StudyMetadata
+import cool.jacoblin.particeps.core.model.StudyClockCheckpoint
+import cool.jacoblin.particeps.core.model.TrustedStudyTimeUnavailable
 import cool.jacoblin.particeps.core.model.TransitionReason
 import java.time.Instant
 import org.junit.Assert.assertEquals
@@ -59,7 +61,7 @@ class CollectionWorkPlanTest {
         val start = ResearchTime(1_000_000, 900_000_000_000, "boot-one")
         val metadata = startedMetadata(start, ExperimentState.RUNNING)
 
-        assertThrows(IllegalArgumentException::class.java) {
+        assertThrows(TrustedStudyTimeUnavailable::class.java) {
             collectionWorkPlan(
                 configuration,
                 metadata,
@@ -120,6 +122,12 @@ class CollectionWorkPlanTest {
         return StudyMetadata.initial(EXPERIMENT_ID, CONFIGURATION_ID).copy(
             state = state,
             transitions = transitions,
+            clockCheckpoint = StudyClockCheckpoint(
+                studyElapsedNanos = if (state == ExperimentState.RUNNING) 0 else 1,
+                activeCollectionElapsedNanos = if (state == ExperimentState.RUNNING) 0 else 1,
+                anchor = transitions.last().time,
+                deadlineUtcMillis = start.wallTimeUtcMillis + 3_600_000,
+            ),
         )
     }
 

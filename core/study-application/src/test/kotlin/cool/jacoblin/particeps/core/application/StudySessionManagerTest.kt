@@ -48,6 +48,10 @@ import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.core.model.SafetyPauseReason
 import cool.jacoblin.particeps.core.model.StorageUsage
 import cool.jacoblin.particeps.core.model.StudyMetadata
+import cool.jacoblin.particeps.core.model.StudyClockCheckpoint
+import cool.jacoblin.particeps.core.model.StudyResetMarker
+import cool.jacoblin.particeps.core.model.StudyResetStore
+import cool.jacoblin.particeps.core.model.StudyStorageResetter
 import cool.jacoblin.particeps.core.model.StudyStore
 import cool.jacoblin.particeps.core.model.TransitionReason
 import cool.jacoblin.particeps.core.runtime.CommandResult
@@ -74,6 +78,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -298,7 +303,11 @@ class StudySessionManagerTest {
         assertTrue(notifications.requirement.required)
         assertFalse(notifications.granted)
         assertEquals(
-            setOf(NotificationAccessFeature.COLLECTION, NotificationAccessFeature.DAILY_STATUS),
+            setOf(
+                NotificationAccessFeature.COLLECTION,
+                NotificationAccessFeature.DAILY_STATUS,
+                NotificationAccessFeature.RECOVERY,
+            ),
             fixture.access.lastRequest?.notificationFeatures,
         )
         assertEquals(
@@ -350,7 +359,7 @@ class StudySessionManagerTest {
         }.exceptionOrNull()
 
         assertEquals(
-            "Access inspection must return every planned kind and no others",
+            "Recovery validation failed: ACCESS_MISSING",
             failure?.message,
         )
         assertNull(fixture.active.record)
@@ -1056,7 +1065,7 @@ class StudySessionManagerTest {
         runCurrent()
 
         assertNull(fixture.manager.snapshot.value.configuration)
-        assertEquals("STUDY_RECOVERY_FAILED", fixture.manager.snapshot.value.incidentCode)
+        assertEquals("RECOVERY_UNKNOWN", fixture.manager.snapshot.value.incidentCode)
         assertEquals(
             SafetyPauseStatus.Pending(SafetyPauseReason.REQUIRED_ACCESS_MISSING),
             fixture.manager.snapshot.value.safetyPauseStatus,
@@ -1081,7 +1090,7 @@ class StudySessionManagerTest {
         val blocked = fixture.manager.snapshot.value
         assertNull(blocked.configuration)
         assertTrue(blocked.recoveryBlocked)
-        assertEquals("STUDY_RECOVERY_FAILED", blocked.incidentCode)
+        assertEquals("RECOVERY_WORK_SCHEDULING_FAILED", blocked.incidentCode)
         assertEquals(0, fixture.host.startCount)
         assertEquals(0, fixture.collector.startCount)
 
@@ -1091,7 +1100,7 @@ class StudySessionManagerTest {
 
         assertTrue(importFailure is IllegalStateException)
         assertTrue(fixture.manager.snapshot.value.recoveryBlocked)
-        assertEquals("STUDY_RECOVERY_FAILED", fixture.manager.snapshot.value.incidentCode)
+        assertEquals("RECOVERY_WORK_SCHEDULING_FAILED", fixture.manager.snapshot.value.incidentCode)
         assertNull(fixture.manager.snapshot.value.configuration)
     }
 
@@ -1112,7 +1121,7 @@ class StudySessionManagerTest {
         runCurrent()
 
         assertNull(fixture.manager.snapshot.value.configuration)
-        assertEquals("STUDY_RECOVERY_FAILED", fixture.manager.snapshot.value.incidentCode)
+        assertEquals("RECOVERY_UNKNOWN", fixture.manager.snapshot.value.incidentCode)
         assertEquals(SafetyPauseStatus.MarkerUnreadable, fixture.manager.snapshot.value.safetyPauseStatus)
         assertEquals(0, fixture.host.startCount)
         assertEquals(0, fixture.collector.startCount)
@@ -1386,19 +1395,253 @@ class StudySessionManagerTest {
 
         val recovered = fixture.manager.snapshot.value.runtime.metadata
         assertEquals(ExperimentState.PAUSED, recovered?.state)
-        assertEquals(TransitionReason.WORK_SCHEDULING_FAILURE, recovered?.transitions?.last()?.reason)
-        assertEquals("WORK_SCHEDULING_FAILED", fixture.manager.snapshot.value.incidentCode)
+        assertEquals(TransitionReason.DEVICE_REBOOT, recovered?.transitions?.last()?.reason)
+        assertEquals("RECOVERY_TIME_UNTRUSTED", fixture.manager.snapshot.value.incidentCode)
         assertEquals(0, fixture.host.startCount)
         assertEquals(0, fixture.collector.startCount)
         assertEquals(0, fixture.work.scheduleCount)
 
         assertEquals(
-            CommandResult.Failed("WORK_SCHEDULING_FAILED"),
+            CommandResult.Failed("RECOVERY_TIME_UNTRUSTED"),
             fixture.manager.resume(),
         )
         assertEquals(ExperimentState.PAUSED, fixture.manager.snapshot.value.runtime.metadata?.state)
         assertEquals(0, fixture.host.startCount)
         assertEquals(0, fixture.collector.resumeCount)
+    }
+
+    @Test
+    fun trustedRebootRecoveryPersistsPauseThenAutomaticallyResumes() = runTest {
+        val configuration = configuration()
+        val started = startedMetadata(configuration)
+        val fixture = fixture(
+            configuration = configuration,
+            activeEnvelope = byteArrayOf(9),
+            initialMetadata = started,
+            recoveredBootSessionId = "boot-after-recovery",
+            trustedUtcMillis = started.clockCheckpoint!!.anchor.wallTimeUtcMillis + 10 * 60_000,
+        )
+
+        fixture.manager.initialize()
+        runCurrent()
+
+        val recovered = requireNotNull(fixture.manager.snapshot.value.runtime.metadata)
+        assertEquals(ExperimentState.RUNNING, recovered.state)
+        assertEquals(
+            listOf(TransitionReason.DEVICE_REBOOT, TransitionReason.AUTOMATIC_RECOVERY),
+            recovered.transitions.takeLast(2).map { it.reason },
+        )
+        assertTrue(recovered.clockCheckpoint!!.studyElapsedNanos >= 10 * 60_000_000_000L)
+        assertEquals(0L, recovered.clockCheckpoint!!.activeCollectionElapsedNanos)
+        assertEquals(1, fixture.host.startCount)
+        assertEquals(1, fixture.collector.startCount)
+        assertTrue(fixture.work.scheduleCount > 0)
+        assertNull(fixture.manager.snapshot.value.incidentCode)
+    }
+
+    @Test
+    fun rebootAccessFailureKeepsTheDeviceBoundaryAndRetriesThroughTheSamePath() = runTest {
+        val configuration = configuration()
+        val started = startedMetadata(configuration)
+        val fixture = fixture(
+            configuration = configuration,
+            activeEnvelope = byteArrayOf(9),
+            initialMetadata = started,
+            grantedAccess = emptySet(),
+            recoveredBootSessionId = "boot-after-recovery",
+            trustedUtcMillis = started.clockCheckpoint!!.anchor.wallTimeUtcMillis + 60_000,
+        )
+
+        fixture.manager.initialize()
+        runCurrent()
+
+        assertEquals(ExperimentState.PAUSED, fixture.store.metadata?.state)
+        assertEquals(TransitionReason.DEVICE_REBOOT, fixture.store.metadata?.transitions?.last()?.reason)
+        assertEquals("RECOVERY_ACCESS_MISSING", fixture.manager.snapshot.value.incidentCode)
+        assertEquals(0, fixture.host.startCount)
+
+        fixture.access.granted += AccessKind.NOTIFICATIONS
+        fixture.manager.reconcileAccess()
+
+        assertEquals(ExperimentState.RUNNING, fixture.store.metadata?.state)
+        assertEquals(TransitionReason.AUTOMATIC_RECOVERY, fixture.store.metadata?.transitions?.last()?.reason)
+        assertEquals(1, fixture.host.startCount)
+        assertNull(fixture.manager.snapshot.value.incidentCode)
+    }
+
+    @Test
+    fun rebootPersistsTheDeviceBoundaryBeforeAndroidAccessInspectionThrows() = runTest {
+        val configuration = configuration()
+        val started = startedMetadata(configuration)
+        val fixture = fixture(
+            configuration = configuration,
+            activeEnvelope = byteArrayOf(9),
+            initialMetadata = started,
+            recoveredBootSessionId = "boot-after-recovery",
+            trustedUtcMillis = started.clockCheckpoint!!.anchor.wallTimeUtcMillis + 60_000,
+        )
+        fixture.access.failure = IllegalStateException("access service unavailable")
+
+        fixture.manager.initialize()
+
+        assertEquals(ExperimentState.PAUSED, fixture.store.metadata?.state)
+        assertEquals(TransitionReason.DEVICE_REBOOT, fixture.store.metadata?.transitions?.last()?.reason)
+        assertEquals("RECOVERY_ACCESS_MISSING", fixture.manager.snapshot.value.incidentCode)
+        assertEquals(0, fixture.host.startCount)
+
+        fixture.access.failure = null
+        assertEquals(CommandResult.Success, fixture.manager.retryRecovery())
+
+        assertEquals(ExperimentState.RUNNING, fixture.store.metadata?.state)
+        assertEquals(TransitionReason.AUTOMATIC_RECOVERY, fixture.store.metadata?.transitions?.last()?.reason)
+        assertEquals(1, fixture.host.startCount)
+        assertNull(fixture.manager.snapshot.value.incidentCode)
+    }
+
+    @Test
+    fun rebootWorkValidationFailureIsTypedAndRetriesWithoutAddingAnotherDeviceBoundary() = runTest {
+        val configuration = configuration()
+        val started = startedMetadata(configuration)
+        val fixture = fixture(
+            configuration = configuration,
+            activeEnvelope = byteArrayOf(9),
+            initialMetadata = started,
+            recoveredBootSessionId = "boot-after-recovery",
+            trustedUtcMillis = started.clockCheckpoint!!.anchor.wallTimeUtcMillis + 60_000,
+        )
+        fixture.work.failSchedule = true
+
+        fixture.manager.initialize()
+        runCurrent()
+
+        assertEquals(ExperimentState.PAUSED, fixture.store.metadata?.state)
+        assertEquals(TransitionReason.DEVICE_REBOOT, fixture.store.metadata?.transitions?.last()?.reason)
+        assertEquals(
+            RecoveryStatus.ActionRequired(RecoveryFailureCode.WORK_SCHEDULING_FAILED),
+            fixture.manager.snapshot.value.recoveryStatus,
+        )
+        assertEquals("RECOVERY_WORK_SCHEDULING_FAILED", fixture.manager.snapshot.value.incidentCode)
+        assertEquals(0, fixture.host.startCount)
+
+        fixture.work.failSchedule = false
+        assertEquals(CommandResult.Success, fixture.manager.retryRecovery())
+
+        val recovered = requireNotNull(fixture.store.metadata)
+        assertEquals(ExperimentState.RUNNING, recovered.state)
+        assertEquals(
+            listOf(TransitionReason.DEVICE_REBOOT, TransitionReason.AUTOMATIC_RECOVERY),
+            recovered.transitions.takeLast(2).map { it.reason },
+        )
+        assertEquals(1, fixture.host.startCount)
+        assertNull(fixture.manager.snapshot.value.incidentCode)
+    }
+
+    @Test
+    fun rebootForegroundServiceFailureIsTypedAndRetryable() = runTest {
+        val configuration = configuration()
+        val started = startedMetadata(configuration)
+        val fixture = fixture(
+            configuration = configuration,
+            activeEnvelope = byteArrayOf(9),
+            initialMetadata = started,
+            recoveredBootSessionId = "boot-after-recovery",
+            trustedUtcMillis = started.clockCheckpoint!!.anchor.wallTimeUtcMillis + 60_000,
+        )
+        fixture.host.startFailure = IllegalStateException("foreground start rejected")
+
+        fixture.manager.initialize()
+        runCurrent()
+
+        assertEquals(ExperimentState.PAUSED, fixture.store.metadata?.state)
+        assertEquals(TransitionReason.DEVICE_REBOOT, fixture.store.metadata?.transitions?.last()?.reason)
+        assertEquals(
+            RecoveryStatus.ActionRequired(RecoveryFailureCode.FOREGROUND_SERVICE_FAILED),
+            fixture.manager.snapshot.value.recoveryStatus,
+        )
+        assertEquals("RECOVERY_FOREGROUND_SERVICE_FAILED", fixture.manager.snapshot.value.incidentCode)
+        assertEquals(1, fixture.host.startCount)
+        assertEquals(0, fixture.collector.startCount)
+
+        fixture.host.startFailure = null
+        assertEquals(CommandResult.Success, fixture.manager.retryRecovery())
+
+        assertEquals(ExperimentState.RUNNING, fixture.store.metadata?.state)
+        assertEquals(TransitionReason.AUTOMATIC_RECOVERY, fixture.store.metadata?.transitions?.last()?.reason)
+        assertEquals(2, fixture.host.startCount)
+        assertNull(fixture.manager.snapshot.value.incidentCode)
+    }
+
+    @Test
+    fun scheduledWorkReconciliationPersistsADeadlineWhenTrustedTimeBecomesAvailable() = runTest {
+        val fixture = fixture(configuration())
+        fixture.prepareRunningStudy()
+        assertFalse(requireNotNull(fixture.store.metadata?.clockCheckpoint).deadlineUtcTrusted)
+
+        fixture.clocks.trustedUtc = 500_000
+        fixture.manager.reconcileScheduledWork()
+
+        val persisted = requireNotNull(fixture.store.metadata?.clockCheckpoint)
+        assertTrue(persisted.deadlineUtcTrusted)
+        assertTrue(persisted.deadlineUtcMillis > fixture.clocks.trustedUtc!!)
+        assertEquals(persisted, fixture.work.ensuredMetadata.last().clockCheckpoint)
+    }
+
+    @Test
+    fun destructiveRecoveryResetReusesAValidEnvelopeWithANewParticipantInstance() = runTest {
+        val resetStore = FakeResetStore()
+        val storageResetter = FakeStorageResetter()
+        val fixture = fixture(
+            configuration = configuration(),
+            resetStore = resetStore,
+            storageResetter = storageResetter,
+        )
+        fixture.prepareRunningStudy()
+        val oldParticipant = requireNotNull(fixture.store.metadata).participantInstanceId
+
+        fixture.manager.resetAndRestart()
+
+        val restarted = requireNotNull(fixture.manager.snapshot.value.runtime.metadata)
+        assertEquals(ExperimentState.IMPORTED, restarted.state)
+        assertTrue(restarted.participantInstanceId != oldParticipant)
+        assertEquals(0L, restarted.eventCount)
+        assertEquals(1L, restarted.nextSequenceNumber)
+        assertTrue(fixture.active.record is ActiveStudyRecord.Active)
+        assertNull(resetStore.load())
+        assertEquals(1, storageResetter.clearCount)
+        assertEquals(1, fixture.work.resetCancelCount)
+    }
+
+    @Test
+    fun unfinishedRecoveryResetIsCompletedOnTheNextLaunch() = runTest {
+        val resetStore = FakeResetStore()
+        val failingResetter = FakeStorageResetter(
+            failure = IllegalStateException("storage reset interrupted"),
+        )
+        val first = fixture(
+            configuration = configuration(),
+            resetStore = resetStore,
+            storageResetter = failingResetter,
+        )
+        first.prepareRunningStudy()
+
+        assertEquals(
+            "storage reset interrupted",
+            runCatching { first.manager.resetAndRestart() }.exceptionOrNull()?.message,
+        )
+        assertNotNull(resetStore.load())
+
+        val completingResetter = FakeStorageResetter()
+        val recovered = fixture(
+            configuration = configuration(),
+            activeRecord = first.active.record,
+            resetStore = resetStore,
+            storageResetter = completingResetter,
+        )
+        recovered.manager.initialize()
+
+        assertEquals(ExperimentState.IMPORTED, recovered.manager.snapshot.value.runtime.metadata?.state)
+        assertNull(resetStore.load())
+        assertEquals(1, completingResetter.clearCount)
     }
 
     @Test
@@ -1424,7 +1667,7 @@ class StudySessionManagerTest {
         assertEquals(participantPaused.transitions, recovered?.transitions)
         assertEquals(TransitionReason.PARTICIPANT_PAUSED, recovered?.transitions?.last()?.reason)
         assertEquals(participantPause.time, recovered?.transitions?.last()?.time)
-        assertEquals("WORK_SCHEDULING_FAILED", fixture.manager.snapshot.value.incidentCode)
+        assertEquals("RECOVERY_TIME_UNTRUSTED", fixture.manager.snapshot.value.incidentCode)
         assertNull(fixture.manager.snapshot.value.runtime.pendingSafetyPauseReason)
         assertNull(fixture.manager.snapshot.value.safetyPauseStatus)
         assertEquals(0, fixture.host.startCount)
@@ -1433,7 +1676,7 @@ class StudySessionManagerTest {
         assertEquals(0, fixture.work.scheduleCount)
 
         assertEquals(
-            CommandResult.Failed("WORK_SCHEDULING_FAILED"),
+            CommandResult.Failed("RECOVERY_TIME_UNTRUSTED"),
             fixture.manager.resume(),
         )
         assertEquals(ExperimentState.PAUSED, fixture.manager.snapshot.value.runtime.metadata?.state)
@@ -2381,6 +2624,9 @@ class StudySessionManagerTest {
         collectorAccessKindsById: Map<String, Set<AccessKind>> = emptyMap(),
         pauseStore: FakeSafetyPauseStore = FakeSafetyPauseStore(),
         recoveredBootSessionId: String? = null,
+        trustedUtcMillis: Long? = null,
+        resetStore: FakeResetStore = FakeResetStore(),
+        storageResetter: FakeStorageResetter = FakeStorageResetter(),
     ): Fixture {
         val active = FakeActiveStudyStore(activeRecord)
         val store = FakeStudyStore(initialMetadata)
@@ -2411,10 +2657,16 @@ class StudySessionManagerTest {
             ?.takeIf { it.bootSessionId == clockBootSessionId }
             ?.elapsedRealtimeNanos
             ?: 0L
-        val clocks = FakeClocks(recoveredWallTime, recoveredElapsedTime, clockBootSessionId)
+        val clocks = FakeClocks(
+            recoveredWallTime,
+            recoveredElapsedTime,
+            clockBootSessionId,
+            trustedUtcMillis,
+        )
         val manager = StudySessionManager(
             activeStudyStore = active,
             verifier = StudyVerifier { verified(configuration) },
+            acceptedStudyVerifier = AcceptedStudyVerifier { verified(configuration) },
             storeFactory = StudyStoreFactory { _, _ -> store },
             runtimeFactory = ExperimentRuntimeFactory { verified, createdStore, safetyPauseWitness ->
                 ExperimentRuntime(
@@ -2429,6 +2681,12 @@ class StudySessionManagerTest {
             collectorRegistry = registry,
             accessGateway = access,
             collectionHost = host,
+            recoveryReporter = FakeRecoveryReporter(),
+            resetStore = resetStore,
+            storageResetter = StudyStorageResetter {
+                storageResetter.clearAll()
+                store.clear()
+            },
             safetyPauseStore = pauseStore,
             workScheduler = work,
             exporter = FakeExporter(),
@@ -2677,6 +2935,7 @@ class StudySessionManagerTest {
         private val wallTimeBase: Long = 0,
         private val elapsedRealtimeBase: Long = 0,
         private val bootSessionId: String = UUID.randomUUID().toString(),
+        var trustedUtc: Long? = null,
     ) : ResearchClocks {
         private var tick = 0L
         private var forcedTime: ResearchTime? = null
@@ -2686,6 +2945,8 @@ class StudySessionManagerTest {
             elapsedRealtimeBase + tick * 1_000_000_000,
             bootSessionId,
         )
+
+        override fun trustedUtcMillis(): Long? = trustedUtc
 
         fun force(time: ResearchTime) {
             forcedTime = time
@@ -2765,6 +3026,7 @@ class StudySessionManagerTest {
         var cancelInterventionCount = 0
         var safetyPauseScheduleCount = 0
         var safetyPauseCancelCount = 0
+        var resetCancelCount = 0
         var scheduledSafetyPauseReason: SafetyPauseReason? = null
         val activeSafetyPauseReasons = mutableSetOf<SafetyPauseReason>()
         var safetyPauseScheduleFailure: Exception? = null
@@ -2841,6 +3103,11 @@ class StudySessionManagerTest {
             safetyPauseCancelFailure?.let { throw it }
             activeSafetyPauseReasons.clear()
         }
+        override suspend fun scheduleRecoveryRetry() = Unit
+        override suspend fun cancelRecoveryRetry() = Unit
+        override suspend fun cancelAllForReset() {
+            resetCancelCount += 1
+        }
         override suspend fun cancelCollectionWork(experimentId: String, occurrenceIds: Set<String>) {
             cancelCollectionCount += 1
             cancelledNotificationIds += occurrenceIds
@@ -2851,6 +3118,33 @@ class StudySessionManagerTest {
         override suspend fun cancel(experimentId: String) {
             cancelCount += 1
             cancelFailure?.let { throw it }
+        }
+    }
+
+    private class FakeRecoveryReporter : RecoveryReporter {
+        override fun actionRequired(code: RecoveryFailureCode, failure: Throwable?) = Unit
+        override fun clear() = Unit
+    }
+
+    private class FakeResetStore : StudyResetStore {
+        private var marker: StudyResetMarker? = null
+        override suspend fun load(): StudyResetMarker? = marker
+        override suspend fun mark(retainedEnvelopeBytes: ByteArray?) {
+            marker = StudyResetMarker(retainedEnvelopeBytes?.copyOf())
+        }
+        override suspend fun clear() {
+            marker = null
+        }
+    }
+
+    private class FakeStorageResetter(
+        var failure: Throwable? = null,
+    ) : StudyStorageResetter {
+        var clearCount = 0
+
+        override suspend fun clearAll() {
+            clearCount += 1
+            failure?.let { throw it }
         }
     }
 
@@ -2981,6 +3275,13 @@ class StudySessionManagerTest {
             state = state,
             transitions = transitions,
             occurrences = occurrences,
+            clockCheckpoint = StudyClockCheckpoint(
+                studyElapsedNanos = if (state == ExperimentState.PAUSED) 1 else 0,
+                activeCollectionElapsedNanos = if (state == ExperimentState.PAUSED) 1 else 0,
+                anchor = transitions.last().time,
+                deadlineUtcMillis = start.wallTimeUtcMillis +
+                    configuration.durationHours.toLong() * 60 * 60 * 1_000,
+            ),
         )
     }
 

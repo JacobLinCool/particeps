@@ -11,6 +11,7 @@ class AndroidResearchClocks(
     context: Context,
     experimentId: String,
 ) : ResearchClocks {
+    private val applicationContext = context.applicationContext
     private val bootSessionId: String
 
     init {
@@ -26,4 +27,15 @@ class AndroidResearchClocks(
         elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos(),
         bootSessionId = bootSessionId,
     )
+
+    override fun trustedUtcMillis(): Long? {
+        val networkTime = runCatching { SystemClock.currentNetworkTimeClock().millis() }.getOrNull()
+        if (networkTime != null) return networkTime
+        val automaticTimeEnabled = Settings.Global.getInt(
+            applicationContext.contentResolver,
+            Settings.Global.AUTO_TIME,
+            0,
+        ) == 1
+        return System.currentTimeMillis().takeIf { automaticTimeEnabled }
+    }
 }

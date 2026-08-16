@@ -29,6 +29,8 @@ enum class TransitionReason(
     WORK_SCHEDULING_FAILURE(ExperimentState.PAUSED),
     COLLECTION_TEARDOWN_FAILURE(ExperimentState.PAUSED),
     STORAGE_FAILURE(ExperimentState.PAUSED),
+    DEVICE_REBOOT(ExperimentState.PAUSED),
+    AUTOMATIC_RECOVERY(ExperimentState.RUNNING),
 }
 
 /** Closed reasons that force collection admission to remain closed until an explicit resume. */
@@ -100,5 +102,14 @@ data class RecordedEvent(
 ) {
     init {
         require(sequenceNumber > 0) { "Sequence number must be positive" }
+        // Durable records obey the exact same payload contract as newly admitted drafts. This
+        // makes authenticated storage candidates schema-valid rather than merely decryptable.
+        EventDraft(
+            collectorId = collectorId,
+            payloadSchemaVersion = payloadSchemaVersion,
+            observedTime = observedTime,
+            payloadType = payloadType,
+            fields = fields,
+        )
     }
 }

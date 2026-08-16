@@ -232,11 +232,16 @@ Verification order:
 4. Resolve the Ed25519 public key: the pinned key for that key ID if the build has one, otherwise
    the key the configuration declares.
 5. Verify the signature over the raw canonical configuration bytes.
-6. Check `issued_at <= now < expires_at`, platform, and the client build floor.
+6. For a fresh import, check `issued_at <= now < expires_at`, platform, and the client build floor.
 
 These checks live in `ConfigurationVerifier`, which returns a `VerifiedConfiguration` containing
 the exact canonical bytes, signer key ID and signature, configuration SHA-256, typed configuration,
 and `signerAnchored`. That preserved provenance is embedded and reverified in every bundle.
+
+Recovery of an already accepted active record repeats framing, exact schema, signature, platform,
+and client-floor verification, but does not reinterpret the import-only `expires_at` window as the
+study's runtime deadline. Reset-and-restart is a fresh import and therefore repeats the full validity
+window check.
 
 `ConfigurationVerifier` takes a map of pinned signers, `CollectorApplication.TRUSTED_SIGNING_KEYS`.
 Empty is the shipped default. Any correctly signed configuration is then accepted, `signerAnchored`
@@ -404,9 +409,10 @@ claim, not an absolute hardware-protection claim.
   `PTCMET01 | random 96-bit IV | ciphertext+tag`. `PTCMET01`
   carries the fresh-per-import instance ID, optional researcher-assigned ID, upload watermark,
   retained floor, and durable intervention occurrence states. It also holds
-  `last_events`, the most recent event per collector, which is why opening a study needs no scan of
-  the log to rebuild it. There is no fallback reader, so a `PTCMET01` file is refused rather than
-  migrated.
+  `last_events`, the most recent event per collector, plus metadata layout v2's
+  `StudyClockCheckpoint`. Opening a study therefore needs no full-log scan. The decoder accepts only
+  v2 and the exact metadata layout shipped immediately before v2; that one v1 layout is rewritten to
+  v2 on its first successful authenticated open. There is no general legacy reader.
 - Events: `events-00000001.ptcs` segments capped at 4 MiB. A segment is appended to and never
   rewritten; whole leading segments can be reclaimed once delivery is confirmed. At most
   `MAXIMUM_LIVE_SEGMENTS = 2048` are resident at once. At 4 MiB each that covers the largest
@@ -422,12 +428,13 @@ claim, not an absolute hardware-protection claim.
   `.pending` and `.replacement`, then directory-syncs both. The checked atomic rename consumes only
   `.replacement`; `.pending` remains as an uncertainty witness until exact base-file readback and a
   second parent-directory sync acknowledge the replacement. Only then is witness deletion attempted
-  and directory-synced. A cleanup failure may leave the witness and conservatively block a later
-  read, but cannot retroactively turn an acknowledged base mutation into a reported failed commit.
-  Any unresolved witness, rc.5 framework-`AtomicFile` `.new`/`.bak` residue, or unknown event-directory
-  entry blocks recovery; the app never guesses whether to promote or parse incomplete bytes. Only a
-  later explicit write of caller-supplied known bytes may retire and directory-sync all stale
-  artifacts before beginning a new two-copy replacement. New segment creation is directory-synced
+  and directory-synced. On recovery, base, `.pending`, and `.replacement` are exposed as separate
+  candidates. Every candidate must authenticate and validate its schema, experiment identity,
+  sequence boundary, and transaction tail; every valid metadata/journal combination must converge
+  to one result. A verified active-study deletion tombstone has priority. Conflict, tampering, or a
+  missing key is a typed hard failure. Only after convergence does recovery rewrite the known-good
+  ciphertext or canonical v2 metadata as a clean base and retire current residue. There is no
+  heuristic promotion or former `AtomicFile` compatibility path. New segment creation is directory-synced
   before append can succeed. Reclaim is different: its authoritative retained floor commits first;
   physical unlink and its directory sync are best-effort cleanup that stops at the first failure and
   is retried later, because every affected segment was already confirmed delivered.
@@ -696,15 +703,17 @@ the same way.
   action from durable state. Survey answers validate against stable survey/question/option IDs and
   commit as one immutable `SURVEY_SUBMITTED` event plus terminal occurrence state. Closing the UI
   before that commit persists no answer or draft.
-- The study deadline is a unique WorkManager job measured from the one durable
-  `PARTICIPANT_STARTED` transition, never from Resume or process recovery. Same-boot repair uses the
-  participant-start monotonic clock. An active study observed under any other boot-session ID cannot
-  prove elapsed time and fails closed with `WORK_SCHEDULING_FAILURE`; it never falls back to wall
-  time and never reopens a host or collector. Every same-boot active-state ensure replaces the
-  deadline with its recomputed remaining duration, so time-change and process recovery also repair a
-  stale existing WorkSpec. An already-expired same-boot study reaches `COMPLETED` before any host or
-  collector is reopened. WorkManager is not the data boundary: collector and occurrence admission
-  compare every original observation time with the exact same-boot monotonic deadline and reject
+- The study deadline is a unique WorkManager job measured by metadata v2's checkpoint from the one
+  durable `PARTICIPANT_STARTED` transition, never from Resume or process recovery. Same-boot repair
+  uses only monotonic elapsed time. A recovered cross-boot `RUNNING` study first commits
+  `PAUSED / DEVICE_REBOOT`; network time, or wall time only while Android automatic time is enabled,
+  advances its absolute UTC deadline. The reboot gap counts toward study duration but not the
+  active-collection intervention clock. Missing trusted UTC leaves the study paused and schedules a
+  typed recovery retry. An elapsed study reaches `COMPLETED`; otherwise access, durable work, and the
+  exact foreground-service type must all validate before `RUNNING / AUTOMATIC_RECOVERY` and source
+  activation. A participant's own pause never auto-resumes. WorkManager is not the data boundary:
+  collector and occurrence admission compare every original observation time with the checkpoint's
+  exact same-boot monotonic deadline and reject
   values at or beyond it. The worker rechecks due-ness, retrying an early wake instead of completing
   early; a delayed wake can postpone the visible `COMPLETED` transition but cannot widen the dataset.
 - `UploadWorker` is a self-renewing chain of unique one-time work rather than a

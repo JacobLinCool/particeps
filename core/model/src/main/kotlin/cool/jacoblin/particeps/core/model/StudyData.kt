@@ -30,6 +30,11 @@ data class StudyMetadata(
      * start. Reclaiming space must never renumber what was already delivered.
      */
     val retainedFromSequence: Long,
+    /**
+     * Version-2 durable timeline. Null is valid only before participant Start, or while the exact
+     * current v1 layout is being migrated during the first open after an update.
+     */
+    val clockCheckpoint: StudyClockCheckpoint? = null,
 ) {
     init {
         require(ID.matches(experimentId)) { "Invalid experiment ID" }
@@ -80,9 +85,34 @@ data class StudyMetadata(
             emptyMap(),
             0,
             1,
+            null,
         )
 
         private val ASSIGNED_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+    }
+}
+
+/**
+ * Monotone study clocks persisted at every durable lifecycle/event boundary.
+ *
+ * [studyElapsedNanos] counts calendar lifetime, including reboot and recovery downtime.
+ * [activeCollectionElapsedNanos] counts only intervals durably known to have been RUNNING.
+ * [deadlineUtcMillis] bridges boots only when [deadlineUtcTrusted] is true; within one boot
+ * [anchor] and elapsedRealtime are authoritative.
+ */
+data class StudyClockCheckpoint(
+    val studyElapsedNanos: Long,
+    val activeCollectionElapsedNanos: Long,
+    val anchor: ResearchTime,
+    val deadlineUtcMillis: Long,
+    val deadlineUtcTrusted: Boolean = true,
+) {
+    init {
+        require(studyElapsedNanos >= 0) { "Study elapsed time must be non-negative" }
+        require(activeCollectionElapsedNanos in 0..studyElapsedNanos) {
+            "Active-collection time must be within study elapsed time"
+        }
+        require(deadlineUtcMillis >= 0) { "Study deadline must be non-negative" }
     }
 }
 
@@ -207,3 +237,28 @@ class StudyStoreMutationFailedClosed(
     val metadata: StudyMetadata,
     cause: Throwable,
 ) : java.io.IOException("Study-store mutation recovered fail-closed", cause)
+
+enum class StudyStoreRecoveryFailure {
+    KEY_UNAVAILABLE,
+    METADATA_INVALID,
+    TRANSACTION_INVALID,
+    EVENT_LOG_INVALID,
+    CANDIDATE_CONFLICT,
+}
+
+class StudyStoreRecoveryException(
+    val failure: StudyStoreRecoveryFailure,
+    cause: Throwable? = null,
+) : java.io.IOException("Study-store recovery failed: ${failure.name}", cause)
+
+data class StudyResetMarker(val retainedEnvelopeBytes: ByteArray?)
+
+interface StudyResetStore {
+    suspend fun load(): StudyResetMarker?
+    suspend fun mark(retainedEnvelopeBytes: ByteArray?)
+    suspend fun clear()
+}
+
+fun interface StudyStorageResetter {
+    suspend fun clearAll()
+}

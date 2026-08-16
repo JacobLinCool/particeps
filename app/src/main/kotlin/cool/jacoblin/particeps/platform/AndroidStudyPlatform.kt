@@ -27,6 +27,7 @@ import cool.jacoblin.particeps.MainActivity
 import cool.jacoblin.particeps.ParticepsNotificationChannels
 import cool.jacoblin.particeps.R
 import cool.jacoblin.particeps.SafetyPauseWorker
+import cool.jacoblin.particeps.RecoveryWorker
 import cool.jacoblin.particeps.SurveyActivity
 import cool.jacoblin.particeps.UploadWorker
 import cool.jacoblin.particeps.core.application.StudyCollectionHost
@@ -318,6 +319,36 @@ class AndroidStudyWorkScheduler(
         }
     }
 
+    override suspend fun scheduleRecoveryRetry() {
+        val request = OneTimeWorkRequestBuilder<RecoveryWorker>()
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
+            .build()
+        awaitWorkMutations(
+            listOf({
+                workManager.enqueueUniqueWork(
+                    RECOVERY_WORK_NAME,
+                    ExistingWorkPolicy.REPLACE,
+                    request,
+                )
+            }),
+        )
+    }
+
+    override suspend fun cancelRecoveryRetry() {
+        withContext(NonCancellable) {
+            awaitWorkMutations(listOf({ workManager.cancelUniqueWork(RECOVERY_WORK_NAME) }))
+        }
+    }
+
+    override suspend fun cancelAllForReset() {
+        withContext(NonCancellable) {
+            awaitCleanupMutations(
+                notificationCleanup = { notificationManager.cancelAll() },
+                mutations = listOf({ workManager.cancelAllWork() }),
+            )
+        }
+    }
+
     override suspend fun cancelCollectionWork(experimentId: String, occurrenceIds: Set<String>) {
         awaitCleanupMutations(
             notificationCleanup = {
@@ -350,6 +381,7 @@ class AndroidStudyWorkScheduler(
 
     private fun deadlineWorkName(experimentId: String) = "particeps-deadline-$experimentId"
     private val DAILY_STATUS_WORK_NAME = "particeps-daily-status"
+    private val RECOVERY_WORK_NAME = "particeps-study-recovery"
     private fun uploadTag(experimentId: String) = "particeps-upload-$experimentId"
     companion object {
         fun uploadWorkName(experimentId: String, configurationId: String) =
@@ -396,9 +428,9 @@ internal fun collectionWorkPlan(
     }
     val lifetime = studyLifetime(configuration, metadata, observedAt)
     return CollectionWorkPlan(
-        // REPLACE is intentional: same-boot TIME_CHANGED/process recovery and rc5's reset deadline
-        // must be corrected from the immutable participant-start boundary on every acknowledged
-        // ensure. Cross-boot active repair is rejected by studyLifetime before reaching this plan.
+        // REPLACE is intentional: every acknowledged ensure must reflect the session's latest
+        // durable checkpoint after process, time-change, or reboot reconciliation. A raw
+        // cross-boot observation is rejected by studyLifetime before reaching this plan.
         deadlineDelayMillis = lifetime.remainingMillis.takeIf { active },
         deadlinePolicy = ExistingWorkPolicy.REPLACE,
         scheduleDailyStatus = active,
