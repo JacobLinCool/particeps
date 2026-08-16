@@ -82,6 +82,8 @@ export const SETUP_STEPS: readonly { nameKey: MessageKey; captionKey: MessageKey
 
 export const REPOSITORY = 'https://github.com/JacobLinCool/particeps';
 
-export const ANDROID_APK_URL = `${REPOSITORY}/releases/download/v1.0.0-rc.6/particeps-v1.0.0-rc.6.apk`;
+export const ANDROID_RELEASE_VERSION = 'v1.0.0-rc.7';
+
+export const ANDROID_APK_URL = `${REPOSITORY}/releases/download/${ANDROID_RELEASE_VERSION}/particeps-${ANDROID_RELEASE_VERSION}.apk`;
 
 export const PARTICIPANT_GUIDE = `${REPOSITORY}/blob/main/docs/participant-guide.md`;

@@ -188,11 +188,11 @@ New collectors are the main contribution path — see [CONTRIBUTING.md](CONTRIBU
 
 `v1.0.0-rc.5` established the current application ID and the production signing certificate recorded
 in the repository's [auditable identity anchor](.github/android-release-signing-certificate.sha256),
-so rc.6 updates rc.5 in place. Rc.4 and earlier use another application ID, signing certificate, or
-file identity and cannot update directly to the current build. Those older apps keep running under
-their own identity until removed. Uninstalling destroys their Keystore key and everything encrypted
-under it, so export whatever is still wanted first. Artifacts from before the rename are unsupported
-input to every current implementation, and there is no converter.
+so rc.7 updates rc.5 and rc.6 in place. Rc.4 and earlier use another application ID, signing
+certificate, or file identity and cannot update directly to the current build. Those older apps keep
+running under their own identity until removed. Uninstalling destroys their Keystore key and
+everything encrypted under it, so export whatever is still wanted first. Artifacts from before the
+rename are unsupported input to every current implementation, and there is no converter.
 [CHANGELOG.md](CHANGELOG.md) says which release carries which identity, which spellings it retired,
 and what each release asks of an existing install.
 

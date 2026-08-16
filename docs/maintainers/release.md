@@ -67,18 +67,18 @@ application-distribution plan.
 ### Update compatibility
 
 `v1.0.0-rc.5` established the current `cool.jacoblin.particeps` application ID and the certificate in
-the repository identity anchor. `v1.0.0-rc.6` keeps both, so it updates rc.5 in place. Earlier
-candidates used another application ID, another certificate, or incompatible file identities and
-cannot update directly to the current build. [CHANGELOG.md](../../CHANGELOG.md) records the action
-required from each release.
+the repository identity anchor. `v1.0.0-rc.6` and `v1.0.0-rc.7` keep both, so rc.7 updates rc.5 or
+rc.6 in place. Earlier candidates used another application ID, another certificate, or incompatible
+file identities and cannot update directly to the current build. [CHANGELOG.md](../../CHANGELOG.md)
+records the action required from each release.
 
 The key was rotated to correct the certificate's subject, which named the pre-rename product. A
 certificate is signed over its own subject, so changing it means issuing a new one. That was
 affordable only before the current identity and key were handed to testers. It stops being
 affordable once a participant is running rc.5 or later, so it does not happen again.
 
-State update compatibility in every release note. In particular, rc.5 updates in place to rc.6;
-rc.4 and earlier do not.
+State update compatibility in every release note. In particular, rc.5 and rc.6 update in place to
+rc.7; rc.4 and earlier do not.
 
 ## Android Developer Verification
 

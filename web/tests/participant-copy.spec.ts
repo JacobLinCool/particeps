@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ANDROID_APK_URL, GLANCE } from '$lib/participant/content';
+import { ANDROID_APK_URL, ANDROID_RELEASE_VERSION, GLANCE } from '$lib/participant/content';
 import { en, zhTW } from '$lib/participant/copy';
 
 describe('participant page structure', () => {
@@ -12,8 +12,9 @@ describe('participant page structure', () => {
   });
 
   it('offers the verified Android release from the hero in both locales', () => {
+    expect(ANDROID_RELEASE_VERSION).toBe('v1.0.0-rc.7');
     expect(ANDROID_APK_URL).toBe(
-      'https://github.com/JacobLinCool/particeps/releases/download/v1.0.0-rc.6/particeps-v1.0.0-rc.6.apk'
+      'https://github.com/JacobLinCool/particeps/releases/download/v1.0.0-rc.7/particeps-v1.0.0-rc.7.apk'
     );
     expect(en.hero.download).toBe('Download App');
     expect(zhTW.hero.download).toBe('下載 App');
