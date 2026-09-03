@@ -19,6 +19,49 @@ MODULES = (
 
 
 class AndroidHostHarnessContractTest(unittest.TestCase):
+    def test_api_37_surfaceflinger_guard_sets_and_verifies_sampling_property(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            adb = directory / "adb"
+            log = directory / "adb.log"
+            adb.write_text(
+                """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$FAKE_ADB_LOG"
+case "$*" in
+  *" shell setprop debug.sf.luma_sampling 0")
+    ;;
+  *" shell getprop debug.sf.luma_sampling")
+    printf '0\\r\\n'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+"""
+            )
+            adb.chmod(0o755)
+            environment = os.environ.copy()
+            environment["ADB"] = str(adb)
+            environment["FAKE_ADB_LOG"] = str(log)
+            environment["PARTICEPS_SURFACEFLINGER_GUARD_TIMEOUT_SECONDS"] = "2"
+            result = subprocess.run(
+                [
+                    str(ROOT / "tools/android-api37-surfaceflinger-guard.sh"),
+                    "emulator-5554",
+                ],
+                cwd=ROOT,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn("region sampling disabled", result.stdout)
+            commands = log.read_text()
+            self.assertIn("-s emulator-5554 shell setprop debug.sf.luma_sampling 0", commands)
+            self.assertIn("-s emulator-5554 shell getprop debug.sf.luma_sampling", commands)
+
     def run_instrumentation_launcher(
         self,
         fail_install: bool = False,
@@ -228,9 +271,15 @@ esac
                 workflow,
             )
             self.assertNotIn("swiftshader_indirect", workflow)
-            self.assertIn("pre-emulator-launch-script: tools/android-emulator-prebuild.sh", workflow)
+            self.assertIn(
+                "pre-emulator-launch-script: tools/android-emulator-prebuild.sh "
+                "--require-16k=${{ matrix.require_16k }}",
+                workflow,
+            )
         self.assertIn("API 37 ps16k emulator page size must be 16384", launcher)
         self.assertIn("API 37 ps16k image revision must be at least 5", launcher)
+        self.assertIn("debug.sf.luma_sampling", launcher)
+        self.assertIn("SurfaceFlinger did not remain stable", launcher)
         self.assertIn("./gradlew --no-daemon --max-workers=1", launcher)
         self.assertIn("connectedDebugAndroidTest", launcher)
         self.assertIn("tools/android-instrumentation-ci.sh", launcher)
@@ -241,6 +290,7 @@ esac
         self.assertIn(":test-fixtures:traffic-target-a:assembleReplacementDebug", prebuild)
         self.assertIn(":test-fixtures:competing-vpn:assembleDebug", prebuild)
         self.assertIn("-PinstrumentedTestAbi=x86_64", prebuild)
+        self.assertIn("android-api37-surfaceflinger-guard.sh", prebuild)
         app_build = (ROOT / "app/build.gradle.kts").read_text()
         self.assertIn('providers.gradleProperty("instrumentedTestAbi")', app_build)
         self.assertIn("options=(--no-streaming)", instrumentation)

@@ -190,9 +190,8 @@ jobs:
             system_image_api: "37.0"
             target: google_apis_ps16k
             require_16k: true
-            # API 37 ps16k's RegionSamplingThread aborts when the host advertises
-            # ReadColorBufferDma. The off renderer falls back to lavapipe/swangle
-            # and keeps that unrelated capability out of the graphics protocol.
+            # Keep the renderer minimal; the pre-launch guard separately disables
+            # the unrelated RegionSamplingThread path that is broken in revision 5.
             emulator_options: "-no-window -gpu off -no-snapshot -noaudio -no-boot-anim -camera-back none"
     env:
       ANDROID_NDK_PACKAGE: ndk;30.0.14904198
@@ -263,7 +262,7 @@ jobs:
           disk-size: 12G
           emulator-options: ${{ matrix.emulator_options }}
           disable-animations: true
-          pre-emulator-launch-script: tools/android-emulator-prebuild.sh
+          pre-emulator-launch-script: tools/android-emulator-prebuild.sh --require-16k=${{ matrix.require_16k }}
           script: tools/android-emulator-ci.sh --require-16k=${{ matrix.require_16k }}
 
       - name: Upload sanitized Android host-harness evidence
