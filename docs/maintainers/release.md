@@ -20,7 +20,7 @@ verifier. Successful runs retain the debug APK as an artifact for 14 days.
 The complete API 37 host harness is temporarily quarantined for one exact preview-emulator defect:
 the evidence must identify `mapper.ranchu.so`, the `SurfaceFlinger` process, and
 `Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma`. The classifier first rejects any
-Particeps App, VPN, `libgojni`, instrumentation, or test assertion failure. Every other failure is
+Particeps App, VPN, `libgojni`, or instrumentation/test assertion failure. Every other failure is
 blocking, and the exact signature must also terminate the emulator transport rather than merely
 coincide with a scenario failure. CI runs the stock image without root, remount, framework overlay,
 SystemUI disablement, or system-server mutation.

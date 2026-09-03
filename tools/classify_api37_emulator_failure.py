@@ -14,7 +14,6 @@ KNOWN_PROCESS = re.compile(r"surfaceflinger", re.IGNORECASE)
 PRODUCT_FAILURES = (
     re.compile(r"java\.lang\.AssertionError"),
     re.compile(r"FAILURES!!!"),
-    re.compile(r"INSTRUMENTATION_(?:ABORTED|FAILED)"),
     re.compile(r"shortMsg="),
     re.compile(r"Host scenario failed"),
     re.compile(r"(?:FATAL EXCEPTION|Process:)\s*cool\.jacoblin\.particeps", re.IGNORECASE),

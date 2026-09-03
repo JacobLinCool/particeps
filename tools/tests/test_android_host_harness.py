@@ -58,6 +58,7 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
         self,
         fail_install: bool = False,
         fail_instrumentation: bool = False,
+        suite: str | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], str]:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -87,6 +88,8 @@ case "$1" in
   shell)
     if [[ "${FAKE_ADB_FAIL_INSTRUMENT:-0}" == 1 ]]; then
       printf 'FAILURES!!!\\nTests run: 1, Failures: 1\\n'
+    elif [[ "$*" == *Api37CompatibilityInstrumentation* ]]; then
+      printf 'INSTRUMENTATION_RESULT: stream=API 37 compatibility checks passed.\\nINSTRUMENTATION_CODE: -1\\n'
     else
       printf 'OK (1 test)\\n'
     fi
@@ -102,8 +105,11 @@ esac
                 environment["FAKE_ADB_FAIL_INSTALL"] = "1"
             if fail_instrumentation:
                 environment["FAKE_ADB_FAIL_INSTRUMENT"] = "1"
+            command = [str(ROOT / "tools/android-instrumentation-ci.sh")]
+            if suite is not None:
+                command.append(f"--suite={suite}")
             result = subprocess.run(
-                [str(ROOT / "tools/android-instrumentation-ci.sh")],
+                command,
                 cwd=ROOT,
                 env=environment,
                 check=False,
@@ -117,6 +123,13 @@ esac
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(3, commands.count("install --no-streaming"))
         self.assertEqual(2, commands.count("shell am instrument -w -r"))
+
+    def test_api_37_compatibility_uses_one_self_targeted_product_apk(self) -> None:
+        result, commands = self.run_instrumentation_launcher(suite="api37-compatibility")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(1, commands.count("install --no-streaming"))
+        self.assertEqual(1, commands.count("shell am instrument -w -r"))
+        self.assertIn("Api37CompatibilityInstrumentation", commands)
 
     def test_api_37_instrumentation_launcher_reports_install_failures(self) -> None:
         result, commands = self.run_instrumentation_launcher(fail_install=True)
@@ -298,18 +311,18 @@ esac
         self.assertIn("cool.jacoblin.particeps.test/androidx.test.runner.AndroidJUnitRunner", instrumentation)
         self.assertIn("cool.jacoblin.particeps.core.storage.test/androidx.test.runner.AndroidJUnitRunner", instrumentation)
         self.assertIn("INSTRUMENTATION_(ABORTED|FAILED)", instrumentation)
-        self.assertIn("cool.jacoblin.particeps.Api37CompatibilityTest", instrumentation)
+        self.assertIn("cool.jacoblin.particeps.Api37CompatibilityInstrumentation", instrumentation)
         self.assertIn("logcat -b crash -d -v brief", instrumentation)
         harness = (ROOT / "tools/android-host-harness.sh").read_text()
         self.assertIn('install --no-streaming -r -d -t', harness)
 
-        compatibility_test = (
+        compatibility_instrumentation = (
             ROOT
-            / "app/src/androidTest/kotlin/cool/jacoblin/particeps/Api37CompatibilityTest.kt"
+            / "app/src/debug/kotlin/cool/jacoblin/particeps/Api37CompatibilityInstrumentation.kt"
         ).read_text()
-        self.assertIn("Trafficshaping.touch()", compatibility_test)
-        self.assertIn("android.permission.ACCESS_LOCAL_NETWORK", compatibility_test)
-        self.assertNotIn("ActivityScenario", compatibility_test)
+        self.assertIn("Trafficshaping.touch()", compatibility_instrumentation)
+        self.assertIn("android.permission.ACCESS_LOCAL_NETWORK", compatibility_instrumentation)
+        self.assertNotIn("ActivityScenario", compatibility_instrumentation)
 
     def test_api_37_traffic_apps_declare_local_network_permission(self) -> None:
         permission = "android.permission.ACCESS_LOCAL_NETWORK"

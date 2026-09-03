@@ -452,7 +452,7 @@ blocks on all four packaged ABIs and 16 KiB ELF alignment.
 
 The complete API 37 host harness is temporarily quarantined only when evidence exactly matches the
 revision 5 `mapper.ranchu.so` / `SurfaceFlinger` readback assertion and contains no Particeps App,
-VPN, native, instrumentation, or test assertion failure. It must also end in a recognized emulator
+VPN, native, or instrumentation/test assertion failure. It must also end in a recognized emulator
 transport failure; a coincident platform log cannot mask a failed scenario. Any other failure
 remains blocking. CI does not modify the preview system image or its services. This limitation is
 tracked in [#33](https://github.com/JacobLinCool/particeps/issues/33), and a quarantined run is not

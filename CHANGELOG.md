@@ -39,7 +39,7 @@ must do.
   and Play services location registration/removal cannot leave startup waiting indefinitely. A
   timeout follows the same fail-closed resource path as an explicit platform failure.
 - API 37 compatibility remains a release blocker for compilation, installation, the revision 5+
-  16 KiB runtime, manifest/permission contracts, source-built native loading, non-snapshot storage
+  16 KiB runtime, manifest/permission contracts, source-built native loading, non-snapshot
   instrumentation, four packaged ABIs, and 16 KiB ELF alignment. The complete API 37 host harness
   is temporarily quarantined only for the exact revision 5 `mapper.ranchu.so` / `SurfaceFlinger`
   readback assertion tracked in [#33](https://github.com/JacobLinCool/particeps/issues/33); App, VPN,

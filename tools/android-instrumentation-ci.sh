@@ -53,7 +53,13 @@ install_apk() {
 run_instrumentation() {
   local name="$1"
   local runner="$2"
-  shift 2
+  local success_pattern='^OK \([1-9][0-9]* tests?\)$'
+  if (( $# >= 3 )); then
+    success_pattern="$3"
+    shift 3
+  else
+    shift 2
+  fi
   local output="$temporary_directory/$name.txt"
   if ! "$adb_binary" shell am instrument -w -r "$@" "$runner" \
     | tr -d '\r' \
@@ -64,7 +70,7 @@ run_instrumentation() {
     return 1
   fi
   cp "$output" "$report_directory/$name.txt"
-  if grep -Eq '^OK \([1-9][0-9]* tests?\)$' "$output" \
+  if grep -Eq "$success_pattern" "$output" \
     && ! grep -Eq 'FAILURES!!!|INSTRUMENTATION_(ABORTED|FAILED)|shortMsg=' "$output"; then
     return 0
   fi
@@ -78,17 +84,18 @@ run_instrumentation() {
 "$adb_binary" uninstall cool.jacoblin.particeps.test >/dev/null 2>&1 || true
 "$adb_binary" uninstall cool.jacoblin.particeps >/dev/null 2>&1 || true
 install_apk app/build/outputs/apk/debug/app-debug.apk false
-install_apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk true
 if [[ "$suite" == "api37-compatibility" ]]; then
   run_instrumentation \
-    app \
-    cool.jacoblin.particeps.test/androidx.test.runner.AndroidJUnitRunner \
-    -e class cool.jacoblin.particeps.Api37CompatibilityTest
-else
-  run_instrumentation \
-    app \
-    cool.jacoblin.particeps.test/androidx.test.runner.AndroidJUnitRunner
+    api37-compatibility \
+    cool.jacoblin.particeps/cool.jacoblin.particeps.Api37CompatibilityInstrumentation \
+    '^INSTRUMENTATION_CODE: -1$'
+  exit 0
 fi
+
+install_apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk true
+run_instrumentation \
+  app \
+  cool.jacoblin.particeps.test/androidx.test.runner.AndroidJUnitRunner
 
 "$adb_binary" uninstall cool.jacoblin.particeps.core.storage.test >/dev/null 2>&1 || true
 install_apk core/storage/build/outputs/apk/androidTest/debug/storage-debug-androidTest.apk true

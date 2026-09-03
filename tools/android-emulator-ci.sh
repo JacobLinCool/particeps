@@ -77,7 +77,7 @@ if [[ "$require_16k" == true ]]; then
   python3 -c 'import os, pathlib, xml.etree.ElementTree as ET; p=pathlib.Path(os.environ["ANDROID_SDK_ROOT"]) / "system-images/android-37.0/google_apis_ps16k/x86_64/package.xml"; r=ET.parse(p).getroot().find(".//revision/major"); assert r is not None and int(r.text) >= 5, "API 37 ps16k image revision must be at least 5"'
 
   # This blocking suite never launches participant UI or asks the system to capture task snapshots.
-  # It verifies installability, manifest contracts, native loading, and storage instrumentation on
+  # It verifies installability, manifest contracts, native loading, and non-snapshot instrumentation on
   # an unmodified API 37 16 KiB image.
   tools/android-instrumentation-ci.sh --suite=api37-compatibility
   run_api37_quarantined_host_harness

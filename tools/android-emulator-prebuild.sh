@@ -17,18 +17,24 @@ case "$1" in
     ;;
 esac
 
-# Build every APK used by the blocking compatibility checks and host harness before starting the
-# emulator. API 37 uses the stock image without root, remount, overlays, or system-service changes.
+# Build the stock-image compatibility APK or every APK used by the API 34 host harness before
+# starting the emulator. The API 37 self-targeted instrumentation lives in the debug App itself, so
+# its blocking checks need only the one product installation that they are intended to verify.
+gradle_tasks=(:app:assembleDebug)
+if [[ "$1" == "--require-16k=false" ]]; then
+  gradle_tasks+=(
+    :app:assembleDebugAndroidTest
+    :core:storage:assembleDebug
+    :core:storage:assembleDebugAndroidTest
+    :test-fixtures:competing-vpn:assembleDebug
+    :test-fixtures:shared-uid-peer:assembleDebug
+    :test-fixtures:shared-uid-target:assembleDebug
+    :test-fixtures:traffic-control:assembleDebug
+    :test-fixtures:traffic-target-a:assembleBaseDebug
+    :test-fixtures:traffic-target-a:assembleReplacementDebug
+    :test-fixtures:traffic-target-b:assembleDebug
+  )
+fi
 ./gradlew --no-daemon --max-workers=1 \
   -PinstrumentedTestAbi=x86_64 \
-  :app:assembleDebug \
-  :app:assembleDebugAndroidTest \
-  :core:storage:assembleDebug \
-  :core:storage:assembleDebugAndroidTest \
-  :test-fixtures:competing-vpn:assembleDebug \
-  :test-fixtures:shared-uid-peer:assembleDebug \
-  :test-fixtures:shared-uid-target:assembleDebug \
-  :test-fixtures:traffic-control:assembleDebug \
-  :test-fixtures:traffic-target-a:assembleBaseDebug \
-  :test-fixtures:traffic-target-a:assembleReplacementDebug \
-  :test-fixtures:traffic-target-b:assembleDebug
+  "${gradle_tasks[@]}"

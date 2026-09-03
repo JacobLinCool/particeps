@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Self-targeted, debug-only instrumentation for the API 37 compatibility lane. -->
+    <instrumentation
+        android:name=".Api37CompatibilityInstrumentation"
+        android:functionalTest="true"
+        android:handleProfiling="false"
+        android:targetPackage="cool.jacoblin.particeps" />
+
     <application>
         <!-- Debug-only shell control for the blocking host harness. Release has no such component. -->
         <receiver
