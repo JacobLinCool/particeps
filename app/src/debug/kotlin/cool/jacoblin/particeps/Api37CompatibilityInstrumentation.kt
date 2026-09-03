@@ -14,6 +14,11 @@ import java.io.File
 
 /** Debug-only API 37 checks that do not launch UI or invoke system task snapshots. */
 class Api37CompatibilityInstrumentation : Instrumentation() {
+    override fun onCreate(arguments: Bundle?) {
+        super.onCreate(arguments)
+        start()
+    }
+
     override fun onStart() {
         val results = Bundle()
         try {

@@ -321,6 +321,8 @@ esac
             / "app/src/debug/kotlin/cool/jacoblin/particeps/Api37CompatibilityInstrumentation.kt"
         ).read_text()
         self.assertIn("Trafficshaping.touch()", compatibility_instrumentation)
+        self.assertIn("override fun onCreate", compatibility_instrumentation)
+        self.assertIn("start()", compatibility_instrumentation)
         self.assertIn("android.permission.ACCESS_LOCAL_NETWORK", compatibility_instrumentation)
         self.assertNotIn("ActivityScenario", compatibility_instrumentation)
 
