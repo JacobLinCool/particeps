@@ -134,9 +134,10 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
             self.assertIn("build/reports/android-host-harness", workflow)
             self.assertIn("google_apis_ps16k", workflow)
             self.assertIn("system_image_api: 34", workflow)
+            self.assertIn("disk-size: 12G", workflow)
         self.assertIn("API 37 ps16k emulator page size must be 16384", launcher)
         self.assertIn("API 37 ps16k image revision must be at least 5", launcher)
-        self.assertIn("./gradlew --no-daemon connectedDebugAndroidTest", launcher)
+        self.assertIn("./gradlew --no-daemon --max-workers=1 connectedDebugAndroidTest", launcher)
         self.assertIn("tools/android-host-harness.sh", launcher)
 
     def test_api_37_traffic_apps_declare_local_network_permission(self) -> None:

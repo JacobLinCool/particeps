@@ -32,5 +32,7 @@ if [[ "$require_16k" == true ]]; then
   python3 -c 'import os, pathlib, xml.etree.ElementTree as ET; p=pathlib.Path(os.environ["ANDROID_SDK_ROOT"]) / "system-images/android-37.0/google_apis_ps16k/x86_64/package.xml"; r=ET.parse(p).getroot().find(".//revision/major"); assert r is not None and int(r.text) >= 5, "API 37 ps16k image revision must be at least 5"'
 fi
 
-./gradlew --no-daemon connectedDebugAndroidTest
+# One emulator is shared by every Android module in this job. Serial workers avoid overlapping
+# package-installer sessions and make teardown between test APKs deterministic.
+./gradlew --no-daemon --max-workers=1 connectedDebugAndroidTest
 tools/android-host-harness.sh
