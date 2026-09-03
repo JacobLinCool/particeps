@@ -21,7 +21,7 @@ install_apk() {
     options+=(-t)
   fi
   if output="$("$adb_binary" install "${options[@]}" "$apk" 2>&1 | tr -d '\r')"; then
-    if [[ "$output" == "Success" ]]; then
+    if grep -qx 'Success' <<< "$output"; then
       return 0
     fi
   fi

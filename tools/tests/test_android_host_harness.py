@@ -44,7 +44,7 @@ case "$1" in
       printf 'Failure [INSTALL_FAILED_TEST]\\n'
       exit 1
     fi
-    printf 'Success\\n'
+    printf 'fixture.apk: 1 file pushed, 0 skipped.\\nPerforming Push Install\\nSuccess\\n'
     ;;
   logcat)
     printf 'synthetic crash buffer\\n'
