@@ -53,7 +53,12 @@ class Api37CompatibilityInstrumentation : Instrumentation() {
 
         val vpnService = context.packageManager.getServiceInfo(
             ComponentName(context, TrafficShapingVpnService::class.java),
-            PackageManager.ComponentInfoFlags.of(0),
+            PackageManager.ComponentInfoFlags.of(
+                (
+                    PackageManager.MATCH_DIRECT_BOOT_AWARE or
+                        PackageManager.MATCH_DIRECT_BOOT_UNAWARE
+                    ).toLong(),
+            ),
         )
         check(vpnService.permission == Manifest.permission.BIND_VPN_SERVICE) {
             "Traffic-shaping service permission is invalid"

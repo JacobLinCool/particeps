@@ -362,6 +362,8 @@ esac
         self.assertIn("start()", compatibility_instrumentation)
         self.assertIn("getServiceInfo", compatibility_instrumentation)
         self.assertIn("ComponentName(context, TrafficShapingVpnService::class.java)", compatibility_instrumentation)
+        self.assertIn("PackageManager.MATCH_DIRECT_BOOT_AWARE", compatibility_instrumentation)
+        self.assertIn("PackageManager.MATCH_DIRECT_BOOT_UNAWARE", compatibility_instrumentation)
         self.assertNotIn("packageInfo.services", compatibility_instrumentation)
         self.assertIn("android.permission.ACCESS_LOCAL_NETWORK", compatibility_instrumentation)
         self.assertNotIn("ActivityScenario", compatibility_instrumentation)
