@@ -9,8 +9,8 @@ val nativeAar = rootProject.layout.buildDirectory.file(
     "generated/traffic-shaping/particeps-traffic-shaping.aar",
 )
 val nativeSourceDirectory = rootProject.layout.projectDirectory.dir("native/traffic-shaping")
-val androidSdk = providers.environmentVariable("ANDROID_HOME")
-    .orElse(providers.environmentVariable("ANDROID_SDK_ROOT"))
+val androidSdk = providers.environmentVariable("ANDROID_SDK_ROOT")
+    .orElse(providers.environmentVariable("ANDROID_HOME"))
     .get()
 
 val buildNativeTrafficShapingAar = tasks.register<Exec>("buildNativeTrafficShapingAar") {
