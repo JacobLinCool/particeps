@@ -1,5 +1,8 @@
 import base64
 import json
+import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -16,6 +19,64 @@ MODULES = (
 
 
 class AndroidHostHarnessContractTest(unittest.TestCase):
+    def run_instrumentation_launcher(
+        self,
+        fail_instrumentation: bool = False,
+    ) -> tuple[subprocess.CompletedProcess[str], str]:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            adb = directory / "adb"
+            log = directory / "adb.log"
+            adb.write_text(
+                """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$FAKE_ADB_LOG"
+case "$1" in
+  get-state)
+    printf 'device\\n'
+    ;;
+  uninstall)
+    exit 1
+    ;;
+  install)
+    printf 'Success\\n'
+    ;;
+  shell)
+    if [[ "${FAKE_ADB_FAIL_INSTRUMENT:-0}" == 1 ]]; then
+      printf 'FAILURES!!!\\nTests run: 1, Failures: 1\\n'
+    else
+      printf 'OK (1 test)\\n'
+    fi
+    ;;
+esac
+"""
+            )
+            adb.chmod(0o755)
+            environment = os.environ.copy()
+            environment["ADB"] = str(adb)
+            environment["FAKE_ADB_LOG"] = str(log)
+            if fail_instrumentation:
+                environment["FAKE_ADB_FAIL_INSTRUMENT"] = "1"
+            result = subprocess.run(
+                [str(ROOT / "tools/android-instrumentation-ci.sh")],
+                cwd=ROOT,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            return result, log.read_text()
+
+    def test_api_37_instrumentation_launcher_uses_non_streaming_installs(self) -> None:
+        result, commands = self.run_instrumentation_launcher()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(3, commands.count("install --no-streaming -r -d -t"))
+        self.assertEqual(2, commands.count("shell am instrument -w -r"))
+
+    def test_api_37_instrumentation_launcher_rejects_test_failures(self) -> None:
+        result, _ = self.run_instrumentation_launcher(fail_instrumentation=True)
+        self.assertNotEqual(0, result.returncode)
+
     def test_fixtures_are_debug_only_and_not_app_dependencies(self) -> None:
         settings = (ROOT / "settings.gradle.kts").read_text()
         app_build = (ROOT / "app/build.gradle.kts").read_text()
@@ -123,6 +184,7 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
 
     def test_both_blocking_emulator_lanes_run_harness_and_upload_only_sanitized_reports(self) -> None:
         launcher = (ROOT / "tools/android-emulator-ci.sh").read_text()
+        instrumentation = (ROOT / "tools/android-instrumentation-ci.sh").read_text()
         prebuild = (ROOT / "tools/android-emulator-prebuild.sh").read_text()
         for workflow_name in ("ci.yml", "release.yml"):
             workflow = (ROOT / f".github/workflows/{workflow_name}").read_text()
@@ -142,6 +204,7 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
         self.assertIn("API 37 ps16k image revision must be at least 5", launcher)
         self.assertIn("./gradlew --no-daemon --max-workers=1", launcher)
         self.assertIn("connectedDebugAndroidTest", launcher)
+        self.assertIn("tools/android-instrumentation-ci.sh", launcher)
         self.assertIn("tools/android-host-harness.sh --skip-build", launcher)
         self.assertIn("-PinstrumentedTestAbi=x86_64", launcher)
         self.assertIn(":app:assembleDebugAndroidTest", prebuild)
@@ -151,9 +214,10 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
         self.assertIn("-PinstrumentedTestAbi=x86_64", prebuild)
         app_build = (ROOT / "app/build.gradle.kts").read_text()
         self.assertIn('providers.gradleProperty("instrumentedTestAbi")', app_build)
-        self.assertIn('installOptions += "--no-streaming"', app_build)
-        storage_build = (ROOT / "core/storage/build.gradle.kts").read_text()
-        self.assertIn('installOptions += "--no-streaming"', storage_build)
+        self.assertIn("install --no-streaming -r -d -t", instrumentation)
+        self.assertIn("cool.jacoblin.particeps.test/androidx.test.runner.AndroidJUnitRunner", instrumentation)
+        self.assertIn("cool.jacoblin.particeps.core.storage.test/androidx.test.runner.AndroidJUnitRunner", instrumentation)
+        self.assertIn("INSTRUMENTATION_(ABORTED|FAILED)", instrumentation)
         harness = (ROOT / "tools/android-host-harness.sh").read_text()
         self.assertIn('install --no-streaming -r -d -t', harness)
 
