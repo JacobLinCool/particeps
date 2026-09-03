@@ -36,17 +36,20 @@ sdkmanager="$(find_sdk_tool sdkmanager)"
 avdmanager="$(find_sdk_tool avdmanager)"
 adb_binary="$ANDROID_SDK_ROOT/platform-tools/adb"
 emulator_binary="$ANDROID_SDK_ROOT/emulator/emulator"
-for executable in "$adb_binary" "$emulator_binary"; do
-  if [[ ! -x "$executable" ]]; then
-    echo "Required Android SDK executable is missing: $executable" >&2
-    exit 1
-  fi
-done
 
 system_image_package="system-images;android-37.0;google_apis_ps16k;x86_64"
 printf 'y\n' | "$sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" \
+  "emulator" \
+  "platform-tools" \
   "platforms;android-37.0" \
   "$system_image_package"
+
+for executable in "$adb_binary" "$emulator_binary"; do
+  if [[ ! -x "$executable" ]]; then
+    echo "Required Android SDK executable is missing after SDK installation: $executable" >&2
+    exit 1
+  fi
+done
 
 python3 -c 'import os, pathlib, xml.etree.ElementTree as ET; p=pathlib.Path(os.environ["ANDROID_SDK_ROOT"]) / "system-images/android-37.0/google_apis_ps16k/x86_64/package.xml"; r=ET.parse(p).getroot().find(".//revision/major"); assert r is not None and int(r.text) >= 5, "API 37 ps16k image revision must be at least 5"'
 

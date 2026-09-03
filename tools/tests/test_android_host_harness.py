@@ -310,6 +310,8 @@ esac
         self.assertIn("service check package", api37_runner)
         self.assertIn("service check activity", api37_runner)
         self.assertIn("service check input", api37_runner)
+        self.assertIn('"emulator"', api37_runner)
+        self.assertIn('"platform-tools"', api37_runner)
         self.assertIn("-logcat-output", api37_runner)
         self.assertIn("tools/android-emulator-ci.sh --require-16k=true", api37_runner)
         self.assertNotIn("settings put", api37_runner)
