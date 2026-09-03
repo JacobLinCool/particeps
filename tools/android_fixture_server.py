@@ -31,7 +31,10 @@ class ByteCounter:
 
 def throughput_bounds(cap_kbps: int, duration_seconds: int) -> tuple[int, int]:
     expected = cap_kbps * 1_000 * duration_seconds // 8
-    lower = expected * 90 // 100
+    # The cap applies to aggregate Layer-3 bytes while this external observer
+    # can count only TCP payload. Keep the upper bound strict and allow the
+    # payload floor to absorb headers plus virtual-device scheduling jitter.
+    lower = expected * 85 // 100
     upper = expected * 105 // 100 + IP_MTU_BYTES
     return lower, upper
 

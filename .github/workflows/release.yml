@@ -105,10 +105,15 @@ jobs:
             system_image_api: 34
             target: google_apis
             require_16k: false
+            emulator_options: "-no-window -gpu swiftshader -feature -Vulkan -feature -GLDirectMem -no-snapshot -noaudio -no-boot-anim -camera-back none"
           - name: API 37 16 KiB
             system_image_api: "37.0"
             target: google_apis_ps16k
             require_16k: true
+            # API 37 ps16k's RegionSamplingThread aborts when the host advertises
+            # ReadColorBufferDma. The off renderer falls back to lavapipe/swangle
+            # and keeps that unrelated capability out of the graphics protocol.
+            emulator_options: "-no-window -gpu off -no-snapshot -noaudio -no-boot-anim -camera-back none"
     env:
       ANDROID_NDK_PACKAGE: ndk;30.0.14904198
       GOTOOLCHAIN: local
@@ -176,9 +181,7 @@ jobs:
           profile: pixel_7_pro
           ram-size: 4096M
           disk-size: 12G
-          # The API 37 ps16k image rejects the host ReadColorBufferDma capability in
-          # mapper.ranchu. Disabling GLDirectMem prevents the emulator from advertising it.
-          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -feature -GLDirectMem -no-snapshot -noaudio -no-boot-anim -camera-back none
+          emulator-options: ${{ matrix.emulator_options }}
           disable-animations: true
           pre-emulator-launch-script: tools/android-emulator-prebuild.sh
           script: tools/android-emulator-ci.sh --require-16k=${{ matrix.require_16k }}

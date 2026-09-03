@@ -14,9 +14,11 @@ Particeps.
   Android revokes/replaces the Particeps VPN without a fake production callback.
 
 The blocking throughput stage runs two selected targets concurrently for 60 seconds at each signed
-64, 512, and 4,096 kbps resource profile. It checks their combined payload stays within 90% of the
-cap and the cap plus 5% and one MTU. A simultaneous unselected control connection must exceed that
-upper bound, proving it bypasses both the local VPN and limiter.
+64, 512, and 4,096 kbps resource profile. It checks their combined TCP payload reaches 85% of the
+Layer-3 cap and stays below the cap plus 5% and one MTU. The payload floor accounts for IP/TCP
+headers and virtual-device scheduling jitter; it does not relax the upper limit. A simultaneous
+unselected control connection must exceed that upper bound, proving it bypasses both the local VPN
+and limiter.
 Before that measurement, the same TCP/UDP/DNS/IPv4/IPv6 attempt matrix runs while the signed VPN
 resource is verified; the host requires the original Particeps process and study to remain RUNNING.
 
