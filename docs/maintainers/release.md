@@ -23,8 +23,8 @@ the evidence must identify `mapper.ranchu.so`, the `SurfaceFlinger` process, and
 Particeps App, VPN, `libgojni`, or instrumentation/test assertion failure. Every other failure is
 blocking, and the exact signature must also terminate the emulator transport rather than merely
 coincide with a scenario failure. CI runs the stock image without root, remount, framework overlay,
-SystemUI disablement, or system-server mutation. The API 37 runner waits until the stock package,
-activity, and input services are actually registered before starting product checks; it does not
+SystemUI disablement, or system-server mutation. The API 37 runner waits until the stock package and
+activity services required by its non-UI checks are actually registered before starting; it does not
 treat the preview image's early `sys.boot_completed` property as sufficient readiness. If the exact
 tracked assertion restarts those services during the blocking compatibility checks, CI waits for
 consecutive successful package-manager probes after service recovery and reruns the entire

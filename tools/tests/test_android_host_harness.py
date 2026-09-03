@@ -324,7 +324,7 @@ esac
         self.assertNotIn("android-api37-surfaceflinger-guard.sh", prebuild)
         self.assertIn("service check package", api37_runner)
         self.assertIn("service check activity", api37_runner)
-        self.assertIn("service check input", api37_runner)
+        self.assertNotIn("service check input", api37_runner)
         self.assertIn('"emulator"', api37_runner)
         self.assertIn('"platform-tools"', api37_runner)
         self.assertIn("-logcat-output", api37_runner)

@@ -28,7 +28,7 @@ mkdir -p "$report_directory"
 
 await_api37_services() {
   local timeout_seconds="$1"
-  local deadline state boot_completed package_service activity_service input_service package_probe
+  local deadline state boot_completed package_service activity_service package_probe
   local stable_observations=0
   deadline=$((SECONDS + timeout_seconds))
   while (( SECONDS <= deadline )); do
@@ -37,11 +37,9 @@ await_api37_services() {
     if [[ "$state" == device && "$boot_completed" == 1 ]]; then
       package_service="$($adb_binary shell service check package 2>/dev/null | tr -d '\r' || true)"
       activity_service="$($adb_binary shell service check activity 2>/dev/null | tr -d '\r' || true)"
-      input_service="$($adb_binary shell service check input 2>/dev/null | tr -d '\r' || true)"
       package_probe="$($adb_binary shell cmd package path android 2>/dev/null | tr -d '\r' || true)"
       if [[ "$package_service" == *found* \
           && "$activity_service" == *found* \
-          && "$input_service" == *found* \
           && "$package_probe" == package:* ]]; then
         stable_observations=$((stable_observations + 1))
         if (( stable_observations >= 3 )); then

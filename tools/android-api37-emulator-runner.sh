@@ -93,7 +93,7 @@ trap cleanup EXIT
 emulator_pid=$!
 
 # sys.boot_completed is not a sufficient readiness signal on the revision 5 preview image: it can
-# become 1 before package, activity, or input has registered. Wait for the services required by the
+# become 1 before package or activity has registered. Wait only for services required by the
 # blocking compatibility gate. This observes the stock image and does not patch Android framework or
 # SystemUI state.
 deadline=$((SECONDS + 600))
@@ -110,8 +110,7 @@ while (( SECONDS <= deadline )); do
   if [[ "$state" == device && "$boot_completed" == 1 ]]; then
     package_service="$($adb_binary -s emulator-5554 shell service check package 2>/dev/null | tr -d '\r' || true)"
     activity_service="$($adb_binary -s emulator-5554 shell service check activity 2>/dev/null | tr -d '\r' || true)"
-    input_service="$($adb_binary -s emulator-5554 shell service check input 2>/dev/null | tr -d '\r' || true)"
-    if [[ "$package_service" == *found* && "$activity_service" == *found* && "$input_service" == *found* ]]; then
+    if [[ "$package_service" == *found* && "$activity_service" == *found* ]]; then
       ready=true
       break
     fi
