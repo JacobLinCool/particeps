@@ -461,6 +461,9 @@ activity services required by its non-UI compatibility checks because revision 5
 `sys.boot_completed=1` before those services are usable. An exact-signature service restart during the blocking
 compatibility test permits a bounded full-test retry, but never substitutes for a successful
 installation and native-loading result.
+Once those blocking checks pass, the full-harness watcher may stop only on the exact assertion plus
+a failed live package-manager probe. Host-scenario failures are retained before cleanup, so a later
+matching platform crash cannot convert them into a quarantine.
 
 The release verifier requires:
 

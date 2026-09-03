@@ -624,6 +624,7 @@ run_case() {
     else
       result="failed"
       failure_count=$((failure_count + 1))
+      printf 'Host scenario failed: %s\n' "$name" >&2
       "$adb_binary" shell cmd connectivity airplane-mode disable >/dev/null 2>&1 || true
       "$adb_binary" shell am force-stop "$competing_vpn_package" >/dev/null 2>&1 || true
       "$adb_binary" install --no-streaming -r -d -t "$target_a_base_apk" > "$harness_temporary/restore.txt" 2>&1 || true

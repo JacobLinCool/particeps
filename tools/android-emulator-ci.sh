@@ -107,7 +107,10 @@ run_api37_quarantined_host_harness() {
   local crash_log="$quarantine_directory/crash-buffer.txt"
   local classification="$quarantine_directory/classification.txt"
   local crash_log_pid
+  local harness_pid
   local harness_status
+  local package_probe
+  local platform_abort=false
 
   mkdir -p "$quarantine_directory"
   "$adb_binary" logcat -b crash -c >/dev/null 2>&1 || true
@@ -116,8 +119,30 @@ run_api37_quarantined_host_harness() {
 
   set +e
   PARTICEPS_HOST_REPORT_DIR="$quarantine_directory/harness" \
-    tools/android-host-harness.sh --skip-build >"$harness_output" 2>&1
-  harness_status=$?
+    tools/android-host-harness.sh --skip-build >"$harness_output" 2>&1 &
+  harness_pid=$!
+  while kill -0 "$harness_pid" >/dev/null 2>&1; do
+    if grep -Fq 'mapper.ranchu.so' "$crash_log" \
+        && grep -Fqi 'surfaceflinger' "$crash_log" \
+        && grep -Fq 'Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma' "$crash_log"; then
+      package_probe="$($adb_binary shell cmd package path android 2>/dev/null | tr -d '\r' || true)"
+      if [[ "$package_probe" != package:* ]]; then
+        printf '%s\n' \
+          'transport error: package service became unavailable after the exact SurfaceFlinger assertion' \
+          >> "$harness_output"
+        kill "$harness_pid" >/dev/null 2>&1 || true
+        wait "$harness_pid" >/dev/null 2>&1 || true
+        harness_status=1
+        platform_abort=true
+        break
+      fi
+    fi
+    sleep 1
+  done
+  if [[ "$platform_abort" != true ]]; then
+    wait "$harness_pid"
+    harness_status=$?
+  fi
   set -e
 
   kill "$crash_log_pid" >/dev/null 2>&1 || true

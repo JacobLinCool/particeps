@@ -30,6 +30,9 @@ tracked assertion restarts those services during the blocking compatibility chec
 consecutive successful package-manager probes after service recovery and reruns the entire
 install/native-loading instrumentation up to three times. A retry is never a pass: publication still
 requires one complete successful compatibility run.
+During the quarantined full harness, the same exact assertion plus a failed live package-manager
+probe stops the remaining scenarios immediately. A scenario failure is written as a blocking marker
+as soon as it occurs, so a later platform crash cannot hide an App, VPN, native, or test failure.
 [Issue #33](https://github.com/JacobLinCool/particeps/issues/33) tracks restoring the full lane as an
 unconditional blocker on a repaired image. A quarantined run is not evidence that the complete API
 37 host harness passed.
