@@ -14,15 +14,13 @@ resource_root="$repository_root/test-fixtures/api37-snapshot-overlay/src/main/re
 manifest="$repository_root/test-fixtures/api37-snapshot-overlay/src/main/AndroidManifest.xml"
 output_directory="$repository_root/test-fixtures/api37-snapshot-overlay/build/outputs/apk/debug"
 output_apk="$output_directory/api37-snapshot-overlay-debug.apk"
-debug_keystore="${PARTICEPS_DEBUG_KEYSTORE:-${ANDROID_USER_HOME:-${HOME}/.android}/debug.keystore}"
 
 for required_file in \
   "$build_tools/aapt2" \
   "$build_tools/apksigner" \
   "$build_tools/zipalign" \
   "$platform_jar" \
-  "$manifest" \
-  "$debug_keystore"; do
+  "$manifest"; do
   if [[ ! -f "$required_file" ]]; then
     echo "Required API 37 RRO build input is missing: $required_file" >&2
     exit 1
@@ -34,6 +32,30 @@ cleanup() {
   rm -rf -- "$temporary_directory"
 }
 trap cleanup EXIT
+
+if [[ -n "${PARTICEPS_DEBUG_KEYSTORE:-}" ]]; then
+  debug_keystore="$PARTICEPS_DEBUG_KEYSTORE"
+  if [[ ! -f "$debug_keystore" ]]; then
+    echo "Configured API 37 RRO signing keystore is missing: $debug_keystore" >&2
+    exit 1
+  fi
+else
+  debug_keystore="$temporary_directory/test-only.keystore"
+  if ! command -v keytool >/dev/null 2>&1; then
+    echo "JDK keytool is required to sign the test-only API 37 RRO" >&2
+    exit 1
+  fi
+  keytool -genkeypair \
+    -alias androiddebugkey \
+    -keyalg RSA \
+    -keysize 2048 \
+    -validity 1 \
+    -dname "CN=Particeps API 37 Test RRO" \
+    -keystore "$debug_keystore" \
+    -storepass android \
+    -keypass android \
+    -noprompt >/dev/null 2>&1
+fi
 
 mkdir -p "$output_directory"
 "$build_tools/aapt2" compile \

@@ -373,6 +373,7 @@ esac
         overlay_builder = (ROOT / "tools/build-api37-snapshot-overlay.sh").read_text()
         self.assertIn("--auto-add-overlay", overlay_builder)
         self.assertIn("apksigner", overlay_builder)
+        self.assertIn("Particeps API 37 Test RRO", overlay_builder)
         self.assertIn("must not contain executable code", overlay_builder)
 
     def test_api_37_traffic_apps_declare_local_network_permission(self) -> None:
