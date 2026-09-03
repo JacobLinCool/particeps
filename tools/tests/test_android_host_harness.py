@@ -24,15 +24,54 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
             directory = Path(temporary)
             adb = directory / "adb"
             log = directory / "adb.log"
+            stopped = directory / "stopped"
+            ready = directory / "ready"
             adb.write_text(
                 """#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$FAKE_ADB_LOG"
 case "$*" in
+  *" root"|*" wait-for-device")
+    ;;
   *" shell setprop debug.sf.luma_sampling 0")
     ;;
   *" shell getprop debug.sf.luma_sampling")
     printf '0\\r\\n'
+    ;;
+  *" shell id -u")
+    printf '0\\n'
+    ;;
+  *" shell getprop sys.boot_completed")
+    printf '1\\n'
+    ;;
+  *" shell service check "*)
+    printf 'Service test: found\\n'
+    ;;
+  *" shell pm disable-user --user 0 com.android.systemui")
+    printf 'Package com.android.systemui new state: disabled-user\\n'
+    ;;
+  *" shell cmd overlay fabricate "*|*" shell cmd overlay enable "*)
+    ;;
+  *" shell cmd overlay lookup android android:bool/config_disableTaskSnapshots")
+    printf 'true\\n'
+    ;;
+  *" shell stop")
+    : > "$FAKE_ADB_STOPPED"
+    ;;
+  *" shell start")
+    [[ ! -e "$FAKE_ADB_STOPPED" ]] || unlink "$FAKE_ADB_STOPPED"
+    ;;
+  *" shell pidof system_server")
+    [[ -e "$FAKE_ADB_STOPPED" ]] || printf '1723\\n'
+    ;;
+  *" shell pm list packages -d --user 0")
+    printf 'package:com.android.systemui\\n'
+    ;;
+  *" shell dumpsys window")
+    printf 'mSnapshotEnabled=false\\nmSnapshotEnabled=false\\n'
+    ;;
+  *" shell pidof surfaceflinger")
+    printf '489\\n'
     ;;
   *)
     exit 1
@@ -44,11 +83,14 @@ esac
             environment = os.environ.copy()
             environment["ADB"] = str(adb)
             environment["FAKE_ADB_LOG"] = str(log)
-            environment["PARTICEPS_SURFACEFLINGER_GUARD_TIMEOUT_SECONDS"] = "2"
+            environment["FAKE_ADB_STOPPED"] = str(stopped)
+            environment["PARTICEPS_SURFACEFLINGER_GUARD_TIMEOUT_SECONDS"] = "5"
+            environment["PARTICEPS_SURFACEFLINGER_STABILITY_SECONDS"] = "1"
             result = subprocess.run(
                 [
                     str(ROOT / "tools/android-api37-surfaceflinger-guard.sh"),
                     "emulator-5554",
+                    str(ready),
                 ],
                 cwd=ROOT,
                 env=environment,
@@ -57,10 +99,16 @@ esac
                 text=True,
             )
             self.assertEqual(0, result.returncode, result.stderr)
-            self.assertIn("region sampling disabled", result.stdout)
+            self.assertIn("emulator graphics stabilized", result.stdout)
+            self.assertEqual("ready\n", ready.read_text())
             commands = log.read_text()
             self.assertIn("-s emulator-5554 shell setprop debug.sf.luma_sampling 0", commands)
             self.assertIn("-s emulator-5554 shell getprop debug.sf.luma_sampling", commands)
+            self.assertIn("shell pm disable-user --user 0 com.android.systemui", commands)
+            self.assertIn("shell cmd overlay fabricate --target android", commands)
+            self.assertIn("android:bool/config_disableTaskSnapshots 0x12 0x1", commands)
+            self.assertIn("shell stop", commands)
+            self.assertIn("shell start", commands)
 
     def run_instrumentation_launcher(
         self,
@@ -279,7 +327,9 @@ esac
         self.assertIn("API 37 ps16k emulator page size must be 16384", launcher)
         self.assertIn("API 37 ps16k image revision must be at least 5", launcher)
         self.assertIn("debug.sf.luma_sampling", launcher)
-        self.assertIn("SurfaceFlinger did not remain stable", launcher)
+        self.assertIn("graphics or framework process did not remain stable", launcher)
+        self.assertIn("config_disableTaskSnapshots", launcher)
+        self.assertIn("com.android.systemui", launcher)
         self.assertIn("./gradlew --no-daemon --max-workers=1", launcher)
         self.assertIn("connectedDebugAndroidTest", launcher)
         self.assertIn("tools/android-instrumentation-ci.sh", launcher)

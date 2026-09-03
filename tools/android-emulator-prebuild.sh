@@ -41,11 +41,16 @@ esac
 
 if [[ "$require_16k" == true ]]; then
   # API 37 ps16k revision 5 advertises a host readback path that its ranchu mapper
-  # rejects when RegionSamplingThread first locks a buffer. The property is set as
-  # soon as adb becomes available, before the test launcher accepts the boot.
+  # rejects when emulator UI services lock a buffer. The background guard removes
+  # those two UI-only callers and publishes a marker that the test launcher awaits.
   guard_report_directory="build/reports/android-host-harness"
   mkdir -p "$guard_report_directory"
+  guard_ready_file="$repository_root/$guard_report_directory/api37-surfaceflinger-ready.txt"
+  if [[ -e "$guard_ready_file" ]]; then
+    unlink "$guard_ready_file"
+  fi
   nohup tools/android-api37-surfaceflinger-guard.sh \
     "${PARTICEPS_EMULATOR_SERIAL:-emulator-5554}" \
+    "$guard_ready_file" \
     >"$guard_report_directory/api37-surfaceflinger-guard.txt" 2>&1 </dev/null &
 fi
