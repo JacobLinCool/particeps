@@ -123,6 +123,7 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
 
     def test_both_blocking_emulator_lanes_run_harness_and_upload_only_sanitized_reports(self) -> None:
         launcher = (ROOT / "tools/android-emulator-ci.sh").read_text()
+        prebuild = (ROOT / "tools/android-emulator-prebuild.sh").read_text()
         for workflow_name in ("ci.yml", "release.yml"):
             workflow = (ROOT / f".github/workflows/{workflow_name}").read_text()
             self.assertIn(
@@ -134,11 +135,15 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
             self.assertIn("build/reports/android-host-harness", workflow)
             self.assertIn("google_apis_ps16k", workflow)
             self.assertIn("system_image_api: 34", workflow)
+            self.assertIn("ram-size: 4096M", workflow)
             self.assertIn("disk-size: 12G", workflow)
+            self.assertIn("pre-emulator-launch-script: tools/android-emulator-prebuild.sh", workflow)
         self.assertIn("API 37 ps16k emulator page size must be 16384", launcher)
         self.assertIn("API 37 ps16k image revision must be at least 5", launcher)
         self.assertIn("./gradlew --no-daemon --max-workers=1 connectedDebugAndroidTest", launcher)
         self.assertIn("tools/android-host-harness.sh", launcher)
+        self.assertIn(":app:assembleDebugAndroidTest", prebuild)
+        self.assertIn(":core:storage:assembleDebugAndroidTest", prebuild)
 
     def test_api_37_traffic_apps_declare_local_network_permission(self) -> None:
         permission = "android.permission.ACCESS_LOCAL_NETWORK"

@@ -254,9 +254,11 @@ jobs:
           target: ${{ matrix.target }}
           arch: x86_64
           profile: pixel_7_pro
+          ram-size: 4096M
           disk-size: 12G
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           disable-animations: true
+          pre-emulator-launch-script: tools/android-emulator-prebuild.sh
           script: tools/android-emulator-ci.sh --require-16k=${{ matrix.require_16k }}
 
       - name: Upload sanitized Android host-harness evidence
