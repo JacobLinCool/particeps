@@ -18,7 +18,7 @@ fi
 
 adb_binary="${ADB:-adb}"
 temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/particeps-instrumentation.XXXXXX")"
-report_directory="build/reports/android-host-harness/instrumentation"
+report_directory="${PARTICEPS_INSTRUMENTATION_REPORT_DIR:-build/reports/android-host-harness/instrumentation}"
 mkdir -p "$report_directory"
 cleanup() {
   find "$temporary_directory" -type f -delete >/dev/null 2>&1 || true

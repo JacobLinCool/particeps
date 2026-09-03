@@ -26,6 +26,71 @@ adb_binary="${ADB:-adb}"
 report_directory="build/reports/android-host-harness"
 mkdir -p "$report_directory"
 
+await_api37_services() {
+  local timeout_seconds="$1"
+  local deadline state boot_completed package_service activity_service input_service
+  deadline=$((SECONDS + timeout_seconds))
+  while (( SECONDS <= deadline )); do
+    state="$($adb_binary get-state 2>/dev/null || true)"
+    boot_completed="$($adb_binary shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
+    if [[ "$state" == device && "$boot_completed" == 1 ]]; then
+      package_service="$($adb_binary shell service check package 2>/dev/null | tr -d '\r' || true)"
+      activity_service="$($adb_binary shell service check activity 2>/dev/null | tr -d '\r' || true)"
+      input_service="$($adb_binary shell service check input 2>/dev/null | tr -d '\r' || true)"
+      if [[ "$package_service" == *found* && "$activity_service" == *found* && "$input_service" == *found* ]]; then
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  echo "API 37 emulator services did not recover within $timeout_seconds seconds" >&2
+  return 1
+}
+
+run_api37_blocking_compatibility() {
+  local maximum_attempts=3
+  local attempt attempt_output attempt_report_directory crash_log classification instrumentation_file compatibility_status
+  local -a evidence_files
+
+  for attempt in $(seq 1 "$maximum_attempts"); do
+    await_api37_services 180
+    attempt_output="$report_directory/api37-compatibility-attempt-$attempt.txt"
+    attempt_report_directory="$report_directory/instrumentation/api37-attempt-$attempt"
+    crash_log="$report_directory/api37-compatibility-attempt-$attempt-crash.txt"
+    classification="$report_directory/api37-compatibility-attempt-$attempt-classification.txt"
+    "$adb_binary" logcat -b crash -c >/dev/null 2>&1 || true
+
+    set +e
+    PARTICEPS_INSTRUMENTATION_REPORT_DIR="$attempt_report_directory" \
+      tools/android-instrumentation-ci.sh --suite=api37-compatibility \
+      >"$attempt_output" 2>&1
+    compatibility_status=$?
+    set -e
+    if (( compatibility_status == 0 )); then
+      cat "$attempt_output"
+      return 0
+    fi
+
+    "$adb_binary" logcat -b crash -d -v threadtime >"$crash_log" 2>&1 || true
+    evidence_files=("$attempt_output" "$crash_log")
+    while IFS= read -r instrumentation_file; do
+      evidence_files+=("$instrumentation_file")
+    done < <(find "$attempt_report_directory" -maxdepth 1 -type f -print 2>/dev/null | sort)
+
+    if ! python3 tools/classify_api37_emulator_failure.py \
+        --result-label RETRYABLE \
+        "${evidence_files[@]}" | tee "$classification"; then
+      cat "$attempt_output" >&2
+      return "$compatibility_status"
+    fi
+    if (( attempt == maximum_attempts )); then
+      echo "API 37 blocking compatibility did not pass after $maximum_attempts exact-platform-failure attempts" >&2
+      return "$compatibility_status"
+    fi
+    echo "::warning::Retrying the blocking API 37 compatibility gate after the exact revision 5 SurfaceFlinger service restart."
+  done
+}
+
 run_api37_quarantined_host_harness() {
   local quarantine_directory="$report_directory/api37-full-host-harness-quarantine"
   local harness_output="$quarantine_directory/host-harness-output.txt"
@@ -79,7 +144,7 @@ if [[ "$require_16k" == true ]]; then
   # This blocking suite never launches participant UI or asks the system to capture task snapshots.
   # It verifies installability, manifest contracts, native loading, and non-snapshot instrumentation on
   # an unmodified API 37 16 KiB image.
-  tools/android-instrumentation-ci.sh --suite=api37-compatibility
+  run_api37_blocking_compatibility
   printf '%s\n' \
     "PASS: API 37 installation, 16 KiB page size, manifest contracts, and native loading checks passed." \
     > "$report_directory/api37-blocking-compatibility.txt"

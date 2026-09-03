@@ -22,12 +22,12 @@ PRODUCT_FAILURES = (
 )
 PLATFORM_FALLOUT = re.compile(
     r"(?:device offline|no devices/emulators found|device ['\"]?.+?['\"]? not found|"
-    r"transport error|connection reset|broken pipe)",
+    r"transport error|connection reset|broken pipe|Can't find service: (?:package|activity|input))",
     re.IGNORECASE,
 )
 
 
-def classify(evidence: str) -> tuple[bool, str]:
+def classify(evidence: str, result_label: str = "QUARANTINED") -> tuple[bool, str]:
     product_failure = next((pattern.pattern for pattern in PRODUCT_FAILURES if pattern.search(evidence)), None)
     if product_failure is not None:
         return False, f"Particeps/app/test failure evidence is blocking: {product_failure}"
@@ -45,17 +45,22 @@ def classify(evidence: str) -> tuple[bool, str]:
     if PLATFORM_FALLOUT.search(evidence) is None:
         return False, "The platform signature did not cause a recognized emulator transport failure"
     return True, (
-        "QUARANTINED: exact API 37 revision 5 mapper.ranchu.so / SurfaceFlinger "
+        f"{result_label}: exact API 37 revision 5 mapper.ranchu.so / SurfaceFlinger "
         "readback assertion matched, with no Particeps, VPN, native, or test assertion failure."
     )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--result-label",
+        choices=("QUARANTINED", "RETRYABLE"),
+        default="QUARANTINED",
+    )
     parser.add_argument("evidence", nargs="+", type=Path)
     arguments = parser.parse_args()
     combined = "\n".join(path.read_text(encoding="utf-8", errors="replace") for path in arguments.evidence)
-    accepted, reason = classify(combined)
+    accepted, reason = classify(combined, arguments.result_label)
     print(reason)
     return 0 if accepted else 1
 

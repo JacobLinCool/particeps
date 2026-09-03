@@ -19,16 +19,20 @@ MODULES = (
 
 
 class AndroidHostHarnessContractTest(unittest.TestCase):
-    def run_api37_classifier(self, evidence: str) -> subprocess.CompletedProcess[str]:
+    def run_api37_classifier(
+        self,
+        evidence: str,
+        result_label: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as temporary:
             evidence_file = Path(temporary) / "evidence.txt"
             evidence_file.write_text(evidence)
+            command = ["python3", str(ROOT / "tools/classify_api37_emulator_failure.py")]
+            if result_label is not None:
+                command.extend(("--result-label", result_label))
+            command.append(str(evidence_file))
             return subprocess.run(
-                [
-                    "python3",
-                    str(ROOT / "tools/classify_api37_emulator_failure.py"),
-                    str(evidence_file),
-                ],
+                command,
                 cwd=ROOT,
                 check=False,
                 capture_output=True,
@@ -53,6 +57,17 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
         )
         self.assertNotEqual(0, result.returncode)
         self.assertIn("blocking", result.stdout)
+
+    def test_api_37_classifier_recognizes_exact_service_restart_fallout(self) -> None:
+        result = self.run_api37_classifier(
+            "surfaceflinger /vendor/lib64/hw/mapper.ranchu.so\n"
+            "Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma\n"
+            "cmd: Can't find service: package\n",
+            result_label="RETRYABLE",
+        )
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn("RETRYABLE", result.stdout)
+        self.assertNotIn("QUARANTINED", result.stdout)
 
     def run_instrumentation_launcher(
         self,
@@ -318,6 +333,11 @@ esac
         self.assertNotIn("input keyevent", api37_runner)
         self.assertNotIn("-writable-system", api37_runner)
         self.assertIn("api37-blocking-compatibility.txt", launcher)
+        self.assertIn("run_api37_blocking_compatibility", launcher)
+        self.assertIn("await_api37_services 180", launcher)
+        self.assertIn("maximum_attempts=3", launcher)
+        self.assertIn("--result-label RETRYABLE", launcher)
+        self.assertIn("classify_api37_emulator_failure.py", launcher)
         self.assertFalse((ROOT / "tools/android-api37-surfaceflinger-guard.sh").exists())
         self.assertFalse((ROOT / "tools/build-api37-snapshot-overlay.sh").exists())
         app_build = (ROOT / "app/build.gradle.kts").read_text()

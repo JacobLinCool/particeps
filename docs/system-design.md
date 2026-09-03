@@ -458,7 +458,9 @@ remains blocking. CI does not modify the preview system image or its services. T
 tracked in [#33](https://github.com/JacobLinCool/particeps/issues/33), and a quarantined run is not
 represented as a complete API 37 host-harness pass. API 37 orchestration observes package, activity,
 and input service registration before testing because revision 5 can publish `sys.boot_completed=1`
-before those services are usable.
+before those services are usable. An exact-signature service restart during the blocking
+compatibility test permits a bounded full-test retry, but never substitutes for a successful
+installation and native-loading result.
 
 The release verifier requires:
 
