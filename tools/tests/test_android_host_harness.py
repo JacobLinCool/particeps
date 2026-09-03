@@ -140,10 +140,17 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
             self.assertIn("pre-emulator-launch-script: tools/android-emulator-prebuild.sh", workflow)
         self.assertIn("API 37 ps16k emulator page size must be 16384", launcher)
         self.assertIn("API 37 ps16k image revision must be at least 5", launcher)
-        self.assertIn("./gradlew --no-daemon --max-workers=1 connectedDebugAndroidTest", launcher)
-        self.assertIn("tools/android-host-harness.sh", launcher)
+        self.assertIn("./gradlew --no-daemon --max-workers=1", launcher)
+        self.assertIn("connectedDebugAndroidTest", launcher)
+        self.assertIn("tools/android-host-harness.sh --skip-build", launcher)
+        self.assertIn("-PinstrumentedTestAbi=x86_64", launcher)
         self.assertIn(":app:assembleDebugAndroidTest", prebuild)
         self.assertIn(":core:storage:assembleDebugAndroidTest", prebuild)
+        self.assertIn(":test-fixtures:traffic-target-a:assembleReplacementDebug", prebuild)
+        self.assertIn(":test-fixtures:competing-vpn:assembleDebug", prebuild)
+        self.assertIn("-PinstrumentedTestAbi=x86_64", prebuild)
+        app_build = (ROOT / "app/build.gradle.kts").read_text()
+        self.assertIn('providers.gradleProperty("instrumentedTestAbi")', app_build)
 
     def test_api_37_traffic_apps_declare_local_network_permission(self) -> None:
         permission = "android.permission.ACCESS_LOCAL_NETWORK"

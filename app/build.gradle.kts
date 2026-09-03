@@ -10,6 +10,12 @@ val releaseSigningPropertiesFile = rootProject.file(".signing/release-signing.pr
 val releaseSigningProperties = releaseSigningPropertiesFile.takeIf { it.isFile }?.inputStream()?.use { input ->
     Properties().apply { load(input) }
 }
+val instrumentedTestAbi = providers.gradleProperty("instrumentedTestAbi").orNull
+instrumentedTestAbi?.let { abi ->
+    require(abi in setOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")) {
+        "Unsupported instrumentedTestAbi: $abi"
+    }
+}
 
 fun Properties.requireSigningValue(name: String): String =
     getProperty(name)?.takeIf { it.isNotEmpty() }
@@ -26,6 +32,11 @@ android {
         versionCode = providers.gradleProperty("releaseVersionCode").map(String::toInt).getOrElse(1)
         versionName = providers.gradleProperty("releaseVersionName").getOrElse("1.0.0-dev")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        instrumentedTestAbi?.let { abi ->
+            ndk {
+                abiFilters += abi
+            }
+        }
     }
 
     signingConfigs {

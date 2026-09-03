@@ -34,5 +34,7 @@ fi
 
 # One emulator is shared by every Android module in this job. Serial workers avoid overlapping
 # package-installer sessions and make teardown between test APKs deterministic.
-./gradlew --no-daemon --max-workers=1 connectedDebugAndroidTest
-tools/android-host-harness.sh
+./gradlew --no-daemon --max-workers=1 \
+  -PinstrumentedTestAbi=x86_64 \
+  connectedDebugAndroidTest
+tools/android-host-harness.sh --skip-build
