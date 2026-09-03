@@ -47,12 +47,9 @@ if [[ "$("$adb_binary" -s "$emulator_serial" shell id -u | tr -d '\r')" != "0" ]
   exit 1
 fi
 "$adb_binary" -s "$emulator_serial" shell setprop debug.sf.luma_sampling 0
+"$adb_binary" -s "$emulator_serial" shell setprop sys.boot_completed 0
 
 while (( $(date +%s) < guard_deadline_epoch )); do
-  boot_completed="$(
-    "$adb_binary" -s "$emulator_serial" shell getprop sys.boot_completed 2>/dev/null |
-      tr -d '\r' || true
-  )"
   activity_service="$(
     "$adb_binary" -s "$emulator_serial" shell service check activity 2>/dev/null |
       tr -d '\r' || true
@@ -61,15 +58,13 @@ while (( $(date +%s) < guard_deadline_epoch )); do
     "$adb_binary" -s "$emulator_serial" shell service check package 2>/dev/null |
       tr -d '\r' || true
   )"
-  if [[ "$boot_completed" == "1" ]] && [[ "$activity_service" == *"found" ]] &&
-      [[ "$package_service" == *"found" ]]; then
+  if [[ "$activity_service" == *"found" ]] && [[ "$package_service" == *"found" ]]; then
     break
   fi
   sleep 1
 done
 
-if [[ "${boot_completed:-}" != "1" ]] || [[ "${activity_service:-}" != *"found" ]] ||
-    [[ "${package_service:-}" != *"found" ]]; then
+if [[ "${activity_service:-}" != *"found" ]] || [[ "${package_service:-}" != *"found" ]]; then
   echo "API 37 framework was not ready for graphics stabilization" >&2
   exit 1
 fi
@@ -95,6 +90,7 @@ if [[ "$overlay_value" != "true" ]]; then
   exit 1
 fi
 
+"$adb_binary" -s "$emulator_serial" shell setprop sys.boot_completed 0
 "$adb_binary" -s "$emulator_serial" shell stop
 system_server_stopped=false
 while (( $(date +%s) < guard_deadline_epoch )); do
@@ -111,6 +107,10 @@ fi
 "$adb_binary" -s "$emulator_serial" shell start
 
 while (( $(date +%s) < guard_deadline_epoch )); do
+  boot_completed="$(
+    "$adb_binary" -s "$emulator_serial" shell getprop sys.boot_completed 2>/dev/null |
+      tr -d '\r' || true
+  )"
   system_server_pid="$(
     "$adb_binary" -s "$emulator_serial" shell pidof system_server 2>/dev/null |
       tr -d '\r' || true
@@ -127,14 +127,16 @@ while (( $(date +%s) < guard_deadline_epoch )); do
     "$adb_binary" -s "$emulator_serial" shell service check window 2>/dev/null |
       tr -d '\r' || true
   )"
-  if [[ -n "$system_server_pid" ]] && [[ "$activity_service" == *"found" ]] &&
+  if [[ "$boot_completed" == "1" ]] && [[ -n "$system_server_pid" ]] &&
+      [[ "$activity_service" == *"found" ]] &&
       [[ "$package_service" == *"found" ]] && [[ "$window_service" == *"found" ]]; then
     break
   fi
   sleep 1
 done
 
-if [[ -z "${system_server_pid:-}" ]] || [[ "${activity_service:-}" != *"found" ]] ||
+if [[ "${boot_completed:-}" != "1" ]] || [[ -z "${system_server_pid:-}" ]] ||
+    [[ "${activity_service:-}" != *"found" ]] ||
     [[ "${package_service:-}" != *"found" ]] || [[ "${window_service:-}" != *"found" ]]; then
   echo "API 37 framework did not recover after graphics stabilization" >&2
   exit 1

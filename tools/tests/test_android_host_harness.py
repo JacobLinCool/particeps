@@ -35,6 +35,8 @@ case "$*" in
     ;;
   *" shell setprop debug.sf.luma_sampling 0")
     ;;
+  *" shell setprop sys.boot_completed 0")
+    ;;
   *" shell getprop debug.sf.luma_sampling")
     printf '0\\r\\n'
     ;;
