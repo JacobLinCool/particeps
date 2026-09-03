@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly EXPECTED_GO="go1.26.3"
 readonly EXPECTED_NDK="30.0.14904198"
-readonly EXPECTED_NDK_REVISION="30.0.14904198-beta1"
+readonly EXPECTED_NDK_REVISION="30.0.14904198-rc1"
 readonly MODULE_PROXY="https://proxy.golang.org"
 readonly SUM_DATABASE="sum.golang.org"
 

@@ -48,7 +48,7 @@ func TestPinnedSourceDependenciesMatchSBOMInput(t *testing.T) {
 	if err := json.Unmarshal(inputBytes, &input); err != nil {
 		t.Fatal(err)
 	}
-	if input.AndroidNDK != "30.0.14904198" || input.AndroidNDKRevision != "30.0.14904198-beta1" || input.GoToolchain != "go1.26.3" {
+	if input.AndroidNDK != "30.0.14904198" || input.AndroidNDKRevision != "30.0.14904198-rc1" || input.GoToolchain != "go1.26.3" {
 		t.Fatalf("unexpected pinned toolchain: %+v", input)
 	}
 	if input.Proxy != "https://proxy.golang.org" || input.SumDatabase != "sum.golang.org" {
