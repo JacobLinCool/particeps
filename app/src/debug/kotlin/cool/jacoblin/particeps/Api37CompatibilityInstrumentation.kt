@@ -3,6 +3,7 @@ package cool.jacoblin.particeps
 import android.Manifest
 import android.app.Activity
 import android.app.Instrumentation
+import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
@@ -40,7 +41,7 @@ class Api37CompatibilityInstrumentation : Instrumentation() {
 
         val packageInfo = context.packageManager.getPackageInfo(
             context.packageName,
-            PackageManager.GET_PERMISSIONS or PackageManager.GET_SERVICES,
+            PackageManager.GET_PERMISSIONS,
         )
         val permissions = packageInfo.requestedPermissions.orEmpty().toSet()
         check(Manifest.permission.QUERY_ALL_PACKAGES in permissions) {
@@ -50,9 +51,10 @@ class Api37CompatibilityInstrumentation : Instrumentation() {
             "ACCESS_LOCAL_NETWORK is missing"
         }
 
-        val vpnService = checkNotNull(packageInfo.services.orEmpty().singleOrNull {
-            it.name == TrafficShapingVpnService::class.java.name
-        }) { "Traffic-shaping VPN service is missing" }
+        val vpnService = context.packageManager.getServiceInfo(
+            ComponentName(context, TrafficShapingVpnService::class.java),
+            PackageManager.ComponentInfoFlags.of(0),
+        )
         check(vpnService.permission == Manifest.permission.BIND_VPN_SERVICE) {
             "Traffic-shaping service permission is invalid"
         }

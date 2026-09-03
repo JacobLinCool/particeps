@@ -360,6 +360,9 @@ esac
         self.assertIn("Trafficshaping.touch()", compatibility_instrumentation)
         self.assertIn("override fun onCreate", compatibility_instrumentation)
         self.assertIn("start()", compatibility_instrumentation)
+        self.assertIn("getServiceInfo", compatibility_instrumentation)
+        self.assertIn("ComponentName(context, TrafficShapingVpnService::class.java)", compatibility_instrumentation)
+        self.assertNotIn("packageInfo.services", compatibility_instrumentation)
         self.assertIn("android.permission.ACCESS_LOCAL_NETWORK", compatibility_instrumentation)
         self.assertNotIn("ActivityScenario", compatibility_instrumentation)
 
