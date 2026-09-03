@@ -151,6 +151,11 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
         self.assertIn("-PinstrumentedTestAbi=x86_64", prebuild)
         app_build = (ROOT / "app/build.gradle.kts").read_text()
         self.assertIn('providers.gradleProperty("instrumentedTestAbi")', app_build)
+        self.assertIn('installOptions += "--no-streaming"', app_build)
+        storage_build = (ROOT / "core/storage/build.gradle.kts").read_text()
+        self.assertIn('installOptions += "--no-streaming"', storage_build)
+        harness = (ROOT / "tools/android-host-harness.sh").read_text()
+        self.assertIn('install --no-streaming -r -d -t', harness)
 
     def test_api_37_traffic_apps_declare_local_network_permission(self) -> None:
         permission = "android.permission.ACCESS_LOCAL_NETWORK"

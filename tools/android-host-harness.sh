@@ -105,7 +105,7 @@ install_apk() {
   # Fixtures deliberately exercise package replacement with a higher version.
   # Always permit debuggable APK downgrade so a failed or interrupted prior run
   # cannot poison the next run's known version-1 baseline.
-  "$adb_binary" install -r -d -t "$1" > "$harness_temporary/install.txt"
+  "$adb_binary" install --no-streaming -r -d -t "$1" > "$harness_temporary/install.txt"
   grep -qx "Success" "$harness_temporary/install.txt"
 }
 
@@ -623,9 +623,9 @@ run_case() {
       failure_count=$((failure_count + 1))
       "$adb_binary" shell cmd connectivity airplane-mode disable >/dev/null 2>&1 || true
       "$adb_binary" shell am force-stop "$competing_vpn_package" >/dev/null 2>&1 || true
-      "$adb_binary" install -r -d -t "$target_a_base_apk" > "$harness_temporary/restore.txt" 2>&1 || true
-      "$adb_binary" install -r -t "$target_b_apk" > "$harness_temporary/restore.txt" 2>&1 || true
-      "$adb_binary" install -r -t "$shared_target_apk" > "$harness_temporary/restore.txt" 2>&1 || true
+      "$adb_binary" install --no-streaming -r -d -t "$target_a_base_apk" > "$harness_temporary/restore.txt" 2>&1 || true
+      "$adb_binary" install --no-streaming -r -t "$target_b_apk" > "$harness_temporary/restore.txt" 2>&1 || true
+      "$adb_binary" install --no-streaming -r -t "$shared_target_apk" > "$harness_temporary/restore.txt" 2>&1 || true
       "$adb_binary" uninstall "$shared_peer_package" > "$harness_temporary/restore.txt" 2>&1 || true
       prepare_permissions >/dev/null 2>&1 || true
       reset_study >/dev/null 2>&1 || true
