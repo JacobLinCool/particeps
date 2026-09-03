@@ -443,10 +443,20 @@ prevents publishing that dataset.
 CI runs registry generation/checks; Kotlin/TypeScript/Python conformance; JVM, Compose,
 instrumentation, Web, analysis, receiver, and native tests; and release verification.
 
-Blocking Android lanes are API 34 x86_64 and API 37 `google_apis_ps16k` x86_64 revision 5 or newer,
-with the latter asserting a 16 KiB page size. Host orchestration is used for process kill, reboot,
-competing VPN, permission/package change, and multi-APK cases that cannot stay inside one
-instrumentation process.
+API 34 x86_64 is the complete blocking functional lane, including host-orchestrated process kill,
+reboot, competing VPN, permission/package change, TCP/UDP/DNS, throughput, and multi-APK cases. API
+37 `google_apis_ps16k` x86_64 revision 5 or newer is a blocking compatibility lane for compilation,
+installation, 16 KiB runtime page size, manifest/permission contracts, native loading, and
+instrumentation that does not invoke system task snapshots. The release verifier independently
+blocks on all four packaged ABIs and 16 KiB ELF alignment.
+
+The complete API 37 host harness is temporarily quarantined only when evidence exactly matches the
+revision 5 `mapper.ranchu.so` / `SurfaceFlinger` readback assertion and contains no Particeps App,
+VPN, native, instrumentation, or test assertion failure. It must also end in a recognized emulator
+transport failure; a coincident platform log cannot mask a failed scenario. Any other failure
+remains blocking. CI does not modify the preview system image or its services. This limitation is
+tracked in [#33](https://github.com/JacobLinCool/particeps/issues/33), and a quarantined run is not
+represented as a complete API 37 host-harness pass.
 
 The release verifier requires:
 

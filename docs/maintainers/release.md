@@ -9,9 +9,24 @@ All workflows live in [`.github/workflows`](../../.github/workflows). The two th
 **`Android CI`** (`ci.yml`) runs on pushes to `main`, pull requests, and manual dispatch. It checks
 event-source-registry generation/digests, Kotlin/TypeScript/Python conformance, Collector capability,
 Go vet/race/source checks, unit/lint/build/release verification, and connected/host-orchestrated
-Android scenarios. Blocking device lanes are API 34 x86_64 and API 37
-`google_apis_ps16k` x86_64 revision 5 or newer; the latter asserts a 16 KiB page size. Successful
-runs retain the debug APK as an artifact for 14 days.
+Android scenarios. API 34 x86_64 is the complete blocking functional lane, including VPN,
+TCP/UDP/DNS, shaping throughput, lifecycle, process death/reboot, package replacement, permission
+revocation, and competing-VPN scenarios. API 37 `google_apis_ps16k` x86_64 revision 5 or newer is a
+blocking compatibility lane: compilation, installation, 16 KiB runtime page size, manifest and
+permission contracts, source-built native loading, and instrumentation that does not invoke system
+task snapshots must pass. Four-ABI packaging and 16 KiB ELF alignment remain blocking in the release
+verifier. Successful runs retain the debug APK as an artifact for 14 days.
+
+The complete API 37 host harness is temporarily quarantined for one exact preview-emulator defect:
+the evidence must identify `mapper.ranchu.so`, the `SurfaceFlinger` process, and
+`Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma`. The classifier first rejects any
+Particeps App, VPN, `libgojni`, instrumentation, or test assertion failure. Every other failure is
+blocking, and the exact signature must also terminate the emulator transport rather than merely
+coincide with a scenario failure. CI runs the stock image without root, remount, framework overlay,
+SystemUI disablement, or system-server mutation.
+[Issue #33](https://github.com/JacobLinCool/particeps/issues/33) tracks restoring the full lane as an
+unconditional blocker on a repaired image. A quarantined run is not evidence that the complete API
+37 host harness passed.
 
 For pull requests the checkout contains full history and the workflow fetches the exact base commit
 SHA from the event payload. Registry immutability compares against that declared commit; a missing
@@ -21,7 +36,7 @@ operator override and is never inferred in CI.
 
 **`Android Release`** (`release.yml`) accepts only `v<SemVer>` tags that are reachable from `main` — for example `v0.1.0`. A tag with a prerelease suffix produces a GitHub prerelease.
 
-The release workflow runs the same API 34/API 37 instrumented gates and, in parallel, rechecks the
+The release workflow runs the same tiered API 34/API 37 gates and, in parallel, rechecks the
 Web authoring surface, shared TypeScript conformance, ciphertext receiver, and Python replay and
 materialization pipeline from their locked environments. Only after both gates pass does the
 dependent release job reconstruct the `.signing` configuration and pinned Go/NDK native build,

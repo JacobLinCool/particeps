@@ -4,6 +4,18 @@ set -euo pipefail
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
 
+suite="full"
+if (( $# == 1 )) && [[ "$1" == --suite=* ]]; then
+  suite="${1#--suite=}"
+elif (( $# != 0 )); then
+  echo "usage: tools/android-instrumentation-ci.sh [--suite=full|api37-compatibility]" >&2
+  exit 2
+fi
+if [[ "$suite" != "full" && "$suite" != "api37-compatibility" ]]; then
+  echo "unknown instrumentation suite: $suite" >&2
+  exit 2
+fi
+
 adb_binary="${ADB:-adb}"
 temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/particeps-instrumentation.XXXXXX")"
 report_directory="build/reports/android-host-harness/instrumentation"
@@ -41,8 +53,9 @@ install_apk() {
 run_instrumentation() {
   local name="$1"
   local runner="$2"
+  shift 2
   local output="$temporary_directory/$name.txt"
-  if ! "$adb_binary" shell am instrument -w -r "$runner" \
+  if ! "$adb_binary" shell am instrument -w -r "$@" "$runner" \
     | tr -d '\r' \
     | tee "$output"; then
     cp "$output" "$report_directory/$name.txt"
@@ -66,9 +79,16 @@ run_instrumentation() {
 "$adb_binary" uninstall cool.jacoblin.particeps >/dev/null 2>&1 || true
 install_apk app/build/outputs/apk/debug/app-debug.apk false
 install_apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk true
-run_instrumentation \
-  app \
-  cool.jacoblin.particeps.test/androidx.test.runner.AndroidJUnitRunner
+if [[ "$suite" == "api37-compatibility" ]]; then
+  run_instrumentation \
+    app \
+    cool.jacoblin.particeps.test/androidx.test.runner.AndroidJUnitRunner \
+    -e class cool.jacoblin.particeps.Api37CompatibilityTest
+else
+  run_instrumentation \
+    app \
+    cool.jacoblin.particeps.test/androidx.test.runner.AndroidJUnitRunner
+fi
 
 "$adb_binary" uninstall cool.jacoblin.particeps.core.storage.test >/dev/null 2>&1 || true
 install_apk core/storage/build/outputs/apk/androidTest/debug/storage-debug-androidTest.apk true

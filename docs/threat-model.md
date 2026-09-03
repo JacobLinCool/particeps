@@ -370,7 +370,9 @@ The repository gates:
 
 - registry generation/digest and hostile/current conformance across Kotlin, TypeScript, Python;
 - reducer/property/fake-clock and storage fault-injection tests;
-- API 34 plus API 37 16-KiB Android lanes and host-orchestrated kill/reboot/VPN/package scenarios;
+- a complete blocking API 34 lane for host-orchestrated kill/reboot/VPN/package and traffic
+  scenarios, plus a blocking API 37 revision 5+ 16-KiB compatibility lane for install, manifest,
+  native-load, and non-snapshot instrumentation checks;
 - Go vet/race, token-bucket throughput, TCP/UDP/DNS/IPv4/IPv6/protect/silent-log tests;
 - Web validation/simulation/participant preview and Compose accessibility leakage sentinels;
 - Python encrypted-bundle replay/materialization failures;
@@ -379,3 +381,7 @@ The repository gates:
 Passing these gates is evidence about the checked source and environment, not a proof against every
 OEM modification, future Android change, dependency vulnerability, or malicious rooted device.
 Security/privacy claims must remain no broader than the trusted boundaries and residual risks above.
+The complete API 37 host harness is temporarily quarantined only for an exact known preview-emulator
+`mapper.ranchu.so` / `SurfaceFlinger` assertion; all product assertions remain blocking. This is
+tracked in [#33](https://github.com/JacobLinCool/particeps/issues/33) and is not claimed as a complete
+API 37 host-harness pass.

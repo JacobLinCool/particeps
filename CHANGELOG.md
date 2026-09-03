@@ -38,6 +38,14 @@ must do.
 - Platform acknowledgements are bounded: durable timer/action wakeups, foreground-host acquisition,
   and Play services location registration/removal cannot leave startup waiting indefinitely. A
   timeout follows the same fail-closed resource path as an explicit platform failure.
+- API 37 compatibility remains a release blocker for compilation, installation, the revision 5+
+  16 KiB runtime, manifest/permission contracts, source-built native loading, non-snapshot storage
+  instrumentation, four packaged ABIs, and 16 KiB ELF alignment. The complete API 37 host harness
+  is temporarily quarantined only for the exact revision 5 `mapper.ranchu.so` / `SurfaceFlinger`
+  readback assertion tracked in [#33](https://github.com/JacobLinCool/particeps/issues/33); App, VPN,
+  native, and test assertion failures still block. This release does not claim that the complete
+  API 37 host harness passed. API 34 continues to block on the complete functional, traffic,
+  throughput, lifecycle, process, package, permission, and competing-VPN harness.
 
 **This is a destructive pre-1.0 Protocol v1 cut.** Signed configurations, encrypted storage,
 bundles, receipts, readers, and scheduled-work state from every earlier build are invalid. There is

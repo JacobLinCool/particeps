@@ -110,9 +110,9 @@ jobs:
             system_image_api: "37.0"
             target: google_apis_ps16k
             require_16k: true
-            # Keep the renderer minimal; the pre-launch guard separately disables
-            # the emulator-only UI readback paths that are broken in revision 5.
-            emulator_options: "-no-window -gpu off -writable-system -no-snapshot -noaudio -no-boot-anim -camera-back none"
+            # Keep the stock image unmodified. Product compatibility is blocking; the full host
+            # harness has an exact-signature quarantine for the revision 5 renderer defect.
+            emulator_options: "-no-window -gpu off -no-snapshot -noaudio -no-boot-anim -camera-back none"
     env:
       ANDROID_NDK_PACKAGE: ndk;30.0.14904198
       GOTOOLCHAIN: local

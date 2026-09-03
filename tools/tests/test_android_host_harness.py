@@ -19,122 +19,40 @@ MODULES = (
 
 
 class AndroidHostHarnessContractTest(unittest.TestCase):
-    def test_api_37_surfaceflinger_guard_reboots_with_persisted_overlay(self) -> None:
+    def run_api37_classifier(self, evidence: str) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary)
-            adb = directory / "adb"
-            log = directory / "adb.log"
-            service_seen = directory / "service-seen"
-            service_ready = directory / "service-ready"
-            remount_seen = directory / "remount-seen"
-            ready = directory / "ready"
-            overlay_apk = directory / "overlay.apk"
-            overlay_apk.write_bytes(b"test overlay")
-            adb.write_text(
-                """#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> "$FAKE_ADB_LOG"
-case "$*" in
-  *" remount")
-    if [[ -e "$FAKE_ADB_REMOUNT_SEEN" ]]; then
-      printf 'remount succeeded\\n'
-    else
-      : > "$FAKE_ADB_REMOUNT_SEEN"
-      printf 'Now reboot your device for settings to take effect\\n'
-    fi
-    ;;
-  *" root"|*" wait-for-device"|*" reboot"|*" push "*)
-    ;;
-  *" shell chmod 0644 /product/overlay/ParticepsDisableTaskSnapshots.apk"|*" shell restorecon /product/overlay/ParticepsDisableTaskSnapshots.apk"|*" shell test -s /product/overlay/ParticepsDisableTaskSnapshots.apk"|*" shell sync")
-    ;;
-  *" shell setprop debug.sf.luma_sampling 0"|*" shell setprop sys.boot_completed 0")
-    ;;
-  *" shell getprop debug.sf.luma_sampling")
-    printf '0\\r\\n'
-    ;;
-  *" shell id -u")
-    printf '0\\n'
-    ;;
-  *" shell getprop sys.boot_completed")
-    printf '1\\n'
-    ;;
-  *" shell service check activity")
-    if [[ -e "$FAKE_ADB_SERVICE_SEEN" ]]; then
-      : > "$FAKE_ADB_SERVICE_READY"
-      printf 'Service activity: found\\n'
-    else
-      : > "$FAKE_ADB_SERVICE_SEEN"
-      printf 'Service activity: not found\\n'
-    fi
-    ;;
-  *" shell service check package"|*" shell service check overlay"|*" shell service check window")
-    service="${*: -1}"
-    printf 'Service %s: found\\n' "$service"
-    ;;
-  *" shell pm disable-user --user 0 com.android.systemui")
-    [[ -e "$FAKE_ADB_SERVICE_READY" ]]
-    printf 'Package com.android.systemui new state: disabled-user\\n'
-    ;;
-  *" shell cmd overlay lookup android android:bool/config_disableTaskSnapshots")
-    printf 'true\\n'
-    ;;
-  *" shell pidof system_server")
-    printf '1723\\n'
-    ;;
-  *" shell pm list packages -d --user 0")
-    printf 'package:com.android.systemui\\n'
-    ;;
-  *" shell dumpsys window")
-    printf 'mSnapshotEnabled=false\\nmSnapshotEnabled=false\\n'
-    ;;
-  *" shell pidof surfaceflinger")
-    printf '489\\n'
-    ;;
-  *)
-    exit 1
-    ;;
-esac
-"""
-            )
-            adb.chmod(0o755)
-            environment = os.environ.copy()
-            environment["ADB"] = str(adb)
-            environment["FAKE_ADB_LOG"] = str(log)
-            environment["FAKE_ADB_SERVICE_SEEN"] = str(service_seen)
-            environment["FAKE_ADB_SERVICE_READY"] = str(service_ready)
-            environment["FAKE_ADB_REMOUNT_SEEN"] = str(remount_seen)
-            environment["PARTICEPS_API37_SNAPSHOT_OVERLAY_APK"] = str(overlay_apk)
-            environment["PARTICEPS_SURFACEFLINGER_GUARD_TIMEOUT_SECONDS"] = "5"
-            environment["PARTICEPS_SURFACEFLINGER_STABILITY_SECONDS"] = "1"
-            result = subprocess.run(
+            evidence_file = Path(temporary) / "evidence.txt"
+            evidence_file.write_text(evidence)
+            return subprocess.run(
                 [
-                    str(ROOT / "tools/android-api37-surfaceflinger-guard.sh"),
-                    "emulator-5554",
-                    str(ready),
+                    "python3",
+                    str(ROOT / "tools/classify_api37_emulator_failure.py"),
+                    str(evidence_file),
                 ],
                 cwd=ROOT,
-                env=environment,
                 check=False,
                 capture_output=True,
                 text=True,
             )
-            self.assertEqual(0, result.returncode, result.stderr)
-            self.assertIn("emulator graphics stabilized", result.stdout)
-            self.assertEqual("ready\n", ready.read_text())
-            commands = log.read_text()
-            self.assertIn("shell setprop debug.sf.luma_sampling 0", commands)
-            self.assertIn("-s emulator-5554 remount", commands)
-            self.assertIn(str(overlay_apk), commands)
-            self.assertIn("/product/overlay/ParticepsDisableTaskSnapshots.apk", commands)
-            self.assertNotIn("shell cmd overlay fabricate", commands)
-            self.assertIn("-s emulator-5554 reboot", commands)
-            self.assertEqual(2, commands.count("-s emulator-5554 reboot"))
-            self.assertNotIn("shell stop", commands)
-            self.assertNotIn("shell start", commands)
-            self.assertGreaterEqual(
-                commands.count("shell pm disable-user --user 0 com.android.systemui"),
-                3,
-            )
+
+    def test_api_37_classifier_accepts_only_exact_platform_signature(self) -> None:
+        result = self.run_api37_classifier(
+            "surfaceflinger /vendor/lib64/hw/mapper.ranchu.so\n"
+            "Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma\n"
+            "error: device offline\n",
+        )
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn("QUARANTINED", result.stdout)
+
+    def test_api_37_classifier_keeps_product_and_test_failures_blocking(self) -> None:
+        result = self.run_api37_classifier(
+            "surfaceflinger /vendor/lib64/hw/mapper.ranchu.so\n"
+            "Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma\n"
+            "error: device offline\n"
+            "java.lang.AssertionError: Particeps result did not match\n",
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("blocking", result.stdout)
 
     def run_instrumentation_launcher(
         self,
@@ -323,7 +241,7 @@ esac
         )
         self.assertNotIn("am broadcast --receiver-foreground", harness)
 
-    def test_both_blocking_emulator_lanes_run_harness_and_upload_only_sanitized_reports(self) -> None:
+    def test_android_release_gates_are_tiered_without_system_image_mutation(self) -> None:
         launcher = (ROOT / "tools/android-emulator-ci.sh").read_text()
         instrumentation = (ROOT / "tools/android-instrumentation-ci.sh").read_text()
         prebuild = (ROOT / "tools/android-emulator-prebuild.sh").read_text()
@@ -344,7 +262,8 @@ esac
                 "-gpu swiftshader -feature -Vulkan -feature -GLDirectMem",
                 workflow,
             )
-            self.assertIn("-gpu off -writable-system", workflow)
+            self.assertIn("-gpu off -no-snapshot", workflow)
+            self.assertNotIn("-writable-system", workflow)
             self.assertNotIn("swiftshader_indirect", workflow)
             self.assertIn(
                 "pre-emulator-launch-script: tools/android-emulator-prebuild.sh "
@@ -353,11 +272,12 @@ esac
             )
         self.assertIn("API 37 ps16k emulator page size must be 16384", launcher)
         self.assertIn("API 37 ps16k image revision must be at least 5", launcher)
-        self.assertIn("debug.sf.luma_sampling", launcher)
-        self.assertIn("graphics or framework process did not remain stable", launcher)
-        self.assertIn('guard_failure_file="${guard_ready_file}.failed"', launcher)
-        self.assertIn("config_disableTaskSnapshots", launcher)
-        self.assertIn("com.android.systemui", launcher)
+        self.assertIn("--suite=api37-compatibility", launcher)
+        self.assertIn("classify_api37_emulator_failure.py", launcher)
+        self.assertIn("api37-full-host-harness-quarantine", launcher)
+        self.assertNotIn("debug.sf.luma_sampling", launcher)
+        self.assertNotIn("config_disableTaskSnapshots", launcher)
+        self.assertNotIn("com.android.systemui", launcher)
         self.assertIn("./gradlew --no-daemon --max-workers=1", launcher)
         self.assertIn("connectedDebugAndroidTest", launcher)
         self.assertIn("tools/android-instrumentation-ci.sh", launcher)
@@ -365,27 +285,31 @@ esac
         self.assertIn("-PinstrumentedTestAbi=x86_64", launcher)
         self.assertIn(":app:assembleDebugAndroidTest", prebuild)
         self.assertIn(":core:storage:assembleDebugAndroidTest", prebuild)
-        self.assertIn("tools/build-api37-snapshot-overlay.sh", prebuild)
+        self.assertNotIn("tools/build-api37-snapshot-overlay.sh", prebuild)
         self.assertIn(":test-fixtures:traffic-target-a:assembleReplacementDebug", prebuild)
         self.assertIn(":test-fixtures:competing-vpn:assembleDebug", prebuild)
         self.assertIn("-PinstrumentedTestAbi=x86_64", prebuild)
-        self.assertIn("android-api37-surfaceflinger-guard.sh", prebuild)
-        self.assertIn('guard_failure_file="${guard_ready_file}.failed"', prebuild)
+        self.assertNotIn("android-api37-surfaceflinger-guard.sh", prebuild)
+        self.assertFalse((ROOT / "tools/android-api37-surfaceflinger-guard.sh").exists())
+        self.assertFalse((ROOT / "tools/build-api37-snapshot-overlay.sh").exists())
         app_build = (ROOT / "app/build.gradle.kts").read_text()
         self.assertIn('providers.gradleProperty("instrumentedTestAbi")', app_build)
         self.assertIn("options=(--no-streaming)", instrumentation)
         self.assertIn("cool.jacoblin.particeps.test/androidx.test.runner.AndroidJUnitRunner", instrumentation)
         self.assertIn("cool.jacoblin.particeps.core.storage.test/androidx.test.runner.AndroidJUnitRunner", instrumentation)
         self.assertIn("INSTRUMENTATION_(ABORTED|FAILED)", instrumentation)
+        self.assertIn("cool.jacoblin.particeps.Api37CompatibilityTest", instrumentation)
         self.assertIn("logcat -b crash -d -v brief", instrumentation)
         harness = (ROOT / "tools/android-host-harness.sh").read_text()
         self.assertIn('install --no-streaming -r -d -t', harness)
 
-        overlay_builder = (ROOT / "tools/build-api37-snapshot-overlay.sh").read_text()
-        self.assertIn("--auto-add-overlay", overlay_builder)
-        self.assertIn("apksigner", overlay_builder)
-        self.assertIn("Particeps API 37 Test RRO", overlay_builder)
-        self.assertIn("must not contain executable code", overlay_builder)
+        compatibility_test = (
+            ROOT
+            / "app/src/androidTest/kotlin/cool/jacoblin/particeps/Api37CompatibilityTest.kt"
+        ).read_text()
+        self.assertIn("Trafficshaping.touch()", compatibility_test)
+        self.assertIn("android.permission.ACCESS_LOCAL_NETWORK", compatibility_test)
+        self.assertNotIn("ActivityScenario", compatibility_test)
 
     def test_api_37_traffic_apps_declare_local_network_permission(self) -> None:
         permission = "android.permission.ACCESS_LOCAL_NETWORK"
