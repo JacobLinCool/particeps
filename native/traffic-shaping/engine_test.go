@@ -91,7 +91,16 @@ func TestEngineLifecycleAndProfileProof(t *testing.T) {
 	if snapshot.GetGeneration() != 2 || snapshot.GetProfileDigest() != second.GetDigest() {
 		t.Fatalf("snapshot does not identify applied generation: %#v", snapshot)
 	}
-	engine.Stop()
+	stopped := make(chan struct{})
+	go func() {
+		engine.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("stop did not interrupt an idle TUN read")
+	}
 	engine.Stop()
 	if engine.IsHealthy() {
 		t.Fatal("stopped engine remained healthy")
