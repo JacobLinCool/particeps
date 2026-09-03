@@ -192,7 +192,7 @@ jobs:
             require_16k: true
             # Keep the renderer minimal; the pre-launch guard separately disables
             # the emulator-only UI readback paths that are broken in revision 5.
-            emulator_options: "-no-window -gpu off -no-snapshot -noaudio -no-boot-anim -camera-back none"
+            emulator_options: "-no-window -gpu off -writable-system -no-snapshot -noaudio -no-boot-anim -camera-back none"
     env:
       ANDROID_NDK_PACKAGE: ndk;30.0.14904198
       GOTOOLCHAIN: local

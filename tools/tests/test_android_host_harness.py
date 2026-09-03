@@ -27,12 +27,16 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
             service_seen = directory / "service-seen"
             service_ready = directory / "service-ready"
             ready = directory / "ready"
+            overlay_apk = directory / "overlay.apk"
+            overlay_apk.write_bytes(b"test overlay")
             adb.write_text(
                 """#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$FAKE_ADB_LOG"
 case "$*" in
-  *" root"|*" wait-for-device"|*" reboot")
+  *" root"|*" wait-for-device"|*" reboot"|*" remount"|*" push "*)
+    ;;
+  *" shell chmod 0644 /product/overlay/ParticepsDisableTaskSnapshots.apk"|*" shell restorecon /product/overlay/ParticepsDisableTaskSnapshots.apk"|*" shell test -s /product/overlay/ParticepsDisableTaskSnapshots.apk"|*" shell sync")
     ;;
   *" shell setprop debug.sf.luma_sampling 0"|*" shell setprop sys.boot_completed 0")
     ;;
@@ -62,8 +66,6 @@ case "$*" in
     [[ -e "$FAKE_ADB_SERVICE_READY" ]]
     printf 'Package com.android.systemui new state: disabled-user\\n'
     ;;
-  *" shell cmd overlay fabricate "*|*" shell cmd overlay enable "*)
-    ;;
   *" shell cmd overlay lookup android android:bool/config_disableTaskSnapshots")
     printf 'true\\n'
     ;;
@@ -91,6 +93,7 @@ esac
             environment["FAKE_ADB_LOG"] = str(log)
             environment["FAKE_ADB_SERVICE_SEEN"] = str(service_seen)
             environment["FAKE_ADB_SERVICE_READY"] = str(service_ready)
+            environment["PARTICEPS_API37_SNAPSHOT_OVERLAY_APK"] = str(overlay_apk)
             environment["PARTICEPS_SURFACEFLINGER_GUARD_TIMEOUT_SECONDS"] = "5"
             environment["PARTICEPS_SURFACEFLINGER_STABILITY_SECONDS"] = "1"
             result = subprocess.run(
@@ -110,8 +113,10 @@ esac
             self.assertEqual("ready\n", ready.read_text())
             commands = log.read_text()
             self.assertIn("shell setprop debug.sf.luma_sampling 0", commands)
-            self.assertIn("shell cmd overlay fabricate --target android", commands)
-            self.assertIn("android:bool/config_disableTaskSnapshots 0x12 0x1", commands)
+            self.assertIn("-s emulator-5554 remount", commands)
+            self.assertIn(str(overlay_apk), commands)
+            self.assertIn("/product/overlay/ParticepsDisableTaskSnapshots.apk", commands)
+            self.assertNotIn("shell cmd overlay fabricate", commands)
             self.assertIn("-s emulator-5554 reboot", commands)
             self.assertNotIn("shell stop", commands)
             self.assertNotIn("shell start", commands)
@@ -328,6 +333,7 @@ esac
                 "-gpu swiftshader -feature -Vulkan -feature -GLDirectMem",
                 workflow,
             )
+            self.assertIn("-gpu off -writable-system", workflow)
             self.assertNotIn("swiftshader_indirect", workflow)
             self.assertIn(
                 "pre-emulator-launch-script: tools/android-emulator-prebuild.sh "
@@ -348,6 +354,7 @@ esac
         self.assertIn("-PinstrumentedTestAbi=x86_64", launcher)
         self.assertIn(":app:assembleDebugAndroidTest", prebuild)
         self.assertIn(":core:storage:assembleDebugAndroidTest", prebuild)
+        self.assertIn("tools/build-api37-snapshot-overlay.sh", prebuild)
         self.assertIn(":test-fixtures:traffic-target-a:assembleReplacementDebug", prebuild)
         self.assertIn(":test-fixtures:competing-vpn:assembleDebug", prebuild)
         self.assertIn("-PinstrumentedTestAbi=x86_64", prebuild)
@@ -362,6 +369,11 @@ esac
         self.assertIn("logcat -b crash -d -v brief", instrumentation)
         harness = (ROOT / "tools/android-host-harness.sh").read_text()
         self.assertIn('install --no-streaming -r -d -t', harness)
+
+        overlay_builder = (ROOT / "tools/build-api37-snapshot-overlay.sh").read_text()
+        self.assertIn("--auto-add-overlay", overlay_builder)
+        self.assertIn("apksigner", overlay_builder)
+        self.assertIn("must not contain executable code", overlay_builder)
 
     def test_api_37_traffic_apps_declare_local_network_permission(self) -> None:
         permission = "android.permission.ACCESS_LOCAL_NETWORK"

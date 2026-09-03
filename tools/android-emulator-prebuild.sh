@@ -40,6 +40,7 @@ esac
   :test-fixtures:traffic-target-b:assembleDebug
 
 if [[ "$require_16k" == true ]]; then
+  tools/build-api37-snapshot-overlay.sh
   # API 37 ps16k revision 5 advertises a host readback path that its ranchu mapper
   # rejects when emulator UI services lock a buffer. The background guard removes
   # those two UI-only callers and publishes a marker that the test launcher awaits.

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    package="cool.jacoblin.particeps.fixture.api37snapshotoverlay">
+    <overlay
+        android:isStatic="true"
+        android:priority="10"
+        android:resourcesMap="@xml/overlays"
+        android:targetPackage="android" />
+
+    <application android:hasCode="false" />
+</manifest>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<overlay>
+    <item
+        target="bool/config_disableTaskSnapshots"
+        value="@bool/config_disableTaskSnapshots" />
+</overlay>

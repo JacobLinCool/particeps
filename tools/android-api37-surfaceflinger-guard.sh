@@ -10,6 +10,9 @@ emulator_serial="$1"
 ready_file="$2"
 failure_file="${ready_file}.failed"
 adb_binary="${ADB:-adb}"
+repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+overlay_apk="${PARTICEPS_API37_SNAPSHOT_OVERLAY_APK:-$repository_root/test-fixtures/api37-snapshot-overlay/build/outputs/apk/debug/api37-snapshot-overlay-debug.apk}"
+overlay_device_path="/product/overlay/ParticepsDisableTaskSnapshots.apk"
 guard_timeout_seconds="${PARTICEPS_SURFACEFLINGER_GUARD_TIMEOUT_SECONDS:-300}"
 stability_seconds="${PARTICEPS_SURFACEFLINGER_STABILITY_SECONDS:-10}"
 
@@ -36,6 +39,10 @@ if [[ ! "$guard_timeout_seconds" =~ ^[1-9][0-9]*$ ]] ||
   echo "SurfaceFlinger guard timeouts must be positive integers" >&2
   exit 2
 fi
+if [[ ! -s "$overlay_apk" ]]; then
+  echo "API 37 task-snapshot RRO was not built: $overlay_apk" >&2
+  exit 1
+fi
 
 guard_deadline_epoch=$(( $(date +%s) + guard_timeout_seconds ))
 while (( $(date +%s) < guard_deadline_epoch )); do
@@ -57,8 +64,8 @@ if [[ "${sampling_state:-}" != "0" ]]; then
   exit 1
 fi
 
-# The API 37 ps16k revision 5 image is userdebug. Root is required only to create the
-# fabricated framework-resource overlay below; production App behavior remains unprivileged.
+# The API 37 ps16k revision 5 image is userdebug. Root is required only to stage a test-only
+# framework RRO on its writable product partition; production App behavior remains unprivileged.
 "$adb_binary" -s "$emulator_serial" root >/dev/null
 "$adb_binary" -s "$emulator_serial" wait-for-device
 if [[ "$("$adb_binary" -s "$emulator_serial" shell id -u | tr -d '\r')" != "0" ]]; then
@@ -84,25 +91,16 @@ fi
 
 # SystemUI registers the nav-bar luma listener that drives RegionSamplingThread. Task snapshots
 # are a second CPU-readback caller in system_server. Both hit the same broken ranchu non-DMA path.
-# Persist the overlay and fully reboot so WindowManager reads it while constructing its snapshot
-# controllers; a late framework restart cannot change those construction-time resource values.
+# Stage the immutable RRO and fully reboot so WindowManager reads it while constructing its
+# snapshot controllers; a late dynamic overlay cannot change those construction-time values.
 "$adb_binary" -s "$emulator_serial" shell \
   pm disable-user --user 0 com.android.systemui >/dev/null
-"$adb_binary" -s "$emulator_serial" shell cmd overlay fabricate \
-  --target android \
-  --name ParticepsDisableTaskSnapshots \
-  android:bool/config_disableTaskSnapshots 0x12 0x1 >/dev/null
-"$adb_binary" -s "$emulator_serial" shell cmd overlay enable --user 0 \
-  com.android.shell:ParticepsDisableTaskSnapshots
-
-overlay_value="$(
-  "$adb_binary" -s "$emulator_serial" shell cmd overlay lookup \
-    android android:bool/config_disableTaskSnapshots | tr -d '\r'
-)"
-if [[ "$overlay_value" != "true" ]]; then
-  echo "API 37 task-snapshot overlay did not resolve to true" >&2
-  exit 1
-fi
+"$adb_binary" -s "$emulator_serial" remount >/dev/null
+"$adb_binary" -s "$emulator_serial" push "$overlay_apk" "$overlay_device_path" >/dev/null
+"$adb_binary" -s "$emulator_serial" shell chmod 0644 "$overlay_device_path"
+"$adb_binary" -s "$emulator_serial" shell restorecon "$overlay_device_path"
+"$adb_binary" -s "$emulator_serial" shell test -s "$overlay_device_path"
+"$adb_binary" -s "$emulator_serial" shell sync
 
 "$adb_binary" -s "$emulator_serial" shell setprop sys.boot_completed 0
 "$adb_binary" -s "$emulator_serial" reboot
@@ -171,7 +169,7 @@ overlay_value="$(
     android android:bool/config_disableTaskSnapshots | tr -d '\r'
 )"
 if [[ "$overlay_value" != "true" ]]; then
-  echo "API 37 task-snapshot overlay did not survive reboot" >&2
+  echo "API 37 task-snapshot RRO was not active after reboot" >&2
   exit 1
 fi
 snapshot_disabled_count="$(
