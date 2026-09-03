@@ -256,13 +256,7 @@ jobs:
           profile: pixel_7_pro
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: |
-            if [[ "${{ matrix.require_16k }}" == "true" ]]; then
-              test "$(adb shell getconf PAGE_SIZE | tr -d '\r')" = "16384"
-              python3 -c 'import pathlib, xml.etree.ElementTree as ET; p=pathlib.Path("'"$ANDROID_SDK_ROOT"'/system-images/android-37.0/google_apis_ps16k/x86_64/package.xml"); r=ET.parse(p).getroot().find(".//revision/major"); assert r is not None and int(r.text) >= 5, "API 37 ps16k image revision must be at least 5"'
-            fi
-            ./gradlew --no-daemon connectedDebugAndroidTest
-            tools/android-host-harness.sh
+          script: tools/android-emulator-ci.sh --require-16k=${{ matrix.require_16k }}
 
       - name: Upload sanitized Android host-harness evidence
         if: always()
