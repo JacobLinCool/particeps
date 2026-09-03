@@ -87,7 +87,10 @@ class CoreFlowTest {
         }
 
         val commitsBeforeStart = session.snapshot.value.runtime.durableThroughCommit
-        composeRule.onNodeWithTag(UiTags.START).performScrollTo().performClick()
+        waitUntilExactlyOneNode(hasTestTag(UiTags.START), useUnmergedTree = true)
+        composeRule.onNodeWithTag(UiTags.START, useUnmergedTree = true)
+            .performScrollTo()
+            .performClick()
         try {
             composeRule.waitUntil(TIMEOUT_MILLIS) {
                 session.snapshot.value.runtime.state == ExperimentState.RUNNING
@@ -191,9 +194,12 @@ class CoreFlowTest {
 
     private fun session() = (composeRule.activity.application as CollectorApplication).session
 
-    private fun waitUntilExactlyOneNode(matcher: SemanticsMatcher) {
+    private fun waitUntilExactlyOneNode(
+        matcher: SemanticsMatcher,
+        useUnmergedTree: Boolean = false,
+    ) {
         composeRule.waitUntil(TIMEOUT_MILLIS) {
-            composeRule.onAllNodes(matcher).fetchSemanticsNodes().size == 1
+            composeRule.onAllNodes(matcher, useUnmergedTree).fetchSemanticsNodes().size == 1
         }
     }
 
