@@ -1,6 +1,6 @@
 {
   "android_ndk": "30.0.14904198",
-  "android_ndk_revision": "30.0.14904198-rc1",
+  "android_ndk_revision": "30.0.14904198-beta1",
   "components": [
     {
       "license": "Apache-2.0",
