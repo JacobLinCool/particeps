@@ -54,7 +54,7 @@ case "$*" in
       printf 'Service activity: not found\\n'
     fi
     ;;
-  *" shell service check package"|*" shell service check window")
+  *" shell service check package"|*" shell service check overlay"|*" shell service check window")
     service="${*: -1}"
     printf 'Service %s: found\\n' "$service"
     ;;

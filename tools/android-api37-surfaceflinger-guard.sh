@@ -69,7 +69,8 @@ fi
 "$adb_binary" -s "$emulator_serial" shell setprop sys.boot_completed 0
 
 while (( $(date +%s) < guard_deadline_epoch )); do
-  if service_is_available activity && service_is_available package; then
+  if service_is_available activity && service_is_available package &&
+      service_is_available overlay; then
     initial_framework_ready=true
     break
   fi
@@ -77,7 +78,7 @@ while (( $(date +%s) < guard_deadline_epoch )); do
 done
 
 if [[ "${initial_framework_ready:-false}" != true ]]; then
-  echo "API 37 framework was not ready for graphics stabilization" >&2
+  echo "API 37 framework and overlay service were not ready for graphics stabilization" >&2
   exit 1
 fi
 
