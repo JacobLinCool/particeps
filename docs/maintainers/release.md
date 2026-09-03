@@ -23,7 +23,9 @@ the evidence must identify `mapper.ranchu.so`, the `SurfaceFlinger` process, and
 Particeps App, VPN, `libgojni`, or instrumentation/test assertion failure. Every other failure is
 blocking, and the exact signature must also terminate the emulator transport rather than merely
 coincide with a scenario failure. CI runs the stock image without root, remount, framework overlay,
-SystemUI disablement, or system-server mutation.
+SystemUI disablement, or system-server mutation. The API 37 runner waits until the stock package,
+activity, and input services are actually registered before starting product checks; it does not
+treat the preview image's early `sys.boot_completed` property as sufficient readiness.
 [Issue #33](https://github.com/JacobLinCool/particeps/issues/33) tracks restoring the full lane as an
 unconditional blocker on a repaired image. A quarantined run is not evidence that the complete API
 37 host harness passed.

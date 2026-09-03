@@ -456,7 +456,9 @@ VPN, native, or instrumentation/test assertion failure. It must also end in a re
 transport failure; a coincident platform log cannot mask a failed scenario. Any other failure
 remains blocking. CI does not modify the preview system image or its services. This limitation is
 tracked in [#33](https://github.com/JacobLinCool/particeps/issues/33), and a quarantined run is not
-represented as a complete API 37 host-harness pass.
+represented as a complete API 37 host-harness pass. API 37 orchestration observes package, activity,
+and input service registration before testing because revision 5 can publish `sys.boot_completed=1`
+before those services are usable.
 
 The release verifier requires:
 

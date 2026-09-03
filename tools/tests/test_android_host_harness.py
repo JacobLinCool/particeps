@@ -258,6 +258,7 @@ esac
         launcher = (ROOT / "tools/android-emulator-ci.sh").read_text()
         instrumentation = (ROOT / "tools/android-instrumentation-ci.sh").read_text()
         prebuild = (ROOT / "tools/android-emulator-prebuild.sh").read_text()
+        api37_runner = (ROOT / "tools/android-api37-emulator-runner.sh").read_text()
         for workflow_name in ("ci.yml", "release.yml"):
             workflow = (ROOT / f".github/workflows/{workflow_name}").read_text()
             self.assertIn(
@@ -283,6 +284,9 @@ esac
                 "--require-16k=${{ matrix.require_16k }}",
                 workflow,
             )
+            self.assertIn("if: matrix.require_16k == false", workflow)
+            self.assertIn("if: matrix.require_16k == true", workflow)
+            self.assertIn("run: tools/android-api37-emulator-runner.sh", workflow)
         self.assertIn("API 37 ps16k emulator page size must be 16384", launcher)
         self.assertIn("API 37 ps16k image revision must be at least 5", launcher)
         self.assertIn("--suite=api37-compatibility", launcher)
@@ -303,6 +307,15 @@ esac
         self.assertIn(":test-fixtures:competing-vpn:assembleDebug", prebuild)
         self.assertIn("-PinstrumentedTestAbi=x86_64", prebuild)
         self.assertNotIn("android-api37-surfaceflinger-guard.sh", prebuild)
+        self.assertIn("service check package", api37_runner)
+        self.assertIn("service check activity", api37_runner)
+        self.assertIn("service check input", api37_runner)
+        self.assertIn("-logcat-output", api37_runner)
+        self.assertIn("tools/android-emulator-ci.sh --require-16k=true", api37_runner)
+        self.assertNotIn("settings put", api37_runner)
+        self.assertNotIn("input keyevent", api37_runner)
+        self.assertNotIn("-writable-system", api37_runner)
+        self.assertIn("api37-blocking-compatibility.txt", launcher)
         self.assertFalse((ROOT / "tools/android-api37-surfaceflinger-guard.sh").exists())
         self.assertFalse((ROOT / "tools/build-api37-snapshot-overlay.sh").exists())
         app_build = (ROOT / "app/build.gradle.kts").read_text()

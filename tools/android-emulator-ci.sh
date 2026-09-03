@@ -80,6 +80,9 @@ if [[ "$require_16k" == true ]]; then
   # It verifies installability, manifest contracts, native loading, and non-snapshot instrumentation on
   # an unmodified API 37 16 KiB image.
   tools/android-instrumentation-ci.sh --suite=api37-compatibility
+  printf '%s\n' \
+    "PASS: API 37 installation, 16 KiB page size, manifest contracts, and native loading checks passed." \
+    > "$report_directory/api37-blocking-compatibility.txt"
   run_api37_quarantined_host_harness
 else
   # API 34 remains the complete blocking product-behaviour lane.

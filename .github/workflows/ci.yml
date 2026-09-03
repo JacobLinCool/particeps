@@ -250,7 +250,8 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Run blocking connected test matrix
+      - name: Run blocking API 34 product-behaviour gate
+        if: matrix.require_16k == false
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: "37.0"
@@ -264,6 +265,11 @@ jobs:
           disable-animations: true
           pre-emulator-launch-script: tools/android-emulator-prebuild.sh --require-16k=${{ matrix.require_16k }}
           script: tools/android-emulator-ci.sh --require-16k=${{ matrix.require_16k }}
+
+      - name: Run blocking API 37 compatibility gate and quarantined full harness
+        if: matrix.require_16k == true
+        shell: bash
+        run: tools/android-api37-emulator-runner.sh
 
       - name: Upload sanitized Android host-harness evidence
         if: always()
