@@ -34,6 +34,24 @@ service_is_available() {
   [[ "$service_status" == "Service ${service_name}: found" ]]
 }
 
+restart_adbd_as_root() {
+  local user_id
+  while (( $(date +%s) < guard_deadline_epoch )); do
+    if "$adb_binary" -s "$emulator_serial" root >/dev/null 2>&1; then
+      "$adb_binary" -s "$emulator_serial" wait-for-device
+      user_id="$(
+        "$adb_binary" -s "$emulator_serial" shell id -u 2>/dev/null |
+          tr -d '\r' || true
+      )"
+      if [[ "$user_id" == "0" ]]; then
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 if [[ ! "$guard_timeout_seconds" =~ ^[1-9][0-9]*$ ]] ||
     [[ ! "$stability_seconds" =~ ^[1-9][0-9]*$ ]]; then
   echo "SurfaceFlinger guard timeouts must be positive integers" >&2
@@ -66,9 +84,7 @@ fi
 
 # The API 37 ps16k revision 5 image is userdebug. Root is required only to stage a test-only
 # framework RRO on its writable product partition; production App behavior remains unprivileged.
-"$adb_binary" -s "$emulator_serial" root >/dev/null
-"$adb_binary" -s "$emulator_serial" wait-for-device
-if [[ "$("$adb_binary" -s "$emulator_serial" shell id -u | tr -d '\r')" != "0" ]]; then
+if ! restart_adbd_as_root; then
   echo "API 37 emulator adbd did not restart as root" >&2
   exit 1
 fi
@@ -105,9 +121,7 @@ fi
 "$adb_binary" -s "$emulator_serial" shell setprop sys.boot_completed 0
 "$adb_binary" -s "$emulator_serial" reboot
 "$adb_binary" -s "$emulator_serial" wait-for-device
-"$adb_binary" -s "$emulator_serial" root >/dev/null
-"$adb_binary" -s "$emulator_serial" wait-for-device
-if [[ "$("$adb_binary" -s "$emulator_serial" shell id -u | tr -d '\r')" != "0" ]]; then
+if ! restart_adbd_as_root; then
   echo "API 37 emulator adbd did not return as root after reboot" >&2
   exit 1
 fi
