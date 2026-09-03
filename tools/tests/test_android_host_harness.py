@@ -26,6 +26,7 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
             log = directory / "adb.log"
             service_seen = directory / "service-seen"
             service_ready = directory / "service-ready"
+            remount_seen = directory / "remount-seen"
             ready = directory / "ready"
             overlay_apk = directory / "overlay.apk"
             overlay_apk.write_bytes(b"test overlay")
@@ -34,7 +35,15 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
 set -euo pipefail
 printf '%s\\n' "$*" >> "$FAKE_ADB_LOG"
 case "$*" in
-  *" root"|*" wait-for-device"|*" reboot"|*" remount"|*" push "*)
+  *" remount")
+    if [[ -e "$FAKE_ADB_REMOUNT_SEEN" ]]; then
+      printf 'remount succeeded\\n'
+    else
+      : > "$FAKE_ADB_REMOUNT_SEEN"
+      printf 'Now reboot your device for settings to take effect\\n'
+    fi
+    ;;
+  *" root"|*" wait-for-device"|*" reboot"|*" push "*)
     ;;
   *" shell chmod 0644 /product/overlay/ParticepsDisableTaskSnapshots.apk"|*" shell restorecon /product/overlay/ParticepsDisableTaskSnapshots.apk"|*" shell test -s /product/overlay/ParticepsDisableTaskSnapshots.apk"|*" shell sync")
     ;;
@@ -93,6 +102,7 @@ esac
             environment["FAKE_ADB_LOG"] = str(log)
             environment["FAKE_ADB_SERVICE_SEEN"] = str(service_seen)
             environment["FAKE_ADB_SERVICE_READY"] = str(service_ready)
+            environment["FAKE_ADB_REMOUNT_SEEN"] = str(remount_seen)
             environment["PARTICEPS_API37_SNAPSHOT_OVERLAY_APK"] = str(overlay_apk)
             environment["PARTICEPS_SURFACEFLINGER_GUARD_TIMEOUT_SECONDS"] = "5"
             environment["PARTICEPS_SURFACEFLINGER_STABILITY_SECONDS"] = "1"
@@ -118,6 +128,7 @@ esac
             self.assertIn("/product/overlay/ParticepsDisableTaskSnapshots.apk", commands)
             self.assertNotIn("shell cmd overlay fabricate", commands)
             self.assertIn("-s emulator-5554 reboot", commands)
+            self.assertEqual(2, commands.count("-s emulator-5554 reboot"))
             self.assertNotIn("shell stop", commands)
             self.assertNotIn("shell start", commands)
             self.assertGreaterEqual(

@@ -13,7 +13,7 @@ adb_binary="${ADB:-adb}"
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 overlay_apk="${PARTICEPS_API37_SNAPSHOT_OVERLAY_APK:-$repository_root/test-fixtures/api37-snapshot-overlay/build/outputs/apk/debug/api37-snapshot-overlay-debug.apk}"
 overlay_device_path="/product/overlay/ParticepsDisableTaskSnapshots.apk"
-guard_timeout_seconds="${PARTICEPS_SURFACEFLINGER_GUARD_TIMEOUT_SECONDS:-300}"
+guard_timeout_seconds="${PARTICEPS_SURFACEFLINGER_GUARD_TIMEOUT_SECONDS:-420}"
 stability_seconds="${PARTICEPS_SURFACEFLINGER_STABILITY_SECONDS:-10}"
 
 publish_failure() {
@@ -111,7 +111,36 @@ fi
 # snapshot controllers; a late dynamic overlay cannot change those construction-time values.
 "$adb_binary" -s "$emulator_serial" shell \
   pm disable-user --user 0 com.android.systemui >/dev/null
-"$adb_binary" -s "$emulator_serial" remount >/dev/null
+remount_output="$("$adb_binary" -s "$emulator_serial" remount 2>&1)"
+if [[ "$remount_output" == *"reboot your device"* ]]; then
+  "$adb_binary" -s "$emulator_serial" shell setprop sys.boot_completed 0
+  "$adb_binary" -s "$emulator_serial" reboot
+  "$adb_binary" -s "$emulator_serial" wait-for-device
+  if ! restart_adbd_as_root; then
+    echo "API 37 emulator adbd did not return as root after enabling overlayfs" >&2
+    exit 1
+  fi
+  "$adb_binary" -s "$emulator_serial" shell setprop debug.sf.luma_sampling 0
+  "$adb_binary" -s "$emulator_serial" shell setprop sys.boot_completed 0
+  while (( $(date +%s) < guard_deadline_epoch )); do
+    if service_is_available package &&
+        "$adb_binary" -s "$emulator_serial" shell \
+          pm disable-user --user 0 com.android.systemui >/dev/null 2>&1; then
+      overlayfs_framework_ready=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "${overlayfs_framework_ready:-false}" != true ]]; then
+    echo "API 37 package service did not recover after enabling overlayfs" >&2
+    exit 1
+  fi
+  remount_output="$("$adb_binary" -s "$emulator_serial" remount 2>&1)"
+fi
+if [[ "$remount_output" == *"reboot your device"* ]]; then
+  echo "API 37 product overlayfs still required a reboot after remount" >&2
+  exit 1
+fi
 "$adb_binary" -s "$emulator_serial" push "$overlay_apk" "$overlay_device_path" >/dev/null
 "$adb_binary" -s "$emulator_serial" shell chmod 0644 "$overlay_device_path"
 "$adb_binary" -s "$emulator_serial" shell restorecon "$overlay_device_path"

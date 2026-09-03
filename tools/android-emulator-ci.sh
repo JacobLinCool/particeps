@@ -26,7 +26,7 @@ if [[ "$require_16k" == true ]]; then
   adb_binary="${ADB:-adb}"
   guard_ready_file="build/reports/android-host-harness/api37-surfaceflinger-ready.txt"
   guard_failure_file="${guard_ready_file}.failed"
-  guard_wait_deadline=$(( SECONDS + 360 ))
+  guard_wait_deadline=$(( SECONDS + 480 ))
   while [[ ! -s "$guard_ready_file" ]] && [[ ! -s "$guard_failure_file" ]] &&
       (( SECONDS < guard_wait_deadline )); do
     sleep 1
