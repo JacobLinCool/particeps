@@ -82,7 +82,7 @@ jobs:
           python-version: "3.13"
           working-directory: particeps-analysis
           enable-cache: true
-          cache-dependency-glob: particeps-analysis/uv.lock
+          cache-dependency-glob: uv.lock
 
       - name: Verify offline analysis replay and materialization
         working-directory: particeps-analysis

@@ -48,7 +48,7 @@ jobs:
           python-version: "3.13"
           working-directory: particeps-analysis
           enable-cache: true
-          cache-dependency-glob: particeps-analysis/uv.lock
+          cache-dependency-glob: uv.lock
 
       - name: Install locked dependencies
         run: uv sync --locked
