@@ -21,6 +21,7 @@ MODULES = (
 class AndroidHostHarnessContractTest(unittest.TestCase):
     def run_instrumentation_launcher(
         self,
+        fail_install: bool = False,
         fail_instrumentation: bool = False,
     ) -> tuple[subprocess.CompletedProcess[str], str]:
         with tempfile.TemporaryDirectory() as temporary:
@@ -39,7 +40,14 @@ case "$1" in
     exit 1
     ;;
   install)
+    if [[ "${FAKE_ADB_FAIL_INSTALL:-0}" == 1 ]]; then
+      printf 'Failure [INSTALL_FAILED_TEST]\\n'
+      exit 1
+    fi
     printf 'Success\\n'
+    ;;
+  logcat)
+    printf 'synthetic crash buffer\\n'
     ;;
   shell)
     if [[ "${FAKE_ADB_FAIL_INSTRUMENT:-0}" == 1 ]]; then
@@ -55,6 +63,8 @@ esac
             environment = os.environ.copy()
             environment["ADB"] = str(adb)
             environment["FAKE_ADB_LOG"] = str(log)
+            if fail_install:
+                environment["FAKE_ADB_FAIL_INSTALL"] = "1"
             if fail_instrumentation:
                 environment["FAKE_ADB_FAIL_INSTRUMENT"] = "1"
             result = subprocess.run(
@@ -70,8 +80,14 @@ esac
     def test_api_37_instrumentation_launcher_uses_non_streaming_installs(self) -> None:
         result, commands = self.run_instrumentation_launcher()
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertEqual(3, commands.count("install --no-streaming -r -d -t"))
+        self.assertEqual(3, commands.count("install --no-streaming"))
         self.assertEqual(2, commands.count("shell am instrument -w -r"))
+
+    def test_api_37_instrumentation_launcher_reports_install_failures(self) -> None:
+        result, commands = self.run_instrumentation_launcher(fail_install=True)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("Failure [INSTALL_FAILED_TEST]", result.stderr)
+        self.assertIn("logcat -b crash -d -v brief", commands)
 
     def test_api_37_instrumentation_launcher_rejects_test_failures(self) -> None:
         result, _ = self.run_instrumentation_launcher(fail_instrumentation=True)
@@ -214,7 +230,7 @@ esac
         self.assertIn("-PinstrumentedTestAbi=x86_64", prebuild)
         app_build = (ROOT / "app/build.gradle.kts").read_text()
         self.assertIn('providers.gradleProperty("instrumentedTestAbi")', app_build)
-        self.assertIn("install --no-streaming -r -d -t", instrumentation)
+        self.assertIn("options=(--no-streaming)", instrumentation)
         self.assertIn("cool.jacoblin.particeps.test/androidx.test.runner.AndroidJUnitRunner", instrumentation)
         self.assertIn("cool.jacoblin.particeps.core.storage.test/androidx.test.runner.AndroidJUnitRunner", instrumentation)
         self.assertIn("INSTRUMENTATION_(ABORTED|FAILED)", instrumentation)

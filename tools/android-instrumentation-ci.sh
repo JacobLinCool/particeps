@@ -14,9 +14,21 @@ trap cleanup EXIT
 
 install_apk() {
   local apk="$1"
+  local test_only="$2"
   local output
-  output="$("$adb_binary" install --no-streaming -r -d -t "$apk" | tr -d '\r')"
-  [[ "$output" == "Success" ]]
+  local -a options=(--no-streaming)
+  if [[ "$test_only" == true ]]; then
+    options+=(-t)
+  fi
+  if output="$("$adb_binary" install "${options[@]}" "$apk" 2>&1 | tr -d '\r')"; then
+    if [[ "$output" == "Success" ]]; then
+      return 0
+    fi
+  fi
+  printf 'Failed to install %s:\n%s\n' "$apk" "$output" >&2
+  "$adb_binary" logcat -b crash -d -v brief >&2 || true
+  "$adb_binary" shell df -h /data /data/local/tmp >&2 || true
+  return 1
 }
 
 run_instrumentation() {
@@ -32,14 +44,14 @@ run_instrumentation() {
 
 "$adb_binary" uninstall cool.jacoblin.particeps.test >/dev/null 2>&1 || true
 "$adb_binary" uninstall cool.jacoblin.particeps >/dev/null 2>&1 || true
-install_apk app/build/outputs/apk/debug/app-debug.apk
-install_apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+install_apk app/build/outputs/apk/debug/app-debug.apk false
+install_apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk true
 run_instrumentation \
   app \
   cool.jacoblin.particeps.test/androidx.test.runner.AndroidJUnitRunner
 
 "$adb_binary" uninstall cool.jacoblin.particeps.core.storage.test >/dev/null 2>&1 || true
-install_apk core/storage/build/outputs/apk/androidTest/debug/storage-debug-androidTest.apk
+install_apk core/storage/build/outputs/apk/androidTest/debug/storage-debug-androidTest.apk true
 run_instrumentation \
   storage \
   cool.jacoblin.particeps.core.storage.test/androidx.test.runner.AndroidJUnitRunner
