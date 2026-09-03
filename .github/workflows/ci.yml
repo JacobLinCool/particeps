@@ -256,7 +256,9 @@ jobs:
           profile: pixel_7_pro
           ram-size: 4096M
           disk-size: 12G
-          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim -camera-back none
+          # The API 37 ps16k image rejects the host ReadColorBufferDma capability in
+          # mapper.ranchu. Disabling GLDirectMem prevents the emulator from advertising it.
+          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -feature -GLDirectMem -no-snapshot -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           pre-emulator-launch-script: tools/android-emulator-prebuild.sh
           script: tools/android-emulator-ci.sh --require-16k=${{ matrix.require_16k }}

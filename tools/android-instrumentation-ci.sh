@@ -28,7 +28,12 @@ install_apk() {
     fi
   fi
   printf 'Failed to install %s:\n%s\n' "$apk" "$output" >&2
-  "$adb_binary" logcat -b crash -d -v brief >&2 || true
+  local report_name
+  report_name="$(basename "$apk" .apk)"
+  printf '%s\n' "$output" > "$report_directory/$report_name-install.txt"
+  "$adb_binary" logcat -b crash -d -v brief \
+    > "$report_directory/$report_name-install-crash-log.txt" 2>&1 || true
+  cat "$report_directory/$report_name-install-crash-log.txt" >&2
   "$adb_binary" shell df -h /data /data/local/tmp >&2 || true
   return 1
 }

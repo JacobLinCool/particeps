@@ -215,7 +215,10 @@ esac
             self.assertIn("system_image_api: 34", workflow)
             self.assertIn("ram-size: 4096M", workflow)
             self.assertIn("disk-size: 12G", workflow)
-            self.assertIn("-gpu swiftshader -feature -Vulkan", workflow)
+            self.assertIn(
+                "-gpu swiftshader -feature -Vulkan -feature -GLDirectMem",
+                workflow,
+            )
             self.assertNotIn("swiftshader_indirect", workflow)
             self.assertIn("pre-emulator-launch-script: tools/android-emulator-prebuild.sh", workflow)
         self.assertIn("API 37 ps16k emulator page size must be 16384", launcher)
