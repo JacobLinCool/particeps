@@ -124,6 +124,10 @@ esac
             self.assertIn("-s emulator-5554 shell setprop debug.sf.luma_sampling 0", commands)
             self.assertIn("-s emulator-5554 shell getprop debug.sf.luma_sampling", commands)
             self.assertIn("shell pm disable-user --user 0 com.android.systemui", commands)
+            self.assertEqual(
+                2,
+                commands.count("shell pm disable-user --user 0 com.android.systemui"),
+            )
             self.assertIn("shell cmd overlay fabricate --target android", commands)
             self.assertIn("android:bool/config_disableTaskSnapshots 0x12 0x1", commands)
             self.assertIn("shell stop", commands)
@@ -347,6 +351,7 @@ esac
         self.assertIn("API 37 ps16k image revision must be at least 5", launcher)
         self.assertIn("debug.sf.luma_sampling", launcher)
         self.assertIn("graphics or framework process did not remain stable", launcher)
+        self.assertIn('guard_failure_file="${guard_ready_file}.failed"', launcher)
         self.assertIn("config_disableTaskSnapshots", launcher)
         self.assertIn("com.android.systemui", launcher)
         self.assertIn("./gradlew --no-daemon --max-workers=1", launcher)
@@ -360,6 +365,7 @@ esac
         self.assertIn(":test-fixtures:competing-vpn:assembleDebug", prebuild)
         self.assertIn("-PinstrumentedTestAbi=x86_64", prebuild)
         self.assertIn("android-api37-surfaceflinger-guard.sh", prebuild)
+        self.assertIn('guard_failure_file="${guard_ready_file}.failed"', prebuild)
         app_build = (ROOT / "app/build.gradle.kts").read_text()
         self.assertIn('providers.gradleProperty("instrumentedTestAbi")', app_build)
         self.assertIn("options=(--no-streaming)", instrumentation)

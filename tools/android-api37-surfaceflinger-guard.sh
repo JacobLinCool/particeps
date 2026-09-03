@@ -8,9 +8,18 @@ fi
 
 emulator_serial="$1"
 ready_file="$2"
+failure_file="${ready_file}.failed"
 adb_binary="${ADB:-adb}"
 guard_timeout_seconds="${PARTICEPS_SURFACEFLINGER_GUARD_TIMEOUT_SECONDS:-180}"
 stability_seconds="${PARTICEPS_SURFACEFLINGER_STABILITY_SECONDS:-10}"
+
+publish_failure() {
+  local exit_status="$?"
+  if (( exit_status != 0 )); then
+    printf 'failed\n' > "$failure_file"
+  fi
+}
+trap publish_failure EXIT
 
 service_is_available() {
   local service_name="$1"
@@ -132,6 +141,10 @@ if [[ "${restarted_framework_ready:-false}" != true ]]; then
   exit 1
 fi
 
+# PackageManager restores the platform SystemUI package to its configured default while the
+# framework is reconstructed. Reassert the test-only disabled state before checking stability.
+"$adb_binary" -s "$emulator_serial" shell \
+  pm disable-user --user 0 com.android.systemui >/dev/null
 if ! "$adb_binary" -s "$emulator_serial" shell pm list packages -d --user 0 |
     tr -d '\r' | grep -qx 'package:com.android.systemui'; then
   echo "API 37 SystemUI did not remain disabled" >&2
@@ -163,4 +176,5 @@ if [[ -z "$surfaceflinger_pid" ]] || [[ "$stable_surfaceflinger_pid" != "$surfac
 fi
 
 printf 'ready\n' > "$ready_file"
+trap - EXIT
 echo "API 37 emulator graphics stabilized on $emulator_serial"

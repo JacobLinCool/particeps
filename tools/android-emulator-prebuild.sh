@@ -46,9 +46,9 @@ if [[ "$require_16k" == true ]]; then
   guard_report_directory="build/reports/android-host-harness"
   mkdir -p "$guard_report_directory"
   guard_ready_file="$repository_root/$guard_report_directory/api37-surfaceflinger-ready.txt"
-  if [[ -e "$guard_ready_file" ]]; then
-    unlink "$guard_ready_file"
-  fi
+  guard_failure_file="${guard_ready_file}.failed"
+  [[ ! -e "$guard_ready_file" ]] || unlink "$guard_ready_file"
+  [[ ! -e "$guard_failure_file" ]] || unlink "$guard_failure_file"
   nohup tools/android-api37-surfaceflinger-guard.sh \
     "${PARTICEPS_EMULATOR_SERIAL:-emulator-5554}" \
     "$guard_ready_file" \
