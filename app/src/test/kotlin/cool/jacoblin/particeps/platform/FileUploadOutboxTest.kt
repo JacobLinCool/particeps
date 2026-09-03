@@ -1,6 +1,5 @@
 package cool.jacoblin.particeps.platform
 
-import cool.jacoblin.particeps.core.application.StudyUploadException
 import cool.jacoblin.particeps.core.export.ExportReceipt
 import java.io.IOException
 import java.security.MessageDigest
@@ -32,7 +31,7 @@ class FileUploadOutboxTest {
 
         val recovered = outbox.recover(
             CONFIGURATION_DIGEST,
-            uploadedThroughSequence = 0,
+            uploadedThroughCommit = 0,
         )
 
         assertEquals(1, writes)
@@ -54,7 +53,7 @@ class FileUploadOutboxTest {
             assertNull(
                 outbox.recover(
                     CONFIGURATION_DIGEST,
-                    uploadedThroughSequence = 6,
+                    uploadedThroughCommit = 6,
                 ),
             )
             assertTrue(directory.listFiles().orEmpty().isEmpty())
@@ -74,7 +73,7 @@ class FileUploadOutboxTest {
         val failure = runCatching {
             outbox.recover(
                 CONFIGURATION_DIGEST,
-                uploadedThroughSequence = 0,
+                uploadedThroughCommit = 0,
             )
         }.exceptionOrNull()
 
@@ -96,12 +95,12 @@ class FileUploadOutboxTest {
         val failure = runCatching {
             FileUploadOutbox(directory) {}.recover(
                 CONFIGURATION_DIGEST,
-                uploadedThroughSequence = 0,
+                uploadedThroughCommit = 0,
             )
         }.exceptionOrNull()
 
-        assertTrue(failure is StudyUploadException)
-        assertEquals("UPLOAD_HTTP_400", (failure as StudyUploadException).reasonCode)
+        assertTrue(failure is UploadTransportException)
+        assertEquals("UPLOAD_HTTP_400", (failure as UploadTransportException).reason)
         assertFalse(failure.retryable)
         outbox.clear()
         assertTrue(directory.listFiles().orEmpty().isEmpty())
@@ -184,8 +183,9 @@ class FileUploadOutboxTest {
     private fun receipt(bytes: ByteArray, first: Long = 1, last: Long = 1): ExportReceipt = ExportReceipt(
         bundleId = UUID.fromString("00000000-0000-4000-8000-000000000001"),
         configurationSha256 = CONFIGURATION_DIGEST,
-        firstSequence = first,
-        lastSequence = last,
+        firstCommitSequence = first,
+        lastCommitSequence = last,
+        commitCount = last - first + 1,
         eventCount = last - first + 1,
         sha256 = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) },
         byteCount = bytes.size.toLong(),

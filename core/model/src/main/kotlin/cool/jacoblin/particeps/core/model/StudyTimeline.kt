@@ -1,13 +1,11 @@
 package cool.jacoblin.particeps.core.model
 
-/** Outcome of advancing a durable study clock to one observed boundary. */
 sealed interface StudyTimelineAdvance {
     data class Advanced(
         val checkpoint: StudyClockCheckpoint,
         val crossedBoot: Boolean,
     ) : StudyTimelineAdvance
 
-    /** A reboot was observed but no authenticated/network or auto-time-backed UTC was available. */
     data object TrustedUtcRequired : StudyTimelineAdvance
 }
 
@@ -15,82 +13,24 @@ class TrustedStudyTimeUnavailable : IllegalStateException(
     "A trusted UTC reading is required to advance the study across a reboot",
 )
 
-/**
- * One source of truth for lifetime, event admission, deadline work and intervention clocks.
- *
- * The caller supplies a trusted UTC reading only when Android can prove its source is acceptable.
- * Wall time inside [ResearchTime] is descriptive and is never used to bridge boot sessions.
- */
+/** Pure monotonic/calendar study clocks. No wall-clock value bridges boots without trusted UTC. */
 class StudyTimeline(durationMillis: Long) {
     init {
         require(durationMillis > 0) { "Study duration must be positive" }
     }
 
     val durationMillis: Long = durationMillis
-    private val durationNanos: Long = Math.multiplyExact(durationMillis, NANOS_PER_MILLISECOND)
+    private val durationNanos = Math.multiplyExact(durationMillis, NANOS_PER_MILLISECOND)
 
-    fun startedAt(
-        time: ResearchTime,
-        trustedUtcMillis: Long? = null,
-    ): StudyClockCheckpoint = StudyClockCheckpoint(
-        studyElapsedNanos = 0,
-        activeCollectionElapsedNanos = 0,
-        anchor = time,
-        deadlineUtcMillis = Math.addExact(trustedUtcMillis ?: time.wallTimeUtcMillis, durationMillis),
-        deadlineUtcTrusted = trustedUtcMillis != null,
-    )
-
-    /** One-time migration from the exact current metadata layout into the v2 clocks. */
-    fun migrateCurrentV1(
-        metadata: StudyMetadata,
-        observedAt: ResearchTime,
-        trustedUtcMillis: Long?,
-    ): StudyTimelineAdvance {
-        require(metadata.clockCheckpoint == null) { "Metadata already has a v2 clock checkpoint" }
-        val start = metadata.transitions.singleOrNull { it.reason == TransitionReason.PARTICIPANT_STARTED }
-            ?: error("Started v1 metadata must contain exactly one participant-start transition")
-        require(start.from == ExperimentState.READY && start.to == ExperimentState.RUNNING) {
-            "Participant-start transition has an invalid boundary"
-        }
-        val migratedActive = migratedActiveMillis(metadata, observedAt)
-        val initial = startedAt(start.time)
-        val advanced = advance(initial, metadata.state, observedAt, trustedUtcMillis)
-        return when (advanced) {
-            is StudyTimelineAdvance.Advanced -> advanced.copy(
-                checkpoint = advanced.checkpoint.copy(
-                    activeCollectionElapsedNanos = minOf(
-                        migratedActive,
-                        advanced.checkpoint.studyElapsedNanos,
-                    ),
-                ),
-            )
-            StudyTimelineAdvance.TrustedUtcRequired -> advanced
-        }
-    }
-
-    /** Conservative v1 baseline retained when trusted UTC is not yet available after a reboot. */
-    fun currentV1Baseline(metadata: StudyMetadata): StudyClockCheckpoint {
-        require(metadata.clockCheckpoint == null) { "Metadata already has a v2 clock checkpoint" }
-        val start = metadata.transitions.singleOrNull { it.reason == TransitionReason.PARTICIPANT_STARTED }
-            ?: error("Started v1 metadata must contain exactly one participant-start transition")
-        val lastSameBoot = buildList {
-            add(start.time)
-            addAll(metadata.transitions.map(ExperimentTransition::time))
-            addAll(metadata.lastEvents.values.map(RecordedEvent::observedTime))
-            addAll(metadata.occurrences.values.mapNotNull(InterventionOccurrence::openedAt))
-            addAll(metadata.occurrences.values.mapNotNull(InterventionOccurrence::submittedAt))
-        }.filter { it.bootSessionId == start.time.bootSessionId }
-            .maxBy(ResearchTime::elapsedRealtimeNanos)
-        val elapsed = lastSameBoot.elapsedRealtimeNanos - start.time.elapsedRealtimeNanos
-        return startedAt(start.time).copy(
-            studyElapsedNanos = elapsed,
-            activeCollectionElapsedNanos = minOf(
-                migratedActiveMillis(metadata, lastSameBoot),
-                elapsed,
-            ),
-            anchor = lastSameBoot,
+    fun startedAt(time: ResearchTime, trustedUtcMillis: Long?, zoneId: String): StudyClockCheckpoint =
+        StudyClockCheckpoint(
+            calendarElapsedNanos = 0,
+            activeRunningElapsedNanos = 0,
+            anchor = time,
+            deadlineUtcMillis = Math.addExact(trustedUtcMillis ?: time.wallTimeUtcMillis, durationMillis),
+            deadlineUtcTrusted = trustedUtcMillis != null,
+            zoneId = zoneId,
         )
-    }
 
     fun advance(
         checkpoint: StudyClockCheckpoint,
@@ -103,28 +43,23 @@ class StudyTimeline(durationMillis: Long) {
             require(observedAt.elapsedRealtimeNanos >= checkpoint.anchor.elapsedRealtimeNanos) {
                 "Monotonic study clock moved backwards"
             }
-            val deltaNanos = observedAt.elapsedRealtimeNanos - checkpoint.anchor.elapsedRealtimeNanos
-            val advanced = checkpoint.copy(
-                studyElapsedNanos = saturatingAdd(checkpoint.studyElapsedNanos, deltaNanos),
-                activeCollectionElapsedNanos = if (stateAtAnchor == ExperimentState.RUNNING) {
-                    saturatingAdd(checkpoint.activeCollectionElapsedNanos, deltaNanos)
+            val delta = observedAt.elapsedRealtimeNanos - checkpoint.anchor.elapsedRealtimeNanos
+            var advanced = checkpoint.copy(
+                calendarElapsedNanos = saturatingAdd(checkpoint.calendarElapsedNanos, delta),
+                activeRunningElapsedNanos = if (stateAtAnchor == ExperimentState.RUNNING) {
+                    saturatingAdd(checkpoint.activeRunningElapsedNanos, delta)
                 } else {
-                    checkpoint.activeCollectionElapsedNanos
+                    checkpoint.activeRunningElapsedNanos
                 },
                 anchor = observedAt,
             )
-            val anchored = if (!advanced.deadlineUtcTrusted && trustedUtcMillis != null) {
-                advanced.copy(
+            if (!advanced.deadlineUtcTrusted && trustedUtcMillis != null) {
+                advanced = advanced.copy(
                     deadlineUtcMillis = addSaturated(trustedUtcMillis, remainingMillis(advanced)),
                     deadlineUtcTrusted = true,
                 )
-            } else {
-                advanced
             }
-            return StudyTimelineAdvance.Advanced(
-                anchored,
-                crossedBoot = false,
-            )
+            return StudyTimelineAdvance.Advanced(advanced, crossedBoot = false)
         }
 
         val trustedNow = trustedUtcMillis ?: return StudyTimelineAdvance.TrustedUtcRequired
@@ -136,10 +71,8 @@ class StudyTimeline(durationMillis: Long) {
         )
         return StudyTimelineAdvance.Advanced(
             checkpoint.copy(
-                // Never decrease either accumulated clock when UTC moves backwards.
-                studyElapsedNanos = maxOf(checkpoint.studyElapsedNanos, elapsedByDeadline),
-                // A cross-boot RUNNING gap is not proof that collectors were active.
-                activeCollectionElapsedNanos = checkpoint.activeCollectionElapsedNanos,
+                calendarElapsedNanos = maxOf(checkpoint.calendarElapsedNanos, elapsedByDeadline),
+                activeRunningElapsedNanos = checkpoint.activeRunningElapsedNanos,
                 anchor = observedAt,
             ),
             crossedBoot = true,
@@ -147,22 +80,28 @@ class StudyTimeline(durationMillis: Long) {
     }
 
     fun remainingNanos(checkpoint: StudyClockCheckpoint): Long =
-        (durationNanos - checkpoint.studyElapsedNanos).coerceAtLeast(0)
+        (durationNanos - checkpoint.calendarElapsedNanos).coerceAtLeast(0)
 
     fun remainingMillis(checkpoint: StudyClockCheckpoint): Long =
         (remainingNanos(checkpoint) + NANOS_PER_MILLISECOND - 1) / NANOS_PER_MILLISECOND
 
-    fun isElapsed(checkpoint: StudyClockCheckpoint): Boolean = remainingMillis(checkpoint) == 0L
+    fun isElapsed(checkpoint: StudyClockCheckpoint): Boolean = remainingNanos(checkpoint) == 0L
 
-    /** Exact same-boot event admission against the checkpoint-derived monotonic deadline. */
+    /** Exact exclusive lifetime boundary in the checkpoint anchor's monotonic boot domain. */
+    fun sameBootDeadline(checkpoint: StudyClockCheckpoint): ResearchTime = ResearchTime(
+        wallTimeUtcMillis = checkpoint.deadlineUtcMillis,
+        elapsedRealtimeNanos = addSaturated(
+            checkpoint.anchor.elapsedRealtimeNanos,
+            remainingNanos(checkpoint),
+        ),
+        bootSessionId = checkpoint.anchor.bootSessionId,
+    )
+
     fun admits(checkpoint: StudyClockCheckpoint, observedAt: ResearchTime): Boolean {
         if (checkpoint.anchor.bootSessionId != observedAt.bootSessionId) return false
         if (observedAt.elapsedRealtimeNanos < checkpoint.anchor.elapsedRealtimeNanos) return false
-        val deadlineNanos = addSaturated(
-            checkpoint.anchor.elapsedRealtimeNanos,
-            remainingNanos(checkpoint),
-        )
-        return observedAt.elapsedRealtimeNanos < deadlineNanos
+        val deadline = addSaturated(checkpoint.anchor.elapsedRealtimeNanos, remainingNanos(checkpoint))
+        return observedAt.elapsedRealtimeNanos < deadline
     }
 
     private fun saturatingAdd(left: Long, right: Long): Long =
@@ -174,49 +113,12 @@ class StudyTimeline(durationMillis: Long) {
     private fun addSaturated(left: Long, right: Long): Long =
         if (right > Long.MAX_VALUE - left) Long.MAX_VALUE else left + right
 
-    private fun migratedActiveMillis(metadata: StudyMetadata, observedAt: ResearchTime): Long {
-        var total = 0L
-        var opened: ResearchTime? = null
-        metadata.transitions.forEach { transition ->
-            if (transition.to == ExperimentState.RUNNING) opened = transition.time
-            if (transition.from == ExperimentState.RUNNING) {
-                val start = checkNotNull(opened) { "RUNNING transition history has no open boundary" }
-                if (
-                    start.bootSessionId == transition.time.bootSessionId &&
-                    transition.time.elapsedRealtimeNanos >= start.elapsedRealtimeNanos
-                ) {
-                    total = saturatingAdd(
-                        total,
-                        transition.time.elapsedRealtimeNanos - start.elapsedRealtimeNanos,
-                    )
-                }
-                opened = null
-            }
-        }
-        val activeStart = opened
-        if (metadata.state == ExperimentState.RUNNING && activeStart != null) {
-            val durableEnd = buildList {
-                addAll(metadata.transitions.map(ExperimentTransition::time))
-                addAll(metadata.lastEvents.values.map(RecordedEvent::observedTime))
-                addAll(metadata.occurrences.values.mapNotNull(InterventionOccurrence::openedAt))
-                addAll(metadata.occurrences.values.mapNotNull(InterventionOccurrence::submittedAt))
-                if (observedAt.bootSessionId == activeStart.bootSessionId) add(observedAt)
-            }.filter { it.bootSessionId == activeStart.bootSessionId }
-                .maxByOrNull(ResearchTime::elapsedRealtimeNanos)
-            if (durableEnd != null && durableEnd.elapsedRealtimeNanos >= activeStart.elapsedRealtimeNanos) {
-                total = saturatingAdd(
-                    total,
-                    durableEnd.elapsedRealtimeNanos - activeStart.elapsedRealtimeNanos,
-                )
-            }
-        }
-        return total
-    }
-
     private companion object {
         const val NANOS_PER_MILLISECOND = 1_000_000L
         val STARTED_STATES = setOf(
+            ExperimentState.ACTIVATING,
             ExperimentState.RUNNING,
+            ExperimentState.PAUSING,
             ExperimentState.PAUSED,
             ExperimentState.COMPLETED,
             ExperimentState.WITHDRAWN,

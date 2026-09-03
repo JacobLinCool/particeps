@@ -45,7 +45,7 @@ class DecryptCommandTest {
     fun authenticatedButInvalidDocumentPublishesNothingAndDeletesStaging() {
         val vector = corpus.getAsJsonArray("hostile")
             .map { it.asJsonObject }
-            .single { it.get("id").asString == "bundle-unknown-payload" }
+            .single { it.get("id").asString == "bundle-unknown-event-field" }
         val files = inputs(vector.get("input_hex").asString)
 
         assertThrows(Exception::class.java) { main(files.arguments()) }

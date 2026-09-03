@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sharedUserId="cool.jacoblin.particeps.fixture.shared">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:allowBackup="false" android:label="Particeps shared target fixture" android:usesCleartextTraffic="false">
+        <meta-data android:name="fixture_role" android:value="shared_uid_target" />
+        <activity
+            android:name="cool.jacoblin.particeps.fixtures.traffic.TrafficFixtureActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

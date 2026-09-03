@@ -217,8 +217,8 @@ private fun decrypt(args: Arguments) {
         FileChannel.open(staging, StandardOpenOption.WRITE).use { it.force(true) }
         Files.move(staging, output, StandardCopyOption.ATOMIC_MOVE)
         println(
-            "verified ${verified.header.bundleId} ${verified.experiment.firstSequenceNumber}-" +
-                "${verified.experiment.lastSequenceNumber}",
+            "verified ${verified.header.bundleId} ${verified.experiment.firstCommitSequence}-" +
+                "${verified.experiment.lastCommitSequence}",
         )
     } catch (failure: Throwable) {
         Files.deleteIfExists(staging)

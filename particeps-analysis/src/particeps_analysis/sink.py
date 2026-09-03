@@ -15,12 +15,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from . import __version__
-from .catalog import CollectorCatalog, PayloadSchema
 from .errors import ConflictError, ValidationError
 from .filesystem import rename_noreplace
 from .jcs import canonicalize
 from .models import PartitionedVerifiedEvents, VerifiedEvent
 from .reassembly import ReassemblyResult
+from .registry import EventSchema, EventSourceRegistry
 from .summary import BoundedExamples
 
 PARQUET_BATCH_MAX_ROWS = 65_536
@@ -40,8 +40,8 @@ class DatasetSink(Protocol):
 
 
 class ParquetSink:
-    def __init__(self, catalog: CollectorCatalog):
-        self.catalog = catalog
+    def __init__(self, registry: EventSourceRegistry):
+        self.registry = registry
 
     def write(
         self,
@@ -68,11 +68,12 @@ class ParquetSink:
             quality = dict(result.quality)
             quality["observations"] = _observations(
                 result.events,
-                self.catalog.sampling_clock_fields,
+                self.registry.source_clock_fields,
             )
             _write_file(temporary / "quality-summary.json", canonicalize(quality))
             manifest = {
                 "dataset_format": "particeps-parquet-dataset-v1",
+                "event_source_registry_sha256": self.registry.digest,
                 "parser_version": __version__,
                 "partitions": partitions,
                 "source_ciphertexts": [
@@ -84,8 +85,9 @@ class ParquetSink:
                         "configuration_sha256": bundle.configuration_sha256,
                         "event_count": str(bundle.event_count),
                         "experiment_id": bundle.experiment_id,
-                        "first_sequence_number": str(bundle.first_sequence_number),
-                        "last_sequence_number": str(bundle.last_sequence_number),
+                        "commit_count": str(bundle.commit_count),
+                        "first_commit_sequence": str(bundle.first_commit_sequence),
+                        "last_commit_sequence": str(bundle.last_commit_sequence),
                         "participant_instance_id": bundle.participant_instance_id,
                         "receiver_received_at_utc_untrusted": (
                             bundle.source.metadata["received_at_utc"]
@@ -112,16 +114,16 @@ class ParquetSink:
         ordered = events.iter_partitioned()
         manifest: list[dict[str, str]] = []
         for key, partition_events in groupby(ordered, key=_partition_key):
-            experiment, configuration, collector, version, payload_type = key
-            schema = self.catalog.payload(collector, version, payload_type)
+            experiment, configuration, source_id, version, event_type = key
+            schema = self.registry.event(source_id, version, event_type)
             arrow_schema = _arrow_schema(schema)
             directory = (
                 root
                 / f"experiment_id={experiment}"
                 / f"configuration_id={configuration}"
-                / f"collector_id={collector}"
-                / f"payload_schema_version={version}"
-                / f"payload_type={payload_type}"
+                / f"source_id={source_id}"
+                / f"schema_version={version}"
+                / f"event_type={event_type}"
             )
             directory.mkdir(parents=True, exist_ok=True)
             path = directory / "part-00000.parquet"
@@ -171,11 +173,13 @@ class ParquetSink:
         return manifest
 
 
-def _arrow_schema(schema: PayloadSchema) -> pa.Schema:
+def _arrow_schema(schema: EventSchema) -> pa.Schema:
     fields = [
         pa.field("participant_instance_id", pa.string(), nullable=False),
         pa.field("assigned_participant_id", pa.string(), nullable=True),
         pa.field("sequence_number", pa.int64(), nullable=False),
+        pa.field("condition_epoch_id", pa.string(), nullable=True),
+        pa.field("source_condition_epoch_id", pa.string(), nullable=True),
         pa.field("observed_wall_time_utc_millis", pa.int64(), nullable=False),
         pa.field("observed_monotonic_time_nanos", pa.int64(), nullable=False),
         pa.field("observed_boot_session_id", pa.string(), nullable=False),
@@ -183,13 +187,15 @@ def _arrow_schema(schema: PayloadSchema) -> pa.Schema:
     reserved = {field.name for field in fields} | {
         "experiment_id",
         "configuration_id",
-        "collector_id",
-        "payload_schema_version",
-        "payload_type",
+        "source_id",
+        "schema_version",
+        "event_type",
         "source_ciphertext_sha256",
         "source_bundle_id",
         "source_configuration_sha256",
         "source_object",
+        "source_commit_sequence",
+        "source_observation_sequence",
         "parser_version",
     }
     for name, descriptor in sorted(schema.fields.items()):
@@ -199,7 +205,7 @@ def _arrow_schema(schema: PayloadSchema) -> pa.Schema:
             )
         metadata = {
             b"particeps.meaning": str(descriptor["meaning"]).encode(),
-            b"particeps.type": descriptor["type"].encode(),
+            b"particeps.type": descriptor["wire_type"].encode(),
             b"particeps.unit": str(descriptor.get("unit", "none")).encode(),
         }
         if descriptor.get("clock_basis") is not None:
@@ -207,7 +213,7 @@ def _arrow_schema(schema: PayloadSchema) -> pa.Schema:
         fields.append(
             pa.field(
                 name,
-                _arrow_type(descriptor["type"]),
+                _arrow_type(descriptor["wire_type"]),
                 nullable=not descriptor["required"],
                 metadata=metadata,
             )
@@ -218,15 +224,17 @@ def _arrow_schema(schema: PayloadSchema) -> pa.Schema:
             pa.field("source_bundle_id", pa.string(), nullable=False),
             pa.field("source_configuration_sha256", pa.string(), nullable=False),
             pa.field("source_object", pa.string(), nullable=False),
+            pa.field("source_commit_sequence", pa.int64(), nullable=False),
+            pa.field("source_observation_sequence", pa.int64(), nullable=True),
             pa.field("parser_version", pa.string(), nullable=False),
         ]
     )
     return pa.schema(
         fields,
         metadata={
-            b"particeps.collector_id": schema.collector_id.encode(),
-            b"particeps.payload_schema_version": str(schema.schema_version).encode(),
-            b"particeps.payload_type": schema.payload_type.encode(),
+            b"particeps.source_id": schema.source_id.encode(),
+            b"particeps.schema_version": str(schema.schema_version).encode(),
+            b"particeps.event_type": schema.event_type.encode(),
         },
     )
 
@@ -234,21 +242,25 @@ def _arrow_schema(schema: PayloadSchema) -> pa.Schema:
 def _arrow_type(kind: str) -> pa.DataType:
     return {
         "boolean": pa.bool_(),
-        "decimal_string": pa.int64(),
+        "uint64_decimal": pa.uint64(),
         "enum": pa.string(),
         "float32": pa.float32(),
         "float64": pa.float64(),
         "int32": pa.int32(),
         "json_string": pa.string(),
+        "sha256_hex": pa.string(),
         "string": pa.string(),
+        "uuid": pa.string(),
     }[kind]
 
 
-def _row(event: VerifiedEvent, schema: PayloadSchema) -> dict[str, Any]:
+def _row(event: VerifiedEvent, schema: EventSchema) -> dict[str, Any]:
     row = {
         "participant_instance_id": event.participant_instance_id,
         "assigned_participant_id": event.assigned_participant_id,
         "sequence_number": event.sequence_number,
+        "condition_epoch_id": event.condition_epoch_id,
+        "source_condition_epoch_id": event.source_condition_epoch_id,
         "observed_wall_time_utc_millis": event.wall_time_utc_millis,
         "observed_monotonic_time_nanos": event.monotonic_time_nanos,
         "observed_boot_session_id": event.boot_session_id,
@@ -256,6 +268,8 @@ def _row(event: VerifiedEvent, schema: PayloadSchema) -> dict[str, Any]:
         "source_bundle_id": event.provenance.source_bundle_id,
         "source_configuration_sha256": event.provenance.source_configuration_sha256,
         "source_object": event.provenance.source_object,
+        "source_commit_sequence": event.provenance.source_commit_sequence,
+        "source_observation_sequence": event.provenance.source_observation_sequence,
         "parser_version": __version__,
     }
     for name in schema.fields:
@@ -267,9 +281,9 @@ def _partition_key(event: VerifiedEvent) -> tuple[str, str, str, int, str]:
     return (
         event.experiment_id,
         event.configuration_id,
-        event.collector_id,
-        event.payload_schema_version,
-        event.payload_type,
+        event.source_id,
+        event.schema_version,
+        event.event_type,
     )
 
 
@@ -293,8 +307,8 @@ def _estimated_row_bytes(event: VerifiedEvent) -> int:
         event.configuration_id,
         event.participant_instance_id,
         event.assigned_participant_id or "",
-        event.collector_id,
-        event.payload_type,
+        event.source_id,
+        event.event_type,
         event.boot_session_id,
         event.provenance.source_ciphertext_sha256,
         event.provenance.source_bundle_id,
@@ -346,8 +360,8 @@ def _observations(
         achieved.add(
             {
                 "boot_session_id": group.boot_session_id,
-                "clock_basis": "continuous_monotonic_since_boot",
-                "collector_id": group.collector_id,
+                "clock_basis": "CONTINUOUS_MONOTONIC_SINCE_BOOT",
+                "source_id": group.source_id,
                 "configuration_id": group.configuration_id,
                 "duration_monotonic_nanos": str(duration_nanos),
                 "event_count": str(group.event_count),
@@ -370,13 +384,13 @@ def _observations(
                 "event_count": str(group.event_count),
                 "experiment_id": group.experiment_id,
                 "participant_instance_id": group.participant_instance_id,
-                "payload_type": group.payload_type,
+                "event_type": group.event_type,
             }
         )
 
     temporal_changes = BoundedExamples[dict[str, str]]()
     for event in events:
-        if event.collector_id == "temporal_context.v1":
+        if event.source_id == "temporal_context.v1":
             temporal_changes.add(
                 {
                     "change_reason": str(event.fields.get("change_reason", "")),

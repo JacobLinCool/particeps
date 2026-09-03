@@ -36,7 +36,7 @@ export const PRESETS = {
   minimum_event_interval_ms: [0.1, 0.5, 1, 10, 60],
   change_threshold_millimeters: [0, 1, 10, 100, 1_000],
   // 6 hours comes off the shortlist and stays a rung on the ladder below, one arrow press from 4.
-  poll_interval_minutes: [1, 5, 15, 60, 1_440],
+  poll_interval_seconds: [15, 60, 300, 900, 3_600],
   interval_millis: [1_000, 10_000, 60_000, 300_000, 3_600_000],
   maximum_batch_delay_millis: [0, 30_000, 300_000, 3_600_000, 86_400_000],
   // 1 km is a kilometre of walking between fixes; it is typed, not clicked.
@@ -62,8 +62,8 @@ export const PRESETS = {
  */
 export const LADDERS = {
   // 1 min → 1 day. Minute granularity where a poll is minutes, then the hours a person names.
-  poll_interval_minutes: [
-    1, 2, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 360, 480, 720, 1_440
+  poll_interval_seconds: [
+    15, 30, 60, 120, 300, 600, 900, 1_800, 3_600, 7_200, 14_400, 21_600, 43_200, 86_400
   ],
   // 0.5 s → 1 h. Both thumbs of the location pair index this.
   interval_millis: [

@@ -2,7 +2,6 @@ package cool.jacoblin.particeps.platform
 
 import android.system.Os
 import android.system.OsConstants
-import cool.jacoblin.particeps.core.application.StudyUploadException
 import cool.jacoblin.particeps.core.export.ExportReceipt
 import java.io.BufferedInputStream
 import java.io.DataInputStream
@@ -39,7 +38,7 @@ internal class FileUploadOutbox(
     @Synchronized
     fun recover(
         configurationSha256: String,
-        uploadedThroughSequence: Long,
+        uploadedThroughCommit: Long,
     ): StagedUpload? {
         ensureDirectory()
         deleteIfExists(temporaryBody, sync = false)
@@ -53,13 +52,13 @@ internal class FileUploadOutbox(
         require(staged.receipt.configurationSha256 == configurationSha256) {
             "Staged upload configuration digest mismatch"
         }
-        if (staged.receipt.lastSequence <= uploadedThroughSequence) {
+        if (staged.receipt.lastCommitSequence <= uploadedThroughCommit) {
             acknowledge(staged.receipt.bundleId)
             return null
         }
         verifyBody(staged)
         staged.terminalFailureCode?.let { code ->
-            throw StudyUploadException(code, retryable = false)
+            throw UploadTransportException(code, retryable = false)
         }
         return staged
     }
@@ -156,7 +155,8 @@ internal class FileUploadOutbox(
             val configurationDigest = ByteArray(SHA256_BYTES).also(input::readFully).toHex()
             val first = input.readLong()
             val last = input.readLong()
-            val count = input.readLong()
+            val commitCount = input.readLong()
+            val eventCount = input.readLong()
             val byteCount = input.readLong()
             val bodyDigest = ByteArray(SHA256_BYTES).also(input::readFully).toHex()
             val terminalCode = input.readAscii(MAXIMUM_REASON_CODE_BYTES).ifEmpty { null }
@@ -166,9 +166,10 @@ internal class FileUploadOutbox(
                 receipt = ExportReceipt(
                     bundleId = bundleId,
                     configurationSha256 = configurationDigest,
-                    firstSequence = first,
-                    lastSequence = last,
-                    eventCount = count,
+                    firstCommitSequence = first,
+                    lastCommitSequence = last,
+                    commitCount = commitCount,
+                    eventCount = eventCount,
                     sha256 = bodyDigest,
                     byteCount = byteCount,
                 ),
@@ -177,7 +178,7 @@ internal class FileUploadOutbox(
         }
     } catch (failure: Exception) {
         if (failure is kotlinx.coroutines.CancellationException) throw failure
-        throw StudyUploadException("UPLOAD_OUTBOX_CORRUPT", retryable = false, cause = failure)
+        throw UploadTransportException("UPLOAD_OUTBOX_CORRUPT", retryable = false, cause = failure)
     }
 
     private fun writeManifest(staged: StagedUpload) {
@@ -188,8 +189,9 @@ internal class FileUploadOutbox(
                     output.writeLong(staged.receipt.bundleId.mostSignificantBits)
                     output.writeLong(staged.receipt.bundleId.leastSignificantBits)
                     output.write(staged.receipt.configurationSha256.hexToBytes())
-                    output.writeLong(staged.receipt.firstSequence)
-                    output.writeLong(staged.receipt.lastSequence)
+                    output.writeLong(staged.receipt.firstCommitSequence)
+                    output.writeLong(staged.receipt.lastCommitSequence)
+                    output.writeLong(staged.receipt.commitCount)
                     output.writeLong(staged.receipt.eventCount)
                     output.writeLong(staged.receipt.byteCount)
                     output.write(staged.receipt.sha256.hexToBytes())
@@ -239,7 +241,7 @@ internal class FileUploadOutbox(
     private val temporaryBody get() = directory.resolve("stage.partexp.tmp")
 
     private companion object {
-        val MANIFEST_MAGIC = "PTCOUT01".toByteArray(Charsets.US_ASCII)
+        val MANIFEST_MAGIC = "PTCOUT02".toByteArray(Charsets.US_ASCII)
         val SHA256_HEX = Regex("[0-9a-f]{64}")
         const val SHA256_BYTES = 32
         const val DIGEST_BUFFER_BYTES = 64 * 1024

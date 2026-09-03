@@ -1,0 +1,2751 @@
+{
+  "format": "particeps-automation-reducer-v1",
+  "registry_sha256": "53e3814c0f159a579d303f51bff94293188d4afd4f8fb82d19616c782483299c",
+  "batch_semantics": {
+    "partition_rule": "Transport/replay partitions may change only between declared steps; a step is never split.",
+    "step_boundary": "Each scenario step is one indivisible SourceObservation or EngineCommit reducer batch."
+  },
+  "atomic_batch_cases": [
+    {
+      "base_checkpoint_after_step": 2,
+      "expected_desired_resource_relation": "UNCHANGED",
+      "expected_resource_changes": [],
+      "id": "delayed-presence-enter-exit-preserves-applied-generation",
+      "inputs": [
+        {
+          "sequence_number": 3,
+          "source_step": 4
+        },
+        {
+          "sequence_number": 4,
+          "source_step": 10
+        }
+      ],
+      "resource": {
+        "id": "traffic-shaping.v1",
+        "kind": "ACTUATOR"
+      },
+      "scenario_id": "conditions-resources-and-resets"
+    }
+  ],
+  "reducer_property_cases": [
+    {
+      "expected_action_count_at_step": 1,
+      "expected_action_step": 6,
+      "expected_automation_id": "occ-event",
+      "expected_suppression_reason": "COOLDOWN",
+      "expected_suppression_step": 7,
+      "id": "active-time-cooldown-suppresses-a-second-match",
+      "mutation": "SET_OCC_EVENT_MAXIMUM_ACTIVATIONS_2",
+      "scenario_id": "conditions-resources-and-resets"
+    }
+  ],
+  "compiler_hostile_cases": [
+    {
+      "base_scenario_id": "conditions-resources-and-resets",
+      "expected_rejection": "condition_node_limit",
+      "id": "combined-trigger-guard-condition-node-overflow",
+      "mutation": "ADD_DENSE_TRIGGER_AND_GUARD"
+    },
+    {
+      "base_scenario_id": "conditions-resources-and-resets",
+      "expected_rejection": "concurrent_timer_limit",
+      "id": "global-concurrent-timer-overflow",
+      "mutation": "ADD_513_CONCURRENT_TIMERS"
+    },
+    {
+      "base_scenario_id": "conditions-resources-and-resets",
+      "expected_rejection": "audit_only_lifecycle_feedback",
+      "id": "lifecycle-audit-event-match",
+      "mutation": "USE_AUDIT_ONLY_STUDY_RUNNING_EVENT"
+    },
+    {
+      "base_scenario_id": "conditions-resources-and-resets",
+      "expected_rejection": "presence_condition_kind",
+      "id": "presence-condition-kind-mismatch",
+      "mutation": "USE_NON_PRESENCE_ENTER_EVENT"
+    },
+    {
+      "base_scenario_id": "conditions-resources-and-resets",
+      "expected_rejection": "presence_group",
+      "id": "presence-group-mismatch",
+      "mutation": "ALTER_EXIT_PRESENCE_GROUP_CONTRACT"
+    },
+    {
+      "base_scenario_id": "conditions-resources-and-resets",
+      "expected_rejection": "presence_key",
+      "id": "presence-key-mismatch",
+      "mutation": "SET_PRESENCE_KEY_TO_PACKAGE_NAME"
+    },
+    {
+      "base_scenario_id": "conditions-resources-and-resets",
+      "expected_rejection": "presence_role",
+      "id": "presence-role-inversion",
+      "mutation": "SWAP_PRESENCE_ENTER_EXIT"
+    },
+    {
+      "base_scenario_id": "conditions-resources-and-resets",
+      "expected_rejection": "random_daily_capacity",
+      "id": "random-window-daily-capacity-overflow",
+      "mutation": "ADD_RANDOM_DAILY_CAPACITY_OVERFLOW"
+    },
+    {
+      "base_scenario_id": "conditions-resources-and-resets",
+      "expected_rejection": "random_adjacent_separation",
+      "id": "random-window-adjacent-separation-violation",
+      "mutation": "ADD_RANDOM_ADJACENT_SEPARATION_VIOLATION"
+    },
+    {
+      "base_scenario_id": "conditions-resources-and-resets",
+      "expected_rejection": "random_cyclic_separation",
+      "id": "random-window-cyclic-separation-violation",
+      "mutation": "ADD_RANDOM_CYCLIC_SEPARATION_VIOLATION"
+    },
+    {
+      "base_scenario_id": "conditions-resources-and-resets",
+      "expected_rejection": "utf16_text_limit",
+      "id": "utf16-astral-title-overflow",
+      "mutation": "SET_61_ASTRAL_TITLE"
+    },
+    {
+      "base_scenario_id": "conditions-resources-and-resets",
+      "expected_rejection": "resource_limit",
+      "id": "sixty-five-stateful-resources",
+      "mutation": "DECLARE_64_COLLECTORS_AND_TRAFFIC"
+    }
+  ],
+  "reducer_hostile_cases": [
+    {
+      "id": "standard-materialization-target-mismatch",
+      "mutation": "SHIFT_TIMER_TARGET_UTC_BY_60000",
+      "scenario_id": "durable-schedule-materialization",
+      "step": 3
+    },
+    {
+      "id": "standard-materialization-generation-mismatch",
+      "mutation": "INCREMENT_TIMER_GENERATION",
+      "scenario_id": "durable-schedule-materialization",
+      "step": 3
+    },
+    {
+      "id": "random-materialization-ineligible-selection",
+      "mutation": "SHIFT_TIMER_TARGET_UTC_BY_30000",
+      "scenario_id": "durable-schedule-materialization",
+      "step": 6
+    }
+  ],
+  "scenarios": [
+    {
+      "final_checkpoint_sha256": "7084322ff799af60eb8578cc1a6f7d89a7ebb480d88bb2b3e65d87833752f6e3",
+      "configuration": {
+        "assigned_participant_id": null,
+        "automations": [
+          {
+            "cases": [
+              {
+                "condition": {
+                  "type": "study_session_active"
+                },
+                "profile_id": "continuous"
+              }
+            ],
+            "default_profile_id": "continuous",
+            "id": "bind-battery",
+            "resource": {
+              "id": "battery_state.v1",
+              "kind": "collector"
+            },
+            "type": "resource_binding"
+          },
+          {
+            "cases": [
+              {
+                "condition": {
+                  "clock": "ACTIVE_RUNNING_TIME",
+                  "condition": {
+                    "enter_when": [
+                      {
+                        "event": {
+                          "event_type": "ACTIVITY_RESUMED",
+                          "schema_version": 1,
+                          "source_id": "usage_events.v1"
+                        },
+                        "predicates": [
+                          {
+                            "field": "package_name",
+                            "operator": "eq",
+                            "value": "com.example.social"
+                          }
+                        ]
+                      }
+                    ],
+                    "exit_when": [
+                      {
+                        "event": {
+                          "event_type": "ACTIVITY_PAUSED",
+                          "schema_version": 1,
+                          "source_id": "usage_events.v1"
+                        },
+                        "predicates": [
+                          {
+                            "field": "package_name",
+                            "operator": "eq",
+                            "value": "com.example.social"
+                          }
+                        ]
+                      }
+                    ],
+                    "key_field": "activity_component_token",
+                    "type": "keyed_presence"
+                  },
+                  "duration_seconds": 180,
+                  "type": "held_for"
+                },
+                "profile_id": "slow"
+              },
+              {
+                "condition": {
+                  "conditions": [
+                    {
+                      "clock": "CALENDAR_TIME",
+                      "duration_seconds": 600,
+                      "type": "elapsed_at_least"
+                    },
+                    {
+                      "condition": {
+                        "reset_when": [
+                          {
+                            "event": {
+                              "event_type": "BATTERY_STATE",
+                              "schema_version": 1,
+                              "source_id": "battery_state.v1"
+                            },
+                            "predicates": [
+                              {
+                                "field": "power_save_enabled",
+                                "operator": "eq",
+                                "value": "false"
+                              }
+                            ]
+                          }
+                        ],
+                        "set_when": [
+                          {
+                            "event": {
+                              "event_type": "BATTERY_STATE",
+                              "schema_version": 1,
+                              "source_id": "battery_state.v1"
+                            },
+                            "predicates": [
+                              {
+                                "field": "power_save_enabled",
+                                "operator": "eq",
+                                "value": "true"
+                              }
+                            ]
+                          }
+                        ],
+                        "type": "event_latch"
+                      },
+                      "type": "not"
+                    }
+                  ],
+                  "type": "all"
+                },
+                "profile_id": "medium"
+              }
+            ],
+            "default_profile_id": "baseline",
+            "id": "bind-traffic",
+            "resource": {
+              "id": "traffic-shaping.v1",
+              "kind": "actuator"
+            },
+            "type": "resource_binding"
+          },
+          {
+            "cases": [
+              {
+                "condition": {
+                  "type": "study_session_active"
+                },
+                "profile_id": "continuous"
+              }
+            ],
+            "default_profile_id": "continuous",
+            "id": "bind-usage",
+            "resource": {
+              "id": "usage_events.v1",
+              "kind": "collector"
+            },
+            "type": "resource_binding"
+          },
+          {
+            "availability_seconds": 5,
+            "cooldown": {
+              "clock": "ACTIVE_RUNNING_TIME",
+              "duration_seconds": 60
+            },
+            "guard": {
+              "conditions": [
+                {
+                  "type": "study_session_active"
+                },
+                {
+                  "condition": {
+                    "type": "study_session_active"
+                  },
+                  "type": "not"
+                }
+              ],
+              "type": "any"
+            },
+            "id": "occ-event",
+            "intervention_id": "notify-event",
+            "maximum_activations": 1,
+            "trigger": {
+              "evaluation_clock": "PRIMARY_SOURCE_TIME",
+              "selector": {
+                "event": {
+                  "event_type": "ACTIVITY_RESUMED",
+                  "schema_version": 1,
+                  "source_id": "usage_events.v1"
+                },
+                "predicates": [
+                  {
+                    "field": "package_name",
+                    "operator": "ne",
+                    "value": "com.example.blocked"
+                  }
+                ]
+              },
+              "type": "event_match"
+            },
+            "type": "occurrence"
+          },
+          {
+            "availability_seconds": 300,
+            "cooldown": null,
+            "guard": null,
+            "id": "occ-latch",
+            "intervention_id": "notify-latch",
+            "maximum_activations": 2,
+            "trigger": {
+              "condition": {
+                "reset_when": [
+                  {
+                    "event": {
+                      "event_type": "BATTERY_STATE",
+                      "schema_version": 1,
+                      "source_id": "battery_state.v1"
+                    },
+                    "predicates": [
+                      {
+                        "field": "charging_state",
+                        "operator": "eq",
+                        "value": "CHARGING"
+                      }
+                    ]
+                  }
+                ],
+                "set_when": [
+                  {
+                    "event": {
+                      "event_type": "BATTERY_STATE",
+                      "schema_version": 1,
+                      "source_id": "battery_state.v1"
+                    },
+                    "predicates": []
+                  }
+                ],
+                "type": "event_latch"
+              },
+              "type": "condition_rising_edge"
+            },
+            "type": "occurrence"
+          },
+          {
+            "availability_seconds": 300,
+            "cooldown": null,
+            "guard": null,
+            "id": "occ-presence",
+            "intervention_id": "notify-presence",
+            "maximum_activations": 2,
+            "trigger": {
+              "condition": {
+                "clock": "ACTIVE_RUNNING_TIME",
+                "condition": {
+                  "enter_when": [
+                    {
+                      "event": {
+                        "event_type": "ACTIVITY_RESUMED",
+                        "schema_version": 1,
+                        "source_id": "usage_events.v1"
+                      },
+                      "predicates": [
+                        {
+                          "field": "package_name",
+                          "operator": "eq",
+                          "value": "com.example.social"
+                        }
+                      ]
+                    }
+                  ],
+                  "exit_when": [
+                    {
+                      "event": {
+                        "event_type": "ACTIVITY_PAUSED",
+                        "schema_version": 1,
+                        "source_id": "usage_events.v1"
+                      },
+                      "predicates": [
+                        {
+                          "field": "package_name",
+                          "operator": "eq",
+                          "value": "com.example.social"
+                        }
+                      ]
+                    }
+                  ],
+                  "key_field": "activity_component_token",
+                  "type": "keyed_presence"
+                },
+                "duration_seconds": 180,
+                "type": "held_for"
+              },
+              "type": "condition_rising_edge"
+            },
+            "type": "occurrence"
+          },
+          {
+            "availability_seconds": 300,
+            "cooldown": null,
+            "guard": null,
+            "id": "occ-sequence",
+            "intervention_id": "notify-sequence",
+            "maximum_activations": 2,
+            "trigger": {
+              "evaluation_clock": "OBSERVED_RESEARCH_TIME",
+              "steps": [
+                {
+                  "event": {
+                    "event_type": "BATTERY_STATE",
+                    "schema_version": 1,
+                    "source_id": "battery_state.v1"
+                  },
+                  "predicates": [
+                    {
+                      "field": "charging_state",
+                      "operator": "eq",
+                      "value": "CHARGING"
+                    }
+                  ]
+                },
+                {
+                  "event": {
+                    "event_type": "BATTERY_STATE",
+                    "schema_version": 1,
+                    "source_id": "battery_state.v1"
+                  },
+                  "predicates": [
+                    {
+                      "field": "charging_state",
+                      "operator": "eq",
+                      "value": "DISCHARGING"
+                    }
+                  ]
+                }
+              ],
+              "type": "sequence",
+              "within_seconds": 30
+            },
+            "type": "occurrence"
+          },
+          {
+            "availability_seconds": 300,
+            "cooldown": null,
+            "guard": null,
+            "id": "occ-window-count",
+            "intervention_id": "notify-window-count",
+            "maximum_activations": 2,
+            "trigger": {
+              "aggregate": {
+                "type": "count"
+              },
+              "comparison": {
+                "operator": "gte",
+                "value": "2"
+              },
+              "evaluation_clock": "OBSERVED_RESEARCH_TIME",
+              "selector": {
+                "event": {
+                  "event_type": "BATTERY_STATE",
+                  "schema_version": 1,
+                  "source_id": "battery_state.v1"
+                },
+                "predicates": []
+              },
+              "type": "window_threshold",
+              "window_seconds": 60
+            },
+            "type": "occurrence"
+          },
+          {
+            "availability_seconds": 300,
+            "cooldown": null,
+            "guard": null,
+            "id": "occ-window-sum",
+            "intervention_id": "notify-window-sum",
+            "maximum_activations": 2,
+            "trigger": {
+              "aggregate": {
+                "field": "percentage",
+                "type": "sum"
+              },
+              "comparison": {
+                "operator": "gte",
+                "value": "100"
+              },
+              "evaluation_clock": "OBSERVED_RESEARCH_TIME",
+              "selector": {
+                "event": {
+                  "event_type": "BATTERY_STATE",
+                  "schema_version": 1,
+                  "source_id": "battery_state.v1"
+                },
+                "predicates": []
+              },
+              "type": "window_threshold",
+              "window_seconds": 60
+            },
+            "type": "occurrence"
+          }
+        ],
+        "collectors": [
+          {
+            "id": "battery_state.v1",
+            "profiles": [
+              {
+                "config": {},
+                "id": "continuous"
+              }
+            ],
+            "required": true
+          },
+          {
+            "id": "usage_events.v1",
+            "profiles": [
+              {
+                "config": {
+                  "poll_interval_seconds": 15
+                },
+                "id": "continuous"
+              }
+            ],
+            "required": true
+          }
+        ],
+        "configuration_id": "automation-conditions-0001",
+        "consent": {
+          "document_version": "v1",
+          "summary": "Non-participant conformance fixture."
+        },
+        "duration_hours": 24,
+        "experiment_id": "automation-conditions",
+        "expires_at": "2027-01-01T00:00:00Z",
+        "export": {
+          "hpke_public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "researcher_key_id": "protocol-export"
+        },
+        "interventions": [
+          {
+            "action": {
+              "notification_message": "notify-event",
+              "notification_title": "Conformance notice",
+              "type": "notification"
+            },
+            "id": "notify-event",
+            "required": true
+          },
+          {
+            "action": {
+              "notification_message": "notify-latch",
+              "notification_title": "Conformance notice",
+              "type": "notification"
+            },
+            "id": "notify-latch",
+            "required": true
+          },
+          {
+            "action": {
+              "notification_message": "notify-presence",
+              "notification_title": "Conformance notice",
+              "type": "notification"
+            },
+            "id": "notify-presence",
+            "required": true
+          },
+          {
+            "action": {
+              "notification_message": "notify-sequence",
+              "notification_title": "Conformance notice",
+              "type": "notification"
+            },
+            "id": "notify-sequence",
+            "required": true
+          },
+          {
+            "action": {
+              "notification_message": "notify-window-count",
+              "notification_title": "Conformance notice",
+              "type": "notification"
+            },
+            "id": "notify-window-count",
+            "required": true
+          },
+          {
+            "action": {
+              "notification_message": "notify-window-sum",
+              "notification_title": "Conformance notice",
+              "type": "notification"
+            },
+            "id": "notify-window-sum",
+            "required": true
+          }
+        ],
+        "issued_at": "2026-01-01T00:00:00Z",
+        "minimum_client_version": "1",
+        "platform": "android",
+        "purpose": "Cross-language reducer parity",
+        "researcher": {
+          "contact": "protocol@example.invalid",
+          "name": "Particeps Protocol"
+        },
+        "schema_version": 1,
+        "signer": {
+          "key_id": "protocol-signer",
+          "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        "storage": {
+          "maximum_local_bytes": 1073741824
+        },
+        "surveys": [],
+        "title": "Automation reducer conformance",
+        "traffic_shaping": {
+          "profiles": [
+            {
+              "downlink_kbps": null,
+              "id": "baseline",
+              "uplink_kbps": null
+            },
+            {
+              "downlink_kbps": 1024,
+              "id": "medium",
+              "uplink_kbps": 512
+            },
+            {
+              "downlink_kbps": 128,
+              "id": "slow",
+              "uplink_kbps": 64
+            }
+          ],
+          "target_packages": [
+            "com.example.social"
+          ]
+        },
+        "upload": {}
+      },
+      "configuration_sha256": "ea2ac5947ee99979e35c474078f49303ba937c9ecd556af69058e2f94b1bbd69",
+      "id": "conditions-resources-and-resets",
+      "stream_partition_ranges": [
+        {
+          "first_step": 3,
+          "last_step": 8
+        }
+      ],
+      "steps": [
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAABAAAACkFDVElWQVRJTkcBAAABoxhcUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAACEFDVFVBVE9SAAAAEnRyYWZmaWMtc2hhcGluZy52MQAAAAExAQAAAAhiYXNlbGluZQAAAAlDT0xMRUNUT1IAAAAQYmF0dGVyeV9zdGF0ZS52MQAAAAExAQAAAApjb250aW51b3VzAAAACUNPTExFQ1RPUgAAAA91c2FnZV9ldmVudHMudjEAAAABMQEAAAAKY29udGludW91cwAAAAEAAABANThkNzc0NzVhNjdlNzk2ZTJhODU2YmEwODU5NzVjYjYzYjIxM2JmYzlmYjUzOTNlOTdjZjhjYTM2ZDBkOTZkMQAAAEA1OGQ3NzQ3NWE2N2U3OTZlMmE4NTZiYTA4NTk3NWNiNjNiMjEzYmZjOWZiNTM5M2U5N2NmOGNhMzZkMGQ5NmQxAAAADGJpbmQtdHJhZmZpYwAAAAExAAAAAAAAAAEAAAAyY29uZGl0aW9uOjZkMjY0MzkyZTg5N2EzZDUxMTY2Y2MyMzlhMTg3NTdhMTk4MjA3OTYAAAABoxhld8ABAAABoxhld8AAAAAAAQAAADJjb25kaXRpb246NmQyNjQzOTJlODk3YTNkNTExNjZjYzIzOWExODc1N2ExOTgyMDc5NgAAAAExAAAAAA",
+            "checkpoint_sha256": "3db34d259590ff029d42e2d6c22107be6131d74a3a339cf127c66075c55d917f",
+            "resource_changes": [
+              {
+                "generation": "1",
+                "id": "traffic-shaping.v1",
+                "kind": "ACTUATOR",
+                "profile_id": "baseline"
+              },
+              {
+                "generation": "1",
+                "id": "battery_state.v1",
+                "kind": "COLLECTOR",
+                "profile_id": "continuous"
+              },
+              {
+                "generation": "1",
+                "id": "usage_events.v1",
+                "kind": "COLLECTOR",
+                "profile_id": "continuous"
+              }
+            ],
+            "timer_intents": [
+              {
+                "timer": {
+                  "automation_id": "bind-traffic",
+                  "causal_sequence": 1,
+                  "expires_at_utc_millis": null,
+                  "generation": "1",
+                  "id": "58d77475a67e796e2a856ba085975cb63b213bfc9fb5393e97cf8ca36d0d96d1",
+                  "logical_deadline_utc_millis": 1800000600000,
+                  "producer_key": "condition:6d264392e897a3d51166cc239a18757a19820796",
+                  "target": {
+                    "type": "CALENDAR_UTC",
+                    "utc_millis": 1800000600000
+                  }
+                },
+                "type": "SCHEDULE"
+              }
+            ],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "0",
+              "calendar_elapsed_nanos": "0",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "100000000000",
+                "wall_time_utc_millis": 1800000000000
+              },
+              "zone_id": "UTC"
+            },
+            "sequence_number": 1,
+            "state": "ACTIVATING",
+            "type": "LIFECYCLE"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAACAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAACtvY2N1cnJlbmNlOm9jYy1sYXRjaDp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC5vY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC9vY2N1cnJlbmNlOm9jYy13aW5kb3ctY291bnQ6dHJpZ2dlcjp3aW5kb3ctZWRnZQAAAAAtb2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdy1lZGdlAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAACEFDVFVBVE9SAAAAEnRyYWZmaWMtc2hhcGluZy52MQAAAAExAQAAAAhiYXNlbGluZQAAAAlDT0xMRUNUT1IAAAAQYmF0dGVyeV9zdGF0ZS52MQAAAAExAQAAAApjb250aW51b3VzAAAACUNPTExFQ1RPUgAAAA91c2FnZV9ldmVudHMudjEAAAABMQEAAAAKY29udGludW91cwAAAAEAAABANThkNzc0NzVhNjdlNzk2ZTJhODU2YmEwODU5NzVjYjYzYjIxM2JmYzlmYjUzOTNlOTdjZjhjYTM2ZDBkOTZkMQAAAEA1OGQ3NzQ3NWE2N2U3OTZlMmE4NTZiYTA4NTk3NWNiNjNiMjEzYmZjOWZiNTM5M2U5N2NmOGNhMzZkMGQ5NmQxAAAADGJpbmQtdHJhZmZpYwAAAAExAAAAAAAAAAEAAAAyY29uZGl0aW9uOjZkMjY0MzkyZTg5N2EzZDUxMTY2Y2MyMzlhMTg3NTdhMTk4MjA3OTYAAAABoxhld8ABAAABoxhld8AAAAAAAQAAADJjb25kaXRpb246NmQyNjQzOTJlODk3YTNkNTExNjZjYzIzOWExODc1N2ExOTgyMDc5NgAAAAExAAAAAA",
+            "checkpoint_sha256": "0cd2a47e4bc322d260e4728cc516ff927f0ddd4c5cb327634b124be03900f4bf",
+            "resource_changes": [],
+            "timer_intents": [],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "0",
+              "calendar_elapsed_nanos": "0",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "100000000000",
+                "wall_time_utc_millis": 1800000000000
+              },
+              "zone_id": "UTC"
+            },
+            "sequence_number": 2,
+            "state": "RUNNING",
+            "type": "LIFECYCLE"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAADAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAAO5rKAAAAAAA7msoAAAAAAgAAACFiaW5kaW5nOmJpbmQtdHJhZmZpYzpjYXNlOjE6MTpub3QAAAAAJm9jY3VycmVuY2U6b2NjLWxhdGNoOnRyaWdnZXI6Y29uZGl0aW9uAAAAAAAAAAAAAAAABAAAACtvY2N1cnJlbmNlOm9jYy1sYXRjaDp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC5vY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC9vY2N1cnJlbmNlOm9jYy13aW5kb3ctY291bnQ6dHJpZ2dlcjp3aW5kb3ctZWRnZQAAAAAtb2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdy1lZGdlAAAAAAIAAAAqb2NjdXJyZW5jZTpvY2Mtd2luZG93LWNvdW50OnRyaWdnZXI6d2luZG93AAAAAQAAAAAAAAADAAAAF4QRsgAAAAAkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxAAAAATEAAAAob2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdwAAAAEAAAAAAAAAAwAAABeEEbIAAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAAAI1MAAAAAEAAAAob2NjdXJyZW5jZTpvY2Mtc2VxdWVuY2U6dHJpZ2dlcjpzZXF1ZW5jZQAAAAEAAAABAAAAAAAAAAMAAAAAAAAAAwAAABeEEbIAAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAAAAAAAAAAAAAAwAAAAhBQ1RVQVRPUgAAABJ0cmFmZmljLXNoYXBpbmcudjEAAAABMQEAAAAIYmFzZWxpbmUAAAAJQ09MTEVDVE9SAAAAEGJhdHRlcnlfc3RhdGUudjEAAAABMQEAAAAKY29udGludW91cwAAAAlDT0xMRUNUT1IAAAAPdXNhZ2VfZXZlbnRzLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAADAAAAQDU4ZDc3NDc1YTY3ZTc5NmUyYTg1NmJhMDg1OTc1Y2I2M2IyMTNiZmM5ZmI1MzkzZTk3Y2Y4Y2EzNmQwZDk2ZDEAAABANThkNzc0NzVhNjdlNzk2ZTJhODU2YmEwODU5NzVjYjYzYjIxM2JmYzlmYjUzOTNlOTdjZjhjYTM2ZDBkOTZkMQAAAAxiaW5kLXRyYWZmaWMAAAABMQAAAAAAAAABAAAAMmNvbmRpdGlvbjo2ZDI2NDM5MmU4OTdhM2Q1MTE2NmNjMjM5YTE4NzU3YTE5ODIwNzk2AAAAAaMYZXfAAQAAAaMYZXfAAAAAAEA5MWJjZWZlMmE2Mjk2ZTQxMzYzZDNmOTEwYmIwYTZmZjViNmJmNDU2OThmMWY4NmQxM2M0NDMxNTUxM2VlYzcwAAAAQDkxYmNlZmUyYTYyOTZlNDEzNjNkM2Y5MTBiYjBhNmZmNWI2YmY0NTY5OGYxZjg2ZDEzYzQ0MzE1NTEzZWVjNzAAAAAOb2NjLXdpbmRvdy1zdW0AAAABMQAAAAAAAAADAAAAMmNvbmRpdGlvbjo3M2JjODQwZGM3OTM5YWFkYjM0ZjUzZmFiZGQ2MTI4NTliZDNlNzM3AgAAACQwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEAAAAlfFkKAAAAAAAAQGYwNzNjYzQwZWVhNTgxOTdiNzNlYjIzMjQzZmI0MDUxYWRjNDFkNGEyNjIxNmNmMTQyZmQ1MDBhMWEzODNkN2EAAABAZjA3M2NjNDBlZWE1ODE5N2I3M2ViMjMyNDNmYjQwNTFhZGM0MWQ0YTI2MjE2Y2YxNDJmZDUwMGExYTM4M2Q3YQAAABBvY2Mtd2luZG93LWNvdW50AAAAATEAAAAAAAAAAwAAADJjb25kaXRpb246ZDlkNGJlM2VjY2I4MDg5ODBmNjFjMzEwNmVmYjNjNGNmZjE3MTA1MQIAAAAkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxAAAAJXxZCgAAAAAAAAMAAAAyY29uZGl0aW9uOjZkMjY0MzkyZTg5N2EzZDUxMTY2Y2MyMzlhMTg3NTdhMTk4MjA3OTYAAAABMQAAADJjb25kaXRpb246NzNiYzg0MGRjNzkzOWFhZGIzNGY1M2ZhYmRkNjEyODU5YmQzZTczNwAAAAExAAAAMmNvbmRpdGlvbjpkOWQ0YmUzZWNjYjgwODk4MGY2MWMzMTA2ZWZiM2M0Y2ZmMTcxMDUxAAAAATEAAAAA",
+            "checkpoint_sha256": "4f85a77a23f4344e3f5bcb2c23487d0f9ad6474a1c54b1b2fb73cf49382792ea",
+            "resource_changes": [],
+            "timer_intents": [
+              {
+                "timer": {
+                  "automation_id": "occ-window-sum",
+                  "causal_sequence": 3,
+                  "expires_at_utc_millis": null,
+                  "generation": "1",
+                  "id": "91bcefe2a6296e41363d3f910bb0a6ff5b6bf45698f1f86d13c44315513eec70",
+                  "logical_deadline_utc_millis": null,
+                  "producer_key": "condition:73bc840dc7939aadb34f53fabdd612859bd3e737",
+                  "target": {
+                    "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                    "elapsed_realtime_nanos": "161000000000",
+                    "type": "SAME_BOOT_MONOTONIC"
+                  }
+                },
+                "type": "SCHEDULE"
+              },
+              {
+                "timer": {
+                  "automation_id": "occ-window-count",
+                  "causal_sequence": 3,
+                  "expires_at_utc_millis": null,
+                  "generation": "1",
+                  "id": "f073cc40eea58197b73eb23243fb4051adc41d4a26216cf142fd500a1a383d7a",
+                  "logical_deadline_utc_millis": null,
+                  "producer_key": "condition:d9d4be3eccb808980f61c3106efb3c4cff171051",
+                  "target": {
+                    "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                    "elapsed_realtime_nanos": "161000000000",
+                    "type": "SAME_BOOT_MONOTONIC"
+                  }
+                },
+                "type": "SCHEDULE"
+              }
+            ],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "1000000000",
+              "calendar_elapsed_nanos": "1000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "101000000000",
+                "wall_time_utc_millis": 1800000001000
+              },
+              "zone_id": "UTC"
+            },
+            "event": {
+              "event_type": "BATTERY_STATE",
+              "fields": {
+                "charging_source": "USB",
+                "charging_state": "CHARGING",
+                "percentage": "50",
+                "power_save_enabled": "false"
+              },
+              "observed_time": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "101000000000",
+                "wall_time_utc_millis": 1800000001000
+              },
+              "primary_source_time": null,
+              "schema_version": 1,
+              "sequence_number": 3,
+              "source_id": "battery_state.v1"
+            },
+            "sequence_number": 3,
+            "type": "EVENT"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAEAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAAdzWUAAAAAAB3NZQAAAAAAgAAACFiaW5kaW5nOmJpbmQtdHJhZmZpYzpjYXNlOjE6MTpub3QAAAAAJm9jY3VycmVuY2U6b2NjLWxhdGNoOnRyaWdnZXI6Y29uZGl0aW9uAAAAAAAAAAAAAAAABAAAACtvY2N1cnJlbmNlOm9jYy1sYXRjaDp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC5vY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC9vY2N1cnJlbmNlOm9jYy13aW5kb3ctY291bnQ6dHJpZ2dlcjp3aW5kb3ctZWRnZQAAAAAtb2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdy1lZGdlAAAAAAIAAAAqb2NjdXJyZW5jZTpvY2Mtd2luZG93LWNvdW50OnRyaWdnZXI6d2luZG93AAAAAQAAAAAAAAADAAAAF4QRsgAAAAAkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxAAAAATEAAAAob2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdwAAAAEAAAAAAAAAAwAAABeEEbIAAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAAAI1MAAAAAEAAAAob2NjdXJyZW5jZTpvY2Mtc2VxdWVuY2U6dHJpZ2dlcjpzZXF1ZW5jZQAAAAEAAAABAAAAAAAAAAMAAAAAAAAAAwAAABeEEbIAAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAAAAAAAAAAAAAAwAAAAhBQ1RVQVRPUgAAABJ0cmFmZmljLXNoYXBpbmcudjEAAAABMQEAAAAIYmFzZWxpbmUAAAAJQ09MTEVDVE9SAAAAEGJhdHRlcnlfc3RhdGUudjEAAAABMQEAAAAKY29udGludW91cwAAAAlDT0xMRUNUT1IAAAAPdXNhZ2VfZXZlbnRzLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAADAAAAQDU4ZDc3NDc1YTY3ZTc5NmUyYTg1NmJhMDg1OTc1Y2I2M2IyMTNiZmM5ZmI1MzkzZTk3Y2Y4Y2EzNmQwZDk2ZDEAAABANThkNzc0NzVhNjdlNzk2ZTJhODU2YmEwODU5NzVjYjYzYjIxM2JmYzlmYjUzOTNlOTdjZjhjYTM2ZDBkOTZkMQAAAAxiaW5kLXRyYWZmaWMAAAABMQAAAAAAAAABAAAAMmNvbmRpdGlvbjo2ZDI2NDM5MmU4OTdhM2Q1MTE2NmNjMjM5YTE4NzU3YTE5ODIwNzk2AAAAAaMYZXfAAQAAAaMYZXfAAAAAAEA5MWJjZWZlMmE2Mjk2ZTQxMzYzZDNmOTEwYmIwYTZmZjViNmJmNDU2OThmMWY4NmQxM2M0NDMxNTUxM2VlYzcwAAAAQDkxYmNlZmUyYTYyOTZlNDEzNjNkM2Y5MTBiYjBhNmZmNWI2YmY0NTY5OGYxZjg2ZDEzYzQ0MzE1NTEzZWVjNzAAAAAOb2NjLXdpbmRvdy1zdW0AAAABMQAAAAAAAAADAAAAMmNvbmRpdGlvbjo3M2JjODQwZGM3OTM5YWFkYjM0ZjUzZmFiZGQ2MTI4NTliZDNlNzM3AgAAACQwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEAAAAlfFkKAAAAAAAAQGYwNzNjYzQwZWVhNTgxOTdiNzNlYjIzMjQzZmI0MDUxYWRjNDFkNGEyNjIxNmNmMTQyZmQ1MDBhMWEzODNkN2EAAABAZjA3M2NjNDBlZWE1ODE5N2I3M2ViMjMyNDNmYjQwNTFhZGM0MWQ0YTI2MjE2Y2YxNDJmZDUwMGExYTM4M2Q3YQAAABBvY2Mtd2luZG93LWNvdW50AAAAATEAAAAAAAAAAwAAADJjb25kaXRpb246ZDlkNGJlM2VjY2I4MDg5ODBmNjFjMzEwNmVmYjNjNGNmZjE3MTA1MQIAAAAkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxAAAAJXxZCgAAAAAAAAMAAAAyY29uZGl0aW9uOjZkMjY0MzkyZTg5N2EzZDUxMTY2Y2MyMzlhMTg3NTdhMTk4MjA3OTYAAAABMQAAADJjb25kaXRpb246NzNiYzg0MGRjNzkzOWFhZGIzNGY1M2ZhYmRkNjEyODU5YmQzZTczNwAAAAExAAAAMmNvbmRpdGlvbjpkOWQ0YmUzZWNjYjgwODk4MGY2MWMzMTA2ZWZiM2M0Y2ZmMTcxMDUxAAAAATEAAAAA",
+            "checkpoint_sha256": "09dad4da71260ee0c742d1e6889b837904cc9c41ff49d3101fa078d24b95896b",
+            "resource_changes": [],
+            "timer_intents": [],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "2000000000",
+              "calendar_elapsed_nanos": "2000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "102000000000",
+                "wall_time_utc_millis": 1800000002000
+              },
+              "zone_id": "UTC"
+            },
+            "event": {
+              "event_type": "ACTIVITY_RESUMED",
+              "fields": {
+                "activity_component_token": "1111111111111111111111111111111111111111111111111111111111111111",
+                "source_time_utc_millis": "1800000002000"
+              },
+              "observed_time": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "102000000000",
+                "wall_time_utc_millis": 1800000002000
+              },
+              "primary_source_time": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "102000000000",
+                "wall_time_utc_millis": 1800000002000
+              },
+              "schema_version": 1,
+              "sequence_number": 4,
+              "source_id": "usage_events.v1"
+            },
+            "sequence_number": 4,
+            "type": "EVENT"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [
+              {
+                "automation_id": "occ-event",
+                "causal_identity": "event:5",
+                "matched": true,
+                "suppression_reason": "EXPIRED"
+              }
+            ],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAFAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAAstBeAAAAAACy0F4AAAAAAgAAACFiaW5kaW5nOmJpbmQtdHJhZmZpYzpjYXNlOjE6MTpub3QAAAAAJm9jY3VycmVuY2U6b2NjLWxhdGNoOnRyaWdnZXI6Y29uZGl0aW9uAAAAAAIAAAAhYmluZGluZzpiaW5kLXRyYWZmaWM6Y2FzZTowOmNoaWxkAAAAAQAAAEAxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExAAAAL29jY3VycmVuY2U6b2NjLXByZXNlbmNlOnRyaWdnZXI6Y29uZGl0aW9uOmNoaWxkAAAAAQAAAEAxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExAAAAAgAAABtiaW5kaW5nOmJpbmQtdHJhZmZpYzpjYXNlOjAAAAAAstBeAAAAAClvY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbgAAAACy0F4AAAAABAAAACtvY2N1cnJlbmNlOm9jYy1sYXRjaDp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC5vY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC9vY2N1cnJlbmNlOm9jYy13aW5kb3ctY291bnQ6dHJpZ2dlcjp3aW5kb3ctZWRnZQAAAAAtb2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdy1lZGdlAAAAAAIAAAAqb2NjdXJyZW5jZTpvY2Mtd2luZG93LWNvdW50OnRyaWdnZXI6d2luZG93AAAAAQAAAAAAAAADAAAAF4QRsgAAAAAkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxAAAAATEAAAAob2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdwAAAAEAAAAAAAAAAwAAABeEEbIAAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAAAI1MAAAAAEAAAAob2NjdXJyZW5jZTpvY2Mtc2VxdWVuY2U6dHJpZ2dlcjpzZXF1ZW5jZQAAAAEAAAABAAAAAAAAAAMAAAAAAAAAAwAAABeEEbIAAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAAAAAAAAAAAAAAwAAAAhBQ1RVQVRPUgAAABJ0cmFmZmljLXNoYXBpbmcudjEAAAABMQEAAAAIYmFzZWxpbmUAAAAJQ09MTEVDVE9SAAAAEGJhdHRlcnlfc3RhdGUudjEAAAABMQEAAAAKY29udGludW91cwAAAAlDT0xMRUNUT1IAAAAPdXNhZ2VfZXZlbnRzLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAAFAAAAQDA5NWZmZGYxZmI2YTVkZjVlZjNjZTNlZjYzYzM2NWZmODAzMTliNGJkNDg0YTM5NTQ2YjFjYzM4MWYyYjNhZWMAAABAMDk1ZmZkZjFmYjZhNWRmNWVmM2NlM2VmNjNjMzY1ZmY4MDMxOWI0YmQ0ODRhMzk1NDZiMWNjMzgxZjJiM2FlYwAAAAxvY2MtcHJlc2VuY2UAAAABMQAAAAAAAAAFAAAAMmNvbmRpdGlvbjo2YTA3YzU1OWMyMGM2OTQwZWY1NDU5MjVjY2ZjNTc1MGU3ZTUyNDdkAQAAACqbpmYAAAAAAABANTgxYzFmMDFjMDZhODk1MmZmMjEzNGY5OTE4YzBlOWQxNmNkYjM3MGQ4NjNmMDc0ZGFmOTRlNmFkMzM4MTFjNQAAAEA1ODFjMWYwMWMwNmE4OTUyZmYyMTM0Zjk5MThjMGU5ZDE2Y2RiMzcwZDg2M2YwNzRkYWY5NGU2YWQzMzgxMWM1AAAADGJpbmQtdHJhZmZpYwAAAAExAAAAAAAAAAUAAAAyY29uZGl0aW9uOjcxOGY4ZTEzODFhN2ViYjllY2NkOTE4Y2Y4NzJjYTFhZGVlYjNkYzQBAAAAKpumZgAAAAAAAEA1OGQ3NzQ3NWE2N2U3OTZlMmE4NTZiYTA4NTk3NWNiNjNiMjEzYmZjOWZiNTM5M2U5N2NmOGNhMzZkMGQ5NmQxAAAAQDU4ZDc3NDc1YTY3ZTc5NmUyYTg1NmJhMDg1OTc1Y2I2M2IyMTNiZmM5ZmI1MzkzZTk3Y2Y4Y2EzNmQwZDk2ZDEAAAAMYmluZC10cmFmZmljAAAAATEAAAAAAAAAAQAAADJjb25kaXRpb246NmQyNjQzOTJlODk3YTNkNTExNjZjYzIzOWExODc1N2ExOTgyMDc5NgAAAAGjGGV3wAEAAAGjGGV3wAAAAABAOTFiY2VmZTJhNjI5NmU0MTM2M2QzZjkxMGJiMGE2ZmY1YjZiZjQ1Njk4ZjFmODZkMTNjNDQzMTU1MTNlZWM3MAAAAEA5MWJjZWZlMmE2Mjk2ZTQxMzYzZDNmOTEwYmIwYTZmZjViNmJmNDU2OThmMWY4NmQxM2M0NDMxNTUxM2VlYzcwAAAADm9jYy13aW5kb3ctc3VtAAAAATEAAAAAAAAAAwAAADJjb25kaXRpb246NzNiYzg0MGRjNzkzOWFhZGIzNGY1M2ZhYmRkNjEyODU5YmQzZTczNwIAAAAkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxAAAAJXxZCgAAAAAAAEBmMDczY2M0MGVlYTU4MTk3YjczZWIyMzI0M2ZiNDA1MWFkYzQxZDRhMjYyMTZjZjE0MmZkNTAwYTFhMzgzZDdhAAAAQGYwNzNjYzQwZWVhNTgxOTdiNzNlYjIzMjQzZmI0MDUxYWRjNDFkNGEyNjIxNmNmMTQyZmQ1MDBhMWEzODNkN2EAAAAQb2NjLXdpbmRvdy1jb3VudAAAAAExAAAAAAAAAAMAAAAyY29uZGl0aW9uOmQ5ZDRiZTNlY2NiODA4OTgwZjYxYzMxMDZlZmIzYzRjZmYxNzEwNTECAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAACV8WQoAAAAAAAAFAAAAMmNvbmRpdGlvbjo2YTA3YzU1OWMyMGM2OTQwZWY1NDU5MjVjY2ZjNTc1MGU3ZTUyNDdkAAAAATEAAAAyY29uZGl0aW9uOjZkMjY0MzkyZTg5N2EzZDUxMTY2Y2MyMzlhMTg3NTdhMTk4MjA3OTYAAAABMQAAADJjb25kaXRpb246NzE4ZjhlMTM4MWE3ZWJiOWVjY2Q5MThjZjg3MmNhMWFkZWViM2RjNAAAAAExAAAAMmNvbmRpdGlvbjo3M2JjODQwZGM3OTM5YWFkYjM0ZjUzZmFiZGQ2MTI4NTliZDNlNzM3AAAAATEAAAAyY29uZGl0aW9uOmQ5ZDRiZTNlY2NiODA4OTgwZjYxYzMxMDZlZmIzYzRjZmYxNzEwNTEAAAABMQAAAAA",
+            "checkpoint_sha256": "1d7f975718a51b6082740d8909ba0081a993c2a53a8b6cb6c0ed95cb97b0544b",
+            "resource_changes": [],
+            "timer_intents": [
+              {
+                "timer": {
+                  "automation_id": "occ-presence",
+                  "causal_sequence": 5,
+                  "expires_at_utc_millis": null,
+                  "generation": "1",
+                  "id": "095ffdf1fb6a5df5ef3ce3ef63c365ff80319b4bd484a39546b1cc381f2b3aec",
+                  "logical_deadline_utc_millis": null,
+                  "producer_key": "condition:6a07c559c20c6940ef545925ccfc5750e7e5247d",
+                  "target": {
+                    "elapsed_nanos": "183000000000",
+                    "type": "ACTIVE_ELAPSED"
+                  }
+                },
+                "type": "SCHEDULE"
+              },
+              {
+                "timer": {
+                  "automation_id": "bind-traffic",
+                  "causal_sequence": 5,
+                  "expires_at_utc_millis": null,
+                  "generation": "1",
+                  "id": "581c1f01c06a8952ff2134f9918c0e9d16cdb370d863f074daf94e6ad33811c5",
+                  "logical_deadline_utc_millis": null,
+                  "producer_key": "condition:718f8e1381a7ebb9eccd918cf872ca1adeeb3dc4",
+                  "target": {
+                    "elapsed_nanos": "183000000000",
+                    "type": "ACTIVE_ELAPSED"
+                  }
+                },
+                "type": "SCHEDULE"
+              }
+            ],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "3000000000",
+              "calendar_elapsed_nanos": "3000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "103000000000",
+                "wall_time_utc_millis": 1800000003000
+              },
+              "zone_id": "UTC"
+            },
+            "event": {
+              "event_type": "ACTIVITY_RESUMED",
+              "fields": {
+                "activity_component_token": "1111111111111111111111111111111111111111111111111111111111111111",
+                "package_name": "com.example.social",
+                "source_time_utc_millis": "1799999993000"
+              },
+              "observed_time": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "103000000000",
+                "wall_time_utc_millis": 1800000003000
+              },
+              "primary_source_time": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "93000000000",
+                "wall_time_utc_millis": 1799999993000
+              },
+              "schema_version": 1,
+              "sequence_number": 5,
+              "source_id": "usage_events.v1"
+            },
+            "sequence_number": 5,
+            "type": "EVENT"
+          }
+        },
+        {
+          "expected": {
+            "actions": [
+              {
+                "action_id": "84eba33d6ce4eb473c66f56d5de2f4f48a5319026a46aa61bfe5e67deaaf367f",
+                "automation_id": "occ-event",
+                "causal_identity": "event:6",
+                "expires_at_utc_millis": 1800000009000,
+                "intervention_id": "notify-event",
+                "logical_deadline_utc_millis": null
+              }
+            ],
+            "audits": [
+              {
+                "automation_id": "occ-event",
+                "causal_identity": "event:6",
+                "matched": true,
+                "suppression_reason": null
+              }
+            ],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAGAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAA7msoAAAAAADuaygAAAAAAgAAACFiaW5kaW5nOmJpbmQtdHJhZmZpYzpjYXNlOjE6MTpub3QAAAAAJm9jY3VycmVuY2U6b2NjLWxhdGNoOnRyaWdnZXI6Y29uZGl0aW9uAAAAAAIAAAAhYmluZGluZzpiaW5kLXRyYWZmaWM6Y2FzZTowOmNoaWxkAAAAAQAAAEAxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExAAAAL29jY3VycmVuY2U6b2NjLXByZXNlbmNlOnRyaWdnZXI6Y29uZGl0aW9uOmNoaWxkAAAAAQAAAEAxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExAAAAAgAAABtiaW5kaW5nOmJpbmQtdHJhZmZpYzpjYXNlOjAAAAAAstBeAAAAAClvY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbgAAAACy0F4AAAAABAAAACtvY2N1cnJlbmNlOm9jYy1sYXRjaDp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC5vY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC9vY2N1cnJlbmNlOm9jYy13aW5kb3ctY291bnQ6dHJpZ2dlcjp3aW5kb3ctZWRnZQAAAAAtb2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdy1lZGdlAAAAAAIAAAAqb2NjdXJyZW5jZTpvY2Mtd2luZG93LWNvdW50OnRyaWdnZXI6d2luZG93AAAAAQAAAAAAAAADAAAAF4QRsgAAAAAkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxAAAAATEAAAAob2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdwAAAAEAAAAAAAAAAwAAABeEEbIAAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAAAI1MAAAAAEAAAAob2NjdXJyZW5jZTpvY2Mtc2VxdWVuY2U6dHJpZ2dlcjpzZXF1ZW5jZQAAAAEAAAABAAAAAAAAAAMAAAAAAAAAAwAAABeEEbIAAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAAAEAAAAJb2NjLWV2ZW50AAAAAQAAAAEAAAAJb2NjLWV2ZW50AAAAAO5rKAAAAAAA7msoAAAAAAMAAAAIQUNUVUFUT1IAAAASdHJhZmZpYy1zaGFwaW5nLnYxAAAAATEBAAAACGJhc2VsaW5lAAAACUNPTExFQ1RPUgAAABBiYXR0ZXJ5X3N0YXRlLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAAJQ09MTEVDVE9SAAAAD3VzYWdlX2V2ZW50cy52MQAAAAExAQAAAApjb250aW51b3VzAAAABQAAAEAwOTVmZmRmMWZiNmE1ZGY1ZWYzY2UzZWY2M2MzNjVmZjgwMzE5YjRiZDQ4NGEzOTU0NmIxY2MzODFmMmIzYWVjAAAAQDA5NWZmZGYxZmI2YTVkZjVlZjNjZTNlZjYzYzM2NWZmODAzMTliNGJkNDg0YTM5NTQ2YjFjYzM4MWYyYjNhZWMAAAAMb2NjLXByZXNlbmNlAAAAATEAAAAAAAAABQAAADJjb25kaXRpb246NmEwN2M1NTljMjBjNjk0MGVmNTQ1OTI1Y2NmYzU3NTBlN2U1MjQ3ZAEAAAAqm6ZmAAAAAAAAQDU4MWMxZjAxYzA2YTg5NTJmZjIxMzRmOTkxOGMwZTlkMTZjZGIzNzBkODYzZjA3NGRhZjk0ZTZhZDMzODExYzUAAABANTgxYzFmMDFjMDZhODk1MmZmMjEzNGY5OTE4YzBlOWQxNmNkYjM3MGQ4NjNmMDc0ZGFmOTRlNmFkMzM4MTFjNQAAAAxiaW5kLXRyYWZmaWMAAAABMQAAAAAAAAAFAAAAMmNvbmRpdGlvbjo3MThmOGUxMzgxYTdlYmI5ZWNjZDkxOGNmODcyY2ExYWRlZWIzZGM0AQAAACqbpmYAAAAAAABANThkNzc0NzVhNjdlNzk2ZTJhODU2YmEwODU5NzVjYjYzYjIxM2JmYzlmYjUzOTNlOTdjZjhjYTM2ZDBkOTZkMQAAAEA1OGQ3NzQ3NWE2N2U3OTZlMmE4NTZiYTA4NTk3NWNiNjNiMjEzYmZjOWZiNTM5M2U5N2NmOGNhMzZkMGQ5NmQxAAAADGJpbmQtdHJhZmZpYwAAAAExAAAAAAAAAAEAAAAyY29uZGl0aW9uOjZkMjY0MzkyZTg5N2EzZDUxMTY2Y2MyMzlhMTg3NTdhMTk4MjA3OTYAAAABoxhld8ABAAABoxhld8AAAAAAQDkxYmNlZmUyYTYyOTZlNDEzNjNkM2Y5MTBiYjBhNmZmNWI2YmY0NTY5OGYxZjg2ZDEzYzQ0MzE1NTEzZWVjNzAAAABAOTFiY2VmZTJhNjI5NmU0MTM2M2QzZjkxMGJiMGE2ZmY1YjZiZjQ1Njk4ZjFmODZkMTNjNDQzMTU1MTNlZWM3MAAAAA5vY2Mtd2luZG93LXN1bQAAAAExAAAAAAAAAAMAAAAyY29uZGl0aW9uOjczYmM4NDBkYzc5MzlhYWRiMzRmNTNmYWJkZDYxMjg1OWJkM2U3MzcCAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAACV8WQoAAAAAAABAZjA3M2NjNDBlZWE1ODE5N2I3M2ViMjMyNDNmYjQwNTFhZGM0MWQ0YTI2MjE2Y2YxNDJmZDUwMGExYTM4M2Q3YQAAAEBmMDczY2M0MGVlYTU4MTk3YjczZWIyMzI0M2ZiNDA1MWFkYzQxZDRhMjYyMTZjZjE0MmZkNTAwYTFhMzgzZDdhAAAAEG9jYy13aW5kb3ctY291bnQAAAABMQAAAAAAAAADAAAAMmNvbmRpdGlvbjpkOWQ0YmUzZWNjYjgwODk4MGY2MWMzMTA2ZWZiM2M0Y2ZmMTcxMDUxAgAAACQwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEAAAAlfFkKAAAAAAAABQAAADJjb25kaXRpb246NmEwN2M1NTljMjBjNjk0MGVmNTQ1OTI1Y2NmYzU3NTBlN2U1MjQ3ZAAAAAExAAAAMmNvbmRpdGlvbjo2ZDI2NDM5MmU4OTdhM2Q1MTE2NmNjMjM5YTE4NzU3YTE5ODIwNzk2AAAAATEAAAAyY29uZGl0aW9uOjcxOGY4ZTEzODFhN2ViYjllY2NkOTE4Y2Y4NzJjYTFhZGVlYjNkYzQAAAABMQAAADJjb25kaXRpb246NzNiYzg0MGRjNzkzOWFhZGIzNGY1M2ZhYmRkNjEyODU5YmQzZTczNwAAAAExAAAAMmNvbmRpdGlvbjpkOWQ0YmUzZWNjYjgwODk4MGY2MWMzMTA2ZWZiM2M0Y2ZmMTcxMDUxAAAAATEAAAAA",
+            "checkpoint_sha256": "d0319b5208c16c3d69d3bfc3aea8774cb941cce62ae72ac588b991fb7ea88bed",
+            "resource_changes": [],
+            "timer_intents": [],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "4000000000",
+              "calendar_elapsed_nanos": "4000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "104000000000",
+                "wall_time_utc_millis": 1800000004000
+              },
+              "zone_id": "UTC"
+            },
+            "event": {
+              "event_type": "ACTIVITY_RESUMED",
+              "fields": {
+                "activity_component_token": "1111111111111111111111111111111111111111111111111111111111111111",
+                "package_name": "com.example.social",
+                "source_time_utc_millis": "1800000004000"
+              },
+              "observed_time": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "104000000000",
+                "wall_time_utc_millis": 1800000004000
+              },
+              "primary_source_time": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "104000000000",
+                "wall_time_utc_millis": 1800000004000
+              },
+              "schema_version": 1,
+              "sequence_number": 6,
+              "source_id": "usage_events.v1"
+            },
+            "sequence_number": 6,
+            "type": "EVENT"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [
+              {
+                "automation_id": "occ-event",
+                "causal_identity": "event:7",
+                "matched": true,
+                "suppression_reason": "MAXIMUM_ACTIVATIONS"
+              }
+            ],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAHAAAAB1JVTk5JTkcBAAABoxhcUAAAAAABKgXyAAAAAAEqBfIAAAAAAgAAACFiaW5kaW5nOmJpbmQtdHJhZmZpYzpjYXNlOjE6MTpub3QAAAAAJm9jY3VycmVuY2U6b2NjLWxhdGNoOnRyaWdnZXI6Y29uZGl0aW9uAAAAAAIAAAAhYmluZGluZzpiaW5kLXRyYWZmaWM6Y2FzZTowOmNoaWxkAAAAAQAAAEAxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExAAAAL29jY3VycmVuY2U6b2NjLXByZXNlbmNlOnRyaWdnZXI6Y29uZGl0aW9uOmNoaWxkAAAAAQAAAEAxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExAAAAAgAAABtiaW5kaW5nOmJpbmQtdHJhZmZpYzpjYXNlOjAAAAAAstBeAAAAAClvY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbgAAAACy0F4AAAAABAAAACtvY2N1cnJlbmNlOm9jYy1sYXRjaDp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC5vY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC9vY2N1cnJlbmNlOm9jYy13aW5kb3ctY291bnQ6dHJpZ2dlcjp3aW5kb3ctZWRnZQAAAAAtb2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdy1lZGdlAAAAAAIAAAAqb2NjdXJyZW5jZTpvY2Mtd2luZG93LWNvdW50OnRyaWdnZXI6d2luZG93AAAAAQAAAAAAAAADAAAAF4QRsgAAAAAkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxAAAAATEAAAAob2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdwAAAAEAAAAAAAAAAwAAABeEEbIAAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAAAI1MAAAAAEAAAAob2NjdXJyZW5jZTpvY2Mtc2VxdWVuY2U6dHJpZ2dlcjpzZXF1ZW5jZQAAAAEAAAABAAAAAAAAAAMAAAAAAAAAAwAAABeEEbIAAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAAAEAAAAJb2NjLWV2ZW50AAAAAQAAAAEAAAAJb2NjLWV2ZW50AAAAAO5rKAAAAAAA7msoAAAAAAMAAAAIQUNUVUFUT1IAAAASdHJhZmZpYy1zaGFwaW5nLnYxAAAAATEBAAAACGJhc2VsaW5lAAAACUNPTExFQ1RPUgAAABBiYXR0ZXJ5X3N0YXRlLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAAJQ09MTEVDVE9SAAAAD3VzYWdlX2V2ZW50cy52MQAAAAExAQAAAApjb250aW51b3VzAAAABQAAAEAwOTVmZmRmMWZiNmE1ZGY1ZWYzY2UzZWY2M2MzNjVmZjgwMzE5YjRiZDQ4NGEzOTU0NmIxY2MzODFmMmIzYWVjAAAAQDA5NWZmZGYxZmI2YTVkZjVlZjNjZTNlZjYzYzM2NWZmODAzMTliNGJkNDg0YTM5NTQ2YjFjYzM4MWYyYjNhZWMAAAAMb2NjLXByZXNlbmNlAAAAATEAAAAAAAAABQAAADJjb25kaXRpb246NmEwN2M1NTljMjBjNjk0MGVmNTQ1OTI1Y2NmYzU3NTBlN2U1MjQ3ZAEAAAAqm6ZmAAAAAAAAQDU4MWMxZjAxYzA2YTg5NTJmZjIxMzRmOTkxOGMwZTlkMTZjZGIzNzBkODYzZjA3NGRhZjk0ZTZhZDMzODExYzUAAABANTgxYzFmMDFjMDZhODk1MmZmMjEzNGY5OTE4YzBlOWQxNmNkYjM3MGQ4NjNmMDc0ZGFmOTRlNmFkMzM4MTFjNQAAAAxiaW5kLXRyYWZmaWMAAAABMQAAAAAAAAAFAAAAMmNvbmRpdGlvbjo3MThmOGUxMzgxYTdlYmI5ZWNjZDkxOGNmODcyY2ExYWRlZWIzZGM0AQAAACqbpmYAAAAAAABANThkNzc0NzVhNjdlNzk2ZTJhODU2YmEwODU5NzVjYjYzYjIxM2JmYzlmYjUzOTNlOTdjZjhjYTM2ZDBkOTZkMQAAAEA1OGQ3NzQ3NWE2N2U3OTZlMmE4NTZiYTA4NTk3NWNiNjNiMjEzYmZjOWZiNTM5M2U5N2NmOGNhMzZkMGQ5NmQxAAAADGJpbmQtdHJhZmZpYwAAAAExAAAAAAAAAAEAAAAyY29uZGl0aW9uOjZkMjY0MzkyZTg5N2EzZDUxMTY2Y2MyMzlhMTg3NTdhMTk4MjA3OTYAAAABoxhld8ABAAABoxhld8AAAAAAQDkxYmNlZmUyYTYyOTZlNDEzNjNkM2Y5MTBiYjBhNmZmNWI2YmY0NTY5OGYxZjg2ZDEzYzQ0MzE1NTEzZWVjNzAAAABAOTFiY2VmZTJhNjI5NmU0MTM2M2QzZjkxMGJiMGE2ZmY1YjZiZjQ1Njk4ZjFmODZkMTNjNDQzMTU1MTNlZWM3MAAAAA5vY2Mtd2luZG93LXN1bQAAAAExAAAAAAAAAAMAAAAyY29uZGl0aW9uOjczYmM4NDBkYzc5MzlhYWRiMzRmNTNmYWJkZDYxMjg1OWJkM2U3MzcCAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAACV8WQoAAAAAAABAZjA3M2NjNDBlZWE1ODE5N2I3M2ViMjMyNDNmYjQwNTFhZGM0MWQ0YTI2MjE2Y2YxNDJmZDUwMGExYTM4M2Q3YQAAAEBmMDczY2M0MGVlYTU4MTk3YjczZWIyMzI0M2ZiNDA1MWFkYzQxZDRhMjYyMTZjZjE0MmZkNTAwYTFhMzgzZDdhAAAAEG9jYy13aW5kb3ctY291bnQAAAABMQAAAAAAAAADAAAAMmNvbmRpdGlvbjpkOWQ0YmUzZWNjYjgwODk4MGY2MWMzMTA2ZWZiM2M0Y2ZmMTcxMDUxAgAAACQwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEAAAAlfFkKAAAAAAAABQAAADJjb25kaXRpb246NmEwN2M1NTljMjBjNjk0MGVmNTQ1OTI1Y2NmYzU3NTBlN2U1MjQ3ZAAAAAExAAAAMmNvbmRpdGlvbjo2ZDI2NDM5MmU4OTdhM2Q1MTE2NmNjMjM5YTE4NzU3YTE5ODIwNzk2AAAAATEAAAAyY29uZGl0aW9uOjcxOGY4ZTEzODFhN2ViYjllY2NkOTE4Y2Y4NzJjYTFhZGVlYjNkYzQAAAABMQAAADJjb25kaXRpb246NzNiYzg0MGRjNzkzOWFhZGIzNGY1M2ZhYmRkNjEyODU5YmQzZTczNwAAAAExAAAAMmNvbmRpdGlvbjpkOWQ0YmUzZWNjYjgwODk4MGY2MWMzMTA2ZWZiM2M0Y2ZmMTcxMDUxAAAAATEAAAAA",
+            "checkpoint_sha256": "dfd35cf15ab00aa0f7749f4d93d082be3fa495654ffbd8feed1bbf592c6409d1",
+            "resource_changes": [],
+            "timer_intents": [],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "5000000000",
+              "calendar_elapsed_nanos": "5000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "105000000000",
+                "wall_time_utc_millis": 1800000005000
+              },
+              "zone_id": "UTC"
+            },
+            "event": {
+              "event_type": "ACTIVITY_RESUMED",
+              "fields": {
+                "activity_component_token": "1111111111111111111111111111111111111111111111111111111111111111",
+                "package_name": "com.example.social",
+                "source_time_utc_millis": "1800000005000"
+              },
+              "observed_time": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "105000000000",
+                "wall_time_utc_millis": 1800000005000
+              },
+              "primary_source_time": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "105000000000",
+                "wall_time_utc_millis": 1800000005000
+              },
+              "schema_version": 1,
+              "sequence_number": 7,
+              "source_id": "usage_events.v1"
+            },
+            "sequence_number": 7,
+            "type": "EVENT"
+          }
+        },
+        {
+          "expected": {
+            "actions": [
+              {
+                "action_id": "1381a167a52cce779c61410ea8551a3a7863885b8c7b1fb53d4a51bcc40b8255",
+                "automation_id": "occ-latch",
+                "causal_identity": "event:8",
+                "expires_at_utc_millis": 1800000310000,
+                "intervention_id": "notify-latch",
+                "logical_deadline_utc_millis": null
+              },
+              {
+                "action_id": "c223fded7d7b306172329f7de22d5cfa4cd49fbf60348aa176c61a673f54eba0",
+                "automation_id": "occ-sequence",
+                "causal_identity": "range:3:8",
+                "expires_at_utc_millis": 1800000310000,
+                "intervention_id": "notify-sequence",
+                "logical_deadline_utc_millis": null
+              },
+              {
+                "action_id": "df380dac40c20f2c1ea896f072d989e6ee1671578cba7af22d55dea2a19d46dc",
+                "automation_id": "occ-window-count",
+                "causal_identity": "range:3:8",
+                "expires_at_utc_millis": 1800000310000,
+                "intervention_id": "notify-window-count",
+                "logical_deadline_utc_millis": null
+              },
+              {
+                "action_id": "26639d4916ed415fed2cb76369173d1e8440cb30b7ef29dca6e75618e2ddf651",
+                "automation_id": "occ-window-sum",
+                "causal_identity": "range:3:8",
+                "expires_at_utc_millis": 1800000310000,
+                "intervention_id": "notify-window-sum",
+                "logical_deadline_utc_millis": null
+              }
+            ],
+            "audits": [
+              {
+                "automation_id": "occ-latch",
+                "causal_identity": "event:8",
+                "matched": true,
+                "suppression_reason": null
+              },
+              {
+                "automation_id": "occ-sequence",
+                "causal_identity": "range:3:8",
+                "matched": true,
+                "suppression_reason": null
+              },
+              {
+                "automation_id": "occ-window-count",
+                "causal_identity": "range:3:8",
+                "matched": true,
+                "suppression_reason": null
+              },
+              {
+                "automation_id": "occ-window-sum",
+                "causal_identity": "range:3:8",
+                "matched": true,
+                "suppression_reason": null
+              }
+            ],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAIAAAAB1JVTk5JTkcBAAABoxhcUAAAAAACVAvkAAAAAAJUC-QAAAAAAgAAACFiaW5kaW5nOmJpbmQtdHJhZmZpYzpjYXNlOjE6MTpub3QAAAAAJm9jY3VycmVuY2U6b2NjLWxhdGNoOnRyaWdnZXI6Y29uZGl0aW9uAQAAAAIAAAAhYmluZGluZzpiaW5kLXRyYWZmaWM6Y2FzZTowOmNoaWxkAAAAAQAAAEAxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExAAAAL29jY3VycmVuY2U6b2NjLXByZXNlbmNlOnRyaWdnZXI6Y29uZGl0aW9uOmNoaWxkAAAAAQAAAEAxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExAAAAAgAAABtiaW5kaW5nOmJpbmQtdHJhZmZpYzpjYXNlOjAAAAAAstBeAAAAAClvY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbgAAAACy0F4AAAAABAAAACtvY2N1cnJlbmNlOm9jYy1sYXRjaDp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAQAAAC5vY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC9vY2N1cnJlbmNlOm9jYy13aW5kb3ctY291bnQ6dHJpZ2dlcjp3aW5kb3ctZWRnZQEAAAAtb2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdy1lZGdlAQAAAAIAAAAqb2NjdXJyZW5jZTpvY2Mtd2luZG93LWNvdW50OnRyaWdnZXI6d2luZG93AAAAAgAAAAAAAAADAAAAF4QRsgAAAAAkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxAAAAATEAAAAAAAAACAAAABmcgswAAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAAAExAAAAKG9jY3VycmVuY2U6b2NjLXdpbmRvdy1zdW06dHJpZ2dlcjp3aW5kb3cAAAACAAAAAAAAAAMAAAAXhBGyAAAAACQwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEAAAACNTAAAAAAAAAACAAAABmcgswAAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAAAI1MAAAAAAAAAAFAAAACW9jYy1ldmVudAAAAAEAAAAJb2NjLWxhdGNoAAAAAQAAAAxvY2Mtc2VxdWVuY2UAAAABAAAAEG9jYy13aW5kb3ctY291bnQAAAABAAAADm9jYy13aW5kb3ctc3VtAAAAAQAAAAUAAAAJb2NjLWV2ZW50AAAAAO5rKAAAAAAA7msoAAAAAAlvY2MtbGF0Y2gAAAACVAvkAAAAAAJUC-QAAAAADG9jYy1zZXF1ZW5jZQAAAAJUC-QAAAAAAlQL5AAAAAAQb2NjLXdpbmRvdy1jb3VudAAAAAJUC-QAAAAAAlQL5AAAAAAOb2NjLXdpbmRvdy1zdW0AAAACVAvkAAAAAAJUC-QAAAAAAwAAAAhBQ1RVQVRPUgAAABJ0cmFmZmljLXNoYXBpbmcudjEAAAABMQEAAAAIYmFzZWxpbmUAAAAJQ09MTEVDVE9SAAAAEGJhdHRlcnlfc3RhdGUudjEAAAABMQEAAAAKY29udGludW91cwAAAAlDT0xMRUNUT1IAAAAPdXNhZ2VfZXZlbnRzLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAAFAAAAQDA5NWZmZGYxZmI2YTVkZjVlZjNjZTNlZjYzYzM2NWZmODAzMTliNGJkNDg0YTM5NTQ2YjFjYzM4MWYyYjNhZWMAAABAMDk1ZmZkZjFmYjZhNWRmNWVmM2NlM2VmNjNjMzY1ZmY4MDMxOWI0YmQ0ODRhMzk1NDZiMWNjMzgxZjJiM2FlYwAAAAxvY2MtcHJlc2VuY2UAAAABMQAAAAAAAAAFAAAAMmNvbmRpdGlvbjo2YTA3YzU1OWMyMGM2OTQwZWY1NDU5MjVjY2ZjNTc1MGU3ZTUyNDdkAQAAACqbpmYAAAAAAABANTgxYzFmMDFjMDZhODk1MmZmMjEzNGY5OTE4YzBlOWQxNmNkYjM3MGQ4NjNmMDc0ZGFmOTRlNmFkMzM4MTFjNQAAAEA1ODFjMWYwMWMwNmE4OTUyZmYyMTM0Zjk5MThjMGU5ZDE2Y2RiMzcwZDg2M2YwNzRkYWY5NGU2YWQzMzgxMWM1AAAADGJpbmQtdHJhZmZpYwAAAAExAAAAAAAAAAUAAAAyY29uZGl0aW9uOjcxOGY4ZTEzODFhN2ViYjllY2NkOTE4Y2Y4NzJjYTFhZGVlYjNkYzQBAAAAKpumZgAAAAAAAEA1OGQ3NzQ3NWE2N2U3OTZlMmE4NTZiYTA4NTk3NWNiNjNiMjEzYmZjOWZiNTM5M2U5N2NmOGNhMzZkMGQ5NmQxAAAAQDU4ZDc3NDc1YTY3ZTc5NmUyYTg1NmJhMDg1OTc1Y2I2M2IyMTNiZmM5ZmI1MzkzZTk3Y2Y4Y2EzNmQwZDk2ZDEAAAAMYmluZC10cmFmZmljAAAAATEAAAAAAAAAAQAAADJjb25kaXRpb246NmQyNjQzOTJlODk3YTNkNTExNjZjYzIzOWExODc1N2ExOTgyMDc5NgAAAAGjGGV3wAEAAAGjGGV3wAAAAABAOTFiY2VmZTJhNjI5NmU0MTM2M2QzZjkxMGJiMGE2ZmY1YjZiZjQ1Njk4ZjFmODZkMTNjNDQzMTU1MTNlZWM3MAAAAEA5MWJjZWZlMmE2Mjk2ZTQxMzYzZDNmOTEwYmIwYTZmZjViNmJmNDU2OThmMWY4NmQxM2M0NDMxNTUxM2VlYzcwAAAADm9jYy13aW5kb3ctc3VtAAAAATEAAAAAAAAAAwAAADJjb25kaXRpb246NzNiYzg0MGRjNzkzOWFhZGIzNGY1M2ZhYmRkNjEyODU5YmQzZTczNwIAAAAkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxAAAAJXxZCgAAAAAAAEBmMDczY2M0MGVlYTU4MTk3YjczZWIyMzI0M2ZiNDA1MWFkYzQxZDRhMjYyMTZjZjE0MmZkNTAwYTFhMzgzZDdhAAAAQGYwNzNjYzQwZWVhNTgxOTdiNzNlYjIzMjQzZmI0MDUxYWRjNDFkNGEyNjIxNmNmMTQyZmQ1MDBhMWEzODNkN2EAAAAQb2NjLXdpbmRvdy1jb3VudAAAAAExAAAAAAAAAAMAAAAyY29uZGl0aW9uOmQ5ZDRiZTNlY2NiODA4OTgwZjYxYzMxMDZlZmIzYzRjZmYxNzEwNTECAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAACV8WQoAAAAAAAAFAAAAMmNvbmRpdGlvbjo2YTA3YzU1OWMyMGM2OTQwZWY1NDU5MjVjY2ZjNTc1MGU3ZTUyNDdkAAAAATEAAAAyY29uZGl0aW9uOjZkMjY0MzkyZTg5N2EzZDUxMTY2Y2MyMzlhMTg3NTdhMTk4MjA3OTYAAAABMQAAADJjb25kaXRpb246NzE4ZjhlMTM4MWE3ZWJiOWVjY2Q5MThjZjg3MmNhMWFkZWViM2RjNAAAAAExAAAAMmNvbmRpdGlvbjo3M2JjODQwZGM3OTM5YWFkYjM0ZjUzZmFiZGQ2MTI4NTliZDNlNzM3AAAAATEAAAAyY29uZGl0aW9uOmQ5ZDRiZTNlY2NiODA4OTgwZjYxYzMxMDZlZmIzYzRjZmYxNzEwNTEAAAABMQAAAAA",
+            "checkpoint_sha256": "78f4e4ed6074d96aecb67b86f917a99d7161ca0696bbcae9e8db262a2d831b61",
+            "resource_changes": [],
+            "timer_intents": [],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "10000000000",
+              "calendar_elapsed_nanos": "10000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "110000000000",
+                "wall_time_utc_millis": 1800000010000
+              },
+              "zone_id": "UTC"
+            },
+            "event": {
+              "event_type": "BATTERY_STATE",
+              "fields": {
+                "charging_source": "USB",
+                "charging_state": "DISCHARGING",
+                "percentage": "50",
+                "power_save_enabled": "false"
+              },
+              "observed_time": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "110000000000",
+                "wall_time_utc_millis": 1800000010000
+              },
+              "primary_source_time": null,
+              "schema_version": 1,
+              "sequence_number": 8,
+              "source_id": "battery_state.v1"
+            },
+            "sequence_number": 8,
+            "type": "EVENT"
+          }
+        },
+        {
+          "expected": {
+            "actions": [
+              {
+                "action_id": "8b129b43adde3b676b8982ee0fb9b33f4f5452557c45fdbcea987465dedd895a",
+                "automation_id": "occ-presence",
+                "causal_identity": "timer:095ffdf1fb6a5df5ef3ce3ef63c365ff80319b4bd484a39546b1cc381f2b3aec",
+                "expires_at_utc_millis": 1800000483000,
+                "intervention_id": "notify-presence",
+                "logical_deadline_utc_millis": null
+              }
+            ],
+            "audits": [
+              {
+                "automation_id": "occ-presence",
+                "causal_identity": "timer:095ffdf1fb6a5df5ef3ce3ef63c365ff80319b4bd484a39546b1cc381f2b3aec",
+                "matched": true,
+                "suppression_reason": null
+              }
+            ],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAJAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAqm6ZmAAAAACqbpmYAAAAAAgAAACFiaW5kaW5nOmJpbmQtdHJhZmZpYzpjYXNlOjE6MTpub3QAAAAAJm9jY3VycmVuY2U6b2NjLWxhdGNoOnRyaWdnZXI6Y29uZGl0aW9uAQAAAAIAAAAhYmluZGluZzpiaW5kLXRyYWZmaWM6Y2FzZTowOmNoaWxkAAAAAQAAAEAxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExAAAAL29jY3VycmVuY2U6b2NjLXByZXNlbmNlOnRyaWdnZXI6Y29uZGl0aW9uOmNoaWxkAAAAAQAAAEAxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExAAAAAgAAABtiaW5kaW5nOmJpbmQtdHJhZmZpYzpjYXNlOjAAAAAAstBeAAAAAClvY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbgAAAACy0F4AAAAABAAAACtvY2N1cnJlbmNlOm9jYy1sYXRjaDp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAQAAAC5vY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAQAAAC9vY2N1cnJlbmNlOm9jYy13aW5kb3ctY291bnQ6dHJpZ2dlcjp3aW5kb3ctZWRnZQAAAAAtb2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdy1lZGdlAAAAAAAAAAAAAAAABgAAAAlvY2MtZXZlbnQAAAABAAAACW9jYy1sYXRjaAAAAAEAAAAMb2NjLXByZXNlbmNlAAAAAQAAAAxvY2Mtc2VxdWVuY2UAAAABAAAAEG9jYy13aW5kb3ctY291bnQAAAABAAAADm9jYy13aW5kb3ctc3VtAAAAAQAAAAYAAAAJb2NjLWV2ZW50AAAAAO5rKAAAAAAA7msoAAAAAAlvY2MtbGF0Y2gAAAACVAvkAAAAAAJUC-QAAAAADG9jYy1wcmVzZW5jZQAAACqbpmYAAAAAKpumZgAAAAAMb2NjLXNlcXVlbmNlAAAAAlQL5AAAAAACVAvkAAAAABBvY2Mtd2luZG93LWNvdW50AAAAAlQL5AAAAAACVAvkAAAAAA5vY2Mtd2luZG93LXN1bQAAAAJUC-QAAAAAAlQL5AAAAAADAAAACEFDVFVBVE9SAAAAEnRyYWZmaWMtc2hhcGluZy52MQAAAAEyAQAAAARzbG93AAAACUNPTExFQ1RPUgAAABBiYXR0ZXJ5X3N0YXRlLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAAJQ09MTEVDVE9SAAAAD3VzYWdlX2V2ZW50cy52MQAAAAExAQAAAApjb250aW51b3VzAAAAAQAAAEA1OGQ3NzQ3NWE2N2U3OTZlMmE4NTZiYTA4NTk3NWNiNjNiMjEzYmZjOWZiNTM5M2U5N2NmOGNhMzZkMGQ5NmQxAAAAQDU4ZDc3NDc1YTY3ZTc5NmUyYTg1NmJhMDg1OTc1Y2I2M2IyMTNiZmM5ZmI1MzkzZTk3Y2Y4Y2EzNmQwZDk2ZDEAAAAMYmluZC10cmFmZmljAAAAATEAAAAAAAAAAQAAADJjb25kaXRpb246NmQyNjQzOTJlODk3YTNkNTExNjZjYzIzOWExODc1N2ExOTgyMDc5NgAAAAGjGGV3wAEAAAGjGGV3wAAAAAAFAAAAMmNvbmRpdGlvbjo2YTA3YzU1OWMyMGM2OTQwZWY1NDU5MjVjY2ZjNTc1MGU3ZTUyNDdkAAAAATEAAAAyY29uZGl0aW9uOjZkMjY0MzkyZTg5N2EzZDUxMTY2Y2MyMzlhMTg3NTdhMTk4MjA3OTYAAAABMQAAADJjb25kaXRpb246NzE4ZjhlMTM4MWE3ZWJiOWVjY2Q5MThjZjg3MmNhMWFkZWViM2RjNAAAAAExAAAAMmNvbmRpdGlvbjo3M2JjODQwZGM3OTM5YWFkYjM0ZjUzZmFiZGQ2MTI4NTliZDNlNzM3AAAAATEAAAAyY29uZGl0aW9uOmQ5ZDRiZTNlY2NiODA4OTgwZjYxYzMxMDZlZmIzYzRjZmYxNzEwNTEAAAABMQAAAAA",
+            "checkpoint_sha256": "bd85c1bb6094e9df701d30e2bc3f81b2397b571660f7a6e46896b726d8bb7c1a",
+            "resource_changes": [
+              {
+                "generation": "2",
+                "id": "traffic-shaping.v1",
+                "kind": "ACTUATOR",
+                "profile_id": "slow"
+              }
+            ],
+            "timer_intents": [
+              {
+                "generation": "1",
+                "timer_id": "095ffdf1fb6a5df5ef3ce3ef63c365ff80319b4bd484a39546b1cc381f2b3aec",
+                "type": "RETIRE"
+              },
+              {
+                "generation": "1",
+                "timer_id": "581c1f01c06a8952ff2134f9918c0e9d16cdb370d863f074daf94e6ad33811c5",
+                "type": "RETIRE"
+              },
+              {
+                "generation": "1",
+                "timer_id": "91bcefe2a6296e41363d3f910bb0a6ff5b6bf45698f1f86d13c44315513eec70",
+                "type": "RETIRE"
+              },
+              {
+                "generation": "1",
+                "timer_id": "f073cc40eea58197b73eb23243fb4051adc41d4a26216cf142fd500a1a383d7a",
+                "type": "RETIRE"
+              }
+            ],
+            "timer_production_requests": []
+          },
+          "input": {
+            "automation_id": "occ-presence",
+            "causal_sequence": 5,
+            "clock": {
+              "active_elapsed_nanos": "183000000000",
+              "calendar_elapsed_nanos": "183000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "283000000000",
+                "wall_time_utc_millis": 1800000183000
+              },
+              "zone_id": "UTC"
+            },
+            "generation": "1",
+            "logical_due": {
+              "boot_session_id": "active-running-time",
+              "elapsed_realtime_nanos": "183000000000",
+              "wall_time_utc_millis": 0
+            },
+            "sequence_number": 9,
+            "target": {
+              "elapsed_nanos": "183000000000",
+              "type": "ACTIVE_ELAPSED"
+            },
+            "timer_id": "095ffdf1fb6a5df5ef3ce3ef63c365ff80319b4bd484a39546b1cc381f2b3aec",
+            "type": "TIMER_DUE"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAKAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAq10EwAAAAACrXQTAAAAAAAgAAACFiaW5kaW5nOmJpbmQtdHJhZmZpYzpjYXNlOjE6MTpub3QAAAAAJm9jY3VycmVuY2U6b2NjLWxhdGNoOnRyaWdnZXI6Y29uZGl0aW9uAQAAAAAAAAAAAAAABAAAACtvY2N1cnJlbmNlOm9jYy1sYXRjaDp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAQAAAC5vY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC9vY2N1cnJlbmNlOm9jYy13aW5kb3ctY291bnQ6dHJpZ2dlcjp3aW5kb3ctZWRnZQAAAAAtb2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdy1lZGdlAAAAAAAAAAAAAAAABgAAAAlvY2MtZXZlbnQAAAABAAAACW9jYy1sYXRjaAAAAAEAAAAMb2NjLXByZXNlbmNlAAAAAQAAAAxvY2Mtc2VxdWVuY2UAAAABAAAAEG9jYy13aW5kb3ctY291bnQAAAABAAAADm9jYy13aW5kb3ctc3VtAAAAAQAAAAYAAAAJb2NjLWV2ZW50AAAAAO5rKAAAAAAA7msoAAAAAAlvY2MtbGF0Y2gAAAACVAvkAAAAAAJUC-QAAAAADG9jYy1wcmVzZW5jZQAAACqbpmYAAAAAKpumZgAAAAAMb2NjLXNlcXVlbmNlAAAAAlQL5AAAAAACVAvkAAAAABBvY2Mtd2luZG93LWNvdW50AAAAAlQL5AAAAAACVAvkAAAAAA5vY2Mtd2luZG93LXN1bQAAAAJUC-QAAAAAAlQL5AAAAAADAAAACEFDVFVBVE9SAAAAEnRyYWZmaWMtc2hhcGluZy52MQAAAAEzAQAAAAhiYXNlbGluZQAAAAlDT0xMRUNUT1IAAAAQYmF0dGVyeV9zdGF0ZS52MQAAAAExAQAAAApjb250aW51b3VzAAAACUNPTExFQ1RPUgAAAA91c2FnZV9ldmVudHMudjEAAAABMQEAAAAKY29udGludW91cwAAAAEAAABANThkNzc0NzVhNjdlNzk2ZTJhODU2YmEwODU5NzVjYjYzYjIxM2JmYzlmYjUzOTNlOTdjZjhjYTM2ZDBkOTZkMQAAAEA1OGQ3NzQ3NWE2N2U3OTZlMmE4NTZiYTA4NTk3NWNiNjNiMjEzYmZjOWZiNTM5M2U5N2NmOGNhMzZkMGQ5NmQxAAAADGJpbmQtdHJhZmZpYwAAAAExAAAAAAAAAAEAAAAyY29uZGl0aW9uOjZkMjY0MzkyZTg5N2EzZDUxMTY2Y2MyMzlhMTg3NTdhMTk4MjA3OTYAAAABoxhld8ABAAABoxhld8AAAAAABQAAADJjb25kaXRpb246NmEwN2M1NTljMjBjNjk0MGVmNTQ1OTI1Y2NmYzU3NTBlN2U1MjQ3ZAAAAAExAAAAMmNvbmRpdGlvbjo2ZDI2NDM5MmU4OTdhM2Q1MTE2NmNjMjM5YTE4NzU3YTE5ODIwNzk2AAAAATEAAAAyY29uZGl0aW9uOjcxOGY4ZTEzODFhN2ViYjllY2NkOTE4Y2Y4NzJjYTFhZGVlYjNkYzQAAAABMQAAADJjb25kaXRpb246NzNiYzg0MGRjNzkzOWFhZGIzNGY1M2ZhYmRkNjEyODU5YmQzZTczNwAAAAExAAAAMmNvbmRpdGlvbjpkOWQ0YmUzZWNjYjgwODk4MGY2MWMzMTA2ZWZiM2M0Y2ZmMTcxMDUxAAAAATEAAAAA",
+            "checkpoint_sha256": "f472115755f5e55d0ecea2a6d36adcc782b87b27773817f232dcad75404fab91",
+            "resource_changes": [
+              {
+                "generation": "3",
+                "id": "traffic-shaping.v1",
+                "kind": "ACTUATOR",
+                "profile_id": "baseline"
+              }
+            ],
+            "timer_intents": [],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "184000000000",
+              "calendar_elapsed_nanos": "184000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "284000000000",
+                "wall_time_utc_millis": 1800000184000
+              },
+              "zone_id": "UTC"
+            },
+            "event": {
+              "event_type": "ACTIVITY_PAUSED",
+              "fields": {
+                "activity_component_token": "1111111111111111111111111111111111111111111111111111111111111111",
+                "package_name": "com.example.social",
+                "source_time_utc_millis": "1800000184000"
+              },
+              "observed_time": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "284000000000",
+                "wall_time_utc_millis": 1800000184000
+              },
+              "primary_source_time": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "284000000000",
+                "wall_time_utc_millis": 1800000184000
+              },
+              "schema_version": 1,
+              "sequence_number": 10,
+              "source_id": "usage_events.v1"
+            },
+            "sequence_number": 10,
+            "type": "EVENT"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAALAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAq10EwAAAAAKL7QFgAAAAAAgAAACFiaW5kaW5nOmJpbmQtdHJhZmZpYzpjYXNlOjE6MTpub3QAAAAAJm9jY3VycmVuY2U6b2NjLWxhdGNoOnRyaWdnZXI6Y29uZGl0aW9uAQAAAAAAAAAAAAAABAAAACtvY2N1cnJlbmNlOm9jYy1sYXRjaDp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAQAAAC5vY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC9vY2N1cnJlbmNlOm9jYy13aW5kb3ctY291bnQ6dHJpZ2dlcjp3aW5kb3ctZWRnZQAAAAAtb2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdy1lZGdlAAAAAAIAAAAqb2NjdXJyZW5jZTpvY2Mtd2luZG93LWNvdW50OnRyaWdnZXI6d2luZG93AAAAAQAAAAAAAAALAAAAukO3QAAAAAAkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxAAAAATEAAAAob2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdwAAAAEAAAAAAAAACwAAALpDt0AAAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAAAI1MAAAAAAAAAAGAAAACW9jYy1ldmVudAAAAAEAAAAJb2NjLWxhdGNoAAAAAQAAAAxvY2MtcHJlc2VuY2UAAAABAAAADG9jYy1zZXF1ZW5jZQAAAAEAAAAQb2NjLXdpbmRvdy1jb3VudAAAAAEAAAAOb2NjLXdpbmRvdy1zdW0AAAABAAAABgAAAAlvY2MtZXZlbnQAAAAA7msoAAAAAADuaygAAAAACW9jYy1sYXRjaAAAAAJUC-QAAAAAAlQL5AAAAAAMb2NjLXByZXNlbmNlAAAAKpumZgAAAAAqm6ZmAAAAAAxvY2Mtc2VxdWVuY2UAAAACVAvkAAAAAAJUC-QAAAAAEG9jYy13aW5kb3ctY291bnQAAAACVAvkAAAAAAJUC-QAAAAADm9jYy13aW5kb3ctc3VtAAAAAlQL5AAAAAACVAvkAAAAAAMAAAAIQUNUVUFUT1IAAAASdHJhZmZpYy1zaGFwaW5nLnYxAAAAATQBAAAABm1lZGl1bQAAAAlDT0xMRUNUT1IAAAAQYmF0dGVyeV9zdGF0ZS52MQAAAAExAQAAAApjb250aW51b3VzAAAACUNPTExFQ1RPUgAAAA91c2FnZV9ldmVudHMudjEAAAABMQEAAAAKY29udGludW91cwAAAAIAAABAOTFiY2VmZTJhNjI5NmU0MTM2M2QzZjkxMGJiMGE2ZmY1YjZiZjQ1Njk4ZjFmODZkMTNjNDQzMTU1MTNlZWM3MAAAAEA5MWJjZWZlMmE2Mjk2ZTQxMzYzZDNmOTEwYmIwYTZmZjViNmJmNDU2OThmMWY4NmQxM2M0NDMxNTUxM2VlYzcwAAAADm9jYy13aW5kb3ctc3VtAAAAATIAAAAAAAAACwAAADJjb25kaXRpb246NzNiYzg0MGRjNzkzOWFhZGIzNGY1M2ZhYmRkNjEyODU5YmQzZTczNwIAAAAkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxAAAAyDv-mAAAAAAAAEBmMDczY2M0MGVlYTU4MTk3YjczZWIyMzI0M2ZiNDA1MWFkYzQxZDRhMjYyMTZjZjE0MmZkNTAwYTFhMzgzZDdhAAAAQGYwNzNjYzQwZWVhNTgxOTdiNzNlYjIzMjQzZmI0MDUxYWRjNDFkNGEyNjIxNmNmMTQyZmQ1MDBhMWEzODNkN2EAAAAQb2NjLXdpbmRvdy1jb3VudAAAAAEyAAAAAAAAAAsAAAAyY29uZGl0aW9uOmQ5ZDRiZTNlY2NiODA4OTgwZjYxYzMxMDZlZmIzYzRjZmYxNzEwNTECAAAAJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQAAAMg7_pgAAAAAAAAFAAAAMmNvbmRpdGlvbjo2YTA3YzU1OWMyMGM2OTQwZWY1NDU5MjVjY2ZjNTc1MGU3ZTUyNDdkAAAAATEAAAAyY29uZGl0aW9uOjZkMjY0MzkyZTg5N2EzZDUxMTY2Y2MyMzlhMTg3NTdhMTk4MjA3OTYAAAABMQAAADJjb25kaXRpb246NzE4ZjhlMTM4MWE3ZWJiOWVjY2Q5MThjZjg3MmNhMWFkZWViM2RjNAAAAAExAAAAMmNvbmRpdGlvbjo3M2JjODQwZGM3OTM5YWFkYjM0ZjUzZmFiZGQ2MTI4NTliZDNlNzM3AAAAATIAAAAyY29uZGl0aW9uOmQ5ZDRiZTNlY2NiODA4OTgwZjYxYzMxMDZlZmIzYzRjZmYxNzEwNTEAAAABMgAAAAA",
+            "checkpoint_sha256": "72c13a21cf7339c01279b82ab25a7b340c2a18d9f9c83aa449a89b1f7f7f4c3b",
+            "resource_changes": [
+              {
+                "generation": "4",
+                "id": "traffic-shaping.v1",
+                "kind": "ACTUATOR",
+                "profile_id": "medium"
+              }
+            ],
+            "timer_intents": [
+              {
+                "generation": "1",
+                "timer_id": "58d77475a67e796e2a856ba085975cb63b213bfc9fb5393e97cf8ca36d0d96d1",
+                "type": "RETIRE"
+              },
+              {
+                "timer": {
+                  "automation_id": "occ-window-sum",
+                  "causal_sequence": 11,
+                  "expires_at_utc_millis": null,
+                  "generation": "2",
+                  "id": "91bcefe2a6296e41363d3f910bb0a6ff5b6bf45698f1f86d13c44315513eec70",
+                  "logical_deadline_utc_millis": null,
+                  "producer_key": "condition:73bc840dc7939aadb34f53fabdd612859bd3e737",
+                  "target": {
+                    "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                    "elapsed_realtime_nanos": "860000000000",
+                    "type": "SAME_BOOT_MONOTONIC"
+                  }
+                },
+                "type": "SCHEDULE"
+              },
+              {
+                "timer": {
+                  "automation_id": "occ-window-count",
+                  "causal_sequence": 11,
+                  "expires_at_utc_millis": null,
+                  "generation": "2",
+                  "id": "f073cc40eea58197b73eb23243fb4051adc41d4a26216cf142fd500a1a383d7a",
+                  "logical_deadline_utc_millis": null,
+                  "producer_key": "condition:d9d4be3eccb808980f61c3106efb3c4cff171051",
+                  "target": {
+                    "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                    "elapsed_realtime_nanos": "860000000000",
+                    "type": "SAME_BOOT_MONOTONIC"
+                  }
+                },
+                "type": "SCHEDULE"
+              }
+            ],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "184000000000",
+              "calendar_elapsed_nanos": "700000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "800000000000",
+                "wall_time_utc_millis": 1800000700000
+              },
+              "zone_id": "UTC"
+            },
+            "event": {
+              "event_type": "BATTERY_STATE",
+              "fields": {
+                "charging_source": "USB",
+                "charging_state": "NOT_CHARGING",
+                "percentage": "50",
+                "power_save_enabled": "false"
+              },
+              "observed_time": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "800000000000",
+                "wall_time_utc_millis": 1800000700000
+              },
+              "primary_source_time": null,
+              "schema_version": 1,
+              "sequence_number": 11,
+              "source_id": "battery_state.v1"
+            },
+            "sequence_number": 11,
+            "type": "EVENT"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAMAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAq10EwAAAAAKM22yIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABgAAAAlvY2MtZXZlbnQAAAABAAAACW9jYy1sYXRjaAAAAAEAAAAMb2NjLXByZXNlbmNlAAAAAQAAAAxvY2Mtc2VxdWVuY2UAAAABAAAAEG9jYy13aW5kb3ctY291bnQAAAABAAAADm9jYy13aW5kb3ctc3VtAAAAAQAAAAYAAAAJb2NjLWV2ZW50AAAAAO5rKAAAAAAA7msoAAAAAAlvY2MtbGF0Y2gAAAACVAvkAAAAAAJUC-QAAAAADG9jYy1wcmVzZW5jZQAAACqbpmYAAAAAKpumZgAAAAAMb2NjLXNlcXVlbmNlAAAAAlQL5AAAAAACVAvkAAAAABBvY2Mtd2luZG93LWNvdW50AAAAAlQL5AAAAAACVAvkAAAAAA5vY2Mtd2luZG93LXN1bQAAAAJUC-QAAAAAAlQL5AAAAAADAAAACEFDVFVBVE9SAAAAEnRyYWZmaWMtc2hhcGluZy52MQAAAAE0AQAAAAZtZWRpdW0AAAAJQ09MTEVDVE9SAAAAEGJhdHRlcnlfc3RhdGUudjEAAAABMQEAAAAKY29udGludW91cwAAAAlDT0xMRUNUT1IAAAAPdXNhZ2VfZXZlbnRzLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAAAAAAABQAAADJjb25kaXRpb246NmEwN2M1NTljMjBjNjk0MGVmNTQ1OTI1Y2NmYzU3NTBlN2U1MjQ3ZAAAAAExAAAAMmNvbmRpdGlvbjo2ZDI2NDM5MmU4OTdhM2Q1MTE2NmNjMjM5YTE4NzU3YTE5ODIwNzk2AAAAATEAAAAyY29uZGl0aW9uOjcxOGY4ZTEzODFhN2ViYjllY2NkOTE4Y2Y4NzJjYTFhZGVlYjNkYzQAAAABMQAAADJjb25kaXRpb246NzNiYzg0MGRjNzkzOWFhZGIzNGY1M2ZhYmRkNjEyODU5YmQzZTczNwAAAAEyAAAAMmNvbmRpdGlvbjpkOWQ0YmUzZWNjYjgwODk4MGY2MWMzMTA2ZWZiM2M0Y2ZmMTcxMDUxAAAAATIAAAAA",
+            "checkpoint_sha256": "f9fe89922d426f63729e9ac150b568e49c9905f11fe2a4876e054192948f12f1",
+            "resource_changes": [],
+            "timer_intents": [
+              {
+                "generation": "2",
+                "timer_id": "91bcefe2a6296e41363d3f910bb0a6ff5b6bf45698f1f86d13c44315513eec70",
+                "type": "RETIRE"
+              },
+              {
+                "generation": "2",
+                "timer_id": "f073cc40eea58197b73eb23243fb4051adc41d4a26216cf142fd500a1a383d7a",
+                "type": "RETIRE"
+              }
+            ],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "184000000000",
+              "calendar_elapsed_nanos": "701000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "801000000000",
+                "wall_time_utc_millis": 1800000701000
+              },
+              "zone_id": "UTC"
+            },
+            "sequence_number": 12,
+            "source_id": "usage_events.v1",
+            "type": "QUALITY_GAP"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAANAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAq10EwAAAAAKNydewAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABgAAAAlvY2MtZXZlbnQAAAABAAAACW9jYy1sYXRjaAAAAAEAAAAMb2NjLXByZXNlbmNlAAAAAQAAAAxvY2Mtc2VxdWVuY2UAAAABAAAAEG9jYy13aW5kb3ctY291bnQAAAABAAAADm9jYy13aW5kb3ctc3VtAAAAAQAAAAYAAAAJb2NjLWV2ZW50AAAAAO5rKAAAAAAA7msoAAAAAAlvY2MtbGF0Y2gAAAACVAvkAAAAAAJUC-QAAAAADG9jYy1wcmVzZW5jZQAAACqbpmYAAAAAKpumZgAAAAAMb2NjLXNlcXVlbmNlAAAAAlQL5AAAAAACVAvkAAAAABBvY2Mtd2luZG93LWNvdW50AAAAAlQL5AAAAAACVAvkAAAAAA5vY2Mtd2luZG93LXN1bQAAAAJUC-QAAAAAAlQL5AAAAAADAAAACEFDVFVBVE9SAAAAEnRyYWZmaWMtc2hhcGluZy52MQAAAAE0AQAAAAZtZWRpdW0AAAAJQ09MTEVDVE9SAAAAEGJhdHRlcnlfc3RhdGUudjEAAAABMQEAAAAKY29udGludW91cwAAAAlDT0xMRUNUT1IAAAAPdXNhZ2VfZXZlbnRzLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAAAAAAABQAAADJjb25kaXRpb246NmEwN2M1NTljMjBjNjk0MGVmNTQ1OTI1Y2NmYzU3NTBlN2U1MjQ3ZAAAAAExAAAAMmNvbmRpdGlvbjo2ZDI2NDM5MmU4OTdhM2Q1MTE2NmNjMjM5YTE4NzU3YTE5ODIwNzk2AAAAATEAAAAyY29uZGl0aW9uOjcxOGY4ZTEzODFhN2ViYjllY2NkOTE4Y2Y4NzJjYTFhZGVlYjNkYzQAAAABMQAAADJjb25kaXRpb246NzNiYzg0MGRjNzkzOWFhZGIzNGY1M2ZhYmRkNjEyODU5YmQzZTczNwAAAAEyAAAAMmNvbmRpdGlvbjpkOWQ0YmUzZWNjYjgwODk4MGY2MWMzMTA2ZWZiM2M0Y2ZmMTcxMDUxAAAAATIAAAAA",
+            "checkpoint_sha256": "2ee69fbc64b5b6e7a1c34016cc22c81b12309d4232aabbc3bbc64a79e315e161",
+            "resource_changes": [],
+            "timer_intents": [],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "184000000000",
+              "calendar_elapsed_nanos": "702000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "802000000000",
+                "wall_time_utc_millis": 1800000702000
+              },
+              "zone_id": "Asia/Taipei"
+            },
+            "restart_resources": [],
+            "sequence_number": 13,
+            "type": "CLOCK_DISCONTINUITY"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAOAAAAB1BBVVNJTkcBAAABoxhcUAAAAAAq10EwAAAAAKOuELYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABgAAAAlvY2MtZXZlbnQAAAABAAAACW9jYy1sYXRjaAAAAAEAAAAMb2NjLXByZXNlbmNlAAAAAQAAAAxvY2Mtc2VxdWVuY2UAAAABAAAAEG9jYy13aW5kb3ctY291bnQAAAABAAAADm9jYy13aW5kb3ctc3VtAAAAAQAAAAYAAAAJb2NjLWV2ZW50AAAAAO5rKAAAAAAA7msoAAAAAAlvY2MtbGF0Y2gAAAACVAvkAAAAAAJUC-QAAAAADG9jYy1wcmVzZW5jZQAAACqbpmYAAAAAKpumZgAAAAAMb2NjLXNlcXVlbmNlAAAAAlQL5AAAAAACVAvkAAAAABBvY2Mtd2luZG93LWNvdW50AAAAAlQL5AAAAAACVAvkAAAAAA5vY2Mtd2luZG93LXN1bQAAAAJUC-QAAAAAAlQL5AAAAAADAAAACEFDVFVBVE9SAAAAEnRyYWZmaWMtc2hhcGluZy52MQAAAAE1AAAAAAlDT0xMRUNUT1IAAAAQYmF0dGVyeV9zdGF0ZS52MQAAAAEyAAAAAAlDT0xMRUNUT1IAAAAPdXNhZ2VfZXZlbnRzLnYxAAAAATIAAAAAAAAAAAUAAAAyY29uZGl0aW9uOjZhMDdjNTU5YzIwYzY5NDBlZjU0NTkyNWNjZmM1NzUwZTdlNTI0N2QAAAABMQAAADJjb25kaXRpb246NmQyNjQzOTJlODk3YTNkNTExNjZjYzIzOWExODc1N2ExOTgyMDc5NgAAAAExAAAAMmNvbmRpdGlvbjo3MThmOGUxMzgxYTdlYmI5ZWNjZDkxOGNmODcyY2ExYWRlZWIzZGM0AAAAATEAAAAyY29uZGl0aW9uOjczYmM4NDBkYzc5MzlhYWRiMzRmNTNmYWJkZDYxMjg1OWJkM2U3MzcAAAABMgAAADJjb25kaXRpb246ZDlkNGJlM2VjY2I4MDg5ODBmNjFjMzEwNmVmYjNjNGNmZjE3MTA1MQAAAAEyAAAAAA",
+            "checkpoint_sha256": "e79ded81ad8d51b30134e937ee17287ea0f55485b7500f172306f3ebbc213949",
+            "resource_changes": [
+              {
+                "generation": "5",
+                "id": "traffic-shaping.v1",
+                "kind": "ACTUATOR",
+                "profile_id": null
+              },
+              {
+                "generation": "2",
+                "id": "battery_state.v1",
+                "kind": "COLLECTOR",
+                "profile_id": null
+              },
+              {
+                "generation": "2",
+                "id": "usage_events.v1",
+                "kind": "COLLECTOR",
+                "profile_id": null
+              }
+            ],
+            "timer_intents": [],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "184000000000",
+              "calendar_elapsed_nanos": "703000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "803000000000",
+                "wall_time_utc_millis": 1800000703000
+              },
+              "zone_id": "Asia/Taipei"
+            },
+            "sequence_number": 14,
+            "state": "PAUSING",
+            "type": "LIFECYCLE"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAPAAAABlBBVVNFRAEAAAGjGFxQAAAAACrXQTAAAAAAo-mrgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGAAAACW9jYy1ldmVudAAAAAEAAAAJb2NjLWxhdGNoAAAAAQAAAAxvY2MtcHJlc2VuY2UAAAABAAAADG9jYy1zZXF1ZW5jZQAAAAEAAAAQb2NjLXdpbmRvdy1jb3VudAAAAAEAAAAOb2NjLXdpbmRvdy1zdW0AAAABAAAABgAAAAlvY2MtZXZlbnQAAAAA7msoAAAAAADuaygAAAAACW9jYy1sYXRjaAAAAAJUC-QAAAAAAlQL5AAAAAAMb2NjLXByZXNlbmNlAAAAKpumZgAAAAAqm6ZmAAAAAAxvY2Mtc2VxdWVuY2UAAAACVAvkAAAAAAJUC-QAAAAAEG9jYy13aW5kb3ctY291bnQAAAACVAvkAAAAAAJUC-QAAAAADm9jYy13aW5kb3ctc3VtAAAAAlQL5AAAAAACVAvkAAAAAAMAAAAIQUNUVUFUT1IAAAASdHJhZmZpYy1zaGFwaW5nLnYxAAAAATUAAAAACUNPTExFQ1RPUgAAABBiYXR0ZXJ5X3N0YXRlLnYxAAAAATIAAAAACUNPTExFQ1RPUgAAAA91c2FnZV9ldmVudHMudjEAAAABMgAAAAAAAAAABQAAADJjb25kaXRpb246NmEwN2M1NTljMjBjNjk0MGVmNTQ1OTI1Y2NmYzU3NTBlN2U1MjQ3ZAAAAAExAAAAMmNvbmRpdGlvbjo2ZDI2NDM5MmU4OTdhM2Q1MTE2NmNjMjM5YTE4NzU3YTE5ODIwNzk2AAAAATEAAAAyY29uZGl0aW9uOjcxOGY4ZTEzODFhN2ViYjllY2NkOTE4Y2Y4NzJjYTFhZGVlYjNkYzQAAAABMQAAADJjb25kaXRpb246NzNiYzg0MGRjNzkzOWFhZGIzNGY1M2ZhYmRkNjEyODU5YmQzZTczNwAAAAEyAAAAMmNvbmRpdGlvbjpkOWQ0YmUzZWNjYjgwODk4MGY2MWMzMTA2ZWZiM2M0Y2ZmMTcxMDUxAAAAATIAAAAA",
+            "checkpoint_sha256": "fa958506895c026cc83a3165cd1360968b42bf87fd7eb3f9acacd79e57cacaf6",
+            "resource_changes": [],
+            "timer_intents": [],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "184000000000",
+              "calendar_elapsed_nanos": "704000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "804000000000",
+                "wall_time_utc_millis": 1800000704000
+              },
+              "zone_id": "Asia/Taipei"
+            },
+            "sequence_number": 15,
+            "state": "PAUSED",
+            "type": "LIFECYCLE"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAQAAAACkFDVElWQVRJTkcBAAABoxhcUAAAAAAq10EwAAAAAKQlRkoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABgAAAAlvY2MtZXZlbnQAAAABAAAACW9jYy1sYXRjaAAAAAEAAAAMb2NjLXByZXNlbmNlAAAAAQAAAAxvY2Mtc2VxdWVuY2UAAAABAAAAEG9jYy13aW5kb3ctY291bnQAAAABAAAADm9jYy13aW5kb3ctc3VtAAAAAQAAAAYAAAAJb2NjLWV2ZW50AAAAAO5rKAAAAAAA7msoAAAAAAlvY2MtbGF0Y2gAAAACVAvkAAAAAAJUC-QAAAAADG9jYy1wcmVzZW5jZQAAACqbpmYAAAAAKpumZgAAAAAMb2NjLXNlcXVlbmNlAAAAAlQL5AAAAAACVAvkAAAAABBvY2Mtd2luZG93LWNvdW50AAAAAlQL5AAAAAACVAvkAAAAAA5vY2Mtd2luZG93LXN1bQAAAAJUC-QAAAAAAlQL5AAAAAADAAAACEFDVFVBVE9SAAAAEnRyYWZmaWMtc2hhcGluZy52MQAAAAE2AQAAAAZtZWRpdW0AAAAJQ09MTEVDVE9SAAAAEGJhdHRlcnlfc3RhdGUudjEAAAABMwEAAAAKY29udGludW91cwAAAAlDT0xMRUNUT1IAAAAPdXNhZ2VfZXZlbnRzLnYxAAAAATMBAAAACmNvbnRpbnVvdXMAAAAAAAAABQAAADJjb25kaXRpb246NmEwN2M1NTljMjBjNjk0MGVmNTQ1OTI1Y2NmYzU3NTBlN2U1MjQ3ZAAAAAExAAAAMmNvbmRpdGlvbjo2ZDI2NDM5MmU4OTdhM2Q1MTE2NmNjMjM5YTE4NzU3YTE5ODIwNzk2AAAAATEAAAAyY29uZGl0aW9uOjcxOGY4ZTEzODFhN2ViYjllY2NkOTE4Y2Y4NzJjYTFhZGVlYjNkYzQAAAABMQAAADJjb25kaXRpb246NzNiYzg0MGRjNzkzOWFhZGIzNGY1M2ZhYmRkNjEyODU5YmQzZTczNwAAAAEyAAAAMmNvbmRpdGlvbjpkOWQ0YmUzZWNjYjgwODk4MGY2MWMzMTA2ZWZiM2M0Y2ZmMTcxMDUxAAAAATIAAAAA",
+            "checkpoint_sha256": "34ca98af1db4ba2bf30f0c5f60bf07f48685e997dc57abc4f43bfb76d4e50df0",
+            "resource_changes": [
+              {
+                "generation": "6",
+                "id": "traffic-shaping.v1",
+                "kind": "ACTUATOR",
+                "profile_id": "medium"
+              },
+              {
+                "generation": "3",
+                "id": "battery_state.v1",
+                "kind": "COLLECTOR",
+                "profile_id": "continuous"
+              },
+              {
+                "generation": "3",
+                "id": "usage_events.v1",
+                "kind": "COLLECTOR",
+                "profile_id": "continuous"
+              }
+            ],
+            "timer_intents": [],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "184000000000",
+              "calendar_elapsed_nanos": "705000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "805000000000",
+                "wall_time_utc_millis": 1800000705000
+              },
+              "zone_id": "Asia/Taipei"
+            },
+            "sequence_number": 16,
+            "state": "ACTIVATING",
+            "type": "LIFECYCLE"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAARAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAq10EwAAAAAKRg4RQAAAAAAAAAAAAAAAAAAAAABAAAACtvY2N1cnJlbmNlOm9jYy1sYXRjaDp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC5vY2N1cnJlbmNlOm9jYy1wcmVzZW5jZTp0cmlnZ2VyOmNvbmRpdGlvbi1lZGdlAAAAAC9vY2N1cnJlbmNlOm9jYy13aW5kb3ctY291bnQ6dHJpZ2dlcjp3aW5kb3ctZWRnZQAAAAAtb2NjdXJyZW5jZTpvY2Mtd2luZG93LXN1bTp0cmlnZ2VyOndpbmRvdy1lZGdlAAAAAAAAAAAAAAAABgAAAAlvY2MtZXZlbnQAAAABAAAACW9jYy1sYXRjaAAAAAEAAAAMb2NjLXByZXNlbmNlAAAAAQAAAAxvY2Mtc2VxdWVuY2UAAAABAAAAEG9jYy13aW5kb3ctY291bnQAAAABAAAADm9jYy13aW5kb3ctc3VtAAAAAQAAAAYAAAAJb2NjLWV2ZW50AAAAAO5rKAAAAAAA7msoAAAAAAlvY2MtbGF0Y2gAAAACVAvkAAAAAAJUC-QAAAAADG9jYy1wcmVzZW5jZQAAACqbpmYAAAAAKpumZgAAAAAMb2NjLXNlcXVlbmNlAAAAAlQL5AAAAAACVAvkAAAAABBvY2Mtd2luZG93LWNvdW50AAAAAlQL5AAAAAACVAvkAAAAAA5vY2Mtd2luZG93LXN1bQAAAAJUC-QAAAAAAlQL5AAAAAADAAAACEFDVFVBVE9SAAAAEnRyYWZmaWMtc2hhcGluZy52MQAAAAE2AQAAAAZtZWRpdW0AAAAJQ09MTEVDVE9SAAAAEGJhdHRlcnlfc3RhdGUudjEAAAABMwEAAAAKY29udGludW91cwAAAAlDT0xMRUNUT1IAAAAPdXNhZ2VfZXZlbnRzLnYxAAAAATMBAAAACmNvbnRpbnVvdXMAAAAAAAAABQAAADJjb25kaXRpb246NmEwN2M1NTljMjBjNjk0MGVmNTQ1OTI1Y2NmYzU3NTBlN2U1MjQ3ZAAAAAExAAAAMmNvbmRpdGlvbjo2ZDI2NDM5MmU4OTdhM2Q1MTE2NmNjMjM5YTE4NzU3YTE5ODIwNzk2AAAAATEAAAAyY29uZGl0aW9uOjcxOGY4ZTEzODFhN2ViYjllY2NkOTE4Y2Y4NzJjYTFhZGVlYjNkYzQAAAABMQAAADJjb25kaXRpb246NzNiYzg0MGRjNzkzOWFhZGIzNGY1M2ZhYmRkNjEyODU5YmQzZTczNwAAAAEyAAAAMmNvbmRpdGlvbjpkOWQ0YmUzZWNjYjgwODk4MGY2MWMzMTA2ZWZiM2M0Y2ZmMTcxMDUxAAAAATIAAAAA",
+            "checkpoint_sha256": "7084322ff799af60eb8578cc1a6f7d89a7ebb480d88bb2b3e65d87833752f6e3",
+            "resource_changes": [],
+            "timer_intents": [],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "184000000000",
+              "calendar_elapsed_nanos": "706000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "806000000000",
+                "wall_time_utc_millis": 1800000706000
+              },
+              "zone_id": "Asia/Taipei"
+            },
+            "sequence_number": 17,
+            "state": "RUNNING",
+            "type": "LIFECYCLE"
+          }
+        }
+      ]
+    },
+    {
+      "final_checkpoint_sha256": "ff96b9c3a16dfa73d09eed542fc873a2a7afd08a039cff4dddeed5c0591205e1",
+      "configuration": {
+        "assigned_participant_id": null,
+        "automations": [
+          {
+            "cases": [
+              {
+                "condition": {
+                  "type": "study_session_active"
+                },
+                "profile_id": "continuous"
+              }
+            ],
+            "default_profile_id": "continuous",
+            "id": "bind-battery",
+            "resource": {
+              "id": "battery_state.v1",
+              "kind": "collector"
+            },
+            "type": "resource_binding"
+          },
+          {
+            "availability_seconds": 60,
+            "cooldown": null,
+            "guard": null,
+            "id": "occ-daily",
+            "intervention_id": "notify-daily",
+            "maximum_activations": 1,
+            "trigger": {
+              "schedule": {
+                "local_time": "08:05",
+                "type": "daily_local"
+              },
+              "type": "schedule"
+            },
+            "type": "occurrence"
+          },
+          {
+            "availability_seconds": 60,
+            "cooldown": null,
+            "guard": null,
+            "id": "occ-interval",
+            "intervention_id": "notify-interval",
+            "maximum_activations": 2,
+            "trigger": {
+              "schedule": {
+                "clock": "CALENDAR_TIME",
+                "interval_minutes": 2,
+                "start_offset_minutes": 1,
+                "type": "interval"
+              },
+              "type": "schedule"
+            },
+            "type": "occurrence"
+          },
+          {
+            "availability_seconds": 60,
+            "cooldown": null,
+            "guard": null,
+            "id": "occ-one-time",
+            "intervention_id": "notify-one-time",
+            "maximum_activations": 1,
+            "trigger": {
+              "schedule": {
+                "clock": "ACTIVE_RUNNING_TIME",
+                "offset_minutes": 0,
+                "type": "one_time"
+              },
+              "type": "schedule"
+            },
+            "type": "occurrence"
+          },
+          {
+            "availability_seconds": 60,
+            "cooldown": null,
+            "guard": null,
+            "id": "occ-random",
+            "intervention_id": "notify-random",
+            "maximum_activations": 1,
+            "trigger": {
+              "schedule": {
+                "local_windows": [
+                  {
+                    "end_local_time": "08:20",
+                    "start_local_time": "08:07"
+                  }
+                ],
+                "maximum_occurrences_per_day": 1,
+                "maximum_occurrences_total": 1,
+                "minimum_separation_minutes": 1,
+                "occurrences_per_window": 1,
+                "type": "random_window"
+              },
+              "type": "schedule"
+            },
+            "type": "occurrence"
+          }
+        ],
+        "collectors": [
+          {
+            "id": "battery_state.v1",
+            "profiles": [
+              {
+                "config": {},
+                "id": "continuous"
+              }
+            ],
+            "required": true
+          }
+        ],
+        "configuration_id": "automation-schedules-0001",
+        "consent": {
+          "document_version": "v1",
+          "summary": "Non-participant conformance fixture."
+        },
+        "duration_hours": 24,
+        "experiment_id": "automation-schedules",
+        "expires_at": "2027-01-01T00:00:00Z",
+        "export": {
+          "hpke_public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "researcher_key_id": "protocol-export"
+        },
+        "interventions": [
+          {
+            "action": {
+              "notification_message": "notify-daily",
+              "notification_title": "Conformance notice",
+              "type": "notification"
+            },
+            "id": "notify-daily",
+            "required": true
+          },
+          {
+            "action": {
+              "notification_message": "notify-interval",
+              "notification_title": "Conformance notice",
+              "type": "notification"
+            },
+            "id": "notify-interval",
+            "required": true
+          },
+          {
+            "action": {
+              "notification_message": "notify-one-time",
+              "notification_title": "Conformance notice",
+              "type": "notification"
+            },
+            "id": "notify-one-time",
+            "required": true
+          },
+          {
+            "action": {
+              "notification_message": "notify-random",
+              "notification_title": "Conformance notice",
+              "type": "notification"
+            },
+            "id": "notify-random",
+            "required": true
+          }
+        ],
+        "issued_at": "2026-01-01T00:00:00Z",
+        "minimum_client_version": "1",
+        "platform": "android",
+        "purpose": "Cross-language reducer parity",
+        "researcher": {
+          "contact": "protocol@example.invalid",
+          "name": "Particeps Protocol"
+        },
+        "schema_version": 1,
+        "signer": {
+          "key_id": "protocol-signer",
+          "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        "storage": {
+          "maximum_local_bytes": 1073741824
+        },
+        "surveys": [],
+        "title": "Automation reducer conformance",
+        "traffic_shaping": {},
+        "upload": {}
+      },
+      "configuration_sha256": "a4087a96adb2e843a71fc18246c256f5833b5010650a2a6cd2b874c17be24846",
+      "id": "durable-schedule-materialization",
+      "stream_partition_ranges": [
+        {
+          "first_step": 3,
+          "last_step": 12
+        }
+      ],
+      "steps": [
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAABAAAACkFDVElWQVRJTkcBAAABoxhcUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAACUNPTExFQ1RPUgAAABBiYXR0ZXJ5X3N0YXRlLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAAAAAAAAAAAAAA",
+            "checkpoint_sha256": "eeba8f1f54790eaf0e0f9c530550aaec26bf380cc655ee6ee6bc91e7266f0bd4",
+            "resource_changes": [
+              {
+                "generation": "1",
+                "id": "battery_state.v1",
+                "kind": "COLLECTOR",
+                "profile_id": "continuous"
+              }
+            ],
+            "timer_intents": [],
+            "timer_production_requests": []
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "0",
+              "calendar_elapsed_nanos": "0",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "100000000000",
+                "wall_time_utc_millis": 1800000000000
+              },
+              "zone_id": "UTC"
+            },
+            "sequence_number": 1,
+            "state": "ACTIVATING",
+            "type": "LIFECYCLE"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAACAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAACUNPTExFQ1RPUgAAABBiYXR0ZXJ5X3N0YXRlLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAAAAAAAAAAAAAA",
+            "checkpoint_sha256": "f6edfcd3844b6b6cf3016c80be37ba2a2b8c10e743f62408b80ff6f3a147f4c7",
+            "resource_changes": [],
+            "timer_intents": [],
+            "timer_production_requests": [
+              {
+                "automation_id": "occ-daily",
+                "causal_sequence": 2,
+                "current_generation": "0",
+                "materialized_producer_keys": [],
+                "pending_timer_id": null,
+                "schedule_type": "daily_local"
+              },
+              {
+                "automation_id": "occ-interval",
+                "causal_sequence": 2,
+                "current_generation": "0",
+                "materialized_producer_keys": [],
+                "pending_timer_id": null,
+                "schedule_type": "interval"
+              },
+              {
+                "automation_id": "occ-one-time",
+                "causal_sequence": 2,
+                "current_generation": "0",
+                "materialized_producer_keys": [],
+                "pending_timer_id": null,
+                "schedule_type": "one_time"
+              },
+              {
+                "automation_id": "occ-random",
+                "causal_sequence": 2,
+                "current_generation": "0",
+                "materialized_producer_keys": [],
+                "pending_timer_id": null,
+                "schedule_type": "random_window"
+              }
+            ]
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "0",
+              "calendar_elapsed_nanos": "0",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "100000000000",
+                "wall_time_utc_millis": 1800000000000
+              },
+              "zone_id": "UTC"
+            },
+            "sequence_number": 2,
+            "state": "RUNNING",
+            "type": "LIFECYCLE"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAADAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAACUNPTExFQ1RPUgAAABBiYXR0ZXJ5X3N0YXRlLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAABAAAAQGEzYjI3YTk3N2RkOTk1YjliZjUyYTdiMDUxYzAwNjJhNjdjMzQwZjg1NTcyMDFhNmI0NjYxYzUxODU0ZDQyNTEAAABAYTNiMjdhOTc3ZGQ5OTViOWJmNTJhN2IwNTFjMDA2MmE2N2MzNDBmODU1NzIwMWE2YjQ2NjFjNTE4NTRkNDI1MQAAAAlvY2MtZGFpbHkAAAABMQAAAAAAAAACAAAAEGRhaWx5OjIwMjctMDEtMTUAAAABoxhg4-ABAAABoxhg4-ABAAABoxhhzkAAAAABAAAACW9jYy1kYWlseQAAAAExAAAAAQAAAAlvY2MtZGFpbHkAAAABAAAAEGRhaWx5OjIwMjctMDEtMTUAAAGjGGDj4AA",
+            "checkpoint_sha256": "d0aededdfc1a83b7e20792a5f7f904cf947cd86eb367f72e3e6fbffaa647413d",
+            "resource_changes": [],
+            "timer_intents": [
+              {
+                "timer": {
+                  "automation_id": "occ-daily",
+                  "causal_sequence": 2,
+                  "expires_at_utc_millis": 1800000360000,
+                  "generation": "1",
+                  "id": "a3b27a977dd995b9bf52a7b051c0062a67c340f8557201a6b4661c51854d4251",
+                  "logical_deadline_utc_millis": 1800000300000,
+                  "producer_key": "daily:2027-01-15",
+                  "target": {
+                    "type": "CALENDAR_UTC",
+                    "utc_millis": 1800000300000
+                  }
+                },
+                "type": "SCHEDULE"
+              }
+            ],
+            "timer_production_requests": [
+              {
+                "automation_id": "occ-daily",
+                "causal_sequence": 3,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "daily:2027-01-15"
+                ],
+                "pending_timer_id": "a3b27a977dd995b9bf52a7b051c0062a67c340f8557201a6b4661c51854d4251",
+                "schedule_type": "daily_local"
+              },
+              {
+                "automation_id": "occ-interval",
+                "causal_sequence": 3,
+                "current_generation": "0",
+                "materialized_producer_keys": [],
+                "pending_timer_id": null,
+                "schedule_type": "interval"
+              },
+              {
+                "automation_id": "occ-one-time",
+                "causal_sequence": 3,
+                "current_generation": "0",
+                "materialized_producer_keys": [],
+                "pending_timer_id": null,
+                "schedule_type": "one_time"
+              },
+              {
+                "automation_id": "occ-random",
+                "causal_sequence": 3,
+                "current_generation": "0",
+                "materialized_producer_keys": [],
+                "pending_timer_id": null,
+                "schedule_type": "random_window"
+              }
+            ]
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "0",
+              "calendar_elapsed_nanos": "0",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "100000000000",
+                "wall_time_utc_millis": 1800000000000
+              },
+              "zone_id": "UTC"
+            },
+            "sequence_number": 3,
+            "timer": {
+              "automation_id": "occ-daily",
+              "causal_sequence": 2,
+              "expires_at_utc_millis": 1800000360000,
+              "generation": "1",
+              "id": "a3b27a977dd995b9bf52a7b051c0062a67c340f8557201a6b4661c51854d4251",
+              "logical_deadline_utc_millis": 1800000300000,
+              "producer_key": "daily:2027-01-15",
+              "target": {
+                "type": "CALENDAR_UTC",
+                "utc_millis": 1800000300000
+              }
+            },
+            "type": "TIMER_MATERIALIZED"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAEAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAACUNPTExFQ1RPUgAAABBiYXR0ZXJ5X3N0YXRlLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAACAAAAQDQwNjE1NDA1NWY0NzNlODVkYmMxMDIxMGI0NGY0YzgyODljNjc5ODlkYmUxNzA1YWQyNmJjMzAxNzdmNTkyOGIAAABANDA2MTU0MDU1ZjQ3M2U4NWRiYzEwMjEwYjQ0ZjRjODI4OWM2Nzk4OWRiZTE3MDVhZDI2YmMzMDE3N2Y1OTI4YgAAAAxvY2MtaW50ZXJ2YWwAAAABMQAAAAAAAAACAAAACmludGVydmFsOjAAAAABoxhdOmABAAABoxhdOmABAAABoxheJMAAAABAYTNiMjdhOTc3ZGQ5OTViOWJmNTJhN2IwNTFjMDA2MmE2N2MzNDBmODU1NzIwMWE2YjQ2NjFjNTE4NTRkNDI1MQAAAEBhM2IyN2E5NzdkZDk5NWI5YmY1MmE3YjA1MWMwMDYyYTY3YzM0MGY4NTU3MjAxYTZiNDY2MWM1MTg1NGQ0MjUxAAAACW9jYy1kYWlseQAAAAExAAAAAAAAAAIAAAAQZGFpbHk6MjAyNy0wMS0xNQAAAAGjGGDj4AEAAAGjGGDj4AEAAAGjGGHOQAAAAAIAAAAJb2NjLWRhaWx5AAAAATEAAAAMb2NjLWludGVydmFsAAAAATEAAAACAAAACW9jYy1kYWlseQAAAAEAAAAQZGFpbHk6MjAyNy0wMS0xNQAAAaMYYOPgAAAAAAxvY2MtaW50ZXJ2YWwAAAABAAAACmludGVydmFsOjAAAAGjGF06YAA",
+            "checkpoint_sha256": "9d74b9d3ffcfc060a89fd4eeedceb465d6dd60556fe017947ede2e13cb37f391",
+            "resource_changes": [],
+            "timer_intents": [
+              {
+                "timer": {
+                  "automation_id": "occ-interval",
+                  "causal_sequence": 2,
+                  "expires_at_utc_millis": 1800000120000,
+                  "generation": "1",
+                  "id": "406154055f473e85dbc10210b44f4c8289c67989dbe1705ad26bc30177f5928b",
+                  "logical_deadline_utc_millis": 1800000060000,
+                  "producer_key": "interval:0",
+                  "target": {
+                    "type": "CALENDAR_UTC",
+                    "utc_millis": 1800000060000
+                  }
+                },
+                "type": "SCHEDULE"
+              }
+            ],
+            "timer_production_requests": [
+              {
+                "automation_id": "occ-daily",
+                "causal_sequence": 4,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "daily:2027-01-15"
+                ],
+                "pending_timer_id": "a3b27a977dd995b9bf52a7b051c0062a67c340f8557201a6b4661c51854d4251",
+                "schedule_type": "daily_local"
+              },
+              {
+                "automation_id": "occ-interval",
+                "causal_sequence": 4,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "interval:0"
+                ],
+                "pending_timer_id": "406154055f473e85dbc10210b44f4c8289c67989dbe1705ad26bc30177f5928b",
+                "schedule_type": "interval"
+              },
+              {
+                "automation_id": "occ-one-time",
+                "causal_sequence": 4,
+                "current_generation": "0",
+                "materialized_producer_keys": [],
+                "pending_timer_id": null,
+                "schedule_type": "one_time"
+              },
+              {
+                "automation_id": "occ-random",
+                "causal_sequence": 4,
+                "current_generation": "0",
+                "materialized_producer_keys": [],
+                "pending_timer_id": null,
+                "schedule_type": "random_window"
+              }
+            ]
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "0",
+              "calendar_elapsed_nanos": "0",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "100000000000",
+                "wall_time_utc_millis": 1800000000000
+              },
+              "zone_id": "UTC"
+            },
+            "sequence_number": 4,
+            "timer": {
+              "automation_id": "occ-interval",
+              "causal_sequence": 2,
+              "expires_at_utc_millis": 1800000120000,
+              "generation": "1",
+              "id": "406154055f473e85dbc10210b44f4c8289c67989dbe1705ad26bc30177f5928b",
+              "logical_deadline_utc_millis": 1800000060000,
+              "producer_key": "interval:0",
+              "target": {
+                "type": "CALENDAR_UTC",
+                "utc_millis": 1800000060000
+              }
+            },
+            "type": "TIMER_MATERIALIZED"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAFAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAACUNPTExFQ1RPUgAAABBiYXR0ZXJ5X3N0YXRlLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAADAAAAQDQwNjE1NDA1NWY0NzNlODVkYmMxMDIxMGI0NGY0YzgyODljNjc5ODlkYmUxNzA1YWQyNmJjMzAxNzdmNTkyOGIAAABANDA2MTU0MDU1ZjQ3M2U4NWRiYzEwMjEwYjQ0ZjRjODI4OWM2Nzk4OWRiZTE3MDVhZDI2YmMzMDE3N2Y1OTI4YgAAAAxvY2MtaW50ZXJ2YWwAAAABMQAAAAAAAAACAAAACmludGVydmFsOjAAAAABoxhdOmABAAABoxhdOmABAAABoxheJMAAAABAOGZkZjgwZDIzY2E3MWUzY2Y1MWQyOGI0OGIwZjRmODZhM2RkNjA0MWM0YjM4NmZjNzNjZjFiYmU0NmE2YzVlMwAAAEA4ZmRmODBkMjNjYTcxZTNjZjUxZDI4YjQ4YjBmNGY4NmEzZGQ2MDQxYzRiMzg2ZmM3M2NmMWJiZTQ2YTZjNWUzAAAADG9jYy1vbmUtdGltZQAAAAExAAAAAAAAAAIAAAAIb25lLXRpbWUBAAAAAAAAAAAAAAAAAEBhM2IyN2E5NzdkZDk5NWI5YmY1MmE3YjA1MWMwMDYyYTY3YzM0MGY4NTU3MjAxYTZiNDY2MWM1MTg1NGQ0MjUxAAAAQGEzYjI3YTk3N2RkOTk1YjliZjUyYTdiMDUxYzAwNjJhNjdjMzQwZjg1NTcyMDFhNmI0NjYxYzUxODU0ZDQyNTEAAAAJb2NjLWRhaWx5AAAAATEAAAAAAAAAAgAAABBkYWlseToyMDI3LTAxLTE1AAAAAaMYYOPgAQAAAaMYYOPgAQAAAaMYYc5AAAAAAwAAAAlvY2MtZGFpbHkAAAABMQAAAAxvY2MtaW50ZXJ2YWwAAAABMQAAAAxvY2Mtb25lLXRpbWUAAAABMQAAAAMAAAAJb2NjLWRhaWx5AAAAAQAAABBkYWlseToyMDI3LTAxLTE1AAABoxhg4-AAAAAADG9jYy1pbnRlcnZhbAAAAAEAAAAKaW50ZXJ2YWw6MAAAAaMYXTpgAAAAAAxvY2Mtb25lLXRpbWUAAAABAAAACG9uZS10aW1lAAAAAAAAAAAA",
+            "checkpoint_sha256": "473784fa0375ce2642a8bd5f42c2736537478f9dadbda75220b3b6d265c63fe3",
+            "resource_changes": [],
+            "timer_intents": [
+              {
+                "timer": {
+                  "automation_id": "occ-one-time",
+                  "causal_sequence": 2,
+                  "expires_at_utc_millis": null,
+                  "generation": "1",
+                  "id": "8fdf80d23ca71e3cf51d28b48b0f4f86a3dd6041c4b386fc73cf1bbe46a6c5e3",
+                  "logical_deadline_utc_millis": null,
+                  "producer_key": "one-time",
+                  "target": {
+                    "elapsed_nanos": "0",
+                    "type": "ACTIVE_ELAPSED"
+                  }
+                },
+                "type": "SCHEDULE"
+              }
+            ],
+            "timer_production_requests": [
+              {
+                "automation_id": "occ-daily",
+                "causal_sequence": 5,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "daily:2027-01-15"
+                ],
+                "pending_timer_id": "a3b27a977dd995b9bf52a7b051c0062a67c340f8557201a6b4661c51854d4251",
+                "schedule_type": "daily_local"
+              },
+              {
+                "automation_id": "occ-interval",
+                "causal_sequence": 5,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "interval:0"
+                ],
+                "pending_timer_id": "406154055f473e85dbc10210b44f4c8289c67989dbe1705ad26bc30177f5928b",
+                "schedule_type": "interval"
+              },
+              {
+                "automation_id": "occ-one-time",
+                "causal_sequence": 5,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "one-time"
+                ],
+                "pending_timer_id": "8fdf80d23ca71e3cf51d28b48b0f4f86a3dd6041c4b386fc73cf1bbe46a6c5e3",
+                "schedule_type": "one_time"
+              },
+              {
+                "automation_id": "occ-random",
+                "causal_sequence": 5,
+                "current_generation": "0",
+                "materialized_producer_keys": [],
+                "pending_timer_id": null,
+                "schedule_type": "random_window"
+              }
+            ]
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "0",
+              "calendar_elapsed_nanos": "0",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "100000000000",
+                "wall_time_utc_millis": 1800000000000
+              },
+              "zone_id": "UTC"
+            },
+            "sequence_number": 5,
+            "timer": {
+              "automation_id": "occ-one-time",
+              "causal_sequence": 2,
+              "expires_at_utc_millis": null,
+              "generation": "1",
+              "id": "8fdf80d23ca71e3cf51d28b48b0f4f86a3dd6041c4b386fc73cf1bbe46a6c5e3",
+              "logical_deadline_utc_millis": null,
+              "producer_key": "one-time",
+              "target": {
+                "elapsed_nanos": "0",
+                "type": "ACTIVE_ELAPSED"
+              }
+            },
+            "type": "TIMER_MATERIALIZED"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAGAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAACUNPTExFQ1RPUgAAABBiYXR0ZXJ5X3N0YXRlLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAAEAAAAQDQwNjE1NDA1NWY0NzNlODVkYmMxMDIxMGI0NGY0YzgyODljNjc5ODlkYmUxNzA1YWQyNmJjMzAxNzdmNTkyOGIAAABANDA2MTU0MDU1ZjQ3M2U4NWRiYzEwMjEwYjQ0ZjRjODI4OWM2Nzk4OWRiZTE3MDVhZDI2YmMzMDE3N2Y1OTI4YgAAAAxvY2MtaW50ZXJ2YWwAAAABMQAAAAAAAAACAAAACmludGVydmFsOjAAAAABoxhdOmABAAABoxhdOmABAAABoxheJMAAAABAOGZkZjgwZDIzY2E3MWUzY2Y1MWQyOGI0OGIwZjRmODZhM2RkNjA0MWM0YjM4NmZjNzNjZjFiYmU0NmE2YzVlMwAAAEA4ZmRmODBkMjNjYTcxZTNjZjUxZDI4YjQ4YjBmNGY4NmEzZGQ2MDQxYzRiMzg2ZmM3M2NmMWJiZTQ2YTZjNWUzAAAADG9jYy1vbmUtdGltZQAAAAExAAAAAAAAAAIAAAAIb25lLXRpbWUBAAAAAAAAAAAAAAAAAEA5MGMzN2FjNjM2MDZhZTcxMWNlOThmNzExODY4NWMzMzQxMjI2YTE5MDA0NjYwZDAxMjIyOGU0Y2U3ODNiZWEyAAAAQDkwYzM3YWM2MzYwNmFlNzExY2U5OGY3MTE4Njg1YzMzNDEyMjZhMTkwMDQ2NjBkMDEyMjI4ZTRjZTc4M2JlYTIAAAAKb2NjLXJhbmRvbQAAAAExAAAAAAAAAAIAAAAVcmFuZG9tOjIwMjctMDEtMTU6MDowAAAAAaMYYrigAQAAAaMYYrigAQAAAaMYY6MAAAAAQGEzYjI3YTk3N2RkOTk1YjliZjUyYTdiMDUxYzAwNjJhNjdjMzQwZjg1NTcyMDFhNmI0NjYxYzUxODU0ZDQyNTEAAABAYTNiMjdhOTc3ZGQ5OTViOWJmNTJhN2IwNTFjMDA2MmE2N2MzNDBmODU1NzIwMWE2YjQ2NjFjNTE4NTRkNDI1MQAAAAlvY2MtZGFpbHkAAAABMQAAAAAAAAACAAAAEGRhaWx5OjIwMjctMDEtMTUAAAABoxhg4-ABAAABoxhg4-ABAAABoxhhzkAAAAAEAAAACW9jYy1kYWlseQAAAAExAAAADG9jYy1pbnRlcnZhbAAAAAExAAAADG9jYy1vbmUtdGltZQAAAAExAAAACm9jYy1yYW5kb20AAAABMQAAAAQAAAAJb2NjLWRhaWx5AAAAAQAAABBkYWlseToyMDI3LTAxLTE1AAABoxhg4-AAAAAADG9jYy1pbnRlcnZhbAAAAAEAAAAKaW50ZXJ2YWw6MAAAAaMYXTpgAAAAAAxvY2Mtb25lLXRpbWUAAAABAAAACG9uZS10aW1lAAAAAAAAAAAAAAAACm9jYy1yYW5kb20AAAABAAAAFXJhbmRvbToyMDI3LTAxLTE1OjA6MAAAAaMYYrigAA",
+            "checkpoint_sha256": "882af5dda91a4d1200f2ff51d918ce0f3f20e8ebe8ef15beba8d4d125de79e1e",
+            "resource_changes": [],
+            "timer_intents": [
+              {
+                "timer": {
+                  "automation_id": "occ-random",
+                  "causal_sequence": 2,
+                  "expires_at_utc_millis": 1800000480000,
+                  "generation": "1",
+                  "id": "90c37ac63606ae711ce98f7118685c3341226a19004660d012228e4ce783bea2",
+                  "logical_deadline_utc_millis": 1800000420000,
+                  "producer_key": "random:2027-01-15:0:0",
+                  "target": {
+                    "type": "CALENDAR_UTC",
+                    "utc_millis": 1800000420000
+                  }
+                },
+                "type": "SCHEDULE"
+              }
+            ],
+            "timer_production_requests": [
+              {
+                "automation_id": "occ-daily",
+                "causal_sequence": 6,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "daily:2027-01-15"
+                ],
+                "pending_timer_id": "a3b27a977dd995b9bf52a7b051c0062a67c340f8557201a6b4661c51854d4251",
+                "schedule_type": "daily_local"
+              },
+              {
+                "automation_id": "occ-interval",
+                "causal_sequence": 6,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "interval:0"
+                ],
+                "pending_timer_id": "406154055f473e85dbc10210b44f4c8289c67989dbe1705ad26bc30177f5928b",
+                "schedule_type": "interval"
+              },
+              {
+                "automation_id": "occ-one-time",
+                "causal_sequence": 6,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "one-time"
+                ],
+                "pending_timer_id": "8fdf80d23ca71e3cf51d28b48b0f4f86a3dd6041c4b386fc73cf1bbe46a6c5e3",
+                "schedule_type": "one_time"
+              },
+              {
+                "automation_id": "occ-random",
+                "causal_sequence": 6,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "random:2027-01-15:0:0"
+                ],
+                "pending_timer_id": "90c37ac63606ae711ce98f7118685c3341226a19004660d012228e4ce783bea2",
+                "schedule_type": "random_window"
+              }
+            ]
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "0",
+              "calendar_elapsed_nanos": "0",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "100000000000",
+                "wall_time_utc_millis": 1800000000000
+              },
+              "zone_id": "UTC"
+            },
+            "sequence_number": 6,
+            "timer": {
+              "automation_id": "occ-random",
+              "causal_sequence": 2,
+              "expires_at_utc_millis": 1800000480000,
+              "generation": "1",
+              "id": "90c37ac63606ae711ce98f7118685c3341226a19004660d012228e4ce783bea2",
+              "logical_deadline_utc_millis": 1800000420000,
+              "producer_key": "random:2027-01-15:0:0",
+              "target": {
+                "type": "CALENDAR_UTC",
+                "utc_millis": 1800000420000
+              }
+            },
+            "type": "TIMER_MATERIALIZED"
+          }
+        },
+        {
+          "expected": {
+            "actions": [
+              {
+                "action_id": "37f6f0767024478df2e5ad77e2a8f275d45449b0f47d413a6c835a1771cd4552",
+                "automation_id": "occ-one-time",
+                "causal_identity": "timer:8fdf80d23ca71e3cf51d28b48b0f4f86a3dd6041c4b386fc73cf1bbe46a6c5e3",
+                "expires_at_utc_millis": 1800000060000,
+                "intervention_id": "notify-one-time",
+                "logical_deadline_utc_millis": null
+              }
+            ],
+            "audits": [
+              {
+                "automation_id": "occ-one-time",
+                "causal_identity": "timer:8fdf80d23ca71e3cf51d28b48b0f4f86a3dd6041c4b386fc73cf1bbe46a6c5e3",
+                "matched": true,
+                "suppression_reason": null
+              }
+            ],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAHAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAxvY2Mtb25lLXRpbWUAAAABAAAAAQAAAAxvY2Mtb25lLXRpbWUAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAlDT0xMRUNUT1IAAAAQYmF0dGVyeV9zdGF0ZS52MQAAAAExAQAAAApjb250aW51b3VzAAAAAwAAAEA0MDYxNTQwNTVmNDczZTg1ZGJjMTAyMTBiNDRmNGM4Mjg5YzY3OTg5ZGJlMTcwNWFkMjZiYzMwMTc3ZjU5MjhiAAAAQDQwNjE1NDA1NWY0NzNlODVkYmMxMDIxMGI0NGY0YzgyODljNjc5ODlkYmUxNzA1YWQyNmJjMzAxNzdmNTkyOGIAAAAMb2NjLWludGVydmFsAAAAATEAAAAAAAAAAgAAAAppbnRlcnZhbDowAAAAAaMYXTpgAQAAAaMYXTpgAQAAAaMYXiTAAAAAQDkwYzM3YWM2MzYwNmFlNzExY2U5OGY3MTE4Njg1YzMzNDEyMjZhMTkwMDQ2NjBkMDEyMjI4ZTRjZTc4M2JlYTIAAABAOTBjMzdhYzYzNjA2YWU3MTFjZTk4ZjcxMTg2ODVjMzM0MTIyNmExOTAwNDY2MGQwMTIyMjhlNGNlNzgzYmVhMgAAAApvY2MtcmFuZG9tAAAAATEAAAAAAAAAAgAAABVyYW5kb206MjAyNy0wMS0xNTowOjAAAAABoxhiuKABAAABoxhiuKABAAABoxhjowAAAABAYTNiMjdhOTc3ZGQ5OTViOWJmNTJhN2IwNTFjMDA2MmE2N2MzNDBmODU1NzIwMWE2YjQ2NjFjNTE4NTRkNDI1MQAAAEBhM2IyN2E5NzdkZDk5NWI5YmY1MmE3YjA1MWMwMDYyYTY3YzM0MGY4NTU3MjAxYTZiNDY2MWM1MTg1NGQ0MjUxAAAACW9jYy1kYWlseQAAAAExAAAAAAAAAAIAAAAQZGFpbHk6MjAyNy0wMS0xNQAAAAGjGGDj4AEAAAGjGGDj4AEAAAGjGGHOQAAAAAQAAAAJb2NjLWRhaWx5AAAAATEAAAAMb2NjLWludGVydmFsAAAAATEAAAAMb2NjLW9uZS10aW1lAAAAATEAAAAKb2NjLXJhbmRvbQAAAAExAAAABAAAAAlvY2MtZGFpbHkAAAABAAAAEGRhaWx5OjIwMjctMDEtMTUAAAGjGGDj4AAAAAAMb2NjLWludGVydmFsAAAAAQAAAAppbnRlcnZhbDowAAABoxhdOmAAAAAADG9jYy1vbmUtdGltZQAAAAEAAAAIb25lLXRpbWUAAAAAAAAAAAEAAAAKb2NjLXJhbmRvbQAAAAEAAAAVcmFuZG9tOjIwMjctMDEtMTU6MDowAAABoxhiuKAA",
+            "checkpoint_sha256": "cd00a75fc5751bf87e70d0fbd9000ce1771c79ebb2e2a23f1cbcfe79bd3daa0e",
+            "resource_changes": [],
+            "timer_intents": [
+              {
+                "generation": "1",
+                "timer_id": "8fdf80d23ca71e3cf51d28b48b0f4f86a3dd6041c4b386fc73cf1bbe46a6c5e3",
+                "type": "RETIRE"
+              }
+            ],
+            "timer_production_requests": [
+              {
+                "automation_id": "occ-daily",
+                "causal_sequence": 7,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "daily:2027-01-15"
+                ],
+                "pending_timer_id": "a3b27a977dd995b9bf52a7b051c0062a67c340f8557201a6b4661c51854d4251",
+                "schedule_type": "daily_local"
+              },
+              {
+                "automation_id": "occ-interval",
+                "causal_sequence": 7,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "interval:0"
+                ],
+                "pending_timer_id": "406154055f473e85dbc10210b44f4c8289c67989dbe1705ad26bc30177f5928b",
+                "schedule_type": "interval"
+              },
+              {
+                "automation_id": "occ-random",
+                "causal_sequence": 7,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "random:2027-01-15:0:0"
+                ],
+                "pending_timer_id": "90c37ac63606ae711ce98f7118685c3341226a19004660d012228e4ce783bea2",
+                "schedule_type": "random_window"
+              }
+            ]
+          },
+          "input": {
+            "automation_id": "occ-one-time",
+            "causal_sequence": 2,
+            "clock": {
+              "active_elapsed_nanos": "0",
+              "calendar_elapsed_nanos": "0",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "100000000000",
+                "wall_time_utc_millis": 1800000000000
+              },
+              "zone_id": "UTC"
+            },
+            "generation": "1",
+            "logical_due": {
+              "boot_session_id": "active-running-time",
+              "elapsed_realtime_nanos": "0",
+              "wall_time_utc_millis": 0
+            },
+            "sequence_number": 7,
+            "target": {
+              "elapsed_nanos": "0",
+              "type": "ACTIVE_ELAPSED"
+            },
+            "timer_id": "8fdf80d23ca71e3cf51d28b48b0f4f86a3dd6041c4b386fc73cf1bbe46a6c5e3",
+            "type": "TIMER_DUE"
+          }
+        },
+        {
+          "expected": {
+            "actions": [
+              {
+                "action_id": "d345dfc6591f9cb6cf5797b9f2cc26739710fbcd8e48c2120a7a25d4b297206d",
+                "automation_id": "occ-interval",
+                "causal_identity": "timer:406154055f473e85dbc10210b44f4c8289c67989dbe1705ad26bc30177f5928b",
+                "expires_at_utc_millis": 1800000120000,
+                "intervention_id": "notify-interval",
+                "logical_deadline_utc_millis": 1800000060000
+              }
+            ],
+            "audits": [
+              {
+                "automation_id": "occ-interval",
+                "causal_identity": "timer:406154055f473e85dbc10210b44f4c8289c67989dbe1705ad26bc30177f5928b",
+                "matched": true,
+                "suppression_reason": null
+              }
+            ],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAIAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAN-EdYAAAAAA34R1gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAxvY2MtaW50ZXJ2YWwAAAABAAAADG9jYy1vbmUtdGltZQAAAAEAAAACAAAADG9jYy1pbnRlcnZhbAAAAA34R1gAAAAADfhHWAAAAAAMb2NjLW9uZS10aW1lAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAJQ09MTEVDVE9SAAAAEGJhdHRlcnlfc3RhdGUudjEAAAABMQEAAAAKY29udGludW91cwAAAAIAAABAOTBjMzdhYzYzNjA2YWU3MTFjZTk4ZjcxMTg2ODVjMzM0MTIyNmExOTAwNDY2MGQwMTIyMjhlNGNlNzgzYmVhMgAAAEA5MGMzN2FjNjM2MDZhZTcxMWNlOThmNzExODY4NWMzMzQxMjI2YTE5MDA0NjYwZDAxMjIyOGU0Y2U3ODNiZWEyAAAACm9jYy1yYW5kb20AAAABMQAAAAAAAAACAAAAFXJhbmRvbToyMDI3LTAxLTE1OjA6MAAAAAGjGGK4oAEAAAGjGGK4oAEAAAGjGGOjAAAAAEBhM2IyN2E5NzdkZDk5NWI5YmY1MmE3YjA1MWMwMDYyYTY3YzM0MGY4NTU3MjAxYTZiNDY2MWM1MTg1NGQ0MjUxAAAAQGEzYjI3YTk3N2RkOTk1YjliZjUyYTdiMDUxYzAwNjJhNjdjMzQwZjg1NTcyMDFhNmI0NjYxYzUxODU0ZDQyNTEAAAAJb2NjLWRhaWx5AAAAATEAAAAAAAAAAgAAABBkYWlseToyMDI3LTAxLTE1AAAAAaMYYOPgAQAAAaMYYOPgAQAAAaMYYc5AAAAABAAAAAlvY2MtZGFpbHkAAAABMQAAAAxvY2MtaW50ZXJ2YWwAAAABMQAAAAxvY2Mtb25lLXRpbWUAAAABMQAAAApvY2MtcmFuZG9tAAAAATEAAAAEAAAACW9jYy1kYWlseQAAAAEAAAAQZGFpbHk6MjAyNy0wMS0xNQAAAaMYYOPgAAAAAAxvY2MtaW50ZXJ2YWwAAAABAAAACmludGVydmFsOjAAAAGjGF06YAEAAAAMb2NjLW9uZS10aW1lAAAAAQAAAAhvbmUtdGltZQAAAAAAAAAAAQAAAApvY2MtcmFuZG9tAAAAAQAAABVyYW5kb206MjAyNy0wMS0xNTowOjAAAAGjGGK4oAA",
+            "checkpoint_sha256": "32e2464837700170e2dfbb3d9654a8b9f458b35e55f3616f5fb6d6601000083c",
+            "resource_changes": [],
+            "timer_intents": [
+              {
+                "generation": "1",
+                "timer_id": "406154055f473e85dbc10210b44f4c8289c67989dbe1705ad26bc30177f5928b",
+                "type": "RETIRE"
+              }
+            ],
+            "timer_production_requests": [
+              {
+                "automation_id": "occ-daily",
+                "causal_sequence": 8,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "daily:2027-01-15"
+                ],
+                "pending_timer_id": "a3b27a977dd995b9bf52a7b051c0062a67c340f8557201a6b4661c51854d4251",
+                "schedule_type": "daily_local"
+              },
+              {
+                "automation_id": "occ-interval",
+                "causal_sequence": 8,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "interval:0"
+                ],
+                "pending_timer_id": null,
+                "schedule_type": "interval"
+              },
+              {
+                "automation_id": "occ-random",
+                "causal_sequence": 8,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "random:2027-01-15:0:0"
+                ],
+                "pending_timer_id": "90c37ac63606ae711ce98f7118685c3341226a19004660d012228e4ce783bea2",
+                "schedule_type": "random_window"
+              }
+            ]
+          },
+          "input": {
+            "automation_id": "occ-interval",
+            "causal_sequence": 2,
+            "clock": {
+              "active_elapsed_nanos": "60000000000",
+              "calendar_elapsed_nanos": "60000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "160000000000",
+                "wall_time_utc_millis": 1800000060000
+              },
+              "zone_id": "UTC"
+            },
+            "generation": "1",
+            "logical_due": {
+              "boot_session_id": "calendar-time",
+              "elapsed_realtime_nanos": "0",
+              "wall_time_utc_millis": 1800000060000
+            },
+            "sequence_number": 8,
+            "target": {
+              "type": "CALENDAR_UTC",
+              "utc_millis": 1800000060000
+            },
+            "timer_id": "406154055f473e85dbc10210b44f4c8289c67989dbe1705ad26bc30177f5928b",
+            "type": "TIMER_DUE"
+          }
+        },
+        {
+          "expected": {
+            "actions": [],
+            "audits": [],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAJAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAN-EdYAAAAAA34R1gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAxvY2MtaW50ZXJ2YWwAAAABAAAADG9jYy1vbmUtdGltZQAAAAEAAAACAAAADG9jYy1pbnRlcnZhbAAAAA34R1gAAAAADfhHWAAAAAAMb2NjLW9uZS10aW1lAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAJQ09MTEVDVE9SAAAAEGJhdHRlcnlfc3RhdGUudjEAAAABMQEAAAAKY29udGludW91cwAAAAMAAABAMjUzZTZjYjlkMWJiNjc3Mzg2M2I0ODQzNWE4YTNkZWRiODE5MjkwMjczYzdlNTcyMzYzMjhjY2RmODgzMjY1MgAAAEAyNTNlNmNiOWQxYmI2NzczODYzYjQ4NDM1YThhM2RlZGI4MTkyOTAyNzNjN2U1NzIzNjMyOGNjZGY4ODMyNjUyAAAADG9jYy1pbnRlcnZhbAAAAAEyAAAAAAAAAAgAAAAKaW50ZXJ2YWw6MQAAAAGjGF8PIAEAAAGjGF8PIAEAAAGjGF_5gAAAAEA5MGMzN2FjNjM2MDZhZTcxMWNlOThmNzExODY4NWMzMzQxMjI2YTE5MDA0NjYwZDAxMjIyOGU0Y2U3ODNiZWEyAAAAQDkwYzM3YWM2MzYwNmFlNzExY2U5OGY3MTE4Njg1YzMzNDEyMjZhMTkwMDQ2NjBkMDEyMjI4ZTRjZTc4M2JlYTIAAAAKb2NjLXJhbmRvbQAAAAExAAAAAAAAAAIAAAAVcmFuZG9tOjIwMjctMDEtMTU6MDowAAAAAaMYYrigAQAAAaMYYrigAQAAAaMYY6MAAAAAQGEzYjI3YTk3N2RkOTk1YjliZjUyYTdiMDUxYzAwNjJhNjdjMzQwZjg1NTcyMDFhNmI0NjYxYzUxODU0ZDQyNTEAAABAYTNiMjdhOTc3ZGQ5OTViOWJmNTJhN2IwNTFjMDA2MmE2N2MzNDBmODU1NzIwMWE2YjQ2NjFjNTE4NTRkNDI1MQAAAAlvY2MtZGFpbHkAAAABMQAAAAAAAAACAAAAEGRhaWx5OjIwMjctMDEtMTUAAAABoxhg4-ABAAABoxhg4-ABAAABoxhhzkAAAAAEAAAACW9jYy1kYWlseQAAAAExAAAADG9jYy1pbnRlcnZhbAAAAAEyAAAADG9jYy1vbmUtdGltZQAAAAExAAAACm9jYy1yYW5kb20AAAABMQAAAAQAAAAJb2NjLWRhaWx5AAAAAQAAABBkYWlseToyMDI3LTAxLTE1AAABoxhg4-AAAAAADG9jYy1pbnRlcnZhbAAAAAIAAAAKaW50ZXJ2YWw6MAAAAaMYXTpgAQAAAAppbnRlcnZhbDoxAAABoxhfDyAAAAAADG9jYy1vbmUtdGltZQAAAAEAAAAIb25lLXRpbWUAAAAAAAAAAAEAAAAKb2NjLXJhbmRvbQAAAAEAAAAVcmFuZG9tOjIwMjctMDEtMTU6MDowAAABoxhiuKAA",
+            "checkpoint_sha256": "a54e23dfc8ce883d12c976883c829739c9412d12806c51485d117035b1b0d242",
+            "resource_changes": [],
+            "timer_intents": [
+              {
+                "timer": {
+                  "automation_id": "occ-interval",
+                  "causal_sequence": 8,
+                  "expires_at_utc_millis": 1800000240000,
+                  "generation": "2",
+                  "id": "253e6cb9d1bb6773863b48435a8a3dedb819290273c7e57236328ccdf8832652",
+                  "logical_deadline_utc_millis": 1800000180000,
+                  "producer_key": "interval:1",
+                  "target": {
+                    "type": "CALENDAR_UTC",
+                    "utc_millis": 1800000180000
+                  }
+                },
+                "type": "SCHEDULE"
+              }
+            ],
+            "timer_production_requests": [
+              {
+                "automation_id": "occ-daily",
+                "causal_sequence": 9,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "daily:2027-01-15"
+                ],
+                "pending_timer_id": "a3b27a977dd995b9bf52a7b051c0062a67c340f8557201a6b4661c51854d4251",
+                "schedule_type": "daily_local"
+              },
+              {
+                "automation_id": "occ-interval",
+                "causal_sequence": 9,
+                "current_generation": "2",
+                "materialized_producer_keys": [
+                  "interval:0",
+                  "interval:1"
+                ],
+                "pending_timer_id": "253e6cb9d1bb6773863b48435a8a3dedb819290273c7e57236328ccdf8832652",
+                "schedule_type": "interval"
+              },
+              {
+                "automation_id": "occ-random",
+                "causal_sequence": 9,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "random:2027-01-15:0:0"
+                ],
+                "pending_timer_id": "90c37ac63606ae711ce98f7118685c3341226a19004660d012228e4ce783bea2",
+                "schedule_type": "random_window"
+              }
+            ]
+          },
+          "input": {
+            "clock": {
+              "active_elapsed_nanos": "60000000000",
+              "calendar_elapsed_nanos": "60000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "160000000000",
+                "wall_time_utc_millis": 1800000060000
+              },
+              "zone_id": "UTC"
+            },
+            "sequence_number": 9,
+            "timer": {
+              "automation_id": "occ-interval",
+              "causal_sequence": 8,
+              "expires_at_utc_millis": 1800000240000,
+              "generation": "2",
+              "id": "253e6cb9d1bb6773863b48435a8a3dedb819290273c7e57236328ccdf8832652",
+              "logical_deadline_utc_millis": 1800000180000,
+              "producer_key": "interval:1",
+              "target": {
+                "type": "CALENDAR_UTC",
+                "utc_millis": 1800000180000
+              }
+            },
+            "type": "TIMER_MATERIALIZED"
+          }
+        },
+        {
+          "expected": {
+            "actions": [
+              {
+                "action_id": "76f3cc95425dcae74cff8e04d0d0fd5229b74fd6ee95bd30f37abb61e7b39294",
+                "automation_id": "occ-interval",
+                "causal_identity": "timer:253e6cb9d1bb6773863b48435a8a3dedb819290273c7e57236328ccdf8832652",
+                "expires_at_utc_millis": 1800000240000,
+                "intervention_id": "notify-interval",
+                "logical_deadline_utc_millis": 1800000180000
+              }
+            ],
+            "audits": [
+              {
+                "automation_id": "occ-interval",
+                "causal_identity": "timer:253e6cb9d1bb6773863b48435a8a3dedb819290273c7e57236328ccdf8832652",
+                "matched": true,
+                "suppression_reason": null
+              }
+            ],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAKAAAAB1JVTk5JTkcBAAABoxhcUAAAAAAp6NYIAAAAACno1ggAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAxvY2MtaW50ZXJ2YWwAAAACAAAADG9jYy1vbmUtdGltZQAAAAEAAAACAAAADG9jYy1pbnRlcnZhbAAAACno1ggAAAAAKejWCAAAAAAMb2NjLW9uZS10aW1lAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAJQ09MTEVDVE9SAAAAEGJhdHRlcnlfc3RhdGUudjEAAAABMQEAAAAKY29udGludW91cwAAAAIAAABAOTBjMzdhYzYzNjA2YWU3MTFjZTk4ZjcxMTg2ODVjMzM0MTIyNmExOTAwNDY2MGQwMTIyMjhlNGNlNzgzYmVhMgAAAEA5MGMzN2FjNjM2MDZhZTcxMWNlOThmNzExODY4NWMzMzQxMjI2YTE5MDA0NjYwZDAxMjIyOGU0Y2U3ODNiZWEyAAAACm9jYy1yYW5kb20AAAABMQAAAAAAAAACAAAAFXJhbmRvbToyMDI3LTAxLTE1OjA6MAAAAAGjGGK4oAEAAAGjGGK4oAEAAAGjGGOjAAAAAEBhM2IyN2E5NzdkZDk5NWI5YmY1MmE3YjA1MWMwMDYyYTY3YzM0MGY4NTU3MjAxYTZiNDY2MWM1MTg1NGQ0MjUxAAAAQGEzYjI3YTk3N2RkOTk1YjliZjUyYTdiMDUxYzAwNjJhNjdjMzQwZjg1NTcyMDFhNmI0NjYxYzUxODU0ZDQyNTEAAAAJb2NjLWRhaWx5AAAAATEAAAAAAAAAAgAAABBkYWlseToyMDI3LTAxLTE1AAAAAaMYYOPgAQAAAaMYYOPgAQAAAaMYYc5AAAAABAAAAAlvY2MtZGFpbHkAAAABMQAAAAxvY2MtaW50ZXJ2YWwAAAABMgAAAAxvY2Mtb25lLXRpbWUAAAABMQAAAApvY2MtcmFuZG9tAAAAATEAAAAEAAAACW9jYy1kYWlseQAAAAEAAAAQZGFpbHk6MjAyNy0wMS0xNQAAAaMYYOPgAAAAAAxvY2MtaW50ZXJ2YWwAAAACAAAACmludGVydmFsOjAAAAGjGF06YAEAAAAKaW50ZXJ2YWw6MQAAAaMYXw8gAQAAAAxvY2Mtb25lLXRpbWUAAAABAAAACG9uZS10aW1lAAAAAAAAAAABAAAACm9jYy1yYW5kb20AAAABAAAAFXJhbmRvbToyMDI3LTAxLTE1OjA6MAAAAaMYYrigAA",
+            "checkpoint_sha256": "0e65a70e3732ed6cff40ef6185adfec63e3418b85e6a67a0ca6f812d12b4b418",
+            "resource_changes": [],
+            "timer_intents": [
+              {
+                "generation": "2",
+                "timer_id": "253e6cb9d1bb6773863b48435a8a3dedb819290273c7e57236328ccdf8832652",
+                "type": "RETIRE"
+              }
+            ],
+            "timer_production_requests": [
+              {
+                "automation_id": "occ-daily",
+                "causal_sequence": 10,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "daily:2027-01-15"
+                ],
+                "pending_timer_id": "a3b27a977dd995b9bf52a7b051c0062a67c340f8557201a6b4661c51854d4251",
+                "schedule_type": "daily_local"
+              },
+              {
+                "automation_id": "occ-random",
+                "causal_sequence": 10,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "random:2027-01-15:0:0"
+                ],
+                "pending_timer_id": "90c37ac63606ae711ce98f7118685c3341226a19004660d012228e4ce783bea2",
+                "schedule_type": "random_window"
+              }
+            ]
+          },
+          "input": {
+            "automation_id": "occ-interval",
+            "causal_sequence": 8,
+            "clock": {
+              "active_elapsed_nanos": "180000000000",
+              "calendar_elapsed_nanos": "180000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "280000000000",
+                "wall_time_utc_millis": 1800000180000
+              },
+              "zone_id": "UTC"
+            },
+            "generation": "2",
+            "logical_due": {
+              "boot_session_id": "calendar-time",
+              "elapsed_realtime_nanos": "0",
+              "wall_time_utc_millis": 1800000180000
+            },
+            "sequence_number": 10,
+            "target": {
+              "type": "CALENDAR_UTC",
+              "utc_millis": 1800000180000
+            },
+            "timer_id": "253e6cb9d1bb6773863b48435a8a3dedb819290273c7e57236328ccdf8832652",
+            "type": "TIMER_DUE"
+          }
+        },
+        {
+          "expected": {
+            "actions": [
+              {
+                "action_id": "ee163794b306aa7d32163a0221adcd3e9d411d69f0020fb775fecaf2f2583790",
+                "automation_id": "occ-daily",
+                "causal_identity": "timer:a3b27a977dd995b9bf52a7b051c0062a67c340f8557201a6b4661c51854d4251",
+                "expires_at_utc_millis": 1800000360000,
+                "intervention_id": "notify-daily",
+                "logical_deadline_utc_millis": 1800000300000
+              }
+            ],
+            "audits": [
+              {
+                "automation_id": "occ-daily",
+                "causal_identity": "timer:a3b27a977dd995b9bf52a7b051c0062a67c340f8557201a6b4661c51854d4251",
+                "matched": true,
+                "suppression_reason": null
+              }
+            ],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAALAAAAB1JVTk5JTkcBAAABoxhcUAAAAABF2WS4AAAAAEXZZLgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAlvY2MtZGFpbHkAAAABAAAADG9jYy1pbnRlcnZhbAAAAAIAAAAMb2NjLW9uZS10aW1lAAAAAQAAAAMAAAAJb2NjLWRhaWx5AAAARdlkuAAAAABF2WS4AAAAAAxvY2MtaW50ZXJ2YWwAAAAp6NYIAAAAACno1ggAAAAADG9jYy1vbmUtdGltZQAAAAAAAAAAAAAAAAAAAAAAAAABAAAACUNPTExFQ1RPUgAAABBiYXR0ZXJ5X3N0YXRlLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAABAAAAQDkwYzM3YWM2MzYwNmFlNzExY2U5OGY3MTE4Njg1YzMzNDEyMjZhMTkwMDQ2NjBkMDEyMjI4ZTRjZTc4M2JlYTIAAABAOTBjMzdhYzYzNjA2YWU3MTFjZTk4ZjcxMTg2ODVjMzM0MTIyNmExOTAwNDY2MGQwMTIyMjhlNGNlNzgzYmVhMgAAAApvY2MtcmFuZG9tAAAAATEAAAAAAAAAAgAAABVyYW5kb206MjAyNy0wMS0xNTowOjAAAAABoxhiuKABAAABoxhiuKABAAABoxhjowAAAAAEAAAACW9jYy1kYWlseQAAAAExAAAADG9jYy1pbnRlcnZhbAAAAAEyAAAADG9jYy1vbmUtdGltZQAAAAExAAAACm9jYy1yYW5kb20AAAABMQAAAAQAAAAJb2NjLWRhaWx5AAAAAQAAABBkYWlseToyMDI3LTAxLTE1AAABoxhg4-ABAAAADG9jYy1pbnRlcnZhbAAAAAIAAAAKaW50ZXJ2YWw6MAAAAaMYXTpgAQAAAAppbnRlcnZhbDoxAAABoxhfDyABAAAADG9jYy1vbmUtdGltZQAAAAEAAAAIb25lLXRpbWUAAAAAAAAAAAEAAAAKb2NjLXJhbmRvbQAAAAEAAAAVcmFuZG9tOjIwMjctMDEtMTU6MDowAAABoxhiuKAA",
+            "checkpoint_sha256": "d07d0b57a4241baee1baf9ca1003411eaad7e2f3fc65b9a86197c064b5a54c0b",
+            "resource_changes": [],
+            "timer_intents": [
+              {
+                "generation": "1",
+                "timer_id": "a3b27a977dd995b9bf52a7b051c0062a67c340f8557201a6b4661c51854d4251",
+                "type": "RETIRE"
+              }
+            ],
+            "timer_production_requests": [
+              {
+                "automation_id": "occ-random",
+                "causal_sequence": 11,
+                "current_generation": "1",
+                "materialized_producer_keys": [
+                  "random:2027-01-15:0:0"
+                ],
+                "pending_timer_id": "90c37ac63606ae711ce98f7118685c3341226a19004660d012228e4ce783bea2",
+                "schedule_type": "random_window"
+              }
+            ]
+          },
+          "input": {
+            "automation_id": "occ-daily",
+            "causal_sequence": 2,
+            "clock": {
+              "active_elapsed_nanos": "300000000000",
+              "calendar_elapsed_nanos": "300000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "400000000000",
+                "wall_time_utc_millis": 1800000300000
+              },
+              "zone_id": "UTC"
+            },
+            "generation": "1",
+            "logical_due": {
+              "boot_session_id": "calendar-time",
+              "elapsed_realtime_nanos": "0",
+              "wall_time_utc_millis": 1800000300000
+            },
+            "sequence_number": 11,
+            "target": {
+              "type": "CALENDAR_UTC",
+              "utc_millis": 1800000300000
+            },
+            "timer_id": "a3b27a977dd995b9bf52a7b051c0062a67c340f8557201a6b4661c51854d4251",
+            "type": "TIMER_DUE"
+          }
+        },
+        {
+          "expected": {
+            "actions": [
+              {
+                "action_id": "00edc0c1df07445c64ab36f1780d5df314e4f26456e3ffa31e5aa789c3170577",
+                "automation_id": "occ-random",
+                "causal_identity": "timer:90c37ac63606ae711ce98f7118685c3341226a19004660d012228e4ce783bea2",
+                "expires_at_utc_millis": 1800000480000,
+                "intervention_id": "notify-random",
+                "logical_deadline_utc_millis": 1800000420000
+              }
+            ],
+            "audits": [
+              {
+                "automation_id": "occ-random",
+                "causal_identity": "timer:90c37ac63606ae711ce98f7118685c3341226a19004660d012228e4ce783bea2",
+                "matched": true,
+                "suppression_reason": null
+              }
+            ],
+            "checkpoint": "automation-checkpoint-v1:AAAAAQAAAAAAAAAMAAAAB1JVTk5JTkcBAAABoxhcUAAAAABhyfNoAAAAAGHJ82gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAlvY2MtZGFpbHkAAAABAAAADG9jYy1pbnRlcnZhbAAAAAIAAAAMb2NjLW9uZS10aW1lAAAAAQAAAApvY2MtcmFuZG9tAAAAAQAAAAQAAAAJb2NjLWRhaWx5AAAARdlkuAAAAABF2WS4AAAAAAxvY2MtaW50ZXJ2YWwAAAAp6NYIAAAAACno1ggAAAAADG9jYy1vbmUtdGltZQAAAAAAAAAAAAAAAAAAAAAAAAAKb2NjLXJhbmRvbQAAAGHJ82gAAAAAYcnzaAAAAAABAAAACUNPTExFQ1RPUgAAABBiYXR0ZXJ5X3N0YXRlLnYxAAAAATEBAAAACmNvbnRpbnVvdXMAAAAAAAAABAAAAAlvY2MtZGFpbHkAAAABMQAAAAxvY2MtaW50ZXJ2YWwAAAABMgAAAAxvY2Mtb25lLXRpbWUAAAABMQAAAApvY2MtcmFuZG9tAAAAATEAAAAEAAAACW9jYy1kYWlseQAAAAEAAAAQZGFpbHk6MjAyNy0wMS0xNQAAAaMYYOPgAQAAAAxvY2MtaW50ZXJ2YWwAAAACAAAACmludGVydmFsOjAAAAGjGF06YAEAAAAKaW50ZXJ2YWw6MQAAAaMYXw8gAQAAAAxvY2Mtb25lLXRpbWUAAAABAAAACG9uZS10aW1lAAAAAAAAAAABAAAACm9jYy1yYW5kb20AAAABAAAAFXJhbmRvbToyMDI3LTAxLTE1OjA6MAAAAaMYYrigAQ",
+            "checkpoint_sha256": "ff96b9c3a16dfa73d09eed542fc873a2a7afd08a039cff4dddeed5c0591205e1",
+            "resource_changes": [],
+            "timer_intents": [
+              {
+                "generation": "1",
+                "timer_id": "90c37ac63606ae711ce98f7118685c3341226a19004660d012228e4ce783bea2",
+                "type": "RETIRE"
+              }
+            ],
+            "timer_production_requests": []
+          },
+          "input": {
+            "automation_id": "occ-random",
+            "causal_sequence": 2,
+            "clock": {
+              "active_elapsed_nanos": "420000000000",
+              "calendar_elapsed_nanos": "420000000000",
+              "now": {
+                "boot_session_id": "00000000-0000-4000-8000-000000000001",
+                "elapsed_realtime_nanos": "520000000000",
+                "wall_time_utc_millis": 1800000420000
+              },
+              "zone_id": "UTC"
+            },
+            "generation": "1",
+            "logical_due": {
+              "boot_session_id": "calendar-time",
+              "elapsed_realtime_nanos": "0",
+              "wall_time_utc_millis": 1800000420000
+            },
+            "sequence_number": 12,
+            "target": {
+              "type": "CALENDAR_UTC",
+              "utc_millis": 1800000420000
+            },
+            "timer_id": "90c37ac63606ae711ce98f7118685c3341226a19004660d012228e4ce783bea2",
+            "type": "TIMER_DUE"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -48,39 +48,40 @@ const USAGE_EVENTS_PER_POLL = 40;
 
 export function collectorRate(collector: CollectorConfig): Rate {
   const bytes = EVENT_BYTES[collector.id];
-  switch (collector.id) {
+  const rates = collector.profiles.map((profile) => profileRate(collector.id, profile.config));
+  return { events: Math.max(0, ...rates), bytes };
+}
+
+function profileRate(id: CollectorConfig['id'], profile: unknown): number {
+  const config = profile as Record<string, unknown>;
+  const number = (field: string, fallback = 1) =>
+    typeof config[field] === 'number' ? Math.max(fallback, config[field] as number) : fallback;
+  switch (id) {
     case 'app_lifecycle.v1':
-      return { events: 20, bytes };
+      return 20;
     case 'accelerometer.v1':
-      return { events: 3.6e9 / Math.max(1, collector.config.sampling_period_us), bytes };
+      return 3.6e9 / number('sampling_period_us');
     case 'battery_state.v1':
-      return { events: 4, bytes };
+      return 4;
     case 'temporal_context.v1':
-      return { events: 1, bytes };
+      return 1;
     case 'gyroscope.v1':
-      return { events: 3.6e9 / Math.max(1, collector.config.sampling_period_us), bytes };
+      return 3.6e9 / number('sampling_period_us');
     case 'ambient_light.v1':
-      return { events: 3.6e9 / Math.max(1, collector.config.sampling_period_us), bytes };
+      return 3.6e9 / number('sampling_period_us');
     case 'proximity.v1':
-      return { events: 3.6e6 / Math.max(1, collector.config.minimum_event_interval_ms), bytes };
+      return 3.6e6 / number('minimum_event_interval_ms');
     case 'network_state.v1':
-      return { events: 30, bytes };
+      return 30;
     case 'network_usage.v1':
-      return {
-        events:
-          (60 / Math.max(1, collector.config.poll_interval_minutes)) *
-          collector.config.transports.length,
-        bytes
-      };
+      return (3_600 / number('poll_interval_seconds')) *
+        (Array.isArray(config.transports) ? config.transports.length : 0);
     case 'usage_events.v1':
-      return {
-        events: (60 / Math.max(1, collector.config.poll_interval_minutes)) * USAGE_EVENTS_PER_POLL,
-        bytes
-      };
+      return (3_600 / number('poll_interval_seconds')) * USAGE_EVENTS_PER_POLL;
     case 'location.v1':
-      return { events: 3.6e6 / Math.max(1, collector.config.interval_millis), bytes };
+      return 3.6e6 / number('interval_millis');
     case 'keyboard_touch.v1':
-      return { events: collector.config.trajectory_sampling_hz * 60, bytes };
+      return number('trajectory_sampling_hz') * 60;
   }
 }
 

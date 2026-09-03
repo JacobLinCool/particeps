@@ -15,6 +15,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":core:automation"))
     implementation(project(":core:collector-api"))
     api(project(":core:model"))
     api(project(":core:protocol"))
@@ -23,4 +24,13 @@ dependencies {
     implementation(libs.gson)
     implementation(libs.coroutines.core)
     testImplementation(libs.junit4)
+}
+
+val kotlinExportInteropDirectory = providers.environmentVariable("PARTICEPS_KOTLIN_EXPORT_INTEROP_DIR")
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    if (kotlinExportInteropDirectory.isPresent) {
+        inputs.property("particepsKotlinExportInteropDirectory", kotlinExportInteropDirectory)
+        outputs.dir(kotlinExportInteropDirectory)
+        outputs.cacheIf("Interop output contains an ephemeral test-only private key") { false }
+    }
 }

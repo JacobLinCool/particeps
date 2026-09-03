@@ -9,15 +9,15 @@
  * Three rules the wording is held to, all of them from `docs/threat-model.md`:
  *
  *   - No claim that a signature or fingerprint identifies who wrote a file.
- *   - Collector limits shown by the app must be narrow guarantees grounded in the implementation,
- *     not an exhaustive threat model. The data dictionary remains the complete field reference.
+ *   - Public source tiles are profile-independent categories. Cadence, distance thresholds,
+ *     limits, and other named-profile settings do not belong on this page.
  *   - No "anonymous", no hardware-backed key, and nothing about a research team's intentions.
  *     The install code is pseudonymous, the app requests no StrongBox, and this page cannot know
  *     anything at all about the team that recruited its reader.
  *
- * Where the app already has the sentence — a collector description, a consent-screen block, or a
- * setup-step label — it is transcribed verbatim from the app's `strings.xml` in both languages, so
- * the page and the phone say the same words rather than two paraphrases of them.
+ * Where the app already has a stable, profile-independent sentence — a setup-step label or consent
+ * block — it is transcribed from `strings.xml`. Data-source descriptions stay at the shared
+ * category boundary rather than projecting a signed profile.
  */
 
 export interface ParticipantCopy {
@@ -55,9 +55,6 @@ export interface ParticipantCopy {
   sources: {
     title: string;
     lead: string;
-    /** What the `{n}` / `{t}` / `{d}` pills stand for. */
-    tokens: string;
-    more: string;
     moreLink: string;
     name: {
       appLifecycle: string;
@@ -174,9 +171,7 @@ export const en: ParticipantCopy = {
   sources: {
     title: 'Twelve sources exist. Your study uses some of them.',
     lead: 'Before you agree, the app lists the ones your study switched on — in the app’s own words, not the research team’s.',
-    tokens: 'N, T and D come from your study: how often, how long between, how far.',
-    more: 'That screen also names selected limits the implementation guarantees.',
-    moreLink: 'The guide has the complete field table.',
+    moreLink: 'Read the participant guide for the full category descriptions and your controls.',
     name: {
       appLifecycle: 'App activity',
       accelerometer: 'Motion',
@@ -193,16 +188,16 @@ export const en: ParticipantCopy = {
     },
     detail: {
       appLifecycle: 'When this app itself is opened and closed',
-      accelerometer: 'Movement of the phone, about {n} times per second or more',
+      accelerometer: 'Movement measured by the phone’s motion sensor',
       batteryState: 'Battery percentage, charging source, and power-save state',
       temporalContext: 'Time zone, UTC offset, daylight-saving state, and clock changes',
-      gyroscope: 'Rotation of the phone around three axes, about {n} times per second or more',
-      ambientLight: 'Illuminance reported by the phone’s ambient-light sensor',
-      proximity: 'Raw distance, sensor range, and the phone’s near/far interpretation',
+      gyroscope: 'Raw rotation measured by the phone; no activity is inferred',
+      ambientLight: 'Raw surrounding light level; it does not record images or environmental content',
+      proximity: 'The phone’s raw near or distance sensor reading; it is not a presence claim',
       networkState: 'Whether you are on Wi-Fi or mobile data, and whether it is metered',
-      networkUsage: 'Total bytes your phone sent and received, every {t}',
-      usageEvents: 'Which apps open and close, and when the screen turns on, every {t}',
-      location: 'Where the phone is, about every {t}, after it moves at least {d}',
+      networkUsage: 'Total bytes this phone sends and receives',
+      usageEvents: 'Which apps open and close, and when the screen turns on',
+      location: 'The phone’s location',
       keyboardTouch:
         'How you touch the keys — position, timing, pressure — inside the research keyboard only'
     }
@@ -299,9 +294,7 @@ export const zhTW: ParticipantCopy = {
   sources: {
     title: 'App 支援十二種資料來源，每項研究只會啟用其中幾種。',
     lead: '取得你的同意前，App 會列出這項研究啟用的資料來源。這些說明由 App 提供，研究團隊無法修改。',
-    tokens: 'N、T、D 分別代表取樣頻率、時間間隔與移動距離。',
-    more: '該畫面也會列出部分由實作保證的限制。',
-    moreLink: '完整的收集範圍請見參與者指南。',
+    moreLink: '參與者指南會進一步說明這些資料類別與你可使用的控制。',
     name: {
       appLifecycle: 'App 使用狀況',
       accelerometer: '手機移動',
@@ -318,16 +311,16 @@ export const zhTW: ParticipantCopy = {
     },
     detail: {
       appLifecycle: '這個 App 本身開啟與關閉的時間',
-      accelerometer: '手機的移動狀況，每秒約記錄 {n} 次以上',
+      accelerometer: '手機動作感測器量到的移動狀況',
       batteryState: '電量百分比、充電來源與省電模式狀態',
       temporalContext: '時區、UTC 偏移、日光節約時間狀態與系統時間變更',
-      gyroscope: '手機繞三軸旋轉的角速度，每秒約記錄 {n} 次以上',
-      ambientLight: '手機環境光感測器回報的照度',
-      proximity: '原始距離、感測器最大範圍與手機的遠近判定',
+      gyroscope: '手機量到的原始旋轉資訊；不據此推論活動',
+      ambientLight: '周遭的原始光線強度；不會記錄影像或環境內容',
+      proximity: '手機接近感測器量到的原始遠近或距離；不代表有人在場',
       networkState: '目前使用 Wi-Fi 或行動網路，以及連線是否按流量計費',
-      networkUsage: '每隔 {t} 記錄手機傳送與接收的總位元組數',
-      usageEvents: '每隔 {t} 記錄開啟或關閉了哪些 App，以及螢幕何時亮起',
-      location: '約每隔 {t} 記錄一次手機位置，移動超過 {d} 才會記錄',
+      networkUsage: '手機傳送與接收的總位元組數',
+      usageEvents: '哪些 App 開啟或關閉，以及螢幕何時亮起',
+      location: '手機的位置',
       keyboardTouch: '你在研究鍵盤內的觸控方式，包括觸碰位置、時間與力道'
     }
   },

@@ -1,81 +1,42 @@
 package cool.jacoblin.particeps.platform
 
-import cool.jacoblin.particeps.core.definition.AppLifecycleConfiguration
-import cool.jacoblin.particeps.core.definition.ExportConfiguration
-import cool.jacoblin.particeps.core.definition.SignerIdentity
-import cool.jacoblin.particeps.core.definition.StudyConfiguration
-import cool.jacoblin.particeps.core.definition.UploadConfiguration
+import cool.jacoblin.particeps.core.application.StudyUploadPlan
 import cool.jacoblin.particeps.core.export.ExportReceipt
-import cool.jacoblin.particeps.core.model.StudyMetadata
-import cool.jacoblin.particeps.core.protocol.VerifiedConfiguration
-import java.time.Instant
 import java.util.UUID
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UploadIdentityTest {
     @Test
-    fun importsMintDistinctInstancesAndUploadHeadersExposeNoParticipantIdentity() {
-        val first = StudyMetadata.initial("identity-test", "identity-config", "assigned-secret")
-        val second = StudyMetadata.initial("identity-test", "identity-config", "assigned-secret")
-        assertNotEquals(first.participantInstanceId, second.participantInstanceId)
-        assertEquals("assigned-secret", first.assignedParticipantId)
-
-        val configuration = configuration()
-        val verified = VerifiedConfiguration(
-            configuration,
-            byteArrayOf(1),
-            configuration.signer.keyId,
-            ByteArray(64),
-            "0".repeat(64),
-            false,
-        )
+    fun commitHeadersExposeNoParticipantOrAutomationIdentity() {
         val headers = uploadHeaders(
-            verified,
+            StudyUploadPlan(
+                experimentId = "identity-test",
+                configurationSha256 = "0".repeat(64),
+                researcherKeyId = "export-key",
+                endpoint = "https://example.invalid/v1",
+                intervalMinutes = 60,
+                allowMetered = false,
+            ),
             ExportReceipt(
-                UUID.fromString("00000000-0000-4000-8000-000000000001"),
-                verified.configurationSha256,
-                1,
-                9,
-                9,
-                "1".repeat(64),
-                10,
+                bundleId = UUID.fromString("00000000-0000-4000-8000-000000000001"),
+                configurationSha256 = "0".repeat(64),
+                firstCommitSequence = 1,
+                lastCommitSequence = 9,
+                commitCount = 9,
+                eventCount = 17,
+                sha256 = "1".repeat(64),
+                byteCount = 10,
             ),
         )
+
         assertTrue(headers.keys.none { it.contains("Participant", ignoreCase = true) })
         assertTrue(headers.keys.none { it.contains("Assigned", ignoreCase = true) })
-        assertTrue(headers.values.none { it == first.participantInstanceId })
-        assertTrue(headers.values.none { it == "assigned-secret" })
-    }
-
-    private fun configuration() = StudyConfiguration(
-        schemaVersion = 1,
-        experimentId = "identity-test",
-        configurationId = "identity-config",
-        issuedAt = Instant.parse("2026-01-01T00:00:00Z"),
-        expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
-        platform = StudyConfiguration.ANDROID_PLATFORM,
-        minimumClientVersion = 1,
-        title = "Identity test",
-        researcherName = "Researcher",
-        researcherContact = "research@example.invalid",
-        purpose = "Test upload identity separation.",
-        durationHours = 1,
-        consentDocumentVersion = "v1",
-        consentSummary = "Test consent.",
-        assignedParticipantId = "assigned-secret",
-        collectors = listOf(AppLifecycleConfiguration(true)),
-        surveys = emptyList(),
-        interventions = emptyList(),
-        maximumLocalBytes = 16_777_216,
-        signer = SignerIdentity("test-signer", RAW_PUBLIC_KEY),
-        export = ExportConfiguration("export-key", RAW_PUBLIC_KEY),
-        upload = UploadConfiguration("https://example.invalid/v1", 60, false),
-    )
-
-    private companion object {
-        const val RAW_PUBLIC_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        assertTrue(headers.keys.none { it.contains("Automation", ignoreCase = true) })
+        assertTrue(headers.keys.none { it.contains("Epoch", ignoreCase = true) })
+        assertFalse(headers.containsKey("X-Particeps-Sequence-From"))
+        assertTrue(headers["X-Particeps-Commit-From"] == "1")
+        assertTrue(headers["X-Particeps-Commit-To"] == "9")
     }
 }

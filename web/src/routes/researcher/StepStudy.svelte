@@ -25,6 +25,10 @@
   import CollectorCard from './CollectorCard.svelte';
   import IdentityField from './IdentityField.svelte';
   import InterventionEditor from './InterventionEditor.svelte';
+  import TrafficShapingEditor from './TrafficShapingEditor.svelte';
+  import ResourceAutomationEditor from './ResourceAutomationEditor.svelte';
+  import ParticipantStudyPreview from './ParticipantStudyPreview.svelte';
+  import SyntheticTraceSimulator from './SyntheticTraceSimulator.svelte';
   import QuotaMeter from './QuotaMeter.svelte';
   import WindowStrip from './WindowStrip.svelte';
   import { COLLECTOR_ORDER, type Draft } from './draft.svelte';
@@ -32,6 +36,7 @@
   import { BOUNDS } from '$lib/particeps/types';
   import type { Messages } from '$lib/i18n/types';
   import type { Units } from './units';
+  import { i18n } from '$lib/ui/i18n.svelte';
 
   interface Props {
     draft: Draft;
@@ -225,9 +230,14 @@
           config={draft.collector(id)}
           path={draft.collectorPath(id)}
           {m}
+          locale={i18n.locale}
           scales={S}
           onenable={(which) => draft.enableCollector(which)}
           ondisable={(which) => draft.disableCollector(which)}
+          onrequired={(which, required) => draft.setCollectorRequired(which, required)}
+          onaddprofile={(which) => draft.addCollectorProfile(which)}
+          onrenameprofile={(which, previous, next) => draft.renameCollectorProfile(which, previous, next)}
+          onremoveprofile={(which, profileId) => draft.removeCollectorProfile(which, profileId)}
         />
       {/each}
     </div>
@@ -267,8 +277,24 @@
     <Note icon="info" tone="plain" text={m.researcher.study.note.disclosure} />
   </Section>
 
+  <Section id="traffic-shaping" title={i18n.locale === 'zh-TW' ? 'App 資料傳輸調整' : 'App data-transfer adjustment'} icon="connection">
+    <TrafficShapingEditor {draft} locale={i18n.locale} />
+  </Section>
+
   <Section id="interventions" title={section.interventions.title} icon="bell">
-    <InterventionEditor {draft} {m} />
+    <InterventionEditor {draft} {m} locale={i18n.locale} />
+  </Section>
+
+  <Section id="resource-automations" title={i18n.locale === 'zh-TW' ? '條件與資源規則' : 'Conditions and resource rules'} icon="clock">
+    <ResourceAutomationEditor {draft} locale={i18n.locale} />
+  </Section>
+
+  <Section id="participant-preview" title={i18n.locale === 'zh-TW' ? '參與者預覽' : 'Participant preview'} icon="participant">
+    <ParticipantStudyPreview {draft} />
+  </Section>
+
+  <Section id="simulator" title={i18n.locale === 'zh-TW' ? '合成事件模擬' : 'Synthetic trace simulator'} icon="motion">
+    <SyntheticTraceSimulator {draft} locale={i18n.locale} />
   </Section>
 
   <Section id="delivery" title={section.delivery.title} lead={section.delivery.note} icon="send-auto">

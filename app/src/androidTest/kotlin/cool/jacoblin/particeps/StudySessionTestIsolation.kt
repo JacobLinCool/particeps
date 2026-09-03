@@ -1,11 +1,8 @@
 package cool.jacoblin.particeps
 
 import cool.jacoblin.particeps.core.application.StudySessionManager
-import cool.jacoblin.particeps.core.model.ExperimentState
-import cool.jacoblin.particeps.core.runtime.CommandResult
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 
@@ -13,19 +10,13 @@ import org.junit.Assert.assertNull
 internal suspend fun StudySessionManager.clearStudyDataForTest() {
     withTimeout(TEST_SESSION_TIMEOUT_MILLIS) { snapshot.first { it.initialized } }
 
-    if (snapshot.value.configuration != null) {
-        val state = requireNotNull(snapshot.value.runtime.metadata).state
-        if (state != ExperimentState.COMPLETED && state != ExperimentState.WITHDRAWN) {
-            assertEquals(
-                "Failed to withdraw the study left in the shared instrumentation process",
-                CommandResult.Success,
-                withdraw(),
-            )
-        }
+    if (snapshot.value.study != null) {
+        // The durable manager owns the legal terminal transition: pre-consent states are deleted
+        // directly, while active states are withdrawn before their EngineCommit chain is cleared.
         deleteLocalData()
     }
 
-    assertNull("Instrumentation-test cleanup left an active study", snapshot.value.configuration)
+    assertNull("Instrumentation-test cleanup left an active study", snapshot.value.study)
     assertFalse("Instrumentation-test cleanup left deletion pending", snapshot.value.deletionPending)
 }
 

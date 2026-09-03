@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "experiment_id": "android-host-vpn-fixture",
+  "configuration_id": "android-host-vpn-fixture-2026",
+  "assigned_participant_id": null,
+  "issued_at": "2026-01-01T00:00:00Z",
+  "expires_at": "2035-01-01T00:00:00Z",
+  "platform": "android",
+  "minimum_client_version": "1",
+  "title": "Android host VPN fixture",
+  "researcher": {
+    "name": "Particeps test harness",
+    "contact": "test@example.invalid"
+  },
+  "purpose": "Exercise fail-closed Android VPN and package lifecycle behavior.",
+  "duration_hours": 24,
+  "consent": {
+    "document_version": "host-fixture-1",
+    "summary": "Non-shipping emulator fixture. No participant data is collected."
+  },
+  "collectors": [
+    {
+      "id": "app_lifecycle.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {}
+        }
+      ]
+    }
+  ],
+  "surveys": [],
+  "interventions": [],
+  "automations": [
+    {
+      "type": "resource_binding",
+      "id": "bind-app-lifecycle",
+      "resource": {
+        "kind": "collector",
+        "id": "app_lifecycle.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_session_active"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": null
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-traffic-shaping",
+      "resource": {
+        "kind": "actuator",
+        "id": "traffic-shaping.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "elapsed_at_least",
+            "duration_seconds": 150,
+            "clock": "ACTIVE_RUNNING_TIME"
+          },
+          "profile_id": "cap-4096"
+        },
+        {
+          "condition": {
+            "type": "elapsed_at_least",
+            "duration_seconds": 75,
+            "clock": "ACTIVE_RUNNING_TIME"
+          },
+          "profile_id": "cap-0512"
+        }
+      ],
+      "default_profile_id": "cap-0064"
+    }
+  ],
+  "traffic_shaping": {
+    "target_packages": [
+      "cool.jacoblin.particeps.fixture.sharedtarget",
+      "cool.jacoblin.particeps.fixture.targeta",
+      "cool.jacoblin.particeps.fixture.targetb"
+    ],
+    "profiles": [
+      {
+        "id": "cap-0064",
+        "uplink_kbps": 64,
+        "downlink_kbps": 64
+      },
+      {
+        "id": "cap-0512",
+        "uplink_kbps": 512,
+        "downlink_kbps": 512
+      },
+      {
+        "id": "cap-4096",
+        "uplink_kbps": 4096,
+        "downlink_kbps": 4096
+      }
+    ]
+  },
+  "storage": {
+    "maximum_local_bytes": 16777216
+  },
+  "signer": {
+    "key_id": "demo-signer-2026",
+    "public_key": "sRSaTpZmTSBL7eN6nS_HBsNmLM8n1hdRmIt1vtLZsC0"
+  },
+  "export": {
+    "researcher_key_id": "demo-hpke-2026",
+    "hpke_public_key": "GnJDfDh8XH1eARTHmTLNlog9curtphTpEn7L36sY0QA"
+  },
+  "upload": {}
+}

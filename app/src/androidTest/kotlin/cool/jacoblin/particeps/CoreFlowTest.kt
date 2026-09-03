@@ -17,7 +17,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import cool.jacoblin.particeps.core.collector.AccessKind
-import cool.jacoblin.particeps.core.collector.CollectorStatus
 import cool.jacoblin.particeps.core.model.ExperimentState
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -46,31 +45,32 @@ class CoreFlowTest {
         composeRule.onNodeWithTag(UiTags.IMPORT_DEMO).performScrollTo().performClick()
         composeRule.waitUntil(TIMEOUT_MILLIS) {
             val snapshot = session.snapshot.value
-            snapshot.runtime.metadata?.state == ExperimentState.IMPORTED || snapshot.incidentCode != null
+            snapshot.runtime.state == ExperimentState.CONFIG_VERIFIED ||
+                snapshot.recoveryStatus == cool.jacoblin.particeps.core.application.StudyRecoveryStatus.ACTION_REQUIRED
         }
         val imported = session.snapshot.value
         assertEquals(
-            "Demo import failed: ${imported.incidentCode}",
-            ExperimentState.IMPORTED,
-            imported.runtime.metadata?.state,
+            "Demo import failed closed during configuration verification",
+            ExperimentState.CONFIG_VERIFIED,
+            imported.runtime.state,
         )
         // Setup shows a position rather than a state name, so the assertion is that the first
         // step's control is the one on screen.
         composeRule.onNodeWithTag(UiTags.REVIEW).performScrollTo().performClick()
         composeRule.waitUntil(TIMEOUT_MILLIS) {
-            session.snapshot.value.runtime.metadata?.state == ExperimentState.CONSENT_PENDING
+            session.snapshot.value.runtime.state == ExperimentState.CONSENT_PENDING
         }
         // CONSENT_PENDING renders as two pages: what is collected, then what is being agreed to.
         composeRule.onNodeWithTag(UiTags.CONTINUE).performScrollTo().performClick()
         composeRule.onNodeWithTag(UiTags.CONSENT_CHECKBOX).performScrollTo().performClick()
         composeRule.onNodeWithTag(UiTags.PREPARE).performScrollTo().performClick()
         composeRule.waitUntil(TIMEOUT_MILLIS) {
-            session.snapshot.value.runtime.metadata?.state == ExperimentState.ACCESS_SETUP
+            session.snapshot.value.runtime.state == ExperimentState.ACCESS_SETUP
         }
 
         val notificationAccess = session.snapshot.value.access
-            .single { it.requirement.kind == AccessKind.NOTIFICATIONS }
-        assertTrue(notificationAccess.requirement.required)
+            .single { it.kind == AccessKind.NOTIFICATIONS }
+        assertTrue(notificationAccess.required)
 
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.uiAutomation.grantRuntimePermission(
@@ -79,17 +79,29 @@ class CoreFlowTest {
         )
         runBlocking { session.reconcileAccess() }
         composeRule.waitUntil(TIMEOUT_MILLIS) {
-            session.snapshot.value.access.none { it.requirement.required && !it.granted }
+            session.snapshot.value.access.none { it.required && !it.granted }
         }
         composeRule.onNodeWithTag(UiTags.ACCESS_COMPLETE).performScrollTo().assertIsEnabled().performClick()
         composeRule.waitUntil(TIMEOUT_MILLIS) {
-            session.snapshot.value.runtime.metadata?.state == ExperimentState.READY
+            session.snapshot.value.runtime.state == ExperimentState.READY
         }
 
+        val commitsBeforeStart = session.snapshot.value.runtime.durableThroughCommit
         composeRule.onNodeWithTag(UiTags.START).performScrollTo().performClick()
-        composeRule.waitUntil(TIMEOUT_MILLIS) {
-            session.snapshot.value.runtime.metadata?.state == ExperimentState.RUNNING &&
-                session.snapshot.value.runtime.collectorHealth["accelerometer.v1"]?.status == CollectorStatus.ACTIVE
+        try {
+            composeRule.waitUntil(TIMEOUT_MILLIS) {
+                session.snapshot.value.runtime.state == ExperimentState.RUNNING
+            }
+        } catch (failure: androidx.compose.ui.test.ComposeTimeoutException) {
+            val snapshot = session.snapshot.value
+            throw AssertionError(
+                "Study start did not reach its durable running state; " +
+                    "state=${snapshot.runtime.state}, " +
+                    "commits_before=$commitsBeforeStart, " +
+                    "commits_after=${snapshot.runtime.durableThroughCommit}, " +
+                    "recovery=${snapshot.recoveryStatus}",
+                failure,
+            )
         }
         composeRule.onNodeWithTag(UiTags.EXPORT).performScrollTo()
 
@@ -97,14 +109,13 @@ class CoreFlowTest {
         composeRule.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         try {
             composeRule.waitUntil(TIMEOUT_MILLIS) {
-                val ids = session.snapshot.value.runtime.metadata?.lastEvents.orEmpty().keys
-                "app_lifecycle.v1" in ids && "accelerometer.v1" in ids && "network_state.v1" in ids
+                session.snapshot.value.runtime.lifetimeDataEventCount > 0
             }
         } catch (failure: androidx.compose.ui.test.ComposeTimeoutException) {
             val snapshot = session.snapshot.value
             throw AssertionError(
-                "Collector events did not arrive; lastEvents=${snapshot.runtime.metadata?.lastEvents?.keys}, " +
-                    "health=${snapshot.runtime.collectorHealth}, incident=${snapshot.incidentCode}",
+                "Participant-visible event count did not advance; " +
+                    "state=${snapshot.runtime.state}, commits=${snapshot.runtime.durableThroughCommit}",
                 failure,
             )
         }
@@ -116,14 +127,13 @@ class CoreFlowTest {
         assertEquals("Pause should occupy a full control row", fullRowWidth, pauseWidth, 1f)
         composeRule.onNodeWithTag(UiTags.PAUSE).performScrollTo().performClick()
         composeRule.waitUntil(TIMEOUT_MILLIS) {
-            session.snapshot.value.runtime.metadata?.state == ExperimentState.PAUSED &&
-                session.snapshot.value.runtime.collectorHealth["accelerometer.v1"]?.status == CollectorStatus.PAUSED
+            session.snapshot.value.runtime.state == ExperimentState.PAUSED
         }
-        val countAtPause = session.snapshot.value.runtime.metadata?.eventCount ?: 0
+        val countAtPause = session.snapshot.value.runtime.lifetimeDataEventCount
         composeRule.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         composeRule.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         composeRule.waitForIdle()
-        assertEquals(countAtPause, session.snapshot.value.runtime.metadata?.eventCount)
+        assertEquals(countAtPause, session.snapshot.value.runtime.lifetimeDataEventCount)
 
         // Revoking a runtime permission kills the target process by design, which would also kill
         // this in-process instrumentation test. Removing one required app-owned channel exercises
@@ -133,7 +143,7 @@ class CoreFlowTest {
             runBlocking { session.reconcileAccess() }
             composeRule.waitUntil(TIMEOUT_MILLIS) {
                 session.snapshot.value.access.any {
-                    it.requirement.kind == AccessKind.NOTIFICATIONS && !it.granted
+                    it.kind == AccessKind.NOTIFICATIONS && !it.granted
                 }
             }
             composeRule.onNodeWithTag(UiTags.accessAction(AccessKind.NOTIFICATIONS)).assertExists()
@@ -145,20 +155,31 @@ class CoreFlowTest {
         }
         runBlocking { session.reconcileAccess() }
         composeRule.waitUntil(TIMEOUT_MILLIS) {
-            session.snapshot.value.access.none { it.requirement.required && !it.granted }
+            session.snapshot.value.access.none { it.required && !it.granted }
         }
 
         composeRule.onNodeWithTag(UiTags.RESUME).performScrollTo().performClick()
         composeRule.waitUntil(TIMEOUT_MILLIS) {
-            session.snapshot.value.runtime.metadata?.state == ExperimentState.RUNNING
+            session.snapshot.value.runtime.state == ExperimentState.RUNNING
         }
+        val commitsBeforeWithdraw = session.snapshot.value.runtime.durableThroughCommit
         waitUntilExactlyOneNode(hasTestTag(UiTags.WITHDRAW) and isEnabled())
         composeRule.onNodeWithTag(UiTags.WITHDRAW).performScrollTo().performClick()
         val confirm = composeRule.activity.getString(R.string.action_confirm)
         waitUntilExactlyOneNode(hasText(confirm))
         composeRule.onNodeWithText(confirm).performClick()
-        composeRule.waitUntil(TIMEOUT_MILLIS) {
-            session.snapshot.value.runtime.metadata?.state == ExperimentState.WITHDRAWN
+        try {
+            composeRule.waitUntil(TIMEOUT_MILLIS) {
+                session.snapshot.value.runtime.state == ExperimentState.WITHDRAWN
+            }
+        } catch (failure: androidx.compose.ui.test.ComposeTimeoutException) {
+            val snapshot = session.snapshot.value
+            throw AssertionError(
+                "Withdraw did not reach its durable terminal state; " +
+                    "state=${snapshot.runtime.state}, commits_before=$commitsBeforeWithdraw, " +
+                    "commits_after=${snapshot.runtime.durableThroughCommit}",
+                failure,
+            )
         }
 
         assertTrue(countAtPause > 0)

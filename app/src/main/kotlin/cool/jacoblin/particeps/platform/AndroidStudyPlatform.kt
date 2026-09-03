@@ -1,12 +1,7 @@
 package cool.jacoblin.particeps.platform
 
-import android.Manifest
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.Data
@@ -18,709 +13,511 @@ import androidx.work.Operation
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.await
-import androidx.work.CoroutineWorker
-import androidx.work.WorkerParameters
+import cool.jacoblin.particeps.ActionOutboxWorker
 import cool.jacoblin.particeps.CollectionService
 import cool.jacoblin.particeps.DailyStatusWorker
-import cool.jacoblin.particeps.ExperimentDeadlineWorker
-import cool.jacoblin.particeps.MainActivity
-import cool.jacoblin.particeps.ParticepsNotificationChannels
-import cool.jacoblin.particeps.R
-import cool.jacoblin.particeps.SafetyPauseWorker
-import cool.jacoblin.particeps.RecoveryWorker
-import cool.jacoblin.particeps.SurveyActivity
+import cool.jacoblin.particeps.RuntimeTimerWorker
 import cool.jacoblin.particeps.UploadWorker
-import cool.jacoblin.particeps.core.application.StudyCollectionHost
-import cool.jacoblin.particeps.core.application.StudyWorkScheduler
-import cool.jacoblin.particeps.core.application.participantStartedAt
-import cool.jacoblin.particeps.core.application.studyLifetime
+import cool.jacoblin.particeps.core.application.CollectorActuatorDecorator
+import cool.jacoblin.particeps.core.application.StudyCommandResult
+import cool.jacoblin.particeps.core.application.StudySessionManager
+import cool.jacoblin.particeps.core.application.StudyUploadCoordinator
+import cool.jacoblin.particeps.core.application.StudyUploadPlan
+import cool.jacoblin.particeps.core.application.StudyUploadScheduler
+import cool.jacoblin.particeps.core.application.UploadReconciliation
+import cool.jacoblin.particeps.core.automation.DurableTimer
+import cool.jacoblin.particeps.core.automation.TimerTarget
+import cool.jacoblin.particeps.core.collector.ResearchClocks
+import cool.jacoblin.particeps.core.definition.CollectorResourceConfiguration
 import cool.jacoblin.particeps.core.definition.StudyConfiguration
-import cool.jacoblin.particeps.core.definition.SurveyAction
-import cool.jacoblin.particeps.core.definition.UploadConfiguration
-import cool.jacoblin.particeps.core.model.InterventionOccurrence
-import cool.jacoblin.particeps.core.model.ExperimentState
+import cool.jacoblin.particeps.core.export.ExportReceipt
 import cool.jacoblin.particeps.core.model.ResearchTime
-import cool.jacoblin.particeps.core.model.SafetyPauseReason
-import cool.jacoblin.particeps.core.model.StudyMetadata
-import cool.jacoblin.particeps.core.model.TransitionReason
-import cool.jacoblin.particeps.core.runtime.OccurrenceClaimResult
-import cool.jacoblin.particeps.core.runtime.OccurrenceExpiryResult
-import java.security.MessageDigest
+import cool.jacoblin.particeps.core.resource.ApplyReceipt
+import cool.jacoblin.particeps.core.resource.DesiredResourceState
+import cool.jacoblin.particeps.core.resource.FlushReceipt
+import cool.jacoblin.particeps.core.resource.PrepareReceipt
+import cool.jacoblin.particeps.core.resource.ReleaseReceipt
+import cool.jacoblin.particeps.core.resource.ResumeReceipt
+import cool.jacoblin.particeps.core.resource.ResourceHealth
+import cool.jacoblin.particeps.core.resource.ResourceKey
+import cool.jacoblin.particeps.core.resource.ResourceTerminalFailureListener
+import cool.jacoblin.particeps.core.resource.StatefulResourceActuator
+import cool.jacoblin.particeps.core.resource.SuspendReceipt
+import cool.jacoblin.particeps.core.resource.VerifyReceipt
+import cool.jacoblin.particeps.core.runtime.ActionOutboxNotifier
+import cool.jacoblin.particeps.core.runtime.ExperimentRuntime
+import cool.jacoblin.particeps.core.runtime.TimerWakeupAdapter
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
-
-class AndroidStudyCollectionHost(
-    private val context: Context,
-) : StudyCollectionHost {
-    override suspend fun start(studyTitle: String, usesLocation: Boolean) {
-        CollectionService.start(context, studyTitle, usesLocation)
-        retractStaleDailyReminder()
-    }
-
-    override fun stop() {
-        CollectionService.stop(context)
-        retractStaleDailyReminder()
-    }
-
-    /**
-     * Drops a standing daily reminder whenever collection starts or stops.
-     *
-     * The reminder is posted once a day and states which state the study is in, so the moment that
-     * changes the notification sitting on the lock screen is a false statement — and the worst
-     * direction to be wrong in is a paused study still asserting "Still collecting", which is the
-     * exact opposite of what the reminder exists to say. Retracting is enough: the next daily run
-     * posts the truth, whereas re-posting here would turn a daily reminder into a notification on
-     * every pause and resume.
-     */
-    private fun retractStaleDailyReminder() {
-        context.getSystemService(NotificationManager::class.java)
-            ?.cancel(DailyStatusWorker.NOTIFICATION_TAG, 0)
-    }
-}
-
-class AndroidStudyWorkScheduler(
-    context: Context,
-) : StudyWorkScheduler {
-    private val workManager = WorkManager.getInstance(context.applicationContext)
-    private val notificationManager = context.getSystemService(NotificationManager::class.java)
-
-    override suspend fun ensureCollectionWork(
-        configuration: StudyConfiguration,
-        metadata: StudyMetadata,
-        observedAt: ResearchTime,
-    ) {
-        val plan = collectionWorkPlan(configuration, metadata, observedAt)
-        val mutations = mutableListOf<() -> Operation>()
-        plan.deadlineDelayMillis?.let { deadlineDelayMillis ->
-            val deadline = OneTimeWorkRequestBuilder<ExperimentDeadlineWorker>()
-                .setInitialDelay(deadlineDelayMillis, TimeUnit.MILLISECONDS)
-                .setInputData(
-                    Data.Builder()
-                        .putString(ExperimentDeadlineWorker.KEY_EXPERIMENT_ID, configuration.experimentId)
-                        .build(),
-                )
-                .build()
-            mutations += {
-                workManager.enqueueUniqueWork(
-                    deadlineWorkName(configuration.experimentId),
-                    plan.deadlinePolicy,
-                    deadline,
-                )
-            }
-        }
-        if (plan.scheduleDailyStatus) {
-            mutations += ::scheduleDailyStatus
-        }
-        if (plan.scheduleUpload) configuration.upload?.let { upload ->
-            mutations += {
-                uploadOperation(
-                    configuration.experimentId,
-                    configuration.configurationId,
-                    upload,
-                    ExistingWorkPolicy.KEEP,
-                )
-            }
-        }
-        awaitWorkMutations(mutations)
-    }
-
-    /**
-     * The daily reminder, which runs for as long as the study is either collecting or paused.
-     *
-     * Periodic rather than a self-renewing chain, unlike delivery: a day is far above WorkManager's
-     * fifteen-minute floor, so nothing is silently clamped, and periodic work is re-established by
-     * the platform across reboots without this app having to remember to do it. KEEP so that
-     * re-entering a study — a resume, a process restart — does not push the next reminder a full
-     * day away each time.
-     *
-     * The schedule is deliberately not cancelled on pause — a paused study is exactly the case the
-     * reminder exists for — and [cancelCollectionWork] retires it when the study actually ends. The
-     * already-posted notification is a separate matter: pausing retracts it, because it states a
-     * state that has just stopped being true. See [AndroidStudyCollectionHost].
-     */
-    private fun scheduleDailyStatus(): Operation =
-        workManager.enqueueUniquePeriodicWork(
-            DAILY_STATUS_WORK_NAME,
-            ExistingPeriodicWorkPolicy.KEEP,
-            PeriodicWorkRequestBuilder<DailyStatusWorker>(1, TimeUnit.DAYS)
-                .setInitialDelay(1, TimeUnit.DAYS)
-                .build(),
-        )
-
-    override suspend fun replaceInterventionWork(
-        configuration: StudyConfiguration,
-        deliveries: List<InterventionOccurrence>,
-        expiries: List<InterventionOccurrence>,
-    ) {
-        awaitWorkMutations(
-            listOf(
-                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.deliveryTag(configuration.experimentId)) },
-                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.expiryTag(configuration.experimentId)) },
-            ),
-        )
-        awaitWorkMutations(
-            deliveries.map { occurrence ->
-                { enqueueDelivery(configuration, occurrence, ExistingWorkPolicy.REPLACE) }
-            } + expiries.map { occurrence ->
-                { enqueueExpiry(configuration, occurrence, ExistingWorkPolicy.REPLACE) }
-            },
-        )
-    }
-
-    override suspend fun enqueueOccurrence(configuration: StudyConfiguration, occurrence: InterventionOccurrence) {
-        awaitWorkMutations(
-            listOf(
-                { enqueueDelivery(configuration, occurrence, ExistingWorkPolicy.KEEP) },
-                { enqueueExpiry(configuration, occurrence, ExistingWorkPolicy.KEEP) },
-            ),
-        )
-    }
-
-    private fun enqueueDelivery(
-        configuration: StudyConfiguration,
-        occurrence: InterventionOccurrence,
-        policy: ExistingWorkPolicy,
-    ): Operation {
-        val now = System.currentTimeMillis()
-        val delay = (occurrence.scheduledFor.wallTimeUtcMillis - now).coerceAtLeast(0)
-        val request = OneTimeWorkRequestBuilder<InterventionWorker>()
-            .setInitialDelay(delay, TimeUnit.MILLISECONDS)
-            .setInputData(Data.Builder().putString(InterventionWorker.KEY_OCCURRENCE_ID, occurrence.occurrenceId).build())
-            .addTag(InterventionWorkIdentity.deliveryTag(configuration.experimentId))
-            .build()
-        return workManager.enqueueUniqueWork(
-            InterventionWorkIdentity.deliveryName(configuration.experimentId, occurrence.occurrenceId),
-            policy,
-            request,
-        )
-    }
-
-    private fun enqueueExpiry(
-        configuration: StudyConfiguration,
-        occurrence: InterventionOccurrence,
-        policy: ExistingWorkPolicy,
-    ): Operation {
-        val now = System.currentTimeMillis()
-        val expiry = OneTimeWorkRequestBuilder<InterventionExpiryWorker>()
-            .setInitialDelay((occurrence.expiresAtUtcMillis - now).coerceAtLeast(0), TimeUnit.MILLISECONDS)
-            .setInputData(Data.Builder().putString(InterventionWorker.KEY_OCCURRENCE_ID, occurrence.occurrenceId).build())
-            .addTag(InterventionWorkIdentity.expiryTag(configuration.experimentId))
-            .build()
-        return workManager.enqueueUniqueWork(
-            InterventionWorkIdentity.expiryName(configuration.experimentId, occurrence.occurrenceId),
-            policy,
-            expiry,
-        )
-    }
-
-    /**
-     * Enqueues one delivery attempt, which re-enqueues its successor when it finishes.
-     *
-     * Not a [androidx.work.PeriodicWorkRequest]: that floor is 15 minutes, and silently clamping a
-     * shorter configured cadence would make the consent screen's stated frequency untrue. A
-     * self-renewing one-time chain honours whatever the signed configuration asked for.
-     *
-     * The cost of the chain is that it has no platform-side repetition to fall back on, so
-     * [ensureCollectionWork] re-establishes it on Start, Resume, same-boot reconciliation, and
-     * terminal upload-tail repair.
-     */
-    internal suspend fun scheduleUpload(
-        experimentId: String,
-        configurationId: String,
-        upload: UploadConfiguration,
-        policy: ExistingWorkPolicy,
-    ) {
-        awaitWorkMutations(listOf({ uploadOperation(experimentId, configurationId, upload, policy) }))
-    }
-
-    private fun uploadOperation(
-        experimentId: String,
-        configurationId: String,
-        upload: UploadConfiguration,
-        policy: ExistingWorkPolicy,
-    ): Operation {
-        val constraints = Constraints.Builder()
-            // Default to Wi-Fi. Uploading a study over a participant's mobile data is a cost they
-            // did not agree to unless the signed configuration says so.
-            .setRequiredNetworkType(
-                if (upload.allowMetered) NetworkType.CONNECTED else NetworkType.UNMETERED,
-            )
-            .setRequiresBatteryNotLow(true)
-            .build()
-        val request = OneTimeWorkRequestBuilder<UploadWorker>()
-            .setInitialDelay(upload.intervalMinutes.toLong(), TimeUnit.MINUTES)
-            .setConstraints(constraints)
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
-            .setInputData(
-                Data.Builder()
-                    .putString(UploadWorker.KEY_EXPERIMENT_ID, experimentId)
-                    .putString(UploadWorker.KEY_CONFIGURATION_ID, configurationId)
-                    .build(),
-            )
-            .addTag(uploadTag(experimentId))
-            .build()
-        return workManager.enqueueUniqueWork(uploadWorkName(experimentId, configurationId), policy, request)
-    }
-
-    override suspend fun cancelInterventionWork(experimentId: String, occurrenceIds: Set<String>) {
-        awaitCleanupMutations(
-            notificationCleanup = { cancelInterventionNotifications(occurrenceIds) },
-            mutations = listOf(
-                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.deliveryTag(experimentId)) },
-                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.expiryTag(experimentId)) },
-            ),
-        )
-    }
-
-    override fun cancelInterventionNotifications(occurrenceIds: Set<String>) {
-        occurrenceIds.forEach { notificationManager.cancel(it, 0) }
-    }
-
-    override suspend fun scheduleSafetyPauseRetry(experimentId: String, reason: SafetyPauseReason) {
-        val request = OneTimeWorkRequestBuilder<SafetyPauseWorker>()
-            .also { builder ->
-                SafetyPauseWorkIdentity.tags(experimentId, reason).forEach(builder::addTag)
-            }
-            .setInputData(
-                Data.Builder()
-                    .putString(SafetyPauseWorker.KEY_EXPERIMENT_ID, experimentId)
-                    .putString(SafetyPauseWorker.KEY_REASON, reason.name)
-                    .build(),
-            )
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
-            .build()
-        awaitWorkMutations(
-            listOf({
-                workManager.enqueueUniqueWork(
-                    SafetyPauseWorkIdentity.workName(experimentId, reason),
-                    ExistingWorkPolicy.REPLACE,
-                    request,
-                )
-            }),
-        )
-    }
-
-    override suspend fun pendingSafetyPauseReason(experimentId: String): SafetyPauseReason? =
-        withContext(Dispatchers.IO) {
-            val active = workManager.getWorkInfosByTag(SafetyPauseWorkIdentity.COMMON_TAG).get()
-                .filterNot { it.state.isFinished }
-            SafetyPauseWorkIdentity.activeReason(experimentId, active.map { it.tags })
-        }
-
-    override suspend fun cancelSafetyPauseRetry() {
-        withContext(NonCancellable) {
-            awaitWorkMutations(listOf({ workManager.cancelAllWorkByTag(SafetyPauseWorkIdentity.COMMON_TAG) }))
-        }
-    }
-
-    override suspend fun scheduleRecoveryRetry() {
-        val request = OneTimeWorkRequestBuilder<RecoveryWorker>()
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
-            .build()
-        awaitWorkMutations(
-            listOf({
-                workManager.enqueueUniqueWork(
-                    RECOVERY_WORK_NAME,
-                    ExistingWorkPolicy.REPLACE,
-                    request,
-                )
-            }),
-        )
-    }
-
-    override suspend fun cancelRecoveryRetry() {
-        withContext(NonCancellable) {
-            awaitWorkMutations(listOf({ workManager.cancelUniqueWork(RECOVERY_WORK_NAME) }))
-        }
-    }
-
-    override suspend fun cancelAllForReset() {
-        withContext(NonCancellable) {
-            awaitCleanupMutations(
-                notificationCleanup = { notificationManager.cancelAll() },
-                mutations = listOf({ workManager.cancelAllWork() }),
-            )
-        }
-    }
-
-    override suspend fun cancelCollectionWork(experimentId: String, occurrenceIds: Set<String>) {
-        awaitCleanupMutations(
-            notificationCleanup = {
-                cancelInterventionNotifications(occurrenceIds)
-                // Finished or withdrawn: the reminder has nothing left to remind anyone of, and
-                // today's notification must not outlive the study it describes.
-                notificationManager.cancel(DailyStatusWorker.NOTIFICATION_TAG, 0)
-            },
-            mutations = listOf(
-                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.deliveryTag(experimentId)) },
-                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.expiryTag(experimentId)) },
-                { workManager.cancelUniqueWork(deadlineWorkName(experimentId)) },
-                { workManager.cancelUniqueWork(DAILY_STATUS_WORK_NAME) },
-            ),
-        )
-    }
-
-    override suspend fun cancel(experimentId: String) {
-        awaitCleanupMutations(
-            notificationCleanup = { notificationManager.cancel(DailyStatusWorker.NOTIFICATION_TAG, 0) },
-            mutations = listOf(
-                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.deliveryTag(experimentId)) },
-                { workManager.cancelAllWorkByTag(InterventionWorkIdentity.expiryTag(experimentId)) },
-                { workManager.cancelUniqueWork(deadlineWorkName(experimentId)) },
-                { workManager.cancelUniqueWork(DAILY_STATUS_WORK_NAME) },
-                { workManager.cancelAllWorkByTag(uploadTag(experimentId)) },
-            ),
-        )
-    }
-
-    private fun deadlineWorkName(experimentId: String) = "particeps-deadline-$experimentId"
-    private val DAILY_STATUS_WORK_NAME = "particeps-daily-status"
-    private val RECOVERY_WORK_NAME = "particeps-study-recovery"
-    private fun uploadTag(experimentId: String) = "particeps-upload-$experimentId"
-    companion object {
-        fun uploadWorkName(experimentId: String, configurationId: String) =
-            "particeps-upload-$experimentId-$configurationId"
-    }
-}
-
-internal data class CollectionWorkPlan(
-    val deadlineDelayMillis: Long?,
-    val deadlinePolicy: ExistingWorkPolicy,
-    val scheduleDailyStatus: Boolean,
-    val scheduleUpload: Boolean,
-)
-
-/** Pure, auditable policy used by every start, resume and recovery scheduling acknowledgement. */
-internal fun collectionWorkPlan(
-    configuration: StudyConfiguration,
-    metadata: StudyMetadata,
-    observedAt: ResearchTime,
-): CollectionWorkPlan {
-    require(metadata.experimentId == configuration.experimentId) { "Experiment ID mismatch" }
-    require(metadata.configurationId == configuration.configurationId) { "Configuration ID mismatch" }
-    val started = metadata.state in STARTED_STUDY_STATES
-    if (!started) {
-        require(metadata.transitions.none { it.reason == TransitionReason.PARTICIPANT_STARTED }) {
-            "Pre-start study contains a participant start"
-        }
-        return CollectionWorkPlan(
-            deadlineDelayMillis = null,
-            deadlinePolicy = ExistingWorkPolicy.REPLACE,
-            scheduleDailyStatus = false,
-            scheduleUpload = false,
-        )
-    }
-    participantStartedAt(metadata)
-    val active = metadata.state in ACTIVE_STUDY_STATES
-    if (!active) {
-        return CollectionWorkPlan(
-            deadlineDelayMillis = null,
-            deadlinePolicy = ExistingWorkPolicy.REPLACE,
-            scheduleDailyStatus = false,
-            scheduleUpload = configuration.upload != null,
-        )
-    }
-    val lifetime = studyLifetime(configuration, metadata, observedAt)
-    return CollectionWorkPlan(
-        // REPLACE is intentional: every acknowledged ensure must reflect the session's latest
-        // durable checkpoint after process, time-change, or reboot reconciliation. A raw
-        // cross-boot observation is rejected by studyLifetime before reaching this plan.
-        deadlineDelayMillis = lifetime.remainingMillis.takeIf { active },
-        deadlinePolicy = ExistingWorkPolicy.REPLACE,
-        scheduleDailyStatus = active,
-        scheduleUpload = configuration.upload != null,
-    )
-}
-
-private val ACTIVE_STUDY_STATES = setOf(ExperimentState.RUNNING, ExperimentState.PAUSED)
-private val STARTED_STUDY_STATES = ACTIVE_STUDY_STATES + setOf(
-    ExperimentState.COMPLETED,
-    ExperimentState.WITHDRAWN,
-)
-
-/** Does not report a retry boundary as durable until WorkManager commits its transaction. */
-internal suspend fun awaitWorkPersistence(operation: Operation) {
-    operation.await()
-}
-
-/** Invokes every mutation and awaits every returned transaction before surfacing any failure. */
-internal suspend fun awaitWorkMutations(mutations: List<() -> Operation>) {
-    var firstFailure: Throwable? = null
-    val operations = buildList {
-        mutations.forEach { mutation ->
-            try {
-                add(mutation())
-            } catch (failure: Throwable) {
-                val existing = firstFailure
-                if (existing == null) firstFailure = failure else existing.addSuppressed(failure)
-            }
-        }
-    }
-    operations.forEach { operation ->
-        try {
-            awaitWorkPersistence(operation)
-        } catch (failure: Throwable) {
-            val existing = firstFailure
-            if (existing == null) firstFailure = failure else existing.addSuppressed(failure)
-        }
-    }
-    firstFailure?.let { throw it }
-}
-
-/** Notification cleanup cannot prevent any WorkManager cancellation from being attempted. */
-internal suspend fun awaitCleanupMutations(
-    notificationCleanup: () -> Unit,
-    mutations: List<() -> Operation>,
-) = withContext(NonCancellable) {
-    var firstFailure: Throwable? = try {
-        notificationCleanup()
-        null
-    } catch (failure: Throwable) {
-        failure
-    }
-    try {
-        awaitWorkMutations(mutations)
-    } catch (failure: Throwable) {
-        val existing = firstFailure
-        if (existing == null) firstFailure = failure else existing.addSuppressed(failure)
-    }
-    firstFailure?.let { throw it }
-}
-
-internal object SafetyPauseWorkIdentity {
-    const val COMMON_TAG = "particeps-safety-pause"
-    private const val STUDY_TAG_PREFIX = "particeps-safety-pause-study:"
-    private const val REASON_TAG_PREFIX = "particeps-safety-pause-reason:"
-
-    fun workName(experimentId: String, reason: SafetyPauseReason) =
-        "particeps-safety-pause-${studyIdentity(experimentId)}-${reason.name}"
-
-    fun tags(experimentId: String, reason: SafetyPauseReason): Set<String> = setOf(
-        COMMON_TAG,
-        studyTag(experimentId),
-        "$REASON_TAG_PREFIX${reason.name}",
-    )
-
-    fun activeReason(experimentId: String, activeWorkTags: List<Set<String>>): SafetyPauseReason? {
-        val decoded = activeWorkTags.map { tags ->
-            check(COMMON_TAG in tags) { "Active safety-pause work is missing its common tag" }
-            val studyTags = tags.filter { it.startsWith(STUDY_TAG_PREFIX) }
-            val reasonTags = tags.filter { it.startsWith(REASON_TAG_PREFIX) }
-            check(studyTags.size == 1 && reasonTags.size == 1) {
-                "Active safety-pause work has malformed identity tags"
-            }
-            val reasonName = reasonTags.single().removePrefix(REASON_TAG_PREFIX)
-            val reason = SafetyPauseReason.entries.singleOrNull { it.name == reasonName }
-                ?: error("Active safety-pause work has an unknown reason")
-            studyTags.single() to reason
-        }
-        val reasons = decoded
-            .filter { (tag, _) -> tag == studyTag(experimentId) }
-            .mapTo(mutableSetOf()) { (_, reason) -> reason }
-        check(reasons.size <= 1) { "Multiple active safety-pause reasons exist for one study" }
-        return reasons.singleOrNull()
-    }
-
-    private fun studyTag(experimentId: String) = "$STUDY_TAG_PREFIX${studyIdentity(experimentId)}"
-
-    private fun studyIdentity(experimentId: String): String = MessageDigest
-        .getInstance("SHA-256")
-        .digest(experimentId.toByteArray(Charsets.UTF_8))
-        .joinToString("") { byte -> "%02x".format(byte) }
-}
-
-internal object InterventionWorkIdentity {
-    fun deliveryTag(experimentId: String) = "particeps-intervention-delivery-$experimentId"
-    fun expiryTag(experimentId: String) = "particeps-intervention-expiry-$experimentId"
-    fun deliveryName(experimentId: String, occurrenceId: String) = "particeps-intervention-$experimentId-$occurrenceId"
-    fun expiryName(experimentId: String, occurrenceId: String) = "${deliveryName(experimentId, occurrenceId)}-expiry"
-}
-
-internal enum class ExpiryWorkerDirective { RETRY, COMPLETE, COMPLETE_AND_RECOVER }
-
-internal enum class DeliveryWorkerDirective { DELIVER, RETRY, COMPLETE, RECOVER_SUCCESSOR }
-
-internal fun deliveryWorkerDirective(result: OccurrenceClaimResult): DeliveryWorkerDirective = when (result) {
-    is OccurrenceClaimResult.Due -> DeliveryWorkerDirective.DELIVER
-    is OccurrenceClaimResult.NotDue -> DeliveryWorkerDirective.RETRY
-    OccurrenceClaimResult.Expired,
-    OccurrenceClaimResult.Terminal,
-    -> DeliveryWorkerDirective.RECOVER_SUCCESSOR
-    OccurrenceClaimResult.InactiveStudy,
-    OccurrenceClaimResult.Missing,
-    -> DeliveryWorkerDirective.COMPLETE
-}
-
-internal fun expiryWorkerDirective(result: OccurrenceExpiryResult): ExpiryWorkerDirective = when (result) {
-    is OccurrenceExpiryResult.NotDue -> ExpiryWorkerDirective.RETRY
-    OccurrenceExpiryResult.Expired,
-    OccurrenceExpiryResult.Terminal,
-    -> ExpiryWorkerDirective.COMPLETE_AND_RECOVER
-    OccurrenceExpiryResult.InactiveStudy,
-    OccurrenceExpiryResult.Missing,
-    -> ExpiryWorkerDirective.COMPLETE
-}
-
-/** Cancels Android's external side effect unless durable POSTING -> POSTED finalization succeeds. */
-internal suspend fun finalizePostedNotification(
-    finalize: suspend () -> Boolean,
-    cancel: () -> Unit,
-): Boolean {
-    val finalized = try {
-        finalize()
-    } catch (failure: Throwable) {
-        try {
-            cancel()
-        } catch (cleanupFailure: Throwable) {
-            failure.addSuppressed(cleanupFailure)
-        }
-        throw failure
-    }
-    if (!finalized) cancel()
-    return finalized
-}
+import kotlinx.coroutines.withTimeout
 
 /**
- * One process-local owner for notification delivery and stale-POSTING recovery.
- *
- * Recovery may cancel a notification that has not reached durable POSTED state, so it must never
- * interleave with claim -> notify -> finalize.
+ * Starts the acknowledged collector foreground service before the first collector prepares and
+ * stops it only after the final collector releases. The service itself is process liveness, not a
+ * signed resource and never appears in the resource vector.
  */
-internal object InterventionDeliveryCoordinator {
-    private val mutex = Mutex()
+class AndroidCollectorForegroundServiceDecorator(
+    context: Context,
+) : CollectorActuatorDecorator {
+    private val host = RefCountedCollectorForegroundService(
+        AndroidCollectorForegroundServiceController(context.applicationContext),
+    )
 
-    suspend fun <T> run(operation: suspend () -> T): T = mutex.withLock { operation() }
-
-    suspend fun <T> recoverStalePosting(operation: suspend () -> T): T = mutex.withLock { operation() }
+    override fun decorate(
+        study: StudyConfiguration,
+        declaration: CollectorResourceConfiguration,
+        delegate: StatefulResourceActuator,
+    ): StatefulResourceActuator = ForegroundServiceCollectorActuator(
+        delegate = delegate,
+        host = host,
+        studyTitle = study.title,
+        usesLocation = declaration.id == "location.v1",
+    )
 }
 
-class InterventionWorker(
-    context: Context,
-    parameters: WorkerParameters,
-) : CoroutineWorker(context, parameters) {
-    override suspend fun doWork(): Result = InterventionDeliveryCoordinator.run {
-        try {
-            // Claim happens after acquiring the coordinator, so a worker never acts on a stale
-            // POSTING snapshot left by another in-process delivery attempt.
-            deliver()
-        } catch (failure: CancellationException) {
-            throw failure
-        } catch (_: Exception) {
-            Result.retry()
-        }
-    }
+internal interface CollectorForegroundServiceController {
+    suspend fun start(studyTitle: String, usesLocation: Boolean)
+    fun stop()
+}
 
-    private suspend fun deliver(): Result {
-        val occurrenceId = inputData.getString(KEY_OCCURRENCE_ID) ?: return Result.failure()
-        val application = applicationContext as cool.jacoblin.particeps.CollectorApplication
-        if (application.session.snapshot.first { it.initialized }.configuration == null) return Result.success()
-        val claim = application.session.claimOccurrenceIfDue(occurrenceId)
-        when (deliveryWorkerDirective(claim)) {
-            DeliveryWorkerDirective.RETRY -> return Result.retry()
-            DeliveryWorkerDirective.COMPLETE -> return Result.success()
-            DeliveryWorkerDirective.RECOVER_SUCCESSOR -> {
-                application.session.scheduleSuccessor(occurrenceId)
-                return Result.success()
-            }
-            DeliveryWorkerDirective.DELIVER -> Unit
-        }
-        val dispatch = (claim as OccurrenceClaimResult.Due).dispatch
-        if (applicationContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            // The durable claim remains POSTING. A retry can post it after permission is restored,
-            // or atomically expire it once its availability window closes.
-            return Result.retry()
-        }
-        val target = if (dispatch.action is SurveyAction) SurveyActivity::class.java else MainActivity::class.java
-        val intent = Intent(applicationContext, target)
-            .setAction(ACTION_OPEN_OCCURRENCE)
-            // Not the join URI. This only makes each intervention's PendingIntent distinct, and it is
-            // deliberately not declared in any manifest intent filter: the join filter requires
-            // ACTION_VIEW with host "join" and path "/v1", which this intent has none of.
-            .setData(Uri.Builder().scheme("particeps").authority("occurrence").appendPath(occurrenceId).build())
-            .putExtra(KEY_OCCURRENCE_ID, occurrenceId)
-        val pendingIntent = PendingIntent.getActivity(
-            applicationContext,
-            0,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val manager = applicationContext.getSystemService(NotificationManager::class.java)
-        var finalized = false
+private class AndroidCollectorForegroundServiceController(
+    private val context: Context,
+) : CollectorForegroundServiceController {
+    override suspend fun start(studyTitle: String, usesLocation: Boolean) =
+        CollectionService.start(context, studyTitle, usesLocation)
+
+    override fun stop() = CollectionService.stop(context)
+}
+
+internal interface CollectorForegroundServiceHost {
+    suspend fun acquire(key: ResourceKey, studyTitle: String, usesLocation: Boolean)
+    suspend fun release(key: ResourceKey)
+}
+
+internal class RefCountedCollectorForegroundService(
+    private val controller: CollectorForegroundServiceController,
+) : CollectorForegroundServiceHost {
+    private val mutex = Mutex()
+    private val owners = linkedMapOf<ResourceKey, Boolean>()
+    private var title: String? = null
+    private var failedAcquisition: FailedAcquisition? = null
+
+    override suspend fun acquire(key: ResourceKey, studyTitle: String, usesLocation: Boolean) = mutex.withLock {
+        check(failedAcquisition == null) { "A failed collector foreground transition is awaiting containment" }
+        if (owners[key] == usesLocation) return@withLock
+        require(title == null || title == studyTitle) { "Collector foreground service crossed studies" }
+        val next = owners + (key to usesLocation)
         try {
-            manager.notify(
-                occurrenceId,
-                0,
-                android.app.Notification.Builder(applicationContext, ParticepsNotificationChannels.INTERVENTIONS)
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .setContentTitle(dispatch.action.notificationTitle)
-                    .setContentText(dispatch.action.notificationMessage)
-                    .setStyle(android.app.Notification.BigTextStyle().bigText(dispatch.action.notificationMessage))
-                    .setContentIntent(pendingIntent)
-                    .setAutoCancel(true)
-                    .setTimeoutAfter((dispatch.occurrence.expiresAtUtcMillis - System.currentTimeMillis()).coerceAtLeast(1))
-                    .build(),
-            )
-            // Expiry or a storage failure can win between the durable claim and Android's external
-            // notify() side effect. Finalization is authoritative; false and exceptions clean up.
-            finalized = finalizePostedNotification(
-                finalize = { application.session.markNotificationPosted(occurrenceId) },
-                cancel = { manager.cancel(occurrenceId, 0) },
-            )
-            // Deliberately outside durable finalization: a successor enqueue failure must retry
-            // without retracting a notification whose POSTED state already committed.
-            application.session.scheduleSuccessor(occurrenceId)
+            controller.start(studyTitle, next.values.any { it })
         } catch (failure: Throwable) {
-            if (!finalized) {
+            if (owners.isNotEmpty()) {
                 try {
-                    manager.cancel(occurrenceId, 0)
-                } catch (cleanupFailure: Throwable) {
-                    failure.addSuppressed(cleanupFailure)
+                    controller.start(checkNotNull(title), owners.values.any { it })
+                } catch (restorationFailure: Throwable) {
+                    if (restorationFailure !== failure) failure.addSuppressed(restorationFailure)
+                    failedAcquisition = FailedAcquisition(key, failure)
                 }
             }
             throw failure
         }
-        return Result.success()
+        owners[key] = usesLocation
+        title = studyTitle
     }
 
-    companion object {
-        const val KEY_OCCURRENCE_ID = "occurrence_id"
-        const val ACTION_OPEN_OCCURRENCE = "cool.jacoblin.particeps.OPEN_OCCURRENCE"
-    }
-}
-
-/** Records the terminal no-response outcome even when the participant never taps a notification. */
-class InterventionExpiryWorker(
-    context: Context,
-    parameters: WorkerParameters,
-) : CoroutineWorker(context, parameters) {
-    override suspend fun doWork(): Result = try {
-        expire()
-    } catch (failure: CancellationException) {
-        throw failure
-    } catch (_: Exception) {
-        Result.retry()
-    }
-
-    private suspend fun expire(): Result {
-        val occurrenceId = inputData.getString(InterventionWorker.KEY_OCCURRENCE_ID) ?: return Result.failure()
-        val application = applicationContext as cool.jacoblin.particeps.CollectorApplication
-        if (application.session.snapshot.first { it.initialized }.configuration == null) return Result.success()
-        return when (expiryWorkerDirective(application.session.expireOccurrenceIfDue(occurrenceId))) {
-            ExpiryWorkerDirective.RETRY -> Result.retry()
-            ExpiryWorkerDirective.COMPLETE -> Result.success()
-            ExpiryWorkerDirective.COMPLETE_AND_RECOVER -> {
-                applicationContext.getSystemService(NotificationManager::class.java).cancel(occurrenceId, 0)
-                application.session.scheduleSuccessor(occurrenceId)
-                Result.success()
-            }
+    override suspend fun release(key: ResourceKey) = mutex.withLock {
+        failedAcquisition?.takeIf { it.key == key }?.let { failed ->
+            failedAcquisition = null
+            throw failed.failure
+        }
+        val releasedLocationOwner = owners[key] ?: return@withLock
+        val remaining = owners - key
+        if (remaining.isEmpty()) {
+            controller.stop()
+            owners.remove(key)
+            title = null
+        } else if (releasedLocationOwner && remaining.values.none { it }) {
+            // Profile bindings may switch location off while other collectors keep running.
+            // Re-acknowledge the same service with the exact remaining FGS type set instead of
+            // retaining location privilege after its resource has been released.
+            controller.start(checkNotNull(title), usesLocation = false)
+            owners.remove(key)
+        } else {
+            owners.remove(key)
         }
     }
+
+    internal suspend fun ownersForTest(): Map<ResourceKey, Boolean> = mutex.withLock { owners.toMap() }
+
+    private data class FailedAcquisition(val key: ResourceKey, val failure: Throwable)
 }
+
+internal class ForegroundServiceCollectorActuator(
+    private val delegate: StatefulResourceActuator,
+    private val host: CollectorForegroundServiceHost,
+    private val studyTitle: String,
+    private val usesLocation: Boolean,
+) : StatefulResourceActuator {
+    override val key: ResourceKey = delegate.key
+    override val supportsHotProfileSwap: Boolean = delegate.supportsHotProfileSwap
+
+    override fun setTerminalFailureListener(listener: ResourceTerminalFailureListener?) =
+        delegate.setTerminalFailureListener(listener)
+
+    override suspend fun prepare(desired: DesiredResourceState, requestId: String): PrepareReceipt {
+        // Establish the desired-bound PREPARED state first. If Android rejects an FGS type
+        // transition, the runtime can then call release(desired) and obtain exact NOT_APPLIED
+        // cleanup evidence instead of mistaking an optional collector for an uncontained resource.
+        val receipt = delegate.prepare(desired, requestId)
+        return try {
+            host.acquire(key, studyTitle, usesLocation)
+            receipt
+        } catch (failure: Throwable) {
+            failure.rethrowCancellation()
+            throw failure
+        }
+    }
+
+    override suspend fun suspendAt(
+        desired: DesiredResourceState,
+        boundary: ResearchTime,
+    ): SuspendReceipt = delegate.suspendAt(desired, boundary)
+
+    override suspend fun flushThrough(
+        desired: DesiredResourceState,
+        boundary: ResearchTime,
+        cursor: String?,
+    ): FlushReceipt = delegate.flushThrough(desired, boundary, cursor)
+
+    override suspend fun apply(desired: DesiredResourceState): ApplyReceipt = delegate.apply(desired)
+
+    override suspend fun verify(desired: DesiredResourceState): VerifyReceipt = delegate.verify(desired)
+
+    override suspend fun resume(desired: DesiredResourceState): ResumeReceipt = delegate.resume(desired)
+
+    override suspend fun onAdmissionOpened(desired: DesiredResourceState): ResourceHealth =
+        delegate.onAdmissionOpened(desired)
+
+    override suspend fun release(desired: DesiredResourceState): ReleaseReceipt {
+        var receipt: ReleaseReceipt? = null
+        var failure: Throwable? = null
+        try {
+            receipt = delegate.release(desired)
+        } catch (caught: Throwable) {
+            caught.rethrowCancellation()
+            failure = caught
+        }
+        try {
+            host.release(key)
+        } catch (caught: Throwable) {
+            caught.rethrowCancellation()
+            if (failure == null) failure = caught else failure.addSuppressed(caught)
+        }
+        failure?.let { throw it }
+        return checkNotNull(receipt)
+    }
+
+    override fun health(): ResourceHealth = delegate.health()
+}
+
+/** WorkManager is only a wakeup adapter; the runtime commit chain remains timer truth. */
+class AndroidTimerWakeupAdapter(
+    context: Context,
+    private val clocks: ResearchClocks,
+) : TimerWakeupAdapter {
+    private val workManager = WorkManager.getInstance(context.applicationContext)
+    @Volatile private var runtime: ExperimentRuntime? = null
+
+    fun bindRuntime(runtime: ExperimentRuntime) {
+        check(this.runtime == null) { "Timer adapter is already bound" }
+        this.runtime = runtime
+    }
+
+    override suspend fun schedule(timer: DurableTimer) {
+        val now = clocks.now()
+        val delayMillis = timer.delayMillis(now, runtime?.snapshot?.value?.activeRunningElapsedNanos ?: 0L)
+        val request = OneTimeWorkRequestBuilder<RuntimeTimerWorker>()
+            .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
+            .setBackoffCriteria(BackoffPolicy.LINEAR, TIMER_RETRY_DELAY_SECONDS, TimeUnit.SECONDS)
+            .setInputData(RuntimeTimerWorker.input(timer.id, timer.generation))
+            .build()
+        awaitWorkPersistence(
+            workManager.enqueueUniqueWork(
+                timerWorkName(timer.id, timer.generation),
+                ExistingWorkPolicy.REPLACE,
+                request,
+            ),
+        )
+    }
+
+    override suspend fun retire(timerId: String, generation: ULong) {
+        awaitWorkPersistence(workManager.cancelUniqueWork(timerWorkName(timerId, generation)))
+    }
+
+    /** Re-arms durable timers after process recovery and whenever active time resumes. */
+    suspend fun reconcile(session: StudySessionManager) {
+        session.pendingTimers().forEach { schedule(it) }
+    }
+
+    private fun DurableTimer.delayMillis(now: ResearchTime, activeElapsedNanos: Long): Long = when (val due = target) {
+        is TimerTarget.CalendarUtc -> (due.utcMillis - now.wallTimeUtcMillis).coerceAtLeast(0L)
+        is TimerTarget.ActiveElapsed ->
+            (due.elapsedNanos - activeElapsedNanos).coerceAtLeast(0L) / NANOS_PER_MILLISECOND
+        is TimerTarget.SameBootMonotonic -> if (due.bootSessionId == now.bootSessionId) {
+            (due.elapsedRealtimeNanos - now.elapsedRealtimeNanos).coerceAtLeast(0L) / NANOS_PER_MILLISECOND
+        } else {
+            0L
+        }
+    }
+
+}
+
+/** A committed action ID is the sole WorkManager input and idempotency key. */
+class AndroidActionOutboxNotifier(context: Context) : ActionOutboxNotifier {
+    private val applicationContext = context.applicationContext
+    private val workManager = WorkManager.getInstance(applicationContext)
+    private val notifications = applicationContext.getSystemService(NotificationManager::class.java)
+    private val visibleActions = SerializedActionDisplayGate()
+
+    override suspend fun onActionReady(actionId: String) {
+        val request = OneTimeWorkRequestBuilder<ActionOutboxWorker>()
+            .setInputData(Data.Builder().putString(ActionOutboxWorker.KEY_ACTION_ID, actionId).build())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, ACTION_RETRY_DELAY_SECONDS, TimeUnit.SECONDS)
+            .build()
+        visibleActions.activate(actionId) {
+            awaitWorkPersistence(
+                workManager.enqueueUniqueWork(actionWorkName(actionId), ExistingWorkPolicy.KEEP, request),
+            )
+        }
+    }
+
+    override suspend fun onActionsInactive(actionIds: List<String>) {
+        require(actionIds == actionIds.sorted().distinct()) { "Inactive action identities must be sorted and unique" }
+        var firstFailure: Throwable? = null
+        fun attempt(operation: () -> Unit) {
+            try {
+                operation()
+            } catch (failure: Throwable) {
+                failure.rethrowCancellation()
+                val prior = firstFailure
+                if (prior == null) firstFailure = failure else prior.addSuppressed(failure)
+            }
+        }
+
+        visibleActions.retract(actionIds) { actionId ->
+            attempt { notifications.cancel(actionId, 0) }
+        }
+        // Cancellation is intentionally issued without awaiting completion. A required action may
+        // be reporting its own failure on the current worker; awaiting cancellation of that same
+        // worker would deadlock the runtime's fail-closed transition. The display gate is closed
+        // first so a worker surviving the cancellation cannot make an inactive action visible.
+        actionIds.forEach { actionId ->
+            attempt { workManager.cancelUniqueWork(actionWorkName(actionId)) }
+            attempt { workManager.cancelUniqueWork(actionExpiryWorkName(actionId)) }
+        }
+        firstFailure?.let { throw it }
+    }
+
+    /** Serializes display against pause/terminal retraction without entering the runtime lock. */
+    internal suspend fun displayIfRunning(
+        actionId: String,
+        isRunning: () -> Boolean,
+        display: suspend () -> Unit,
+    ): Boolean = visibleActions.displayIfActive(actionId, isRunning, display)
+
+    /** Prevents an expiry worker racing a previously claimed worker into a late display. */
+    internal suspend fun retractVisible(actionId: String) {
+        visibleActions.retract(listOf(actionId)) { notifications.cancel(it, 0) }
+    }
+}
+
+/** One ordering boundary between a worker's visible effect and lifecycle retraction. */
+internal class SerializedActionDisplayGate {
+    private val mutex = Mutex()
+    private val inactiveActionIds = mutableSetOf<String>()
+
+    suspend fun activate(actionId: String, schedule: suspend () -> Unit) = mutex.withLock {
+        inactiveActionIds.remove(actionId)
+        try {
+            schedule()
+        } catch (failure: Throwable) {
+            inactiveActionIds += actionId
+            throw failure
+        }
+    }
+
+    suspend fun displayIfActive(
+        actionId: String,
+        isRunning: () -> Boolean,
+        display: suspend () -> Unit,
+    ): Boolean = mutex.withLock {
+        if (actionId in inactiveActionIds || !isRunning()) false else {
+            display()
+            true
+        }
+    }
+
+    suspend fun retract(actionIds: List<String>, retract: (String) -> Unit) = mutex.withLock {
+        inactiveActionIds += actionIds
+        actionIds.forEach(retract)
+    }
+}
+
+/**
+ * Owns the one commit-based upload stage and its WorkManager chain. It stores no signed endpoint in
+ * WorkManager input; the verified plan is rebound by StudySessionManager on every process start.
+ */
+class AndroidStudyUploadPlatform(
+    context: Context,
+    private val uploader: OkHttpStudyUploader,
+) : StudyUploadCoordinator, StudyUploadScheduler {
+    private val workManager = WorkManager.getInstance(context.applicationContext)
+    private val mutex = Mutex()
+    private val plans = mutableMapOf<String, StudyUploadPlan>()
+
+    override suspend fun reconcile(context: UploadReconciliation) = mutex.withLock {
+        plans[context.plan.experimentId] = context.plan
+        uploader.reconcile(context.plan, context.uploadedThroughCommit)
+        Unit
+    }
+
+    override suspend fun acknowledge(bundleId: UUID) {
+        uploader.acknowledge(bundleId)
+    }
+
+    override suspend fun prepareDeletion(experimentId: String) {
+        uploader.prepareDeletion()
+        cancel(experimentId)
+    }
+
+    override suspend fun clear(experimentId: String) = mutex.withLock {
+        uploader.clear()
+        plans.remove(experimentId)
+        Unit
+    }
+
+    override suspend fun clearAll() = mutex.withLock {
+        uploader.clear()
+        plans.clear()
+    }
+
+    override suspend fun ensureScheduled(plan: StudyUploadPlan) = mutex.withLock {
+        plans[plan.experimentId] = plan
+        awaitWorkPersistence(
+            workManager.enqueueUniqueWork(
+                uploadWorkName(plan.experimentId),
+                ExistingWorkPolicy.KEEP,
+                uploadRequest(plan),
+            ),
+        )
+    }
+
+    suspend fun scheduleSuccessor(plan: StudyUploadPlan) = mutex.withLock {
+        // A worker may finish concurrently with participant deletion or a replacement signed
+        // configuration. Only the plan that is still current may extend its unique chain.
+        if (plans[plan.experimentId] != plan) return@withLock
+        awaitWorkPersistence(
+            workManager.enqueueUniqueWork(
+                uploadWorkName(plan.experimentId),
+                ExistingWorkPolicy.APPEND_OR_REPLACE,
+                uploadRequest(plan),
+            ),
+        )
+    }
+
+    suspend fun uploadOnce(session: StudySessionManager, experimentId: String): UploadAttempt {
+        // Do not hold the platform state lock while entering StudySessionManager. A successful
+        // runtime acknowledgement calls back into ensureScheduled(), and Kotlin Mutex is
+        // deliberately non-reentrant. The uploader has its own serialization/cancellation lock;
+        // this lock protects only the currently verified plan map.
+        val plan = mutex.withLock { plans[experimentId] } ?: return UploadAttempt.Stale
+        val staged = uploader.recover(plan, session.snapshot.value.runtime.uploadedThroughCommit)
+            ?: uploader.stage(session, plan)
+            ?: return UploadAttempt.NothingToUpload(plan)
+        val receipt = uploader.send(plan, staged)
+        return when (session.acknowledgeAutomaticUpload(receipt)) {
+            StudyCommandResult.Success -> {
+                UploadAttempt.Uploaded(plan, receipt)
+            }
+            else -> UploadAttempt.Retry
+        }
+    }
+
+    override suspend fun cancel(experimentId: String) = mutex.withLock {
+        awaitWorkPersistence(workManager.cancelUniqueWork(uploadWorkName(experimentId)))
+        plans.remove(experimentId)
+        Unit
+    }
+
+    override suspend fun cancelAll() = mutex.withLock {
+        awaitWorkPersistence(workManager.cancelAllWorkByTag(UPLOAD_TAG))
+        plans.clear()
+    }
+
+    private fun uploadRequest(plan: StudyUploadPlan) = OneTimeWorkRequestBuilder<UploadWorker>()
+        .setInitialDelay(plan.intervalMinutes.toLong(), TimeUnit.MINUTES)
+        .setConstraints(
+            Constraints.Builder()
+                .setRequiredNetworkType(if (plan.allowMetered) NetworkType.CONNECTED else NetworkType.UNMETERED)
+                .setRequiresBatteryNotLow(true)
+                .build(),
+        )
+        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, UPLOAD_RETRY_DELAY_SECONDS, TimeUnit.SECONDS)
+        .setInputData(Data.Builder().putString(UploadWorker.KEY_EXPERIMENT_ID, plan.experimentId).build())
+        .addTag(UPLOAD_TAG)
+        .build()
+}
+
+sealed interface UploadAttempt {
+    data object Stale : UploadAttempt
+    data object Retry : UploadAttempt
+    data class NothingToUpload(val plan: StudyUploadPlan) : UploadAttempt
+    data class Uploaded(val plan: StudyUploadPlan, val receipt: ExportReceipt) : UploadAttempt
+}
+
+/** Process-global participant reminder. The worker decides from its whitelisted snapshot. */
+suspend fun ensureDailyStatusWork(context: Context) {
+    val request = PeriodicWorkRequestBuilder<DailyStatusWorker>(1, TimeUnit.DAYS)
+        .setInitialDelay(1, TimeUnit.DAYS)
+        .build()
+    awaitWorkPersistence(
+        WorkManager.getInstance(context.applicationContext).enqueueUniquePeriodicWork(
+            DAILY_STATUS_WORK_NAME,
+            ExistingPeriodicWorkPolicy.KEEP,
+            request,
+        ),
+    )
+}
+
+fun retractDailyStatusNotification(context: Context) {
+    context.getSystemService(NotificationManager::class.java)?.cancel(DailyStatusWorker.NOTIFICATION_TAG, 0)
+}
+
+/** WorkManager mutation acknowledgement is bounded so startup and containment cannot hang. */
+internal suspend fun awaitWorkPersistence(operation: Operation) {
+    try {
+        withTimeout(WORK_ACKNOWLEDGEMENT_TIMEOUT_MILLIS) { operation.await() }
+    } catch (timeout: TimeoutCancellationException) {
+        throw IllegalStateException("WorkManager did not acknowledge a scheduled mutation", timeout)
+    }
+}
+
+private fun timerWorkName(timerId: String, generation: ULong) = "runtime-timer:$timerId:$generation"
+internal fun actionWorkName(actionId: String) = "runtime-action:$actionId"
+internal fun actionExpiryWorkName(actionId: String) = "runtime-action-expiry:$actionId"
+private fun uploadWorkName(experimentId: String) = "runtime-upload:$experimentId"
+
+private fun Throwable.rethrowCancellation() {
+    if (this is CancellationException) throw this
+}
+
+private const val DAILY_STATUS_WORK_NAME = "participant-daily-status-v1"
+private const val UPLOAD_TAG = "engine-commit-upload-v1"
+private const val WORK_ACKNOWLEDGEMENT_TIMEOUT_MILLIS = 30_000L
+private const val ACTION_RETRY_DELAY_SECONDS = 10L
+private const val TIMER_RETRY_DELAY_SECONDS = 10L
+private const val UPLOAD_RETRY_DELAY_SECONDS = 60L
+private const val NANOS_PER_MILLISECOND = 1_000_000L

@@ -39,12 +39,32 @@ jobs:
     env:
       ANDROID_PLATFORM_PACKAGE: platforms;android-37.0
       ANDROID_BUILD_TOOLS_PACKAGE: build-tools;37.0.0
+      ANDROID_NDK_PACKAGE: ndk;30.0.14904198
+      PARTICEPS_KOTLIN_EXPORT_INTEROP_DIR: ${{ github.workspace }}/build/protocol-interop/kotlin-export
+      PARTICEPS_REGISTRY_MERGE_BASE: ${{ github.event.pull_request.base.sha || '' }}
+      GOTOOLCHAIN: local
+      GOPROXY: https://proxy.golang.org
+      GOSUMDB: sum.golang.org
+      GOPRIVATE: ""
+      GONOPROXY: ""
+      GONOSUMDB: ""
+      GOVCS: "*:off"
 
     steps:
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Fetch the declared pull-request base
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PARTICEPS_REGISTRY_MERGE_BASE"
+          git fetch --no-tags origin "$PARTICEPS_REGISTRY_MERGE_BASE"
+          git cat-file -e "$PARTICEPS_REGISTRY_MERGE_BASE^{commit}"
 
       - name: Set up JDK 17
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
@@ -52,10 +72,16 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Set up pinned Go toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.26.3"
+          cache-dependency-path: native/traffic-shaping/go.sum
+
       - name: Validate Protocol v1 and collector contracts
         run: |
-          python3 tools/catalog.py check
-          python3 tools/catalog_parity.py
+          python3 tools/event_source_registry.py check
+          python3 -m unittest tools.tests.test_event_source_registry
           python3 tools/validate_protocol_vectors.py
           python3 tools/retired_identity_audit.py
           python3 -m unittest discover -s tools/tests -v
@@ -88,13 +114,42 @@ jobs:
             echo "No sdkmanager under $ANDROID_SDK_ROOT" >&2
             exit 1
           fi
-          "$sdkmanager" "$ANDROID_PLATFORM_PACKAGE" "$ANDROID_BUILD_TOOLS_PACKAGE"
+          "$sdkmanager" "$ANDROID_PLATFORM_PACKAGE" "$ANDROID_BUILD_TOOLS_PACKAGE" "$ANDROID_NDK_PACKAGE"
           dirname "$sdkmanager" >> "$GITHUB_PATH"
+
+      - name: Verify pinned native source and race safety
+        working-directory: native/traffic-shaping
+        run: |
+          go mod download
+          go mod verify
+          go vet ./...
+          go test -race -count=1 ./...
 
       - name: Test, lint, and build
         run: >-
           ./gradlew --no-daemon
           test testDebugUnitTest lintDebug assembleDebug assembleRelease
+
+      - name: Produce a Kotlin encrypted bundle for cross-language replay
+        run: >-
+          ./gradlew --no-daemon
+          :core:export:test
+          --tests cool.jacoblin.particeps.core.export.ResearchExportTest.kotlinExporterWritesEncryptedPythonInteropFixtureWhenExplicitlyRequested
+
+      - name: Set up locked Python analysis environment
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.26"
+          python-version: "3.13"
+          working-directory: particeps-analysis
+          enable-cache: true
+          cache-dependency-glob: particeps-analysis/uv.lock
+
+      - name: Replay the Kotlin ciphertext through Python
+        working-directory: particeps-analysis
+        run: |
+          uv sync --locked
+          uv run --frozen python -m unittest discover -s tests -p test_bundle_contract.py -v
 
       - name: Consume shared Protocol v1 vectors in Kotlin
         run: >-
@@ -102,6 +157,7 @@ jobs:
           -I tools/protocol-conformance.init.gradle
           :core:export:test
           --tests particeps.conformance.ProtocolConformanceTest
+          --tests particeps.conformance.AutomationReducerConformanceTest
 
       - name: Enforce collector capability boundary
         run: python3 tools/collector_assurance.py
@@ -115,10 +171,31 @@ jobs:
           retention-days: 14
 
   instrumented:
-    name: Instrumented tests (API 34)
+    name: Instrumented tests (${{ matrix.name }})
     needs: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: API 34
+            system_image_api: 34
+            target: google_apis
+            require_16k: false
+          - name: API 37 16 KiB
+            system_image_api: "37.0"
+            target: google_apis_ps16k
+            require_16k: true
+    env:
+      ANDROID_NDK_PACKAGE: ndk;30.0.14904198
+      GOTOOLCHAIN: local
+      GOPROXY: https://proxy.golang.org
+      GOSUMDB: sum.golang.org
+      GOPRIVATE: ""
+      GONOPROXY: ""
+      GONOSUMDB: ""
+      GOVCS: "*:off"
 
     steps:
       - name: Check out source
@@ -132,11 +209,33 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Set up pinned Go toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.26.3"
+          cache-dependency-path: native/traffic-shaping/go.sum
+
       - name: Validate the Gradle wrapper
         uses: gradle/actions/wrapper-validation@0f4528296b4bc09e8ae0fc7be30185a4ab435545 # v6.0.0
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@0f4528296b4bc09e8ae0fc7be30185a4ab435545 # v6.0.0
+
+      - name: Install pinned Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager=""
+          for candidate in "$ANDROID_SDK_ROOT"/cmdline-tools/latest/bin/sdkmanager \
+                           "$ANDROID_SDK_ROOT"/cmdline-tools/*/bin/sdkmanager \
+                           "$ANDROID_SDK_ROOT"/tools/bin/sdkmanager; do
+            if [[ -x "$candidate" ]]; then
+              sdkmanager="$candidate"
+              break
+            fi
+          done
+          test -n "$sdkmanager"
+          "$sdkmanager" "$ANDROID_NDK_PACKAGE"
 
       - name: Enable KVM
         run: |
@@ -145,14 +244,29 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Run connected tests on the minimum supported Android version
+      - name: Run blocking connected test matrix
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: "37.0"
-          system-image-api-level: 34
-          target: google_apis
+          system-image-api-level: ${{ matrix.system_image_api }}
+          target: ${{ matrix.target }}
           arch: x86_64
           profile: pixel_7_pro
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: ./gradlew --no-daemon connectedDebugAndroidTest
+          script: |
+            if [[ "${{ matrix.require_16k }}" == "true" ]]; then
+              test "$(adb shell getconf PAGE_SIZE | tr -d '\r')" = "16384"
+              python3 -c 'import pathlib, xml.etree.ElementTree as ET; p=pathlib.Path("'"$ANDROID_SDK_ROOT"'/system-images/android-37.0/google_apis_ps16k/x86_64/package.xml"); r=ET.parse(p).getroot().find(".//revision/major"); assert r is not None and int(r.text) >= 5, "API 37 ps16k image revision must be at least 5"'
+            fi
+            ./gradlew --no-daemon connectedDebugAndroidTest
+            tools/android-host-harness.sh
+
+      - name: Upload sanitized Android host-harness evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-host-harness-${{ matrix.system_image_api }}-${{ matrix.target }}-${{ github.sha }}
+          path: build/reports/android-host-harness
+          if-no-files-found: error
+          retention-days: 14

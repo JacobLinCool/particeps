@@ -189,7 +189,7 @@ export const en: Messages = {
       required: 'The study cannot start without this access.',
       samplingPeriod: 'A request, not a limit. Devices may go faster.',
       ambientLightSamplingPeriod:
-        'A hard minimum between emitted events. The latest meaningful change is retained for the next eligible emission.',
+        'Minimum event gap; the latest change waits.',
       bandwidthEstimates: 'Platform estimates, not measurements.',
       pollInterval: 'A minute is a pilot setting, not a study setting.',
       fastestInterval: 'Never longer than the interval.',
@@ -218,12 +218,12 @@ export const en: Messages = {
     },
     'battery_state.v1': {
       name: 'Battery state',
-      records: 'Percentage, charging state and source, and power-save state',
+      records: 'Level, charging/source, and power-save state',
       limit: 'No serial, hardware ID, health, or temperature'
     },
     'temporal_context.v1': {
       name: 'Time context',
-      records: 'Time-zone ID, UTC offset, DST state, and clock-change reason',
+      records: 'Time zone, UTC offset, DST, and clock changes',
       limit: 'A time zone is not treated as a location or travel record'
     },
     'gyroscope.v1': {
@@ -234,12 +234,12 @@ export const en: Messages = {
     'ambient_light.v1': {
       name: 'Ambient light',
       records: 'Raw illuminance, sensor time, and accuracy',
-      limit: 'No image, environmental content, or presence inference'
+      limit: 'No images, scenes, or presence inference'
     },
     'proximity.v1': {
       name: 'Proximity',
-      records: 'Raw distance, maximum range, and near/far interpretation',
-      limit: 'Many phones report only near/far; values are not comparable across devices'
+      records: 'Distance, maximum range, and near/far',
+      limit: 'Near/far is common; values differ across devices'
     },
     'network_state.v1': {
       name: 'Connection type',
@@ -276,10 +276,9 @@ export const en: Messages = {
     integer: 'Whole numbers only',
     instant: 'Not a date and time this can read',
     window_order: 'Must be after the start of the window',
-    collectors_empty: 'Enable at least one source',
     duplicate_id: 'Already used in this study',
-    transports_empty: 'Choose at least one',
-    location_interval_order: 'Cannot exceed the interval',
+    sorted_unique: 'Keep entries sorted and remove duplicates',
+    profile_invalid: 'This profile does not match the event-source registry contract',
     endpoint_scheme: 'Must begin with https://',
     endpoint_host: 'No host in that address',
     document_too_large: ({ max }) =>
@@ -290,7 +289,15 @@ export const en: Messages = {
     language_tag: 'Use a valid BCP 47 language tag',
     unknown_reference: 'Choose a survey defined in this configuration',
     selection_bounds: 'Selection limits do not match this question',
-    schedule_bounds: 'This schedule is outside the study or creates too many occurrences'
+    automation_invalid: 'This automation is outside the closed Protocol v1 bounds',
+    unknown_event: 'Choose a researcher-triggerable event from the registry',
+    unknown_field: 'This event does not declare that field',
+    unsupported_operator: 'The registry does not allow this operator for the field',
+    canonical_value: 'Use the field’s canonical wire spelling',
+    resource_owner: 'Every stateful resource needs exactly one binding automation',
+    trigger_source_liveness: 'A collector used by automation must be required and continuously active',
+    dependency_cycle: 'Resource conditions form a cycle that cannot be evaluated safely',
+    unbounded_state: 'This window or sequence could retain more than 4,096 entries'
   },
 
   status: {
@@ -450,7 +457,7 @@ export const en: Messages = {
       events: 'Events',
       window: 'Sequence numbers',
       span: 'First to last event',
-      transitions: 'State changes',
+      commits: 'Engine commits',
       exported: 'Exported',
       instance: 'Participant instance',
       state: 'State',

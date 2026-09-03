@@ -6,22 +6,33 @@ For maintainers of this repository. Participants and researchers do not need thi
 
 All workflows live in [`.github/workflows`](../../.github/workflows). The two that decide what ships are below, and `Pages` has its own section. `Analysis CI` and `Receiver CI` verify their own directories on the pull requests that touch them.
 
-**`Android CI`** (`ci.yml`) runs on pushes to `main`, on pull requests, and on manual dispatch. It
-runs unit tests, Android lint, Protocol/catalog conformance, Collector capability checks, and debug
-and release builds. A dependent job then runs the complete connected suite on an API 34 Google APIs
-emulator. Successful runs retain the debug APK as an artifact for 14 days.
+**`Android CI`** (`ci.yml`) runs on pushes to `main`, pull requests, and manual dispatch. It checks
+event-source-registry generation/digests, Kotlin/TypeScript/Python conformance, Collector capability,
+Go vet/race/source checks, unit/lint/build/release verification, and connected/host-orchestrated
+Android scenarios. Blocking device lanes are API 34 x86_64 and API 37
+`google_apis_ps16k` x86_64 revision 5 or newer; the latter asserts a 16 KiB page size. Successful
+runs retain the debug APK as an artifact for 14 days.
+
+For pull requests the checkout contains full history and the workflow fetches the exact base commit
+SHA from the event payload. Registry immutability compares against that declared commit; a missing
+base, missing registry, or unreadable merge base fails the job instead of guessing a branch name or
+skipping the comparison. The one initial catalog-to-registry transition requires an explicit local
+operator override and is never inferred in CI.
 
 **`Android Release`** (`release.yml`) accepts only `v<SemVer>` tags that are reachable from `main` — for example `v0.1.0`. A tag with a prerelease suffix produces a GitHub prerelease.
 
-The release workflow first runs the complete connected suite on an API 34 Google APIs emulator. Only
-after that gate passes does the dependent release job reconstruct the same `.signing` configuration
-used locally and re-run host-side tests plus debug and release lint. It writes the tag into
+The release workflow runs the same API 34/API 37 instrumented gates and, in parallel, rechecks the
+Web authoring surface, shared TypeScript conformance, ciphertext receiver, and Python replay and
+materialization pipeline from their locked environments. Only after both gates pass does the
+dependent release job reconstruct the `.signing` configuration and pinned Go/NDK native build,
+then re-run host-side tests plus debug/release lint. It writes the tag into
 `versionName` and the workflow run number into `versionCode`, then verifies the APK that Gradle signed
 with `apksigner verify`. Verification must report exactly one signer certificate and its SHA-256 must
-match the checked-in production identity anchor; printing certificate details is not sufficient. The
-GitHub release carries both the APK and its SHA-256 checksum. Any device test, host-side test,
-signing, identity, or verification failure stops the release; nothing is published and signing
-secrets are not materialized before the device gate succeeds.
+match the checked-in production identity anchor. The release verifier also requires four native
+ABIs, 16 KiB ELF alignment for the 64-bit libraries, exact VPN manifest/permissions, Go module/tool provenance, registry
+digest asset, complete linked-dependency SBOM/licenses, no tracked native binary, and no sensitive
+packet/destination/DNS logging. The GitHub release carries the APK and SHA-256. Any gate failure
+stops publication; signing secrets are not materialized before device gates succeed.
 
 Permissions are job-scoped. The instrumented gate, including the third-party emulator action, gets
 only `contents: read`; only the dependent release job gets `contents: write` to create or update the
@@ -64,21 +75,21 @@ compares its certificate digest with that anchor. Do not change the anchor to ma
 pass: a deliberate certificate rotation breaks direct update continuity and requires an explicit new
 application-distribution plan.
 
-### Update compatibility
+### Application identity and destructive data compatibility
 
-`v1.0.0-rc.5` established the current `cool.jacoblin.particeps` application ID and the certificate in
-the repository identity anchor. `v1.0.0-rc.6` and `v1.0.0-rc.7` keep both, so rc.7 updates rc.5 or
-rc.6 in place. Earlier candidates used another application ID, another certificate, or incompatible
-file identities and cannot update directly to the current build. [CHANGELOG.md](../../CHANGELOG.md)
-records the action required from each release.
+`v1.0.0-rc.5` established the current `cool.jacoblin.particeps` application ID and certificate.
+Keeping both allows Android to install a newer APK over that application. It does **not** imply
+Protocol/storage compatibility. The current event-driven Protocol v1 cut rejects every former signed
+configuration, store, schedule, bundle, and receipt shape; there is no reader or migration. The app
+uses participant-confirmed generic recovery/reset for incompatible local state.
 
 The key was rotated to correct the certificate's subject, which named the pre-rename product. A
 certificate is signed over its own subject, so changing it means issuing a new one. That was
 affordable only before the current identity and key were handed to testers. It stops being
 affordable once a participant is running rc.5 or later, so it does not happen again.
 
-State update compatibility in every release note. In particular, rc.5 and rc.6 update in place to
-rc.7; rc.4 and earlier do not.
+Every release note must state application-install and local-data compatibility separately. Never use
+“updates in place” to imply a retired study can resume.
 
 ## Android Developer Verification
 

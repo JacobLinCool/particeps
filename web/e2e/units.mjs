@@ -426,7 +426,7 @@ async function openEverything(page) {
     if (state !== 'true') throw new Error(`collector ${i} would not switch on`);
   }
 
-  await page.locator('[data-testid="intervention-add"]').click();
+  await page.locator('[data-testid="add-notification"]').click();
   const delivery = page.locator('#delivery [role="switch"]').first();
   if ((await delivery.getAttribute('aria-checked')) === 'false') await delivery.click();
   await page.waitForTimeout(400);

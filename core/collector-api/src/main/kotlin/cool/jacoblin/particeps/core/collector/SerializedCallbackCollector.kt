@@ -1,6 +1,7 @@
 package cool.jacoblin.particeps.core.collector
 
 import cool.jacoblin.particeps.core.model.EventDraft
+import cool.jacoblin.particeps.core.model.EventSourceId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +21,7 @@ abstract class SerializedCallbackCollector(
     private val mutableHealth = MutableStateFlow(CollectorHealth(CollectorStatus.STOPPED))
     private var consumerJob: Job? = null
     private var sourceState = SourceState.RELEASED
+    private var nextProducerOrdinal = 0L
 
     final override val health: StateFlow<CollectorHealth>
         get() = mutableHealth.asStateFlow()
@@ -175,17 +177,29 @@ abstract class SerializedCallbackCollector(
         for (message in messages) {
             when (message) {
                 is Message.Event -> {
+                    val producerOrdinal = nextProducerOrdinal
                     val result = try {
-                        context.eventSink.emit(message.token, message.draft)
+                        context.eventSink.emitBatch(
+                            message.token,
+                            SourceEventBatch(
+                                sourceId = EventSourceId(context.sourceContract.sourceId),
+                                schemaVersion = context.sourceContract.schemaVersion,
+                                resourceGeneration = context.resourceGeneration,
+                                producerOrdinal = producerOrdinal,
+                                events = listOf(message.draft),
+                            ),
+                        )
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (_: Throwable) {
-                        EmitResult.StorageFailure
+                        EmitBatchResult.StorageFailure
                     }
                     when (result) {
-                        EmitResult.ContractViolation -> fail("EVENT_CONTRACT_VIOLATION")
-                        EmitResult.StorageFailure -> fail("STORAGE_WRITE_FAILED")
-                        else -> Unit
+                        is EmitBatchResult.Accepted -> nextProducerOrdinal = Math.addExact(producerOrdinal, 1L)
+                        EmitBatchResult.ContractViolation -> fail("EVENT_CONTRACT_VIOLATION")
+                        EmitBatchResult.StorageFailure -> fail("STORAGE_WRITE_FAILED")
+                        is EmitBatchResult.SourceQualityGap -> fail("SOURCE_QUALITY_GAP")
+                        EmitBatchResult.RejectedByAdmissionGate -> Unit
                     }
                 }
                 is Message.Barrier -> message.completion.complete(Unit)

@@ -6,6 +6,7 @@
   ],
   "allowed_project_dependencies": [
     ":collector:sensor-common",
+    ":collector:usage-common",
     ":core:collector-api",
     ":core:study-definition"
   ],

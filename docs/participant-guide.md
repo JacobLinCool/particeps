@@ -1,609 +1,199 @@
 # Participant guide
 
-Particeps is a research data collection app for Android. It collects and stores everything on your own phone. Every study you import shows you its title, research team, purpose, duration, contact details, data sources, whether it sends data to the research team automatically, and consent text — all before anything is collected.
+Particeps lets you take part in an Android research study without creating an account. The app
+shows the study, the researcher’s contact details, the kinds of data requested, the consent text,
+and the Android access the study needs before anything is collected.
 
-The name is a Latin word. It means someone who takes part. That is meant concretely here: your data stays on the phone, every source a study uses is shown to you before you are asked to consent, and nothing at all is collected until you press Start study.
+You can decline, pause, resume, withdraw, and export your encrypted data. Completing or withdrawing
+also lets you permanently delete the study from the phone. Particeps never asks why you made one of
+these choices.
 
-It does not mean the study is yours to design. Which sources it may use, how long it runs, and
-whether it sends data to the research team automatically are fixed in the signed file you import.
-Nothing you do in the app changes them. You can read all of that before you agree, and you can say
-no to the whole study. A source marked Optional can stay off when you leave its unshared Android
-access disabled. Optional is not a separate source switch: if a required source uses the same
-Android capability, granting it for the required source also makes it available to the optional
-one. The Access card names every source that shares a capability. Section 4 covers those cards and
-section 5 covers the keyboard. A source the study marks required prevents setup, starting, or
-resuming while its access is missing instead of being silently ignored. Data that has already
-reached the research team cannot be taken back.
+## Before you start
 
-What you can always do is decline, pause, withdraw, and — once the study has completed or you have withdrawn — permanently delete the study data on your phone. The app never asks why.
+A Particeps study arrives as a signed configuration file or an immutable join link. The app checks
+the file’s signature, exact contents, expiry, Android version requirement, and study structure
+before showing it. A valid signature proves that the file has not changed since it was signed; it
+does not by itself prove the real-world identity of the person who holds the signing key. Compare
+the displayed researcher details and signer fingerprint with information you received through a
+trusted channel.
 
-This guide describes what the app does on your phone. It does not replace the consent document approved for your study. Where this guide and that document disagree, the consent document and your research team's answers come first. If anything is unclear, do not start. Ask first.
+Importing a configuration does not start collection. Nothing is collected until you finish setup
+and press **Start study**.
 
-Declining is a complete answer. You do not need a reason, and you do not need to tell anyone why.
+Only one study can be present in the app at a time. A new import is refused while another study or
+its deletion is still present.
 
-## The app's on-screen language
+## The five setup steps
 
-The app ships in **English and Traditional Chinese**, and English is the default. On first run it follows your phone's system language: a phone set to Traditional Chinese shows the app in Traditional Chinese, and anything else gets English.
+Setup keeps the existing five-step flow. The row of five indicators shows your position; it is not
+a set of buttons.
 
-You can change it at any time, before or after you import a study. At the top right of the header there is a **globe** — a circle with a horizontal line across it and a curved meridian from top to bottom. Tap it and a picker opens, headed Language (語言). It lists **System default** (跟隨系統) first, then each language this build ships. Each one is written in its own language, so you can find yours without being able to read the language currently on screen. A check mark sits beside the one in use. Tapping a language applies it immediately and closes the picker; Cancel (取消) closes it without changing anything.
+1. **Study** — title, researcher, contact, purpose, and duration.
+2. **Data** — high-level data categories the study may collect. A category marked
+   **Optional** does not by itself block setup if its Android access is unavailable.
+3. **Consent** — the researcher-authored consent summary, document version, and signing-key
+   fingerprint. Accepting is required to continue.
+4. **Access** — the Android permissions, special access, device settings, and hardware required by
+   the requested categories. Shared access appears once even when more than one category uses it.
+5. **Start** — **Start study** and **Withdraw**. Collection is still off at this point.
 
-That picker is not a private setting inside the app. It writes Android's own per-app language setting, the same one under Android Settings → Apps → Particeps → Language, so changing it in either place changes both. System default (跟隨系統) hands the choice back to your phone.
+Particeps-generated setup text does not describe when a study activity happens or how a study may
+change its behaviour. Researcher-authored consent, notification, and survey text is shown exactly
+as the researcher wrote it and can contain information the researcher chose to disclose.
 
-Because English is the default, this guide quotes the screen in English and gives the Traditional Chinese in parentheses where you might be running it: Start study (開始研究).
+If the study, contact details, requested data, access, or consent do not match what the research
+team told you, stop and contact them before granting access.
 
-**Ordinary study prose is never translated.** The study title, purpose, contact details, and consent text are shown exactly as signed. Survey titles, descriptions, questions, and choices are different. The signed configuration can carry an English and a Traditional Chinese version. The survey uses the best exact language match, and falls back to the signed default.
+## Data categories
 
-The ongoing collection notification and the research keyboard's status banner follow the app
-language. Researcher-authored study text still remains exactly as signed, including the study title
-shown after that localized notification heading.
+Depending on the signed study, the Data step can include:
 
-The interface also says some things without words: a check mark, a coloured dot, a row of five dots, a progress bar, a set of small drawn icons. The app draws all of these itself rather than taking them from an icon set, so this guide describes what each one looks like, and you can match it against the screen in front of you.
-
-Participant-facing prose lives in Android string resources: the main app resources are
-[`app/src/main/res/values/strings.xml`](../app/src/main/res/values/strings.xml) (English) and
-[`app/src/main/res/values-zh-rTW/strings.xml`](../app/src/main/res/values-zh-rTW/strings.xml)
-(Traditional Chinese), while a collector that owns its own participant surface keeps its strings in
-that module's corresponding resource directories. Anyone can inspect those files and check every
-label in this guide against them.
-
-## What matters most
-
-- Importing a study configuration collects nothing. Collection starts only after you consent, complete the access setup, and press Start study (開始研究).
-- **Before you are asked to consent, the app shows you every source the study switched on**, one row each, with a sentence describing what it records. The app writes that sentence, not the research team. Section 3 is that list.
-- **The consent screen shows you a fingerprint of the key the study was signed with, and asks you to check it.** For most studies the app cannot tell who published the study. That is ordinary, not a fault, and the fingerprint is what ties a study to a real research team. Section 2 shows the exact screen.
-- Data is encrypted and kept on your phone. It stays there unless you export and send it yourself, or the study you imported says it sends data automatically.
-- **Whether a study sends data automatically is shown to you before you consent.** If it does, the consent screen carries a block naming where it sends to, how often, and which networks it may use. If there is no such block, the study does not send anything. Section 2 shows you the exact screen.
-- A study that sends automatically sends the same encrypted package you would export by hand. Only the research team's own key can open it — not the company that runs the network, not whoever runs the receiving computer.
-- Automatic sending is part of the study, not a separate setting you can switch off on its own. Pausing and withdrawing stop collection, but data already collected is still sent afterwards. Deleting the local data is what stops that. Section 7 sets out exactly what each one does.
-- In a study that sends data automatically, your phone keeps its own copy too, so you can still export it yourself. If the space the study is allowed runs low, the phone may remove events the research team has already received. It never removes anything still waiting to be sent, and the app tells you when a removal has happened. Section 6 explains it.
-- You can pause, resume, or withdraw. You never have to explain the reason to the app.
-- You can export your data while the study is Collecting (收集中), Paused (已暫停), Completed (已完成), or Withdrawn (已退出), and you can export as many times as you like.
-- Exporting does not change the study's state and does not mean the research team has received anything. You choose whether and how to send the file.
-- After the study completes or you withdraw, you can permanently delete the study data on your phone. That does not delete export files you already saved elsewhere or already sent to someone.
-
-## 1. Install only a version you trust
-
-Use only the official installation source your research team gives you, and check that the app name and study description match what they told you. Do not install an APK from an unknown source, one that asks you to turn off Android security features, or one that asks for account passwords. This app does not ask for your passwords.
-
-A study configuration file usually ends in `.partcfg`. When you import one, the app checks the signature on the file, its Android platform target, the validity period, the minimum client build, and the full structure of the file. If any check fails, the app stops. It does not fall back to a permissive mode and it does not collect anything. If that happens, ask your research team for a correct file rather than trying to work around it.
-
-That signature check tells you the file has not been altered since it was signed. It does not, on its own, tell you who wrote it — the next section explains what the app shows you instead, and what you can do about it.
-
-**A released app has no demo study.** The only thing it can run is a configuration a research team signed and gave you. If you see a Load demo study (載入展示研究) button under Choose a study file (選擇設定檔), you are running a development build, not a release. That study's keys are public, so anyone can read what it collects — see [demonstration keys and study](../researcher-tools/examples/README.md). Do not use it for anything real about yourself.
-
-## 2. Import and read
-
-The setup is five steps, and the screen shows **one** of them at a time. The header holds the study title and, underneath it, a row of five dots telling you which step you are on. Everything else on screen belongs to the step you are reading.
-
-1. Open the app. Before any study is imported the header shows the app's own name, Particeps, and the panel below has one button: Choose a study file (選擇設定檔).
-2. Pick the `.partcfg` file your research team gave you, using Android's file picker. The header title changes to the study's own title.
-3. **Study.** The panel shows the study's purpose in the research team's own words, then three rows, each an icon and a value with no label. A head and shoulders is the research team's name, an envelope is their contact details, and a clock is how long the study runs. Read all four before you go on. Press Continue (繼續).
-4. **Data.** Every source this study switched on, one row each, with a sentence saying what it records and a second line saying what it does not. Section 3 goes through them. Press Continue (繼續).
-5. **Consent.** The research team's consent text, then two blocks the app writes itself: who signed the study, and whether it sends data automatically. Read all of it: the data, the purpose, the risks, the export, the withdrawal, and the deletion terms. Only if you understand it and want to take part, tick "I have read and agree to the data collection and export described above." (我已閱讀並同意上述資料收集與匯出方式。) and press Agree (同意).
-6. **Access.** Review one card for each Android capability the study needs. Every card says what
-   uses it; cards that need a system change provide a named button and, where Android requires
-   manual work, numbered instructions. Section 4 goes through them. Press Done (完成).
-7. **Start.** Press Start study (開始研究). This is the press that begins collection; section 6 describes what happens next.
-
-At every one of these steps you can stop. Closing the app after importing leaves the study sitting there, unstarted, with nothing collected. Withdraw (退出研究) sits at the bottom of every panel except the Data one, so you can leave from almost anywhere in the setup without starting.
-
-If the content does not match what the research team told you, if the contact details do not work, or if it asks for more data than you expected, stop and ask. Do not grant access first and sort it out later.
-
-Two of these presses are not the same kind of thing. Continue (繼續) on the **Study** step is what moves the study forward internally, from imported through verified to awaiting consent. Continue (繼續) on the **Data** step only turns the page, and the study's state does not change. Reading the list of sources and agreeing to it are one decision as far as the app is concerned, shown to you as two pages. One consequence is worth knowing: if you leave the app while you are on the Consent page and come back, you land on the Data page again rather than on the checkbox.
-
-### If you were given a link or a QR code
-
-Step 2 has a second form. Instead of sending you a file, a research team can recruit you with a link beginning `particeps://join/v1`, or with a QR code that holds one. Opening the link, or scanning the QR code and opening what it offers, starts the app, and the app fetches the study file itself from the address written inside the link.
-
-The link names the file it expects: the address to fetch it from, the exact contents of the file, and the fingerprint of the key it is signed with. The app fetches that address once, over an encrypted connection. It then checks that what arrived is byte for byte the file the link names, and that it is signed by the key the link names. If either check fails, nothing is imported. If both pass, the file goes through the same checks section 1 describes, and the setup carries on from the **Study** step exactly as it does for a file you picked yourself. Nothing is collected until you press Start study (開始研究).
-
-The app fetches the file once and never goes back for another. A link cannot change a study you have already imported, and a research team that needs to change anything has to sign a new file and give you a new link for it.
-
-A link is accepted only when your phone holds no study at all. A study that has completed or that you have withdrawn from but not yet deleted still counts, and so does a deletion that has not finished. When a link is refused for that reason the app shows the code `JOIN_ACTIVE_STUDY`, which reports the situation rather than a fault.
-
-Arriving this way also changes what checking the signer's fingerprint can prove. **Who signed the study**, below, explains how.
-
-### Where you are in the setup
-
-Under the study title, during setup, the app draws five dots left to right, joined by a line: Study, Data, Consent, Access, Start. A step you have finished is a filled check mark, the step you are on is a thick ring, and steps still ahead are faint thin rings. The line between them fills in as you go. The names are not printed, because the dots give the position and the panel below gives the content. A screen reader does announce the name of the step you are on. Nothing on this row is a button; it tells you how much of the setup is left.
-
-Once setup is over, the dots are gone for good and that same place shows the study's status instead. Section 6 describes it.
-
-### Who signed the study
-
-Above the agreement checkbox, the consent step shows a block headed Configuration signature (設定檔簽章). Beside that heading is a mark: a check mark if this build of the app has built-in trust for the signer, a solid red dot if it does not.
-
-Directly under the heading, on its own, is the key fingerprint: eight groups of four characters, such as `9D0D AE5A 0D20 B29F D642 942A 0E17 4AAE`. It is a short summary of the key the study was signed with, and a different key produces a different one. This is the line you compare.
-
-Underneath, the block says one of two things.
-
-Most studies show an instruction, then the reason for it in smaller grey type:
-
-> Check this against the fingerprint your research team published.
->
-> (請與研究團隊公佈的金鑰指紋核對。)
-
-> A signature shows the file has not been altered since it was signed. It does not show who wrote it.
->
-> (簽章證明設定檔在簽署後未被竄改，但不能證明是誰寫的。)
-
-**Nothing here is in red, and that is deliberate.** A study whose signer the app does not recognise is the ordinary case, not a fault — so the block reads as something for you to do, not as an alarm. Red in this app is reserved for a source that has actually stopped working. If the fingerprints do not match, or your research team never published one, that is when to stop and ask.
-
-**Seeing this is normal.** It is what the app shows for any study whose signer is not built into the app, which is most of them. It is not a warning that this particular study is fake. What it means is that the app cannot do this check for you, so you do it. Your research team should have given you the fingerprint in the study information sheet, the consent document, or wherever they recruited you. Compare the two. If they match, the file came from whoever holds that key. If they do not match, or you were never given a fingerprint, stop and ask your research team before consenting.
-
-**If you arrived by a link or a QR code, the fingerprint you were sent with it is not the one to compare against.** A `particeps://join/v1` link carries a signer fingerprint inside it, and the app refuses to import a file signed by any other key. The fingerprint on this screen is therefore the fingerprint that was in the link. Comparing the two shows only that the link agrees with itself: whoever composed the link chose both. To learn anything, the fingerprint you compare against has to reach you by a route the link did not — the study information sheet, the consent document, your research team's published page, or the team itself through details you already had.
-
-The other possibility is a version of the app built by an institution to run only its own studies. It shows:
-
-> This app trusts this signer.
->
-> (這個 App 內建信任此簽章者。)
-
-In that case the check has already been done for you, at the time the app was built.
-
-Nothing in the researcher name, contact details, or study description proves who wrote them — they are part of the file, so whoever signed the file chose them. The fingerprint is the part you can check independently. How the signing key travels inside the file, and how the fingerprint is derived from it, are in the [threat model](threat-model.md).
-
-### Your study codes
-
-The consent step also says whether the study is **Anonymous or pseudonymous** (匿名或假名研究) or **Personalized** (個人化研究). An anonymous configuration contains no code assigned by the research team. A personalized configuration shows the exact opaque code embedded in your signed file; compare it with the code the team gave you. The app never asks you to enter a name, email address, or phone number.
-
-Every import also creates a fresh random installation code. Importing the same configuration twice therefore produces two different installation codes. A personalized export contains both codes inside its encrypted body. Automatic upload headers contain neither code, nor the study or configuration identifier; they contain only bundle-level routing claims. Treat either code as linkable study data after decryption even though neither is required to be a name.
-
-### Whether the study sends data automatically
-
-The consent step always answers this, in a block above the agreement checkbox. A study that sends nothing says so, under a check mark:
-
-| Line | What it tells you |
-| --- | --- |
-| This study does not send data automatically (這個研究不會自動傳送資料) | Nothing leaves the phone on its own |
-| What it collects stays on this phone until you export it yourself. (資料只留在這支手機，直到你自己匯出。) | What it collects stays on this phone until you export it yourself |
-
-A study that does send data shows a block headed This study sends data automatically (這個研究會自動傳送資料) instead, marked with two arrows pointing opposite ways, and stating, in this order:
-
-| Line | What it tells you |
-| --- | --- |
-| To ⋯ (傳送對象：⋯) | The site the data goes to, shown as a host name such as `study.example.org` |
-| ⋯, ⋯ (⋯，⋯) | How often it tries — About every N minutes (約每 N 分鐘), About every N hours (約每 N 小時), or About every N days (約每 N 天) — then a comma, then Wi-Fi only (僅在 Wi-Fi 下) or Wi-Fi or mobile data (Wi-Fi 或行動網路) |
-| Only the research team's key can open what is sent. Neither the network it travels over nor the server that receives it can read the contents. | Only the research team's key can open what is sent; neither the network it travels over nor the server that receives it can read the contents |
-| A randomly generated code travels with the data so the team can tell participants apart. It contains no name and no account. | A random code is attached so the team can tell participants apart. It contains no name and no account |
-| Automatic sending is part of this study and cannot be switched off on its own. Pausing or withdrawing stops new collection, but data already collected and not yet sent still goes to the research team. | Exactly that, and section 7 sets out what each control does |
-
-The app builds this block from the signed configuration, not from the research team's written summary. It therefore describes what the app will actually do, even if the summary leaves it out. If it says something the research team did not tell you, that is a reason to stop and ask before consenting.
-
-Sending happens in the background. It does not need you to do anything, and your phone keeps its own copy, so you can still export by hand at any time. If the space the study is allowed runs low, the phone frees some by removing events the research team has already received; section 6 describes exactly what that looks like on screen.
-
-One detail the block states briefly and section 7 explains in full. Pausing and withdrawing stop *collection*, but data already collected and not yet sent still goes to the research team afterwards. The only thing that stops that is deleting the local study data, which is offered once the study has completed or you have withdrawn.
-
-## 3. What a study can collect
-
-The app starts only the collectors listed in that study's signed configuration. It cannot add others later without a new configuration that you import yourself.
-
-The **Data** step, step 2 of the setup, lists every one of them before you are asked to agree to anything. Each row is an icon, the source's name, sometimes the word Optional (選用), and one sentence about what it records.
-
-That sentence comes from the app, not from the research team. It is a template with that study's own settings filled into it, so two studies that sample at different rates do not read the same. No field in a configuration can change the wording. The [threat model](threat-model.md) explains why that is a protection and how far it reaches.
-
-The screen also names selected limits the implementation can guarantee, such as omitted battery identity or inference labels. Those short statements are not an exhaustive threat model.
-
-| Row | The sentence it shows |
-| --- | --- |
-| **App activity** (App 使用狀況) — a rounded square with a dot in the middle | When this app itself is opened and closed (這個 App 本身何時被開啟與關閉) |
-| **Motion** (動作) — a wave, two crests around a centre line | Movement of the phone, about **N** times per second or more (手機的移動，每秒約 **N** 次或更多) |
-| **Battery context** (電池情境) — opposing data arrows | Whole percentage, charging state/source, and power-save mode; not health, temperature, or hardware identity (整數電量、充電狀態與來源、省電模式；不含健康、溫度或硬體識別碼) |
-| **Time context** (時間情境) — a clock | Time-zone setting, UTC offset, daylight-saving state, and clock changes; not a location or travel claim (時區、UTC 偏移、日光節約與時鐘變更；不代表位置或旅行) |
-| **Phone rotation** (手機旋轉) — the motion wave | Raw three-axis rotation, about **N** times per second or more; no orientation or activity labels (三軸旋轉，每秒約 **N** 次以上；不含方向或活動標記) |
-| **Ambient light** (環境光線) — the app-shaped sensor mark | Raw light level within the configured interval and threshold; no environmental content (依設定間隔與門檻記錄原始照度；不含環境內容) |
-| **Proximity sensor** (接近感測器) — the connection arcs | Raw near/distance state within the configured interval and threshold; near/far transitions are recorded even below the distance threshold, and many phones report only near/far (依設定間隔與門檻記錄遠近／距離；遠近狀態切換不受距離門檻限制，且許多手機只能回報近或遠) |
-| **Connection type** (連線類型) — three rising arcs over a dot | Whether you are on Wi-Fi or mobile data, and whether it is metered (你目前是 Wi-Fi 還是行動網路，以及是否計費) |
-| **Data volume** (流量) — two arrows side by side, one up and one down | Total bytes your phone sent and received, every **T** (手機每 **T** 傳送與接收的總位元組數) |
-| **App and screen use** (App 與螢幕使用) — a phone outline with a short bar near its foot | Which apps open and close, and when the screen turns on, every **T** (每 **T** 記錄哪些 App 被開啟關閉、螢幕何時亮起) |
-| **Location** (位置) — a map pin, a teardrop with a filled dot inside | Where the phone is, about every **T**, after it moves at least **D** (手機所在位置，約每 **T** 一次，且移動超過 **D** 才記錄) |
-| **Keyboard touch** (鍵盤觸控) — a wide rounded outline with three dots in a row and a bar beneath them | How you touch the keys — position, timing, pressure — inside the research keyboard only (你按鍵的方式——位置、時間、力道——僅限研究鍵盤內) |
-
-The values written into those sentences:
-
-- **N** is how many readings per second the study asked for. If it asked for one, the English sentence reads "about once a second or more". **"or more" is not hedging.** Android treats a study's sampling rate as a request, not a limit, and a phone is free to deliver faster — several times faster on some devices. The rate on screen is a floor, not a ceiling.
-- **T** is an interval, written in the largest unit that stays exact: 30 s (30 秒), 15 min (15 分鐘), 2 h (2 小時), 1 day (1 天).
-- **D** is a distance in whole metres: 25 m (25 公尺).
-
-Optional (選用) beside a name means that source does not, by itself, make its Android access
-mandatory. If no required source shares the same access, you can leave it off: that source alone
-reports `ACCESS_UNAVAILABLE` on the collecting screen and every other source carries on. If an
-optional and a required source share one Android capability, the Access step shows one shared card,
-names both sources, and requires the capability because the required source needs it. A source
-without Optional needs all of its access granted before the study can start. Optional is not a
-separate on/off switch for a source: when its access is already granted, that source can run.
-
-The sentences are short because they are the summary. This is what each source actually puts in the file. The [data dictionary](data-dictionary.md) holds the exact field list for every source, including everything each one does not record; it is written against the same source code the app runs.
-
-| Source | What can be stored | Important limits |
+| Category | What it can contain | What it does not contain |
 | --- | --- | --- |
-| App activity | Lifecycle timings of this app's own screens | Not your use of any other app |
-| Motion | Raw x/y/z acceleration from your phone, with timing and an accuracy status | Can be used to study movement or posture, but the app does not label it for you |
-| Battery state | Whole percentage, charging state/source, and power-save mode | See the [data dictionary](data-dictionary.md) for what is left out |
-| Time context | Time-zone ID, UTC offset, DST state, and clock-change reason | A time-zone setting is not physical location or travel evidence |
-| Rotation | Raw x/y/z angular velocity, timing, and accuracy status | See the [data dictionary](data-dictionary.md) for what is left out |
-| Ambient light | Raw illuminance, timing, and accuracy status | Values vary by hardware |
-| Proximity | Raw distance/range and the phone's near/far interpretation | Many devices are binary; it does not prove presence or comparable distance |
-| Connection type | Wi-Fi/mobile/ethernet/VPN, whether the connection is validated/metered/roaming, bandwidth estimates | See the [data dictionary](data-dictionary.md) for what is left out |
-| Data volume | Total bytes and packets your device sent and received over Wi-Fi and mobile data during a time window | Coarse and possibly delayed |
-| App and screen use | Package names, app resumed/paused/stopped, screen, keyguard (lock screen), and boot/shutdown events | Android's own record of these can be delayed or incomplete |
-| Location | Latitude and longitude, source time, accuracy, speed, altitude, bearing, and a mock-location flag | Can be inaccurate or have gaps, depending on your phone and surroundings |
-| Keyboard touch | Position within a key, timing, pressure, touch size, orientation, tool type, and key category | Does not store the actual characters or text, but the touch pattern itself still carries privacy risk |
+| Particeps app activity | Lifecycle of Particeps’ own screens | Activity in other apps |
+| Motion | Accelerometer or gyroscope samples | Audio, camera, or inferred activities |
+| Nearby light or distance | Ambient-light or proximity sensor readings | Images or nearby-device identities |
+| Battery | Charge level, charging state, and power-saving state | Battery serial number |
+| Time context | Time zone and offset snapshots | Location inferred from the time zone |
+| Connection state | Wi-Fi/mobile/ethernet/VPN flags and coarse link properties | SSID, BSSID, addresses, destinations, DNS names, URLs, or content |
+| Data volume | Device-wide network accounting over bounded intervals | Per-app destinations or packet content |
+| App and screen use | Android usage-history events such as package resume/pause and screen state | Activity class names, screen contents, or an accessibility-service feed |
+| Location | Android fused-location fixes when explicitly requested | Photos, nearby-device scans, or inferred visits added by Particeps |
+| Research keyboard touch | Timing and geometry of touches on the optional Particeps keyboard | Key identity, typed text, clipboard, password-field touches, or another keyboard’s input |
 
-The same names and the same icons come back on the collecting screen, one row per source. Internal identifiers such as `accelerometer.v1` are not shown to you anywhere in the app; they exist inside the exported file and in what your research team works with.
+The exact requested categories are always listed before consent. Particeps does not silently add a
+new category after the study starts.
 
-## 4. Access setup
+## Android access
 
-You cannot start until every required item is granted. Notifications are required for every study.
-For collector access, an item is required when at least one required source needs it. An item used
-only by optional sources can be left off: those sources report `ACCESS_UNAVAILABLE` on the
-collecting screen, and the other sources keep working.
+The Access step shows one existing card for each ordinary Android capability the study needs. A
+required item must be satisfied before **Done**, **Start study**, or **Resume** succeeds. An item
+used only by optional categories can remain unavailable; those categories stay off while the rest
+of the study continues.
 
-The Access step shows one card per Android capability, not one card per source. A shared capability
-therefore appears once: for example, Data volume and App and screen use share a single Usage access
-card. Each card shows the capability name, its status, and a **Used by** (使用這項設定) list naming
-every source or study feature that depends on it. Optional (選用) beside an owner means that owner
-does not make the shared capability mandatory. Optional beside the card title means that none of
-its owners does.
+Possible access includes:
 
-| What the card shows | What it means |
+- notifications, so Android can show the neutral ongoing research notification and study prompts;
+- Usage access for device network accounting or Android app/screen usage history;
+- fine and background location plus location-services readiness, only for a location study;
+- selecting the optional Particeps research keyboard, only for a keyboard-touch study;
+- sensor or hardware availability required by the selected data categories.
+
+Android owns permission dialogs and Settings screens. Particeps checks the result again after you
+return. Denying required access leaves the study stopped.
+
+### Studies that may adjust App transfer speed
+
+Some studies may use Android’s local VPN feature to adjust how quickly some apps transfer data.
+For those studies, the existing Access step includes this fixed explanation near **Done**:
+
+> This study may use a VPN on this device to adjust how quickly some apps transfer data. Traffic
+> stays on your usual network and is not sent through a Particeps server. Particeps only checks
+> whether the study’s apps are installed; it does not save or upload your installed-app list. On
+> Android 17 or later, local-network access is used only to forward local connections those apps
+> initiate; Particeps does not discover local devices. Another VPN can interrupt this function; if
+> that happens, the study pauses.
+
+Pressing the existing **Done** or **Resume** control opens Android’s local-network permission when
+the operating system requires it, followed by Android’s standard VPN-consent screen when consent
+is not already valid. Particeps does not add a VPN setup screen, card, status dashboard, history,
+or second ongoing notification. Android’s own VPN icon and consent surface are unavoidable system
+UI.
+
+If the local-network permission is denied or revoked, VPN consent is revoked, the VPN is replaced,
+or Particeps can no longer verify safe forwarding, the study pauses. The app does not identify or
+guess the name of another VPN. Resume repeats the required Android checks.
+
+Particeps does not record packet contents, destinations, DNS names, or an installed-app inventory.
+Research traffic continues over the phone’s ordinary underlying network and is not sent through a
+Particeps gateway.
+
+## While the study is active
+
+After Start succeeds, the five setup indicators are replaced by the same compact status area used
+by current Particeps studies. The participant-facing states are:
+
+- **Collecting** — the study is active and verified resources may admit data;
+- **Paused** — no new collector data is admitted until you explicitly resume;
+- **Completed** — the configured study duration has ended;
+- **Withdrawn** — the study has ended permanently at your request.
+
+The screen continues to provide **Pause**, **Resume**, **Complete**, **Withdraw**, and **Export** only
+where those actions are valid. It lists the approved data categories and current study state; it
+does not add a participant-facing research-control dashboard.
+
+The configured duration ends collection automatically. New data is not accepted after that
+boundary even if Android runs the background completion work later, and completion does not wait
+for another data category to report something.
+
+Android requires a foreground-service notification while continuous work is active. Particeps uses
+one neutral research notification even when the study also uses the local VPN. It does not put the
+study title, target apps, treatment state, or internal diagnostics in that notification.
+
+Study notifications and native surveys can contain researcher-authored wording. A posted
+notification does not prove that you saw it. A survey stores no answer draft; a final submission is
+validated and recorded once. Closing an unfinished survey does not submit it.
+
+## Pause, resume, completion, and withdrawal
+
+**Pause** first stops new data admission, finishes work already accepted up to the boundary, and
+then stops the study resources. Once the UI shows **Paused**, the app does not backfill the paused
+interval. **Resume** checks required access again and starts a new verified collection interval.
+Resume is always a participant action; Particeps does not automatically continue after a reboot,
+process loss, or safety failure.
+
+After a phone restart, Particeps discards the interval it could not verify and does not retrieve
+missed App-use or network history. Resume may remain unavailable until the phone can establish a
+trustworthy current time. You can still choose **Complete** or **Withdraw** while the study is
+paused.
+
+**Complete** ends collection and keeps already collected encrypted data available for export.
+**Withdraw** permanently ends the study but likewise preserves already collected encrypted data
+until you delete it. Neither action sends an explanation to the researcher.
+
+If Android access, storage, a required collector, or a continuous study function becomes unsafe,
+Particeps closes admission and moves to the same generic paused experience. The participant UI
+does not expose internal failure names. Check the ordinary Access step, then use **Resume**; if the
+problem persists, contact the research team.
+
+## Export and upload
+
+**Export encrypted data** creates a `.partexp` bundle encrypted to the researcher public key in the
+signed configuration. Particeps cannot decrypt it. A manual export contains the complete encrypted
+research records still retained on the phone through the boundary captured when export began.
+
+If the signed study includes automatic upload, the app sends immutable encrypted chunks to that
+configured HTTPS endpoint. A delivered prefix can be removed locally only after an exact receipt
+confirms the same encrypted bytes and complete range. Pausing stops collection but does not
+erase existing encrypted data or cancel delivery that the signed study already disclosed.
+
+The researcher may be able to link a personalized dataset through an opaque participant code in
+the signed study. Particeps itself has no account, advertising ID, contacts integration, or device
+identity field.
+
+## Delete local data
+
+After completion or withdrawal, **Delete local data** removes the signed configuration, encrypted
+study data, pending upload material, and cached export metadata for that
+study. Android system backups are disabled for these files.
+
+Deletion is permanent. Export anything you want to keep before confirming it. The app does not
+silently delete an incompatible or unreadable study; the existing generic recovery flow requires
+your confirmation before destructive reset.
+
+## Troubleshooting
+
+| What you see | What to do |
 | --- | --- |
-| A check mark | Android currently reports the capability as granted or available |
-| A solid red dot | Required, and not satisfied yet. You cannot finish setup, start, or resume until it is |
-| A hollow ring, with Optional (選用) beside the title | Not satisfied, but every owner is optional, so the study can run without it |
-
-The whole card is not a control. When there is something you can do, use its explicit Allow
-(允許), Open Android settings (開啟 Android 設定), or Choose keyboard (選擇鍵盤) button. Special Android settings
-also include app-written **Manual steps** (手動操作步驟) in English or Traditional Chinese. Follow
-those steps on the Android screen, then return to Particeps; the app checks the real setting again
-automatically. Those instructions and buttons are fixed by the app. Neither a study file nor a
-collector can insert arbitrary instructions or open a different screen.
-
-Some cards depend on an earlier one. Precise location must be granted before the Background
-location button appears, and the research keyboard must be enabled before the keyboard picker can
-be opened. A waiting card says which item to complete first. When every required card has a check
-mark, press Done (完成). The app checks required access again at Done, Start study, and Resume, so a
-grant removed in Android settings cannot be bypassed by an older on-screen state. While a study is
-running, the foreground service waits 25 seconds between complete access checks. A check of the exact
-Location request can take up to another five seconds, so a change made just after a completed check
-normally has a 30-second code-path budget. Android can delay background execution, so this is not a
-strict wall-clock guarantee. When a required loss is detected, Particeps closes study-wide event
-admission, records the closed reason—without a study or participant identity—in a private safety
-marker, and pauses collection. If saving the pause or stopping a source does not finish, Android
-background work carries the same reason and keeps retrying even after the foreground service stops;
-recovery checks both records before any source can restart. They are removed only after the pause and
-cleanup succeed. The relevant Access cards replace the collection controls, and the header
-still says Paused rather than sending you back through setup. Losing an optional-only capability
-closes the separate event gate for only its sources before pausing them; the other sources keep
-working, and an affected gate reopens only after its source successfully starts again.
-
-### Notifications (通知)
-
-Notifications are required in every study, including one with no scheduled study activities. The
-card's Used by line reads **Study status and ongoing collection; scheduled activities when
-configured** (研究狀態與持續收集通知；設定排程活動時也用於活動通知). Press Allow (允許) for Android's notification
-permission dialog. Particeps also verifies that Android allows notifications for the app and that
-the ongoing-collection and daily-status channels are enabled. When the study actually contains
-scheduled activities, it checks that channel too. If a required channel is off, the card opens the
-app's notification settings and names the channels to restore.
-
-Notifications are used for scheduled study activities when the study has them, the notification
-shown while collection is running, and a once-a-day reminder of where the study stands. Activities
-use Android's background work system, which is not an exact alarm: battery saving, Doze, or system
-scheduling can delay them.
-
-The daily reminder says either that the study is still collecting, or that it is paused and since when. It exists for the second case: a pause changes nothing else on the phone, so a study you meant to resume can sit stopped for weeks without anything saying so. It is a quiet notification, with no sound. It names only Particeps and the collection state, never the study; someone glancing at your lock screen can still learn that this phone uses Particeps and whether collection is running or paused. It stops when the study finishes or you withdraw. Turning off a required notification channel makes Particeps pause the study at its next access check rather than continue without that status surface.
-
-### Sensor hardware (感測器硬體) and basic network state
-
-Accelerometer, gyroscope, ambient-light, and proximity items are hardware checks, not permission
-dialogs, so their cards have no action button. A required source blocks enrollment when its sensor
-is absent; an optional source remains off. The card explains that there is no setting or substitute
-that can enable missing hardware. Connection type uses only Android's ordinary
-network-state permission and has no Access card of its own.
-
-### Usage access (使用情況存取權)
-
-Data volume and app and screen use need "Usage access". If both are enabled, the single card names
-both under Used by. That is a special Android setting, and it lets an app see which apps have been
-in the foreground and how much data the device has used. Press Open Android settings
-(開啟 Android 設定), find and
-open Particeps, turn on Permit usage access, and return to Particeps. Android controls that screen.
-
-You can turn it back off later. The affected source then stops receiving data and reports a problem. It does not invent replacement values for the gap.
-
-### Precise location (精確位置), Android location services (Android 定位服務), and Background location (背景位置)
-
-Android handles precise location and background location separately. These cards appear only if the
-study lists a Location source. First press Allow (允許) on Precise location and grant
-precise rather than approximate location. Until that is done, Background location says to complete
-Precise location first and has no action button.
-
-After precise location, the Android location services card checks more than the phone-wide location
-toggle. It asks Android whether the phone can satisfy the exact accuracy, interval, batching, and
-minimum-distance request in the signed study. If Android says a setting must change, press Open
-Android settings (開啟 Android 設定), turn on Use location and the required location-accuracy
-services, then return. If Android reports that the request cannot be satisfied or cannot be checked,
-the card blocks a required Location source and tells you to contact the research team; Particeps
-does not guess that a degraded provider is equivalent.
-
-Once precise location and the configured location request are ready, press Open Android settings
-(開啟 Android 設定) on Background location. The app opens Android's **App info** for Particeps; it
-does not try to request background location through a second permission pop-up. Open Permissions,
-then Location, choose the background option Android displays on that phone (often **Allow all the
-time** in English), and return to Particeps so it can check the setting. Continuous background
-collection is accompanied by a visible
-foreground-service notification, the kind Android requires an app to show while it does ongoing
-work. If optional Location access is restored during a run, Android first confirms that the service
-has added its Location type and only then does the Location source restart. If that access is removed,
-Particeps first closes Location event admission and pauses the source, then removes the Location type
-from the service. You can decline optional location, or stop it later with pause or withdrawal.
-
-### Enable the research keyboard (啟用研究鍵盤) and Select the research keyboard (選擇研究鍵盤)
-
-The research keyboard is an Android input method (a keyboard app, the same kind of component as any
-third-party keyboard you might install). Turning it on takes two deliberate actions from you. First,
-press Open Android settings (開啟 Android 設定), open Manage on-screen keyboards, enable Research keyboard, confirm
-Android's warning, and return. Only after Particeps confirms that step does Choose keyboard
-(選擇鍵盤) appear for the second card; press it and choose Research keyboard in Android's picker.
-
-Only touches on this keyboard's own surface are visible to it. The app does not use an Accessibility Service — the Android feature that can observe activity across all apps — to watch touches anywhere else. Read section 5 before you enable it.
-
-## 5. Important warning about the research keyboard
-
-Research events from the keyboard do not include the actual key identity, the text you submitted, the surrounding text, the clipboard, or suggestions. Some fields are excluded: a password field, or a field an app marks as private or as no-personalized-learning. Touch collection is switched off for that field, and the keyboard shows "Touch capture disabled for this field" (「此欄位已停用觸控資料收集」).
-
-**"No text" does not mean "no risk."** The key category, the relative position of your touch, and the timing can still reveal patterns in what you type. A skilled analyst working with such data can infer more than a list of field names suggests. Third-party apps also sometimes fail to mark sensitive fields correctly, and when that happens, the field is not protected by the rule above — the app has no way to detect the mistake.
-
-If you are not comfortable with this, any of these is a legitimate choice:
-
-- Do not enable the optional research keyboard.
-- Switch back to your normal keyboard before typing anything sensitive.
-- Pause the study.
-- Withdraw from the study and contact the research team.
-
-The research keyboard is a basic English-letter QWERTY layout. It is not a password manager and not a full multilingual everyday keyboard. Do not rely on it as your only keyboard.
-
-## 6. Starting a study
-
-On the last setup step the fifth dot is the current one and the panel holds two things: Start study (開始研究) and Withdraw (退出研究). Nothing is collected in this state, and the app prints no state name for it — during setup the header shows your position, not a status. When you press Start study (開始研究), Particeps first asks Android to start the visible foreground service and waits up to five seconds for Android to confirm its notification and service types. No source starts before that confirmation; if it fails or times out, the study remains not running. Resume uses the same ordering.
-
-After that confirmation succeeds and the study starts, the five dots are replaced, permanently, by a status line, and the panel below becomes the collecting screen.
-
-While a study is collecting:
-
-- Continuous sources run under a visible research foreground service, so the ongoing "Research collection active" notification is present the whole time.
-- If Android cannot keep an acknowledged foreground service while changing its service type, the
-  app closes all event admission and pauses rather than collecting without that visible host. A
-  failed Location upgrade may leave unrelated sources running only when Android confirms a safe
-  non-location foreground-service fallback.
-- Signed interventions are scheduled as one-time, repeating-interval, or daily local-time activities. A schedule may count calendar time or only time spent actively collecting.
-- When the study's duration is reached, the system completes a collecting or paused study for you.
-  Battery-saving scheduling can delay when that completed status appears, but every observation is
-  checked against the exact same-boot Start deadline, so the delay cannot extend the data window.
-
-After you restart your phone, a study that had really been Collecting (收集中) is first recorded as
-Paused because of the device reboot. Particeps keeps every source closed while it validates the
-encrypted study, its signed configuration, the absolute deadline, required access, WorkManager, and
-the exact foreground-service type. It uses Android network time when available, or wall time only
-while Android's automatic time setting is enabled. If all checks succeed before the deadline, it
-records an automatic recovery and resumes collection. Reboot and repair waiting time still count
-toward the study duration, but are not counted as confirmed active-collection time. A study you
-paused yourself remains paused and is never automatically resumed.
-
-If a check cannot be completed, a generic recovery notification appears without a study name or
-diagnostic detail on the lock screen. Tapping it opens the repair screen. You can copy its safe
-diagnostic code and try again. The destructive reset option first warns you that old local data will
-be deleted. If the signed study file is still readable and within its import window, Particeps shows
-the study, consent, and access steps again and creates a new participant instance with the full
-duration. Otherwise it returns to the study-file chooser. Reset has no undo. If you force stop the
-app, Android may block its work until you open it again.
-
-### Scheduled activities and surveys
-
-Each scheduled activity has a durable occurrence identity. Restarting the phone, reopening the app, changing time zone, pausing, or recovering WorkManager reschedules that same occurrence instead of creating another one. Android can deliver a notification late, but the app records separately when it was scheduled, posted, opened, submitted, or expired. A notification being posted is not evidence that you saw it.
-
-Some studies use signed random local-time windows. The phone chooses an instant locally and stores
-it before scheduling; a retry or reboot does not draw a new time, and the research team cannot send
-a remote trigger. The configuration fixes the windows, limits, and minimum spacing.
-
-Tapping a survey notification opens exactly that occurrence. Surveys are native app screens with screen-reader labels, progress, required/optional indicators, and four answer types: short text, numeric scale, one choice, or multiple choices. Closing before submission stores no research answer or draft. Reopening returns to the same unanswered survey. Submission requires confirmation and is atomic: after one successful submission, the answer is read-only and cannot be edited or submitted again, even after restart or competing taps. An expired occurrence cannot be submitted.
-
-### The status line
-
-Under the study title, where the dots used to be, there are three things:
-
-1. **A coloured dot.** Teal while the study is Collecting; grey for every other status.
-2. **The status name**, in bold: Collecting (收集中), Paused (已暫停), Completed (已完成), or Withdrawn (已退出). These four are the only status names the app ever prints.
-3. **How long it has been**, since collection first started: 5m (5 分) under an hour, 2h 13m (2 小時 13 分) under a day, 3d 4h (3 天 4 小時) beyond that. It refreshes about every half minute.
-
-That third figure is time **since the study first started**, not time spent collecting: it keeps counting while you are paused. Once the study is completed or withdrawn it stops, so what you are left looking at is how long the study ran from first start to end. A study you withdrew from before ever starting has no such figure, so the line is just a grey dot and Withdrawn (已退出).
-
-### The collecting screen, top to bottom
-
-One panel, in this order: the sources, the counter, the controls, export, delete if the study has ended, withdraw, and a chevron.
-
-**The sources.** One row each, in the order the study lists them: a coloured dot, the source's icon, and its name — the same names and icons as the Data step in section 3. Teal means it is collecting, grey means it is stopped or paused, red means it needs your attention.
-
-A source that is behaving gets no words, only its dot. When one needs attention, **a raw code appears in red at the end of its row**. It is `ACCESS_UNAVAILABLE` when the access it needs is not granted, or a code such as `STORAGE_WRITE_FAILED`, `USAGE_ACCESS_REVOKED`, or `NETWORK_STATS_QUERY_FAILED` when something else went wrong. The app does not translate these or soften them, in either language. They are for quoting to your research team, and they contain none of your collected data.
-
-**The counter and the sending bar.** Under the sources is the number of events recorded and encrypted so far, across all sources, written as 1,234 events (1,234 筆).
-
-If the study sends data automatically and at least one event exists, the right-hand end of that same line shows 1,200 sent (已送出 1,200). That is how many of those events the research team has confirmed receiving, and a bar underneath fills in the same proportion. An empty bar means nothing has been confirmed yet; a full bar means everything collected so far has arrived. In a study that does not send automatically, there is no bar and no sent figure.
-
-When a send attempt fails, a code in red replaces the sent figure:
-
-| Code | What it usually means |
-| --- | --- |
-| `UPLOAD_TIMEOUT` | The connection was too slow or stopped responding |
-| `UPLOAD_HOST_UNRESOLVED` | The phone could not look up the address, often because it has no working internet connection |
-| `UPLOAD_CONNECT_REFUSED` | Nothing accepted the connection at that address |
-| `UPLOAD_TLS_HANDSHAKE_FAILED` or `UPLOAD_TLS_FAILED` | The encrypted connection could not be established |
-| `UPLOAD_INTERRUPTED` | The attempt was cut short before it finished |
-| `UPLOAD_IO_FAILED` | The connection broke partway through |
-| `UPLOAD_HTTP_<status>` | The receiving server answered with an error, for example `UPLOAD_HTTP_503` |
-| `UPLOAD_FAILED` | Anything else |
-
-**A send failure does not stop collection.** The study keeps collecting and your phone keeps the
-staged encrypted package. Some failures are retried, such as a connection that dropped or a server
-that was busy. Others are recorded as a terminal delivery error instead of being retried forever,
-and the research team has to correct its study or receiver setup. The app does not mark those
-events sent or silently discard them. Which answers from the receiving server are retried, and
-which are final, is set out in the [Protocol v1 contract](../protocol/v1/README.md).
-
-You do not need to interpret the code. If one is still on screen after several days, quote it to your research team as it appears; it tells them where the attempt failed and contains none of your collected data.
-
-**The controls.** While the study is collecting, Pause (暫停) fills its own row; while it is paused, Resume (繼續收集) takes its place. Once the study is completed or withdrawn, neither is there. Below it, Export encrypted data (匯出加密資料) is always available. Delete local data (刪除本機資料) appears only after the study is completed or withdrawn. Withdraw (退出研究) is last, and is there for as long as you have not already withdrawn. Section 7 covers all of them.
-
-**The chevron.** At the very bottom, a small arrowhead pointing down, centred, with nothing beside it. Tap it and the technical identifiers unfold above it; the arrowhead flips to point up, and tapping again folds them away.
-
-### The technical identifiers behind the chevron
-
-Four lines, each a label and a value:
-
-- Configuration (設定) — the configuration's identifier.
-- Consent document (同意書) — the version of the consent text you agreed to.
-- Signature (簽章) — the signer's fingerprint, the same one you compared on the consent step.
-- Last export (上次匯出) — only after you have exported at least once, as 1234 events · a2c3f1b90de4 (1234 筆 · a2c3f1b90de4).
-
-All of it is for telling your research team exactly which study and which file you have. Note that these are only reachable **after** setup is over: during setup, the fingerprint on the consent step is the only identifier on screen.
-
-### When space on your phone runs low
-
-Every study is allowed a fixed amount of space on your phone, set in its configuration. In a study that sends data automatically, the phone makes room when that allowance is nearly full, by removing the oldest events the research team has already confirmed receiving. Two things are always true:
-
-- Nothing that has not yet been sent is ever removed. If there is nothing removable, the study stops collecting and reports a storage problem instead, which you can see on the collecting screen.
-- Nothing is removed quietly. When it has happened, a line appears under the counter: The first N events have been sent and removed from this phone. A later export will not include them. (前 N 筆已傳送並從手機移除，之後的匯出不會包含這些事件。)
-
-Many studies never reach that point and keep everything until you delete it. When it does happen, those events are not lost from the study — the research team already has them. What changes for you is that an export you make afterwards covers only the events still on the phone, starting from the point that message names. If you want your own copy of everything, export before that happens and keep the file.
-
-## 7. Staying in control
-
-You can use these controls at any time, for any reason. The app does not ask why and does not record a reason.
-
-In a study that sends data automatically, this is what each control does to the sending:
-
-| Control | Collection | Automatic sending |
-| --- | --- | --- |
-| Pause (暫停) | Stops until you resume | Continues, for data collected before the pause |
-| Withdraw (退出研究) | Stops permanently | Continues until everything already collected has been sent, then stops on its own |
-| Delete local data (刪除本機資料) | Already stopped | Stops immediately; anything not yet sent is destroyed with the rest |
-
-Duration completion or withdrawal does not strand data the research team was already owed. The app keeps sending what it collected before collection stopped, and gives up scheduling once there is nothing left. If you would rather it not be sent, delete the local study data. That is offered once the study has completed or you have withdrawn, and it removes what has not gone out yet.
-
-### Pause and resume
-
-When you press Pause (暫停), the app takes a pause boundary, stops the sources, closes their event gates, waits for events already admitted before that boundary, and then saves the paused state. If a source cannot stop cleanly, the app records a safety pause and keeps retrying cleanup instead of reporting an ordinary participant pause. Once the status line shows Paused (已暫停), no new study events are accepted for the period you are paused. The line under it tells you when the pause started and how long it has lasted. Data already collected stays on your phone, encrypted. The ongoing notification and any visible scheduled-activity notification go away, and the daily reminder starts saying you are paused instead. A survey cannot be opened or submitted while paused.
-
-Pressing Resume (繼續收集) starts a new collection interval. Data volume and app and screen use are not backfilled: the app does not go back and collect what happened while you were paused. Calendar time and scheduled-activity availability still pass during a pause, so the app expires missed activities and reconciles any remaining ones when you resume.
-
-### Withdraw
-
-Withdraw (退出研究) is available at every stage after import except the Data step of the setup, including before you have started collecting. It stops collection permanently and moves the study to Withdrawn (已退出). The confirmation dialog is headed Withdraw from this study? (確定退出研究？) and says: All collection stops permanently. You can still export what was already collected, until you delete it. (所有收集會永久停止；刪除前仍可匯出既有資料。)
-
-Withdrawing does not automatically delete your data, so that you keep the choice between exporting first and deleting straight away.
-
-**Withdrawal does not recall copies that already left your phone.** It does not retrieve files you already saved elsewhere, and it does not delete any copy the research team already received — whether you sent it yourself or the study sent it automatically. If you want the research side to delete your data, you have to ask them, using the contact details in the consent document. Whether and how they can do that is governed by that document and by their ethics approval, not by this app.
-
-## 8. Exporting, whenever you want
-
-Whenever the status is Collecting (收集中), Paused (已暫停), Completed (已完成), or Withdrawn (已退出), the screen shows Export encrypted data (匯出加密資料). The file it writes is encrypted with your research team's public key.
-
-1. Press Export encrypted data (匯出加密資料).
-2. Choose a location and file name in Android's file picker. The app suggests a name ending in `.partexp`.
-3. Wait for the app to report completion. It shows the code `EXPORT_COMPLETE` in a band under the header. The export's own record is behind the chevron at the bottom of the screen, as Last export (上次匯出) followed by the number of events and the first twelve characters of the file's SHA-256 digest. That digest is a fingerprint of the file's exact contents. The research team can compare it against the file they receive, to confirm nothing was altered or truncated in transit.
-4. Share the `.partexp` file only in the way your study's consent document approves.
-
-The export file is encrypted with the researcher public key contained in that study's signed configuration. An ordinary file manager cannot show you its contents, and neither can anyone else who does not hold the matching private key. Each export uses a fresh random encryption key.
-
-If you export while the study is still collecting, the app takes a consistent snapshot at that moment and then carries on collecting. A later export contains newer events, and normally repeats the older ones as well. That is the intended design, not a duplicate-file bug. The exception is a study that sends data automatically and has had to make room. Such an export covers only the events still on the phone, so it will not repeat ones that were already sent and removed. Section 6 describes the message that tells you this has happened.
-
-Exporting:
-
-- Does not set the status to "exported". There is no such status.
-- Does not pause, complete, or withdraw the study.
-- Does not delete anything from your phone.
-- Does not itself send anything to the research team; you choose whether and how to send the file. In a study that sends automatically, that sending is separate and carries on regardless of whether you ever export by hand.
-- Can be repeated as often as you like.
-
-If writing the file is interrupted or the destination runs out of space, the resulting file can be incomplete and undecryptable. Delete the incomplete file and export again.
-
-## 9. Permanently deleting local data
-
-Delete local data (刪除本機資料) is available only when the study is Completed (已完成) or Withdrawn (已退出). The confirmation dialog is headed Delete local data permanently? (永久刪除本機資料？) and says Encrypted events, study state, and the configuration are all removed. This cannot be undone. (加密事件、研究狀態與設定都會移除，且無法復原。) Press Confirm (確認) to go ahead or Cancel (取消) to stop. When it is done, the app shows the code `LOCAL_DATA_DELETED`.
-
-Confirming deletes:
-
-- The encrypted study configuration and state.
-- All local event segments.
-- The study's non-exportable key in Android Keystore. Some phones may protect it in hardware, but this app does not require or verify hardware backing. Once the key is gone, any leftover encrypted bytes cannot be read back.
-- The export receipt information currently held in the app.
-
-**This cannot be undone.** There is no recovery, no undo, and no backup inside the app. After deleting, you cannot export that study's data again, because the data no longer exists on your phone. If you want the research team to have your data, export and send it before you delete.
-
-Deletion does not touch `.partexp` files you already saved through Android's file picker. Those are ordinary files in whatever location you chose, and you have to delete them yourself. It also does not reach copies you already sent to anyone.
-
-Uninstalling the app or clearing its app data also destroys the local keys and data. If your intention is to formally withdraw from the study, use the app's withdrawal flow first, so the withdrawal is recorded, and tell your research team.
-
-## 10. Troubleshooting
-
-| Screen or situation | What to do |
-| --- | --- |
-| The interface is in a language you cannot read | Tap the globe at the top right of the header and pick a language; it is the same setting as Android Settings → Apps → Particeps → Language |
-| The configuration file will not import | Check the file, the client build/platform, and the study's validity period; do not modify the `.partcfg`, and contact the research team |
-| `JOIN_LINK_INVALID` after opening a link or QR code | The link is not a complete `particeps://join/v1` link. Nothing was fetched and nothing was imported; ask your research team to send the link again rather than retyping or editing it |
-| `JOIN_ACTIVE_STUDY` after opening a link or QR code | Not a fault: the phone still holds a study, so the link was not acted on. A study that has completed or that you have withdrawn from but not yet deleted counts, and so does a deletion that has not finished. Open the link again once the phone holds no study |
-| `JOIN_IMPORT_FAILED` after opening a link or QR code | The study file did not arrive intact or did not pass its checks: the fetch failed, what arrived was not the file the link names, it was not signed by the key the link names, or one of the checks in section 1 failed. Nothing was imported; quote the code to your research team |
-| `STUDY_IMPORT_FAILED` | The app's own record that an import did not finish, whether it came from a link or from a file. Nothing was imported and nothing already on the phone changed |
-| Check this against the fingerprint your research team published (請與研究團隊公佈的金鑰指紋核對) | Ordinary for most studies; compare the fingerprint on the Configuration signature (設定檔簽章) block with the one your research team published, and if you do not have one, ask before consenting |
-| The fingerprint does not match the one you were given | Do not consent. Contact your research team through details you already had, not details taken from the study screen |
-| A required Access card is not granted | Use the named button on that card and follow its numbered Manual steps, if shown. If it says to complete another item first, finish that prerequisite first. Return to Particeps so it can re-check Android. If you do not want to grant it, do not start |
-| An optional source shows `ACCESS_UNAVAILABLE` | The access it needs is not granted. Its source is paused and the other sources keep working. Particeps tries to restart it when Android reports the capability available; its event gate opens only if that restart succeeds, otherwise it stays off with a failure code. |
-| Motion sensor unavailable | The device has no compatible accelerometer; the app does not fabricate substitute data, so a study that requires it cannot start |
-| Gyroscope, ambient-light, or proximity sensor unavailable | The phone lacks that hardware; required collection cannot start and optional collection stays off. There is no substitute or inferred fallback. |
-| A source shows a red dot and any other code | Pause first, check that permission or special access, then try to resume; if it still fails, contact the research team and quote the code |
-| Data volume does not change in real time | Android's accounting is coarse and delayed, and the study sets how often the app polls; this is a normal limit |
-| There are gaps in location | Check location access, your phone's location services, and the research foreground service; indoors it can still be inaccurate |
-| A scheduled activity does not arrive on time | Check the notification permission and battery-saving settings; interventions use inexact background scheduling |
-| A survey says it expired or is unavailable | It cannot be submitted after its signed response window; contact the research team if the timing was unexpected |
-| Export fails | Check that the destination is writable and has enough space, and retry in another location; the study status does not change because of a failed export |
-| An `UPLOAD_…` code appears where the sent figure usually is | Collection carries on. Some failures retry automatically and others are final. Connect to Wi-Fi and charge the phone, then contact the research team and quote a persistent code |
-| Storage failure / paused | The app fails closed and stops accepting events; do not clear the app's data, contact the research team first, or export if you need to |
-
-When the app has something to tell you, it shows a short code in capital letters in a red band directly under the header, beside a solid dot. `STORAGE_WRITE_FAILED`, `CONFIGURATION_IMPORT_FAILED`, and `EXPORT_FAILED` are examples. Passing the code to your research team helps them diagnose the problem, and it contains none of your collected data. Two codes in that band are confirmations rather than problems: `EXPORT_COMPLETE` after an export finishes, and `LOCAL_DATA_DELETED` after a deletion. A third, `JOIN_ACTIVE_STUDY`, is a refusal rather than a fault: the phone already holds a study, so the link was not acted on.
-
-## 11. State reference
-
-A study moves through nine states internally, but the screen names only four of them. During setup you get your position in the five dots instead of a state name; once setup is over, the status line names the state.
-
-| Internal name | What you see | What it means for you |
-| --- | --- | --- |
-| `IMPORTED` | Dot 1 of 5, the Study panel | The configuration file has been read in; nothing is being collected |
-| `CONFIG_VERIFIED` | Dot 1 of 5, the Study panel | Signature, validity period, platform, client build, source list, and export key all checked, which confirms the file is unaltered rather than who wrote it; nothing is being collected |
-| `CONSENT_PENDING` | Dot 2 then dot 3 of 5, the Data panel then the Consent panel | You are reading what would be collected and deciding whether to take part |
-| `ACCESS_SETUP` | Dot 4 of 5, the Access panel | You are completing the required Android access |
-| `READY` | Dot 5 of 5, the Start panel | Waiting for you to press Start study (開始研究); nothing is being collected |
-| `RUNNING` | Collecting (收集中), teal dot | Sources can receive events; you can pause, withdraw, or export |
-| `PAUSED` | Paused (已暫停), grey dot | No new events accepted; you can resume, withdraw, or export |
-| `COMPLETED` | Completed (已完成), grey dot | Permanently stopped; you can export, withdraw, or delete |
-| `WITHDRAWN` | Withdrawn (已退出), grey dot | Permanently stopped; you can export or delete |
-
-Dots 2 and 3 are one state, not two. The app shows the sources and the consent text as separate pages of the same decision, and pressing Continue (繼續) on the Data page changes nothing in the study itself.
-
-While the app is still loading, that same place shows Starting up (準備中). It is not a study state. Once loading finishes with no study imported, the line is simply absent: the header is the app's own name and nothing else.
-
-There is no "exported" state. Your export history and the study's lifecycle are two separate things, and nothing you export changes where the study stands.
-
-If you need to describe your situation to your research team, the internal names in the left-hand column above are exactly the ones recorded inside an export file.
-
-## 12. If you tested an earlier version of this app
-
-If your phone has `v1.0.0-rc.5` or `v1.0.0-rc.6`, install the signed rc.7 APK directly over it. Do **not** uninstall the existing app first. Rc.5 established the current application ID and production signing certificate, so Android accepts rc.7 as an in-place update and preserves the study, consent, encrypted events, Keystore key, notification permission, and keyboard settings already owned by that app.
-
-Rc.4 and earlier are different. They use another application ID or signing certificate and cannot update directly to rc.7. They may sit beside the current Particeps app and bring no on-device study, consent, events, or export history across. **Ask your research team before uninstalling one of those older apps.** Uninstalling destroys its on-device key, after which anything not exported can no longer be read. Export first and tell the team which version produced the file. An rc.4 `.partexp` export already uses the current format and current tooling can read it; an rc.3-or-earlier pre-rename export requires matching pre-rename analysis tooling and is intentionally rejected by current tools. No current tool migrates either app's encrypted on-device state. [CHANGELOG.md](../CHANGELOG.md) records the exact release boundary.
-
-When moving from rc.4 or earlier, enable and select the research keyboard again because Android treats the current package as a different keyboard. An rc.5/rc.6→rc.7 in-place update keeps that Android setting. Section 4 describes the two setup steps if they are needed.
-
----
-
-Related documents: [researcher guide](researcher-guide.md), [system design](system-design.md), [threat model](threat-model.md), [data dictionary](data-dictionary.md).
+| Setup cannot finish | Open the existing Access step and satisfy every required item, or decline/withdraw if you do not want to grant it. |
+| Start or Resume returns to Paused | Recheck required Android access. A study that may adjust App transfer speed may also need local-network permission and Android VPN consent. |
+| Another VPN stops working or the study pauses | Android permits only one active VPN for the same phone user. Choose which VPN to use; Particeps will not resume the study automatically. |
+| A data category is unavailable | Check its Android access or hardware. Required categories stop the study; optional categories can remain off. |
+| A study notification or survey is late | Android background scheduling is best effort. Do not treat delivery time as proof that the participant saw it. |
+| Export fails | Keep the app data intact and retry with enough storage and a writable destination. The app never publishes a partial plaintext or partial encrypted export. |
+| Recovery asks for reset | Export information if the existing generic recovery flow offers it, then confirm only if you accept permanent removal of the incompatible local study. |
+
+For protocol-level field definitions, data quality, and interpretation limits, researchers should
+use the [data dictionary](data-dictionary.md), [Protocol v1](../protocol/v1/README.md), and
+[threat model](threat-model.md). Those documents intentionally contain implementation detail that
+this participant-facing guide omits.

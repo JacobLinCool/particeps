@@ -35,21 +35,39 @@ export function validConfiguration(
     duration_hours: 24,
     consent: { document_version: '2026-01', summary: 'Collect lifecycle test events.' },
     collectors: [
-      { id: 'app_lifecycle.v1', required: true, config: {} },
+      { id: 'app_lifecycle.v1', required: true, profiles: [{ id: 'continuous', config: {} }] },
       {
         id: 'location.v1',
         required: false,
-        config: {
-          interval_millis: 60_000,
-          minimum_interval_millis: 30_000,
-          maximum_batch_delay_millis: 300_000,
-          minimum_displacement_millimeters: 25_000,
-          priority: 'BALANCED'
-        }
+        profiles: [{
+          id: 'continuous',
+          config: {
+            interval_millis: 60_000,
+            minimum_interval_millis: 30_000,
+            maximum_batch_delay_millis: 300_000,
+            minimum_displacement_millimeters: 25_000,
+            priority: 'BALANCED'
+          }
+        }]
       }
     ],
     surveys: [],
     interventions: [],
+    automations: [
+      {
+        type: 'resource_binding', id: 'bind-app-lifecycle',
+        resource: { kind: 'collector', id: 'app_lifecycle.v1' },
+        cases: [{ condition: { type: 'study_session_active' }, profile_id: 'continuous' }],
+        default_profile_id: 'continuous'
+      },
+      {
+        type: 'resource_binding', id: 'bind-location',
+        resource: { kind: 'collector', id: 'location.v1' },
+        cases: [{ condition: { type: 'study_session_active' }, profile_id: 'continuous' }],
+        default_profile_id: null
+      }
+    ],
+    traffic_shaping: {},
     storage: { maximum_local_bytes: 1_073_741_824 },
     signer: { key_id: 'protocol-signer', public_key: SIGNING.publicKey },
     export: { researcher_key_id: 'protocol-export', hpke_public_key: HPKE.publicKey },

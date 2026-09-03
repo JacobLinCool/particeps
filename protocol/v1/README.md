@@ -20,8 +20,14 @@ exactly as on random bytes. The hostile corpus in this directory carries executa
 both. [CHANGELOG.md](../../CHANGELOG.md) records which release retired which spelling, and what
 that asks of someone who already installed one.
 
-The companion [`collector-catalog.json`](collector-catalog.json) is the closed-world collector and
-event schema. [`conformance-vectors.json`](conformance-vectors.json) and
+The companion [`event-source-registry.json`](event-source-registry.json) is the sole closed-world
+registry for collector and system sources, event identities, fields, operators, clock semantics,
+delivery, completeness, privacy, rate bounds, access, and collector profile schemas. Its exact
+meta-schema is [`event-source-registry.schema.json`](event-source-registry.schema.json).
+The generated language-neutral registry corpus under
+[`conformance/event-source-registry/`](conformance/event-source-registry/) binds the exact current
+JCS bytes/digest, semantic-projection digest artifact, and portable hostile mutations.
+[`conformance-vectors.json`](conformance-vectors.json) and
 [`join-link-vectors.json`](join-link-vectors.json) are the executable valid and hostile corpora.
 Start with these files; platform code must not define a second contract.
 
@@ -42,23 +48,72 @@ interpreted as described by RFC 2119 and RFC 8174.
 - Ed25519 and X25519 keys are raw 32-byte values encoded as unpadded base64url. Signatures are raw
   64-byte Ed25519 signatures encoded the same way in JSON. Tink JSON, protobuf keysets, X.509,
   PKCS#8, padded base64, and standard-base64 wire keys are invalid.
-- Every decoder is closed-world. An unknown member, enum, collector, payload type, platform, key
-  context, or framing byte fails the whole artifact.
+- Every decoder is closed-world. An unknown member, enum, event source, schema version, event type,
+  profile field, platform, key context, or framing byte fails the whole artifact.
 - Implementations MUST reject values before allocating from a claimed length. A complete
   `PTCEXP01` upload body is limited to 33,554,432 bytes (32 MiB).
 
 ## Signed configuration (`PTCCFG01`)
 
-The configuration is an Android-targeted, closed-world JCS object with `schema_version` equal to
-the JSON number `1`, `platform` equal to `"android"`, and `minimum_client_version` encoded as a
-canonical decimal string. Android and future iOS configurations may share `experiment_id`; they
-MUST use different `configuration_id` values and signatures. The Android client rejects every
-other platform.
+The configuration is an Android-targeted, closed-world JCS object with exactly
+`assigned_participant_id`, `automations`, `collectors`, `configuration_id`, `consent`,
+`duration_hours`, `expires_at`, `experiment_id`, `export`, `interventions`, `issued_at`,
+`minimum_client_version`, `platform`, `purpose`, `researcher`, `schema_version`, `signer`,
+`storage`, `surveys`, `title`, `traffic_shaping`, and `upload`. `schema_version` is the JSON number
+`1`, `platform` is `"android"`, and `minimum_client_version` is a canonical positive decimal
+string. Android and future iOS configurations may share `experiment_id`; they MUST use different
+`configuration_id` values and signatures. The Android client rejects every other platform.
 
 All configuration quantities are integral physical units. In particular,
 `location.v1.minimum_displacement_millimeters` replaces the former floating-point metre value.
-The collector portion of the configuration is defined by
-[`collector-catalog.json`](collector-catalog.json).
+Collector profiles and event-source identities are defined only by
+[`event-source-registry.json`](event-source-registry.json).
+All signed human-readable text length bounds count UTF-16 code units, matching JVM and ECMAScript
+`String.length`; an astral Unicode scalar therefore counts as two units.
+
+`collectors` is a sorted array of exact `{id, profiles, required}` objects. `profiles` contains
+1–64 exact `{config, id}` objects with unique IDs; `config` MUST match that collector source's
+registry-defined closed-world profile schema. `interventions` is a sorted array of reusable exact
+`{action, id, required}` one-shot notification or survey actions. An intervention never embeds a
+trigger. `traffic_shaping` is either `{}` (disabled) or exact `{profiles, target_packages}`;
+`target_packages` contains 1–64 sorted unique Android application IDs and `profiles` contains 1–64
+exact `{downlink_kbps, id, uplink_kbps}` objects. A directional cap is `null` or a JSON integer in
+1–1,000,000 kbps. `1 kbps` means 1,000 aggregate Layer-3 bits per second at the TUN boundary,
+including IP/transport headers and retransmitted packets observed there. A configuration declares
+at most 64 stateful resources in total, including the traffic-shaping actuator. `surveys` contains
+at most 128 survey definitions.
+
+`automations` is REQUIRED and may be empty only when the configuration declares no collector,
+intervention, or traffic-shaping resource. It contains at most 128 sorted unique definitions:
+
+- an occurrence automation is exact `{availability_seconds, cooldown, guard, id,
+  intervention_id, maximum_activations, trigger, type}` with `type: "occurrence"`;
+- a resource binding is exact `{cases, default_profile_id, id, resource, type}` with
+  `type: "resource_binding"`, an exact `{id, kind}` resource key, 1–16 ordered cases, and first-true
+  case semantics. `profile_id: null` means inactive. Every stateful resource has exactly one owner.
+
+The closed trigger set is `event_match`, bounded `sequence`, bounded `window_threshold`,
+`condition_rising_edge`, and `schedule`. Schedules are `one_time`, `interval`, `daily_local`, or
+`random_window`. The closed state-condition set is `study_session_active`, `event_latch`,
+`keyed_presence`, `held_for`, `elapsed_at_least`, bounded `window_threshold`, `all`, `any`, and
+`not`. Event matchers identify exact `{source_id, schema_version, event_type}` registry entries and
+carry only registry-authorized field predicates. `event_match`, sequence, and window evaluation
+MUST select `OBSERVED_RESEARCH_TIME` or `PRIMARY_SOURCE_TIME`; absence of a matched field makes
+every predicate false, including `ne`. Matcher arrays are OR, and reset/exit wins if the same event
+matches both sides. `in.values` has 1–64 typed-canonical, sorted, unique values. Window sums are
+exact integer arithmetic and only registry-authorized required integer fields may be summed.
+`STUDY_STARTED`, `STUDY_RESUMED`, and `STUDY_RUNNING` are audit-only lifecycle outputs and MUST
+NOT appear in an event matcher, sequence step, or window selector. Active-session behavior uses the
+durable `study_session_active` state condition; lifecycle output events are never fed back into the
+automation reducer.
+
+Conditions are limited to depth 8 and 64 nodes; sequences to 16 steps; windows to seven days and
+4,096 retained entries after applying the registry's enforced `E × ceil(W/P)` rate bound (and the
+sequence step multiplier); lifetime occurrence activations to 512. A collector used by any other
+automation MUST be required and remain non-inactive throughout the active study session.
+Self-disabling trigger sources, multiple resource owners, dependency cycles, unbounded sequence or
+window sources, unsupported feedback, arbitrary code, SQL, regular expressions, generic JSON
+comparison, and remote triggers are invalid before signing.
 
 The envelope is exactly:
 
@@ -178,86 +233,298 @@ Every deterministic vector and sealed fixture was regenerated rather than edited
 
 ### Authenticated document
 
-The decrypted bytes are one JCS `particeps-research-bundle-v1` object with exactly these root members:
+The decrypted bytes are one JCS `particeps-research-bundle-v1` object with exactly
+`bundle_id`, `bundle_kind`, `configuration`, `configuration_sha256`, `configuration_signature`,
+`event_source_registry_sha256`, `experiment`, `exported_at_utc_millis`, `format`, and `producer`.
+`format` is exactly `"particeps-research-bundle-v1"`; `bundle_id` and
+`configuration_sha256` repeat the authenticated outer identities; `bundle_kind` is
+`"manual_export"` or `"automatic_upload"`; `configuration` is byte-for-byte equivalent after JCS
+to the signed object; `configuration_signature` is exact `{signature, signer_key_id}`; and
+`event_source_registry_sha256` is the lowercase SHA-256 published in
+[`generated/event-source-registry.sha256`](generated/event-source-registry.sha256). `producer` is
+exact `{client_version, platform}` with a positive decimal client version and the signed platform.
 
-| Member | Type and rule |
-| --- | --- |
-| `format` | exactly `"particeps-research-bundle-v1"` |
-| `bundle_id` | the outer UUID as lowercase text |
-| `bundle_kind` | `"manual_export"` or `"automatic_upload"` |
-| `configuration_sha256` | the outer digest |
-| `configuration` | the exact signed configuration object; its JCS digest must match |
-| `configuration_signature` | exact `{signer_key_id, signature}` object; signature is unpadded base64url raw Ed25519[64] |
-| `producer` | exact `{client_version, platform}` object; version is a positive decimal string and platform matches configuration |
-| `exported_at_utc_millis` | canonical decimal string |
-| `experiment` | exact experiment snapshot object described below |
-
-The `experiment` object has exactly `assigned_participant_id`, `configuration_id`,
-`durable_through_sequence`, `event_count`, `events`, `experiment_id`, `first_sequence_number`,
-`last_sequence_number`, `next_sequence_number`, `participant_instance_id`,
-`retained_from_sequence`, `state`, `transitions`, and `uploaded_through_sequence`. All sequence and
-count values are canonical decimal strings. For a non-empty document,
-`event_count = last_sequence_number - first_sequence_number + 1`; event sequence numbers are
-strictly contiguous and cover that exact range. An automatic upload is never empty. For an empty
-manual export, `event_count` is `"0"`, `last_sequence_number = first_sequence_number - 1`, and
-`events` is empty.
+The `experiment` object has exactly `assigned_participant_id`, `commit_count`, `commits`,
+`configuration_id`, `durable_through_commit`, `evaluated_through_commit`, `event_count`,
+`experiment_id`, `first_commit_sequence`, `last_commit_sequence`, `lifetime_data_event_count`,
+`next_commit_sequence`, `participant_instance_id`, `retained_from_commit`, `state`, and
+`uploaded_through_commit`. All counts, watermarks, and sequences here are canonical decimal
+strings. `commits` contains a non-empty complete range;
+`commit_count = last_commit_sequence - first_commit_sequence + 1 = commits.length`, and the first
+and last entries carry those sequence values. `event_count` is the sum of the events in those
+commits; it may be zero. Export and retention MUST split only at commit boundaries.
 
 `state` is exactly one of `IMPORTED`, `CONFIG_VERIFIED`, `CONSENT_PENDING`, `ACCESS_SETUP`,
-`READY`, `RUNNING`, `PAUSED`, `COMPLETED`, or `WITHDRAWN`. `transitions` is an ordered array of
-exact `{from, reason, time, to}` objects. `from` and `to` are states. `time` has exactly
-`boot_session_id`, `monotonic_time_nanos`, and `wall_time_utc_millis`; the two times are canonical
-non-negative decimal strings and the boot-session ID is 1–128 UTF-8 bytes.
+`READY`, `ACTIVATING`, `RUNNING`, `PAUSING`, `PAUSED`, `COMPLETED`, or `WITHDRAWN`. Lifecycle
+history is represented only by typed `study_runtime.v1` events in the commit chain. The scalar
+state is a replay checkpoint, not a second history.
 
-Every transition reason has one normative destination:
+Each EngineCommit has exactly `commit_sequence`, `commit_sha256`, `committed_at`,
+`consumed_pending_input_sha256`, `events`, `input_kind`, `mutations`, `previous_commit_sha256`,
+`resulting_checkpoint_sha256`, `source_observations`, and `successor_projection`.
+`commit_sequence` is positive and contiguous across the exported range; commit 1 uses 64 zeroes as
+its predecessor, and every later commit names the preceding `commit_sha256`. `input_kind` is one of
+`SOURCE_OBSERVATION`, `LIFECYCLE_COMMAND`, `TIMER_WAKE`, `RANDOM_SELECTION`, `ACTION_RESULT`,
+`UPLOAD_ACKNOWLEDGEMENT`, `RESOURCE_RESULT`, `SAFETY_FAILURE`, or `RECOVERY`.
 
-| `reason` | Required `to` |
-| --- | --- |
-| `CONFIGURATION_SIGNATURE_VERIFIED` | `CONFIG_VERIFIED` |
-| `CONSENT_REVIEW_OPENED` | `CONSENT_PENDING` |
-| `CONSENT_ACCEPTED` | `ACCESS_SETUP` |
-| `ACCESS_PREFLIGHT_PASSED` | `READY` |
-| `PARTICIPANT_STARTED` | `RUNNING` |
-| `PARTICIPANT_PAUSED` | `PAUSED` |
-| `DEVICE_REBOOT` | `PAUSED` |
-| `AUTOMATIC_RECOVERY` | `RUNNING` |
-| `PARTICIPANT_RESUMED` | `RUNNING` |
-| `STUDY_DURATION_ELAPSED` | `COMPLETED` |
-| `PARTICIPANT_WITHDREW` | `WITHDRAWN` |
-| `REQUIRED_ACCESS_MISSING` | `PAUSED` |
-| `COLLECTION_HOST_FAILURE` | `PAUSED` |
-| `WORK_SCHEDULING_FAILURE` | `PAUSED` |
-| `COLLECTION_TEARDOWN_FAILURE` | `PAUSED` |
-| `STORAGE_FAILURE` | `PAUSED` |
+The reducer batch reconstructed from one SourceObservation or EngineCommit is an indivisible
+semantic boundary. It first consumes every ordered input into condition state, then evaluates the
+complete resource-binding vector and allocates desired generations exactly once. A transport or
+analysis replay may partition a stream only between these boundaries; it MUST NOT split one
+observation/commit or reconcile resources after an intermediate event. Consequently, a delayed
+foreground-enter/exit pair that ends in the previously applied profile creates neither a resource
+change nor an unapplied desired-generation increment.
 
-The legal state graph is `IMPORTED -> {CONFIG_VERIFIED, WITHDRAWN}`,
-`CONFIG_VERIFIED -> {CONSENT_PENDING, WITHDRAWN}`,
-`CONSENT_PENDING -> {ACCESS_SETUP, WITHDRAWN}`, `ACCESS_SETUP -> {READY, WITHDRAWN}`,
-`READY -> {RUNNING, WITHDRAWN}`, `RUNNING -> {PAUSED, COMPLETED, WITHDRAWN}`,
-`PAUSED -> {RUNNING, COMPLETED, WITHDRAWN}`, `COMPLETED -> {WITHDRAWN}`, and no transition out
-of `WITHDRAWN`. An empty history is legal only when `state` is `IMPORTED`. Otherwise the first
-`from` is `IMPORTED`, every later `from` equals the preceding `to`, each pair belongs to this graph,
-each reason has the destination above, and the final `to` equals `state`. A reader rejects the
-whole authenticated document when any one of these conditions fails.
+Reducer order is `RecordedEvent.sequence_number`, not manifest order, producer ordinal, or source
+time. In an ordinary commit, non-empty observation ranges follow `observation_sequence` order. In a
+pending-consuming resource barrier, manifests preserve admission and producer continuity as the
+eventful causal `NORMAL` observation first, followed by pre-drain `NORMAL` observations and then
+`BARRIER_FLUSH` observations. Their event ranges use the one intentional rotation: every eventful
+pre-drain/flush range first, in manifest order, and the causal range last. Zero-event coverage does
+not enter the reducer order. A reader MUST reject every other range permutation and MUST reject
+this rotation when `consumed_pending_input_sha256` is null.
 
-Each event has exactly `sequence_number`, `collector_id`, `payload_schema_version`,
-`observed_time`, `payload_type`, and `fields`. Sequence, `wall_time_utc_millis`, and
-`monotonic_time_nanos` are canonical decimal strings; `boot_session_id` is 1–128 UTF-8 bytes. The
-event's collector, schema version, payload type, field set, values, and encoded size must
-validate against the catalog. Unknown payloads do not become generic rows.
+Reducer-input reconstruction is closed by `input_kind` (runtime/audit events not listed here are
+side-effect evidence, not implicit inputs):
 
-Catalog `int32` payload values remain JSON strings and have one signed decimal spelling:
-`0|-?[1-9][0-9]*`. Leading `+`, leading zeroes, and `-0` are invalid; the parsed value must also fit
-signed 32-bit range and the field's catalog minimum / maximum.
+`study_runtime.v1` lifecycle output events—including `STUDY_STARTED`, `STUDY_RESUMED`, and
+`STUDY_RUNNING`—record the result of lifecycle reduction. They do not themselves reconstruct an
+event input and cannot create a second transition or automation match.
 
-Catalog `float32` and `float64` payload values are also JSON strings. Their exact decimal grammar
-is `[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)`. Empty or whitespace-padded
-values, hexadecimal/binary spellings, separators, `NaN`, and infinities are invalid. The parsed
-value must be finite, fit its declared precision, and satisfy the catalog bounds.
+- `SOURCE_OBSERVATION` carries an ordered collector-event batch, a single quality-gap input with
+  no collector event, or an empty post-commit barrier/coverage batch;
+- `LIFECYCLE_COMMAND` is side-effect-only and empty, or carries an optional collector-event prefix
+  followed by exactly one lifecycle input;
+- `TIMER_WAKE` is side-effect-only and empty, or carries an optional collector-event prefix
+  followed by exactly one timer-due or clock-discontinuity input. The runtime-owned signed-duration
+  deadline instead carries one or two lifecycle inputs; when the deadline is first observed across
+  a wall-clock discontinuity, one clock-discontinuity input precedes the first lifecycle input;
+- `RANDOM_SELECTION` carries exactly one timer-materialized input;
+- `ACTION_RESULT` and `UPLOAD_ACKNOWLEDGEMENT` carry no reducer input;
+- `RESOURCE_RESULT` carries no reducer input or exactly one lifecycle input, without collector
+  events;
+- `SAFETY_FAILURE` carries one or two lifecycle inputs, without collector events; and
+- `RECOVERY` carries an optional collector-event prefix, then exactly one quality-gap input,
+  followed only by lifecycle inputs.
+
+A reader MUST reject a commit whose authenticated kind and reconstructed input shape differ, even
+when its supplied checkpoint and digest are mutually self-consistent.
+
+An event has exactly `condition_epoch_id`, `event_type`, `fields`, `observed_time`,
+`schema_version`, `sequence_number`, and `source_id`. `schema_version` is a JSON integer; sequence
+is a positive decimal string; `condition_epoch_id` is an explicit UUIDv4 string or `null`; and
+`fields` is a sorted string-to-string object. `observed_time` is exact
+`{boot_session_id, elapsed_realtime_nanos, wall_time_utc_millis}`. The identity
+`(source_id, schema_version, event_type)`, exact field set, valid typed wire values, encoded bound,
+exportability, and emission authority MUST match the event-source registry. Integer and boolean
+fields therefore remain strings on the event wire. Decimal floats MUST match
+`[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)`, parse as finite binary32 or
+binary64 as declared, and obey registry bounds. Missing fields, extra fields, `NaN`, infinities,
+hexadecimal values, and unknown events fail the bundle rather than becoming generic rows. A
+`json_string` field accepts strict JSON without requiring JCS whitespace/member order, but duplicate
+object member names at any nesting level are invalid.
+
+Signed automation predicate literals are stricter than the float event wire: a float literal MUST
+use the exact Java `Double.toString` spelling of its finite binary64 value. Reducers parse an
+admitted event value with the decimal wire grammar above, parse the signed literal canonically,
+and compare the resulting numeric values. This preserves a unique signed configuration without
+rejecting another declared decimal spelling from an event producer.
+
+Each collector submission has one SourceObservation with exactly `admission_kind`,
+`condition_epoch_id`, `coverage`, `encoded_sha256`, `event_count`, `first_event_sequence`,
+`last_event_sequence`, `observation_sequence`, `producer_ordinal`, `resource_generation`,
+`schema_version`, and `source_id`. `event_count` is a JSON integer in 0–4,096; schema version is a
+JSON integer; generation, ordinal, observation sequence, and nullable event-range endpoints are
+decimal strings. A non-empty observation owns exactly one contiguous range of collector events in
+the same commit, all with the observation's source, schema, and epoch, and no collector event may
+be unowned or owned twice. A zero-event coverage advance has null endpoints and non-null exact
+`{clock_basis, end_exclusive, start_inclusive}` half-open coverage. Retrospective sources always
+carry coverage. Producer ordinals are contiguous within a resource generation; coverage is
+contiguous within one generation and clock basis. Manifest sequence and owned event-range order
+are identical except for the exact pending-barrier rotation defined above; contiguous ownership is
+still complete and unique in either case.
+
+`mutations` contains sorted exact `{canonical_value, component_id, component_kind, operation}`
+objects. `operation` is `UPSERT` with a non-null canonical component value or `REMOVE` with null.
+The closed component kinds, in canonical mutation order, are `AUTOMATION_CHECKPOINT`, `TIMER`,
+`STUDY_DEADLINE_TIMER`, `RESOURCE_AUDIT_TIMER`, `ACTION_INVOCATION`,
+`UPLOAD_ACKNOWLEDGEMENT`, `RESOURCE`, and `RESOURCE_CLEANUP`. `RANDOM_SELECTION` is an
+`EngineInputKind`, never a component kind: its durable materialization updates the `TIMER` and
+`AUTOMATION_CHECKPOINT` components in the same commit. `TIMER` contains only automation-reducer
+timers and MUST equal the timer map in the automation checkpoint.
+`STUDY_DEADLINE_TIMER` and `RESOURCE_AUDIT_TIMER` are distinct runtime-owned timer classes and
+MUST NOT be inserted into that checkpoint map. The canonical values are durable reducer
+inputs/state, not UI state; a reader that cannot decode the current component codec MUST reject
+instead of skipping it.
+
+`STUDY_DEADLINE_TIMER` has the single component ID `study-duration` and the
+`durable-timer-v1:` codec. Its timer ID is the lowercase SHA-256 of the NUL-separated sequence
+`particeps-study-deadline-timer-v1`, configuration SHA-256, `study-duration`, and
+`study-deadline`. Its owner and producer are respectively `study-duration` and `study-deadline`;
+it has a `SAME_BOOT_MONOTONIC` target, the signed-duration UTC deadline as logical wall evidence,
+and no expiry. The initial generation is 1 and each trustworthy boot or wall-clock re-anchor
+increments it. A started nonterminal study with remaining signed duration MUST retain exactly one
+such component; terminal state MUST retain none.
+
+`RESOURCE_CLEANUP` is the bounded ledger for an applied or attempted resource state that the
+runtime could not yet prove inactive during fail-closed containment. Its component ID is the
+lowercase `<kind>:<source_id>` resource key. Its canonical `resource-cleanup-v1:` payload is the
+version-1 binary sequence `int(1)`, uppercase resource kind, source ID, canonical unsigned-decimal
+desired generation, signed profile ID, and signed expected-profile SHA-256, with every string
+encoded by the Protocol length-prefixed UTF-8 primitive. It is attempted identity, not an applied
+receipt: the same key MUST retain a `RESOURCE` component as the last trusted state.
+
+A cleanup component exists only while the successor is `PAUSED` with no active condition epoch.
+The first containment commit is `SAFETY_FAILURE` or `RECOVERY`; it preserves any pre-existing
+same-key `RESOURCE` bytes exactly. Initial activation failure may instead first materialize that
+key as `INACTIVE`. Pending cleanup entries and their trusted resources remain immutable across
+ancillary paused commits. Cleanup success is one `RESOURCE_RESULT` commit that removes every
+pending `RESOURCE_CLEANUP` and upserts every signed resource key as `INACTIVE`, using the reducer's
+current desired generation. It cannot open admission, activate an epoch, or transition to
+`ACTIVATING`, `RUNNING`, or a terminal state. A complete replay ending in `PAUSED`, `COMPLETED`, or
+`WITHDRAWN` is publishable only when no cleanup entry remains and the complete signed resource
+vector is inactive.
+
+`successor_projection` has exactly `active_condition_epoch`, `clock_checkpoint`,
+`evaluated_through_commit`, `lifetime_data_event_count`, `next_commit_sequence`,
+`next_event_sequence`, `next_observation_sequence`, `retained_from_commit`, `revision`,
+`source_checkpoints`, `state`, and `uploaded_through_commit`. `revision` equals the containing
+commit sequence, `next_commit_sequence = revision + 1`, and the next event/observation sequences
+cover the commit's complete ranges. `source_checkpoints` is an object keyed by source ID; each
+value is exact `{coverage, cursor, next_producer_ordinal, resource_generation, source_id}` and the
+key MUST equal the embedded source ID. A non-null `clock_checkpoint` is exact
+`{active_running_elapsed_nanos, anchor, calendar_elapsed_nanos, deadline_utc_millis,
+deadline_utc_trusted, zone_id}`. `zone_id` is the canonical IANA `ZoneId` authenticated at that
+commit; a system time-zone change is represented by a durable clock-discontinuity reducer input,
+never inferred from a timer selection. A non-null `active_condition_epoch` is exact
+`{activated_at, applied_resource_vector_sha256, configuration_sha256, id}`.
+
+`TIMER_SCHEDULED`, `TIMER_DUE`, and `TIMER_RETIRED` all repeat the timer's immutable clock-domain
+target, not the time at which a worker happened to run. `CALENDAR_TIME` is encoded as
+`ResearchTime(target_utc_millis, 0, "calendar-time")`; `ACTIVE_RUNNING_TIME` as
+`ResearchTime(0, target_active_elapsed_nanos, "active-running-time")`; and
+`SAME_BOOT_MONOTONIC` as the recorded logical wall deadline, target elapsed-realtime nanos, and
+target boot-session ID. WorkManager carries only timer ID and generation; after waking, the runtime
+resolves and verifies the durable timer target before producing `TIMER_DUE`.
+
+The admission gate independently enforces the `STUDY_DEADLINE_TIMER` target as an exclusive
+same-boot boundary: an observation at or after that elapsed-realtime nanosecond is rejected even
+when WorkManager runs late. A due wake atomically retires the deadline and drives
+`STUDY_COMPLETE_REQUESTED` / `STUDY_COMPLETED` with `STUDY_DURATION_ELAPSED`; no later collector
+event is needed. If a wall-clock discontinuity crosses the deadline, the runtime closes admission,
+discards all retrospective cursors and backlog, resets session condition state, closes the epoch,
+and completes without a retrospective flush. A paused reboot may replace the timer only after a
+trusted UTC re-anchor and records a quality gap; without trusted UTC it stays fail-closed `PAUSED`.
+
+### Commit and observation digests
+
+Both digests use a language-neutral binary preimage. `int` is four-byte big-endian, `long` is
+eight-byte big-endian, `boolean` is one byte (`00` or `01`), and `string` is an `int` UTF-8 byte
+length followed by those bytes. `nullable(x)` is a presence boolean then `x` when present;
+`list(x)` is an `int` count followed by each entry. Enums are their uppercase names as strings.
+Maps are sorted by key.
+
+`commit_sha256` is SHA-256 over the following values, excluding `commit_sha256` itself:
+
+```text
+string("particeps-engine-commit-v1")
+long(commit_sequence)
+string(previous_commit_sha256)
+string(input_kind)
+nullable(string(consumed_pending_input_sha256))
+list(source_observations, observation)
+list(events, event)
+list(mutations, mutation)
+time(committed_at)
+projection(successor_projection)
+string(resulting_checkpoint_sha256)
+```
+
+The nested encodings are exact and ordered:
+
+- `observation`: long observation sequence, string source ID, int schema version, long generation,
+  string admission kind, long producer ordinal, string epoch UUID, int event count, nullable long
+  first/last event sequences, nullable coverage, string encoded digest;
+- `event`: long event sequence, string source ID, int schema version, string event type, time,
+  nullable string epoch UUID, sorted fields count followed by each string key/value;
+- `mutation`: string component kind, string component ID, string operation, nullable canonical value;
+- `time`: long wall UTC millis, long elapsed-realtime nanos, string boot-session ID;
+- `coverage`: string clock basis, string inclusive start, string exclusive end;
+- `projection`: string state; long revision and next commit/observation/event sequences; sorted source
+  checkpoint map count, each string map key then string embedded source ID, long generation, long
+  next ordinal, nullable coverage and cursor; nullable clock checkpoint; nullable condition epoch;
+  then long lifetime-data count, uploaded watermark, evaluated watermark, and retained floor;
+- `clock checkpoint`: long calendar elapsed, long active-running elapsed, time anchor, long UTC
+  deadline, boolean trust flag, then canonical IANA zone-ID string;
+- `condition epoch`: string UUID, string configuration digest, string applied-resource-vector digest,
+  then activation time.
+
+`SourceObservation.encoded_sha256` independently binds the producer submission before sequence
+assignment. It is SHA-256 over:
+
+```text
+string("particeps-source-observation-v1")
+string(source_id)
+int(schema_version)
+long(resource_generation)
+long(producer_ordinal)
+string(condition_epoch_id)
+boolean(coverage_present)
+[coverage when present]
+int(event_count)
+for each event in order:
+  string(event_type)
+  long(wall_time_utc_millis)
+  long(elapsed_realtime_nanos)
+  string(boot_session_id)
+  int(sorted_field_count)
+  each string(field_name), string(field_value)
+```
+
+Generic condition epochs are opened and closed only by `study_condition.v1` activation and
+deactivation events. Both event envelopes carry the same UUID as their `condition_epoch_id` field;
+the deactivation event is the last event bound to the old epoch, not a null-epoch event. Epochs MUST
+NOT overlap. Every collector event and SourceObservation belongs to the currently active epoch;
+its projection ID, signed-configuration digest, and complete applied-resource-vector digest MUST
+agree with the audit events. Missing, orphan, overlapping, or digest-divergent epochs fail closed.
+
+For the Protocol v1 traffic actuator, the runtime maintains exactly one
+`RESOURCE_AUDIT_TIMER` while `actuator:traffic-shaping.v1` is applied in an active epoch. Its
+canonical timer value uses the `durable-timer-v1:` codec, a `SAME_BOOT_MONOTONIC` target exactly 60
+seconds after its committed schedule observation, a matching wall deadline, no expiry, and the
+producer key `resource-audit:actuator:traffic-shaping.v1`. Its lowercase SHA-256 identity is the
+NUL-separated digest of, in order:
+
+```text
+"particeps-resource-audit-timer-v1"
+configuration_sha256
+"traffic_shaping.v1"
+"ACTUATOR"
+"traffic-shaping.v1"
+resource_generation
+profile_id
+applied_profile_sha256
+condition_epoch_id
+causal_sequence
+boot_session_id
+target_elapsed_realtime_nanos
+```
+
+Activation ordering is `CONDITION_EPOCH_ACTIVATED`,
+`TRAFFIC_SHAPING_PROFILE_APPLIED`, `TIMER_SCHEDULED`. A due commit orders `TIMER_DUE`, one
+`TRAFFIC_SHAPING_SNAPSHOT` with reason `PERIODIC`, `TIMER_RETIRED` with reason `FIRED`, then the
+successor `TIMER_SCHEDULED`. An epoch boundary orders the exact counter snapshot with reason
+`EPOCH_BOUNDARY`, `TRAFFIC_SHAPING_PROFILE_REMOVED`, `TIMER_RETIRED`, then
+`CONDITION_EPOCH_DEACTIVATED`. The snapshot and removal carry the same resource generation,
+profile, VPN generation, counters, and epoch evidence. Recovery may retire a resource-audit timer
+but MUST NOT recreate one or open an epoch; a participant must resume explicitly.
 
 The reader verifies, in order: framing and bounds; HPKE; content AEAD; JCS bytes; repeated outer
-identities; embedded configuration digest and Ed25519 signature; platform/client requirements;
-range/count contiguity; and every catalog payload. It publishes no plaintext-derived record before
-all checks succeed.
+identities; embedded configuration digest and Ed25519 signature; registry digest;
+platform/client requirements; complete commit range; every commit digest and predecessor;
+registry event contracts; observation range, digest, ordinal, generation, and coverage; mutation
+and projection continuity; deterministic automation causality and checkpoint digest; and generic
+condition epochs. It publishes no plaintext-derived record before every check succeeds.
 
 ## Automatic upload request
 
@@ -272,13 +539,14 @@ body staged before HTTP starts. The exact request headers are:
 | `Content-Digest` | RFC 9530 `sha-256=:<padded standard-base64 digest>:` |
 | `X-Particeps-Bundle-Format` | `particeps-research-bundle-v1` |
 | `X-Particeps-Bundle-Id` | lowercase bundle UUID |
+| `X-Particeps-Commit-Count` | canonical positive decimal count |
+| `X-Particeps-Commit-From` | canonical decimal exact first commit |
+| `X-Particeps-Commit-To` | canonical decimal exact last commit |
 | `X-Particeps-Configuration-SHA256` | 64 lowercase hex characters |
-| `X-Particeps-Researcher-Key-Id` | researcher key ID |
-| `X-Particeps-Sequence-From` | canonical decimal exact first sequence |
-| `X-Particeps-Sequence-To` | canonical decimal exact last sequence |
 | `X-Particeps-Event-Count` | canonical decimal count |
+| `X-Particeps-Researcher-Key-Id` | researcher key ID |
 
-This vocabulary is the media type, the bundle format, and the seven routing header names. It is
+This vocabulary is the media type, the bundle format, and the eight routing header names. It is
 the one part of Protocol v1 whose producer is in one language and whose only reader is in another.
 It is therefore also in `conformance-vectors.json` as `valid.upload_request`, and both sides assert
 against that fixture rather than against their own constants. Asserting against your own constant
@@ -286,7 +554,7 @@ proves only that you are self-consistent, which is exactly what a half-applied r
 
 The routing headers are untrusted claims. The receiver checks their syntax, internal range/count
 arithmetic, body length/digest, and equality to the parseable outer bundle ID, configuration
-digest, and researcher key ID. It cannot authenticate the encrypted participant or sequence claims
+digest, and researcher key ID. It cannot authenticate the encrypted participant or commit claims
 and MUST NOT describe them as authenticated.
 
 The body and every header are fixed for all attempts of one staged bundle. Clients disable
@@ -312,24 +580,25 @@ A success body is JCS JSON with `Content-Type: application/json` and exactly the
 {
   "bundle_id": "550e8400-e29b-41d4-a716-446655440000",
   "byte_count": "1234",
+  "commit_count": "1",
   "configuration_sha256": "64 lowercase hex characters",
   "event_count": "1",
-  "first_sequence_number": "1",
-  "last_sequence_number": "1",
+  "first_commit_sequence": "1",
+  "last_commit_sequence": "1",
   "sha256": "64 lowercase hex characters"
 }
 ```
 
-Both `201 Created` and exact-replay `200 OK` return this same canonical seven-member receipt:
-`bundle_id`, `byte_count`, `configuration_sha256`, `event_count`, `first_sequence_number`,
-`last_sequence_number`, and `sha256`. There are no other members.
+Both `201 Created` and exact-replay `200 OK` return this same canonical eight-member receipt:
+`bundle_id`, `byte_count`, `commit_count`, `configuration_sha256`, `event_count`,
+`first_commit_sequence`, `last_commit_sequence`, and `sha256`. There are no other members.
 
 Those two responses are also the only ones that may advance the client's uploaded-through
 watermark, and only when every receipt value matches its durable outbox manifest exactly. `202
 Accepted`, any other `2xx`, a redirect, `409 Conflict`, any other `4xx`, a malformed receipt, and a
 receipt that mismatches the manifest never advance it. The watermark never moves backwards.
 
-Receive time, researcher key ID, and claimed range may additionally be retained as untrusted R2
+Receive time, researcher key ID, and claimed commit range may additionally be retained as untrusted R2
 custom metadata; they are not added to the receipt JSON.
 
 The receiver has no list, download, delete, administration, decryption, private-key, D1, Queue, KV,
@@ -342,8 +611,10 @@ extensions.
 Every implementation must consume the shared valid and hostile corpus in this directory. The
 corpus must cover Unicode JCS ordering, integral bounds, raw-key encodings, signature input, HPKE
 labels and wrong contexts, malformed lengths, wrong outer/inner identities, body tampering,
-range/count mismatch, unknown fields and payloads, non-finite sensor values, and trailing bytes. It
-must also cover rejection of the pre-v1 encodings and rejection of the retired Android Data
+registry binding, complete commit ranges, commit/checkpoint/predecessor digests, event contracts,
+SourceObservation ranges/digests/ordinals, generic condition epochs, and trailing bytes. It must
+also cover the valid causal-first-manifest/barrier-event rotation, rejection of arbitrary range
+permutations, rejection of flat-event documents, pre-v1 encodings, and the retired Android Data
 Collector identity: the `ADCCFG01` and `ADCEXP01` magics, the `research-bundle-v1` bundle format,
 and the `adc://join/v1` scheme. The two legacy classes are named separately because an
 implementation can reject one while accepting the other. Absence of a vector is not permission to
@@ -359,7 +630,8 @@ about the profile rules above.
 Validate the checked-in sources with:
 
 ```sh
-python3 tools/catalog.py check
+python3 tools/event_source_registry.py check
+python3 -m unittest tools.tests.test_event_source_registry
 python3 tools/validate_protocol_vectors.py
 python3 tools/retired_identity_audit.py
 ```

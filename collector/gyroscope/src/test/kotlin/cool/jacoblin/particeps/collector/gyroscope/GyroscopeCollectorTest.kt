@@ -1,7 +1,8 @@
 package cool.jacoblin.particeps.collector.gyroscope
 
-import cool.jacoblin.particeps.core.collector.ProtocolEventContracts
-import cool.jacoblin.particeps.core.definition.GyroscopeConfiguration
+import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
+import cool.jacoblin.particeps.core.collector.accepts
+import cool.jacoblin.particeps.core.definition.GyroscopeV1ProfileConfiguration
 import cool.jacoblin.particeps.core.model.ResearchTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -21,8 +22,8 @@ class GyroscopeCollectorTest {
         assertEquals("-2.5", event.fields["y_radians_per_second"])
         assertEquals("0.0", event.fields["z_radians_per_second"])
         assertEquals("3", event.fields["accuracy"])
-        assertEquals(GyroscopeConfiguration.ID, event.collectorId)
-        assertTrue(requireNotNull(ProtocolEventContracts[GyroscopeConfiguration.ID]).accepts(event, 1))
+        assertEquals(GyroscopeV1ProfileConfiguration.SOURCE_ID, event.type.sourceId.value)
+        assertTrue(requireNotNull(ProtocolEventSourceRegistry[GyroscopeV1ProfileConfiguration.SOURCE_ID]).accepts(event, 1, null))
     }
 
     @Test

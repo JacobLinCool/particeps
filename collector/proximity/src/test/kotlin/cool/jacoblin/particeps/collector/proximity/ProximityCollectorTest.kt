@@ -1,9 +1,9 @@
 package cool.jacoblin.particeps.collector.proximity
 
 import cool.jacoblin.particeps.core.collector.LatestValueRateGate
-import cool.jacoblin.particeps.core.collector.ProtocolEventContracts
-import cool.jacoblin.particeps.core.definition.ProximityConfiguration
-import cool.jacoblin.particeps.core.model.RecordedEvent
+import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
+import cool.jacoblin.particeps.core.collector.accepts
+import cool.jacoblin.particeps.core.definition.ProximityV1ProfileConfiguration
 import cool.jacoblin.particeps.core.model.ResearchTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -27,8 +27,8 @@ class ProximityCollectorTest {
         assertEquals("1.0", event.fields["distance_centimeters"])
         assertEquals("5.0", event.fields["maximum_range_centimeters"])
         assertEquals("true", event.fields["near"])
-        assertEquals(ProximityConfiguration.ID, event.collectorId)
-        assertTrue(requireNotNull(ProtocolEventContracts[ProximityConfiguration.ID]).accepts(event, 1))
+        assertEquals(ProximityV1ProfileConfiguration.SOURCE_ID, event.type.sourceId.value)
+        assertTrue(requireNotNull(ProtocolEventSourceRegistry[ProximityV1ProfileConfiguration.SOURCE_ID]).accepts(event, 1, null))
     }
 
     @Test
@@ -48,35 +48,6 @@ class ProximityCollectorTest {
         assertNull(proximitySample(1f, Float.POSITIVE_INFINITY, 1, time(1)))
         assertNull(proximitySample(-1f, 5f, 1, time(1)))
         assertNull(proximitySample(1f, 5f, -1, time(1)))
-    }
-
-    @Test
-    fun processRestartRestoresProximityValueAndMinimumInterval() {
-        val previous = requireNotNull(
-            proximitySample(1f, 5f, 9_000_000_000, ResearchTime(10_000, 10_000_000_000, "boot-a")),
-        )
-        val draft = previous.eventDraft()
-        val recorded = RecordedEvent(
-            1,
-            draft.collectorId,
-            draft.payloadSchemaVersion,
-            draft.observedTime,
-            draft.payloadType,
-            draft.fields,
-        )
-        val gate = LatestValueRateGate<ProximitySample>(100) { old, current ->
-            sameProximitySample(old, current, 1)
-        }
-        gate.restoreLastEmission(
-            recorded.proximitySampleOrNull(),
-            10_050,
-        )
-
-        assertEquals(LatestValueRateGate.Decision.Suppress, gate.offer(previous, 10_050))
-        assertEquals(
-            LatestValueRateGate.Decision.Defer(100),
-            gate.offer(previous.copy(distanceCentimeters = 2f), 10_050),
-        )
     }
 
     private fun time(value: Long) = ResearchTime(value, value, "boot-a")

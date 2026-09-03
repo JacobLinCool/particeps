@@ -433,8 +433,8 @@ async function expandStudy(page) {
     const one = switches.nth(i);
     if ((await one.getAttribute('aria-checked')) === 'false') await one.click();
   }
-  await page.locator('[data-testid="intervention-add"]').click();
-  await page.locator('[data-testid="survey-add"]').click();
+  await page.locator('[data-testid="add-notification"]').click();
+  await page.locator('[data-testid="add-survey"]').click();
   const delivery = page.locator('#delivery [role="switch"]').first();
   if ((await delivery.getAttribute('aria-checked')) === 'false') await delivery.click();
   await page.waitForTimeout(500);
@@ -455,30 +455,37 @@ for (const locale of LOCALES) {
   );
 
   for (const width of WIDTHS) {
-    const page = await context.newPage();
-    await page.setViewportSize({ width, height: 1400 });
-    page.on('pageerror', (error) => pageErrors.push(`${locale.id} ${width}px: ${error}`));
-
     for (const view of VIEWS) {
-      await page.goto(`${ORIGIN}${view.route}`, { waitUntil: 'networkidle' });
-      await page.waitForTimeout(250);
-      if (view.step) await reachStep(page, view.step);
-      if (view.expand) await expandStudy(page);
-      // Fonts settle after first paint; measuring before they do measures the fallback face.
-      // Back to the top afterwards, because reaching a control scrolled the page to it.
-      await page.evaluate(async () => {
-        await document.fonts.ready;
-        window.scrollTo(0, 0);
-      });
-      await page.waitForTimeout(150);
+      // Each view gets a fresh document. The researcher route deliberately protects generated
+      // private keys with beforeunload; reusing one page would make the test's own next navigation
+      // race that protection and occasionally measure the previous step instead.
+      const page = await context.newPage();
+      await page.setViewportSize({ width, height: 1400 });
+      page.on('pageerror', (error) =>
+        pageErrors.push(`${locale.id} ${width}px ${view.id}: ${error}`)
+      );
 
-      const findings = await page.evaluate(scanPage, { route: view.route });
-      for (const finding of findings) {
-        rows.push({ ...finding, locale: locale.id, width, view: view.id, route: view.route });
+      try {
+        await page.goto(`${ORIGIN}${view.route}`, { waitUntil: 'networkidle' });
+        await page.waitForTimeout(250);
+        if (view.step) await reachStep(page, view.step);
+        if (view.expand) await expandStudy(page);
+        // Fonts settle after first paint; measuring before they do measures the fallback face.
+        // Back to the top afterwards, because reaching a control scrolled the page to it.
+        await page.evaluate(async () => {
+          await document.fonts.ready;
+          window.scrollTo(0, 0);
+        });
+        await page.waitForTimeout(150);
+
+        const findings = await page.evaluate(scanPage, { route: view.route });
+        for (const finding of findings) {
+          rows.push({ ...finding, locale: locale.id, width, view: view.id, route: view.route });
+        }
+      } finally {
+        await page.close();
       }
     }
-
-    await page.close();
   }
 
   await context.close();

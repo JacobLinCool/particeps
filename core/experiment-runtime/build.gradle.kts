@@ -15,8 +15,10 @@ kotlin {
 }
 
 dependencies {
+    api(project(":core:automation"))
     api(project(":core:collector-api"))
     api(project(":core:model"))
+    api(project(":core:resource-api"))
     api(project(":core:study-definition"))
     api(libs.coroutines.core)
 

@@ -47,7 +47,15 @@ import {
   deriveExportKeyId,
   deriveSignerKeyId
 } from '$lib/particeps/ids';
-import { defaultCollector, emptyConfiguration, validate, type Issue } from '$lib/particeps/schema';
+import { requiresBlindingConfirmation as configurationRequiresBlindingConfirmation } from '$lib/particeps/researcher-blinding';
+import {
+  continuousBinding,
+  continuousBindingProfile,
+  defaultCollector,
+  emptyConfiguration,
+  validate,
+  type Issue
+} from '$lib/particeps/schema';
 import {
   COLLECTOR_ORDER,
   ID_PATTERN,
@@ -96,6 +104,8 @@ function studyStarted(configuration: StudyConfiguration): boolean {
     configuration.collectors.length > 0 ||
     configuration.surveys.length > 0 ||
     configuration.interventions.length > 0 ||
+    configuration.automations.length > 0 ||
+    Object.keys(configuration.traffic_shaping).length > 0 ||
     configuration.assigned_participant_id !== null ||
     configuration.upload !== null
   );
@@ -123,6 +133,7 @@ export function createDraft() {
   let bundle = $state.raw<ResearchBundle | null>(null);
 
   let attempted = $state(false);
+  let blindingConfirmed = $state(false);
   /**
    * Two states, because a browser cannot tell you a file reached the disk. Clicking a download
    * anchor starts a save the reader can still cancel, and a save sheet dismissed leaves nothing
@@ -203,6 +214,9 @@ export function createDraft() {
   const issues = $derived(validate(document));
   const cost = $derived(estimate(document));
   const stale = $derived(signedCanonical !== null && signedCanonical !== canonical);
+  const requiresBlindingConfirmation = $derived(
+    configurationRequiresBlindingConfirmation(configuration)
+  );
 
   const issuesByStep = $derived.by(() => {
     const byStep: Record<StepId, Issue[]> = { keys: [], study: [], sign: [], files: [], read: [] };
@@ -408,6 +422,12 @@ export function createDraft() {
     get attempted() {
       return attempted;
     },
+    get blindingConfirmed() {
+      return blindingConfirmed;
+    },
+    get requiresBlindingConfirmation() {
+      return requiresBlindingConfirmation;
+    },
     /** On disk as far as anyone here can know: the researcher said so, or nothing needed saying. */
     get saved() {
       return kept;
@@ -446,7 +466,7 @@ export function createDraft() {
     stateOf,
     visibleIssues,
 
-    /** `collectors.2.config.…`, matching the paths `validate` emits. */
+    /** `collectors.2.profiles.0.config.…`, matching the paths `validate` emits. */
     collectorPath(id: CollectorId): string {
       const index = indexOf(id);
       return index < 0 ? `collectors.${id}` : `collectors.${index}`;
@@ -458,6 +478,10 @@ export function createDraft() {
 
     touch(path: string) {
       touched.add(path);
+    },
+
+    confirmBlinding(value: boolean) {
+      blindingConfirmed = value;
     },
 
     /** Empty restores the derived name. Anything else is taken as typed, and `validate` judges it. */
@@ -476,18 +500,80 @@ export function createDraft() {
     /** Always in the codec's order, so two otherwise-identical studies stay diffable. */
     enableCollector(id: CollectorId) {
       if (indexOf(id) >= 0) return;
-      const rank = COLLECTOR_ORDER.indexOf(id);
-      const at = configuration.collectors.findIndex(
-        (collector) => COLLECTOR_ORDER.indexOf(collector.id) > rank
-      );
       const next = defaultCollector(id);
-      if (at < 0) configuration.collectors.push(next);
-      else configuration.collectors.splice(at, 0, next);
+      configuration.collectors.push(next);
+      configuration.collectors.sort((left, right) => left.id.localeCompare(right.id));
+      configuration.automations.push(continuousBinding(next));
+      configuration.automations.sort((left, right) => left.id.localeCompare(right.id));
     },
 
     disableCollector(id: CollectorId) {
       const index = indexOf(id);
       if (index >= 0) configuration.collectors.splice(index, 1);
+      configuration.automations = configuration.automations.filter(
+        (automation) => automation.type !== 'resource_binding' ||
+          automation.resource.kind !== 'collector' || automation.resource.id !== id
+      );
+    },
+
+    setCollectorRequired(id: CollectorId, required: boolean) {
+      const collector = configuration.collectors.find((candidate) => candidate.id === id);
+      if (!collector) return;
+      collector.required = required;
+
+      // Keep the generated continuous-collection macro valid as the researcher changes whether
+      // this resource is mandatory. Custom bindings are never rewritten behind their author's
+      // back; their own validation issue remains visible until every inactive outcome is resolved.
+      const owner = configuration.automations.find((automation) =>
+        automation.type === 'resource_binding' &&
+        automation.resource.kind === 'collector' &&
+        automation.resource.id === id
+      );
+      if (!owner || owner.type !== 'resource_binding') return;
+      const profileId = continuousBindingProfile(owner);
+      if (profileId !== null) owner.default_profile_id = required ? profileId : null;
+    },
+
+    addCollectorProfile(id: CollectorId): string | null {
+      const collector = configuration.collectors.find((candidate) => candidate.id === id);
+      if (!collector || collector.profiles.length >= 64) return null;
+      const used = new Set(collector.profiles.map((profile) => profile.id));
+      let ordinal = 2;
+      while (used.has(`profile-${ordinal}`)) ordinal += 1;
+      const profileId = `profile-${ordinal}`;
+      collector.profiles.push({
+        id: profileId,
+        config: structuredClone(collector.profiles[0].config)
+      } as never);
+      collector.profiles.sort((left, right) => left.id.localeCompare(right.id));
+      return profileId;
+    },
+
+    renameCollectorProfile(id: CollectorId, previous: string, next: string) {
+      const collector = configuration.collectors.find((candidate) => candidate.id === id);
+      const profile = collector?.profiles.find((candidate) => candidate.id === previous);
+      if (!collector || !profile) return;
+      profile.id = next;
+      collector.profiles.sort((left, right) => left.id.localeCompare(right.id));
+      for (const automation of configuration.automations) {
+        if (automation.type !== 'resource_binding' || automation.resource.kind !== 'collector' || automation.resource.id !== id) continue;
+        if (automation.default_profile_id === previous) automation.default_profile_id = next;
+        for (const entry of automation.cases) if (entry.profile_id === previous) entry.profile_id = next;
+      }
+    },
+
+    removeCollectorProfile(id: CollectorId, profileId: string) {
+      const collector = configuration.collectors.find((candidate) => candidate.id === id);
+      if (!collector || collector.profiles.length <= 1) return;
+      const index = collector.profiles.findIndex((profile) => profile.id === profileId);
+      if (index < 0) return;
+      collector.profiles.splice(index, 1);
+      const replacement = collector.profiles[0].id;
+      for (const automation of configuration.automations) {
+        if (automation.type !== 'resource_binding' || automation.resource.kind !== 'collector' || automation.resource.id !== id) continue;
+        if (automation.default_profile_id === profileId) automation.default_profile_id = replacement;
+        for (const entry of automation.cases) if (entry.profile_id === profileId) entry.profile_id = replacement;
+      }
     },
 
     addSurvey(survey: SurveyDefinition) {
@@ -504,10 +590,15 @@ export function createDraft() {
 
     addIntervention(intervention: InterventionConfig) {
       configuration.interventions.push(intervention);
+      configuration.interventions.sort((left, right) => left.id.localeCompare(right.id));
     },
 
     removeIntervention(index: number) {
+      const id = configuration.interventions[index]?.id;
       configuration.interventions.splice(index, 1);
+      configuration.automations = configuration.automations.filter(
+        (automation) => automation.type !== 'occurrence' || automation.intervention_id !== id
+      );
     },
 
     generateSigning,
@@ -567,6 +658,7 @@ export function createDraft() {
       envelope = null;
       signedCanonical = null;
       attempted = false;
+      blindingConfirmed = false;
       touched.clear();
       sent = { ...sent, canonical: false, partcfg: false };
       kept = { ...kept, canonical: false, partcfg: false };
@@ -603,6 +695,7 @@ export function createDraft() {
      */
     sign(): SignOutcome {
       attempted = true;
+      if (requiresBlindingConfirmation && !blindingConfirmed) return 'failed';
       if (signing.kind !== 'held') return 'failed';
       const material = signing.material;
       // One snapshot for the whole act, so the bytes that are signed, the bytes that go in the
@@ -642,6 +735,7 @@ export function createDraft() {
       envelope = null;
       signedCanonical = null;
       attempted = false;
+      blindingConfirmed = false;
       sent = { ...NO_ARTIFACTS };
       kept = { ...NO_ARTIFACTS };
       bundle = null;

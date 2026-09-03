@@ -6,6 +6,16 @@ from tools import changelog_release_notes
 
 
 class ChangelogReleaseNotesTest(unittest.TestCase):
+    def test_current_release_notes_describe_destructive_update_and_fresh_install(self) -> None:
+        changelog = changelog_release_notes.DEFAULT_CHANGELOG.read_text(encoding="utf-8")
+
+        notes = changelog_release_notes.extract_release_notes(changelog, "v1.0.0-rc.8")
+
+        self.assertIn("Coming from `v1.0.0-rc.7`", notes)
+        self.assertIn("do not uninstall rc.7 first", notes)
+        self.assertIn("an rc.7 study cannot resume", notes)
+        self.assertIn("Fresh install", notes)
+
     def test_repository_release_notes_include_update_instructions(self) -> None:
         changelog = changelog_release_notes.DEFAULT_CHANGELOG.read_text(encoding="utf-8")
 

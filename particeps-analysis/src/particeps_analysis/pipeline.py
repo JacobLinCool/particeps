@@ -10,12 +10,12 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from .bundle import BundleVerifier
-from .catalog import CollectorCatalog
 from .encoding import base64url_decode, protocol_id
 from .errors import ValidationError
 from .inventory import CiphertextInventory
 from .jcs import canonicalize, exact_object, parse
 from .reassembly import Reassembler
+from .registry import EventSourceRegistry
 from .sink import DatasetSink
 
 
@@ -23,15 +23,16 @@ class AnalysisPipeline:
     def __init__(
         self,
         workspace: Path,
-        catalog: CollectorCatalog,
+        registry: EventSourceRegistry,
         researcher_private_keys: Mapping[str, bytes],
         sink: DatasetSink,
     ):
         self.workspace = Path(workspace).resolve()
         self.inventory = CiphertextInventory(self.workspace)
         self.verifier = BundleVerifier(
-            catalog, researcher_private_keys, self.workspace / "staging" / "plaintext"
+            registry, researcher_private_keys, self.workspace / "staging" / "plaintext"
         )
+        self.registry = registry
         self.sink = sink
 
     def materialize(self, destination: Path) -> Path:
@@ -44,16 +45,27 @@ class AnalysisPipeline:
                     bundles.append(self.verifier.verify(source))
                 except ValidationError as error:
                     failures.append(self._quarantine(source, str(error)))
-            if not bundles:
+            if failures:
                 self._write_report(
                     {
                         "format": "particeps-validation-report-v1",
                         "validation_failures": failures,
                     }
                 )
-                raise ValidationError("no valid bundles remain after verification")
+                raise ValidationError(
+                    "one or more inventoried bundles failed verification; "
+                    "dataset was not materialized"
+                )
+            if not bundles:
+                self._write_report(
+                    {
+                        "format": "particeps-validation-report-v1",
+                        "validation_failures": [],
+                    }
+                )
+                raise ValidationError("inventory contains no research bundles")
             result = Reassembler(
-                self.workspace / "staging" / "reassembly"
+                self.workspace / "staging" / "reassembly", self.registry
             ).reassemble(bundles)
             self._write_report(
                 {
@@ -66,8 +78,6 @@ class AnalysisPipeline:
                 result, destination, validation_failures=tuple(failures)
             )
         finally:
-            for bundle in bundles:
-                bundle.events.close()
             if result is not None:
                 result.events.close()
 

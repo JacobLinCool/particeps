@@ -50,8 +50,9 @@ class InventoryTest(unittest.TestCase):
             "byte_count": str(len(data)),
             "configuration_sha256": "1" * 64,
             "researcher_key_id": "researcher-key",
-            "first_sequence_number": "1",
-            "last_sequence_number": "1",
+            "first_commit_sequence": "1",
+            "last_commit_sequence": "1",
+            "commit_count": "1",
             "event_count": "1",
             "received_at_utc": "2026-08-04T00:00:00.000Z",
         }

@@ -7,6 +7,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import cool.jacoblin.particeps.actuator.trafficshaping.TrafficShapingAndroidPrerequisites
+import cool.jacoblin.particeps.actuator.trafficshaping.TrafficShapingForegroundNotification
+import cool.jacoblin.particeps.core.model.ExperimentState
+import cool.jacoblin.particeps.platform.SharedStudyForegroundNotification
+import cool.jacoblin.particeps.platform.retractDailyStatusNotification
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CompletableDeferred
@@ -45,9 +50,8 @@ class CollectionService : Service() {
         val requestId = startIntent.getStringExtra(EXTRA_REQUEST_ID).orEmpty()
         if (flags and START_FLAG_REDELIVERY != 0) {
             try {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification(title, restoring = true),
+                acquireForegroundNotification(
+                    foregroundNotification(this, title, restoring = true),
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
                 )
             } catch (_: SecurityException) {
@@ -64,12 +68,11 @@ class CollectionService : Service() {
             // The caller was cancelled after asking Android to start the service. Satisfy the
             // platform's foreground deadline with a neutral notification, then retire the orphan.
             try {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification(title, restoring = true),
+                acquireForegroundNotification(
+                    foregroundNotification(this, title, restoring = true),
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
                 )
-                stopForeground(STOP_FOREGROUND_REMOVE)
+                SharedStudyForegroundNotification.release(this)
             } catch (_: SecurityException) {
                 // There is no live caller and no safe collection state to recover.
             } catch (_: IllegalArgumentException) {
@@ -81,9 +84,9 @@ class CollectionService : Service() {
         try {
             val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
                 if (location) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
-            startForeground(NOTIFICATION_ID, notification(title, restoring = false), types)
+            acquireForegroundNotification(foregroundNotification(this, title, restoring = false), types)
             if (!CollectionServiceStartCoordinator.succeed(requestId)) {
-                stopForeground(STOP_FOREGROUND_REMOVE)
+                SharedStudyForegroundNotification.release(this)
                 stopSelf(startId)
                 return START_NOT_STICKY
             }
@@ -111,7 +114,19 @@ class CollectionService : Service() {
     override fun onDestroy() {
         accessMonitor?.cancel()
         accessMonitor = null
+        SharedStudyForegroundNotification.release(this)
         super.onDestroy()
+    }
+
+    private fun acquireForegroundNotification(notification: Notification, foregroundServiceType: Int) {
+        SharedStudyForegroundNotification.acquire(
+            owner = this,
+            id = NOTIFICATION_ID,
+            notification = notification,
+            foregroundServiceType = foregroundServiceType,
+            starter = { id, value, type -> startForeground(id, value, type) },
+            stopper = { mode -> stopForeground(mode) },
+        )
     }
 
     /**
@@ -126,6 +141,17 @@ class CollectionService : Service() {
             while (isActive) {
                 delay(ACCESS_RECONCILIATION_INTERVAL_MILLIS)
                 collectorApplication.session.reconcileAccess()
+                val snapshot = collectorApplication.session.snapshot.value
+                if (
+                    snapshot.runtime.state == ExperimentState.RUNNING &&
+                    snapshot.study?.mayAdjustAppTransferSpeed == true &&
+                    (
+                        !TrafficShapingAndroidPrerequisites.hasLocalNetworkPermission(this@CollectionService) ||
+                            TrafficShapingAndroidPrerequisites.vpnConsentIntent(this@CollectionService) != null
+                        )
+                ) {
+                    collectorApplication.session.safetyPauseForPlatformAccessLoss()
+                }
             }
         }
     }
@@ -141,12 +167,7 @@ class CollectionService : Service() {
         accessMonitor?.cancel()
         accessMonitor = collectorApplication.applicationScope.launch {
             collectorApplication.session.snapshot.first { it.initialized }
-            val running = try {
-                collectorApplication.session.reconcileRedeliveredCollectionHost()
-            } catch (failure: Throwable) {
-                if (failure is CancellationException) throw failure
-                false
-            }
+            val running = collectorApplication.session.snapshot.value.runtime.state == ExperimentState.RUNNING
             if (running) {
                 accessMonitor = null
                 startAccessMonitor()
@@ -156,43 +177,12 @@ class CollectionService : Service() {
         }
     }
 
-    private fun notification(studyTitle: String, restoring: Boolean): Notification {
-        val openApp = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        return Notification.Builder(this, ParticepsNotificationChannels.COLLECTION)
-            .setSmallIcon(R.drawable.ic_app)
-            .setContentTitle(
-                getString(
-                    if (restoring) {
-                        R.string.collection_recovery_notification_title
-                    } else {
-                        R.string.collection_notification_title
-                    },
-                ),
-            )
-            .setContentText(
-                if (restoring) {
-                    getString(R.string.collection_recovery_notification_text)
-                } else {
-                    studyTitle
-                },
-            )
-            .setContentIntent(openApp)
-            .setOngoing(true)
-            .setCategory(Notification.CATEGORY_SERVICE)
-            .build()
-    }
-
     companion object {
         private const val ACTION_START = "cool.jacoblin.particeps.START_COLLECTION"
         private const val EXTRA_STUDY_TITLE = "study_title"
         private const val EXTRA_LOCATION = "location"
         private const val EXTRA_REQUEST_ID = "request_id"
-        private const val NOTIFICATION_ID = 72
+        const val NOTIFICATION_ID = 72
         private const val ACCESS_RECONCILIATION_INTERVAL_MILLIS = 25_000L
         private const val START_CONFIRMATION_TIMEOUT_MILLIS = 5_000L
 
@@ -211,6 +201,7 @@ class CollectionService : Service() {
                         .putExtra(EXTRA_REQUEST_ID, pending.requestId),
                 )
                 withTimeout(START_CONFIRMATION_TIMEOUT_MILLIS) { pending.confirmation.await() }
+                retractDailyStatusNotification(context)
             } catch (failure: TimeoutCancellationException) {
                 stop(context)
                 throw IllegalStateException("Foreground service did not acknowledge startup", failure)
@@ -224,7 +215,58 @@ class CollectionService : Service() {
 
         fun stop(context: Context) {
             context.stopService(Intent(context, CollectionService::class.java))
+            retractDailyStatusNotification(context)
         }
+
+        fun foregroundNotification(
+            context: Context,
+            studyTitle: String,
+            restoring: Boolean,
+        ): Notification {
+            require(studyTitle.isNotBlank()) { "Study title is required for host identity" }
+            val openApp = PendingIntent.getActivity(
+                context,
+                0,
+                Intent(context, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            return Notification.Builder(context, ParticepsNotificationChannels.COLLECTION)
+                .setSmallIcon(R.drawable.ic_app)
+                .setContentTitle(
+                    context.getString(
+                        if (restoring) {
+                            R.string.collection_recovery_notification_title
+                        } else {
+                            R.string.collection_notification_title
+                        },
+                    ),
+                )
+                .setContentText(
+                    if (restoring) {
+                        context.getString(R.string.collection_recovery_notification_text)
+                    } else {
+                        context.getString(R.string.collection_notification_text)
+                    },
+                )
+                .setContentIntent(openApp)
+                .setOngoing(true)
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .build()
+        }
+
+        /**
+         * The collector host and local VPN intentionally occupy one Android foreground slot. This
+         * factory is the sole source of both the fixed ID and the neutral participant-facing copy,
+         * preventing either host from accidentally creating a treatment-revealing second notice.
+         */
+        fun trafficShapingForegroundNotification(
+            context: Context,
+            studyTitle: String,
+        ): TrafficShapingForegroundNotification = TrafficShapingForegroundNotification(
+            id = NOTIFICATION_ID,
+            notification = foregroundNotification(context, studyTitle, restoring = false),
+            lease = SharedStudyForegroundNotification,
+        )
     }
 }
 

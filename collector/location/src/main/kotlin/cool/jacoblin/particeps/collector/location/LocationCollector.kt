@@ -6,12 +6,13 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.os.HandlerThread
 import cool.jacoblin.particeps.core.model.EventDraft
+import cool.jacoblin.particeps.core.model.EventSourceId
+import cool.jacoblin.particeps.core.model.EventTypeKey
 import cool.jacoblin.particeps.core.collector.AccessKind
-import cool.jacoblin.particeps.core.definition.CollectorConfiguration
-import cool.jacoblin.particeps.core.definition.LocationConfiguration
-import cool.jacoblin.particeps.core.definition.LocationPriority
-import cool.jacoblin.particeps.core.collector.PrivacyClass
-import cool.jacoblin.particeps.core.collector.ProtocolEventContracts
+import cool.jacoblin.particeps.core.definition.CollectorProfileConfiguration
+import cool.jacoblin.particeps.core.definition.LocationV1PriorityValue
+import cool.jacoblin.particeps.core.definition.LocationV1ProfileConfiguration
+import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
 import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
@@ -28,9 +29,12 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.Task
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 class LocationCollectorPlugin(
     context: Context,
@@ -38,23 +42,22 @@ class LocationCollectorPlugin(
     private val applicationContext = context.applicationContext
 
     override val descriptor = CollectorDescriptor(
-        id = LocationConfiguration.ID,
+        id = LocationV1ProfileConfiguration.SOURCE_ID,
         displayName = "Location",
-        privacyClass = PrivacyClass.SENSITIVE,
         accessKinds = setOf(
             AccessKind.FINE_LOCATION,
             AccessKind.LOCATION_SERVICES,
             AccessKind.BACKGROUND_LOCATION,
         ),
-        eventContract = requireNotNull(ProtocolEventContracts[LocationConfiguration.ID]),
+        sourceContract = requireNotNull(ProtocolEventSourceRegistry[LocationV1ProfileConfiguration.SOURCE_ID]),
     )
 
     override fun create(
-        configuration: CollectorConfiguration,
+        configuration: CollectorProfileConfiguration,
         context: CollectorContext,
     ): Collector = LocationCollector(
         applicationContext,
-        configuration as? LocationConfiguration
+        configuration as? LocationV1ProfileConfiguration
             ?: throw IllegalArgumentException("Invalid location configuration"),
         context,
     )
@@ -62,7 +65,7 @@ class LocationCollectorPlugin(
 
 private class LocationCollector(
     private val applicationContext: Context,
-    private val configuration: LocationConfiguration,
+    private val configuration: LocationV1ProfileConfiguration,
     collectorContext: CollectorContext,
 ) : SerializedCallbackCollector(collectorContext, CHANNEL_CAPACITY) {
     private val client: FusedLocationProviderClient =
@@ -92,13 +95,18 @@ private class LocationCollector(
         val result = registerSourceWithRollback(
             register = {
                 withContext(NonCancellable) {
-                    client.requestLocationUpdates(request, callback, thread.looper).await()
+                    client.requestLocationUpdates(request, callback, thread.looper)
+                        .awaitAcknowledged("location update registration")
                     updatesRegistered = true
                 }
             },
             rollback = {
                 completeSourceTeardown(
-                    { if (updatesRegistered) client.removeLocationUpdates(callback).await() },
+                    {
+                        if (updatesRegistered) {
+                            client.removeLocationUpdates(callback).awaitAcknowledged("location update removal")
+                        }
+                    },
                     { callbackBoundary.deactivate() },
                     { thread.quitSafely() },
                 )
@@ -111,7 +119,7 @@ private class LocationCollector(
     override suspend fun unregisterSource(): SourceTeardownResult {
         val thread = handlerThread
         completeSourceTeardown(
-            { client.removeLocationUpdates(callback).await() },
+            { client.removeLocationUpdates(callback).awaitAcknowledged("location update removal") },
             { callbackBoundary.deactivate() },
             {
                 thread?.quitSafely()
@@ -144,21 +152,32 @@ private class LocationCollector(
                 put("mock", location.isMock.toString())
             }
             EventDraft(
-                collectorId = LocationConfiguration.ID,
-                payloadSchemaVersion = 1,
+                type = EventTypeKey(EventSourceId(LocationV1ProfileConfiguration.SOURCE_ID), 1, "LOCATION_FIX"),
                 observedTime = context.clocks.now(),
-                payloadType = "LOCATION_FIX",
                 fields = fields,
             )
         }
     }
 
-    private fun LocationPriority.toPlayServicesPriority(): Int = when (this) {
-        LocationPriority.BALANCED -> Priority.PRIORITY_BALANCED_POWER_ACCURACY
-        LocationPriority.HIGH_ACCURACY -> Priority.PRIORITY_HIGH_ACCURACY
+    private fun LocationV1PriorityValue.toPlayServicesPriority(): Int = when (this) {
+        LocationV1PriorityValue.BALANCED -> Priority.PRIORITY_BALANCED_POWER_ACCURACY
+        LocationV1PriorityValue.HIGH_ACCURACY -> Priority.PRIORITY_HIGH_ACCURACY
+    }
+
+    /**
+     * Bounded await: a Play services Task carries no deadline of its own, and registration runs
+     * while the whole app is still behind its starting screen. The timeout is converted out of
+     * [TimeoutCancellationException] so an unresponsive Play services reads as a failed collector
+     * start — handled and reported — rather than as cancellation of the caller.
+     */
+    private suspend fun <T> Task<T>.awaitAcknowledged(action: String): T = try {
+        withTimeout(PLAY_SERVICES_ACKNOWLEDGEMENT_TIMEOUT_MILLIS) { await() }
+    } catch (timeout: TimeoutCancellationException) {
+        throw IllegalStateException("Play services did not acknowledge $action", timeout)
     }
 
     private companion object {
         const val CHANNEL_CAPACITY = 512
+        const val PLAY_SERVICES_ACKNOWLEDGEMENT_TIMEOUT_MILLIS = 10_000L
     }
 }

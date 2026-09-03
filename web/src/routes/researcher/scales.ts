@@ -69,7 +69,7 @@ export type ScaleKey =
   | 'change_threshold_millilux'
   | 'minimum_event_interval_ms'
   | 'change_threshold_millimeters'
-  | 'poll_interval_minutes'
+  | 'poll_interval_seconds'
   | 'interval_millis'
   | 'maximum_batch_delay_millis'
   | 'minimum_displacement_millimeters'
@@ -195,11 +195,11 @@ export function scales(m: Messages, u: Units): Record<ScaleKey, Scale> {
       format: u.millimetres
     },
 
-    // 1 min → 1 day. 2 hours is an ordinary poll interval and is on no chip.
-    poll_interval_minutes: laddered(
-      LADDERS.poll_interval_minutes,
-      PRESETS.poll_interval_minutes,
-      u.minutes
+    // 15 seconds → 1 day. Automation trigger sources are constrained to the first rung.
+    poll_interval_seconds: laddered(
+      LADDERS.poll_interval_seconds,
+      PRESETS.poll_interval_seconds,
+      u.seconds
     ),
 
     // 0.5 s → 1 h, and the ladder both thumbs of `DualRangeField` index. 30 seconds used to land on
@@ -297,7 +297,7 @@ export const SCALE_BOUNDS: Record<ScaleKey, readonly [number, number]> = {
   change_threshold_millilux: BOUNDS.changeThresholdMillilux,
   minimum_event_interval_ms: BOUNDS.minimumEventIntervalMs,
   change_threshold_millimeters: BOUNDS.changeThresholdMillimeters,
-  poll_interval_minutes: BOUNDS.pollIntervalMinutes,
+  poll_interval_seconds: BOUNDS.pollIntervalSeconds,
   interval_millis: [BOUNDS.minimumIntervalMillis[0], BOUNDS.intervalMillis[1]],
   maximum_batch_delay_millis: BOUNDS.maximumBatchDelayMillis,
   minimum_displacement_millimeters: BOUNDS.minimumDisplacementMillimeters,

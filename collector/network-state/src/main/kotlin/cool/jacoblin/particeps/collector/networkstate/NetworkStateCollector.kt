@@ -5,10 +5,11 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import cool.jacoblin.particeps.core.model.EventDraft
-import cool.jacoblin.particeps.core.definition.CollectorConfiguration
-import cool.jacoblin.particeps.core.definition.NetworkStateConfiguration
-import cool.jacoblin.particeps.core.collector.PrivacyClass
-import cool.jacoblin.particeps.core.collector.ProtocolEventContracts
+import cool.jacoblin.particeps.core.model.EventSourceId
+import cool.jacoblin.particeps.core.model.EventTypeKey
+import cool.jacoblin.particeps.core.definition.CollectorProfileConfiguration
+import cool.jacoblin.particeps.core.definition.NetworkStateV1ProfileConfiguration
+import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
 import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
@@ -26,19 +27,18 @@ class NetworkStateCollectorPlugin(
     private val applicationContext = context.applicationContext
 
     override val descriptor = CollectorDescriptor(
-        id = NetworkStateConfiguration.ID,
+        id = NetworkStateV1ProfileConfiguration.SOURCE_ID,
         displayName = "Network connection state",
-        privacyClass = PrivacyClass.SENSITIVE,
         accessKinds = emptySet(),
-        eventContract = requireNotNull(ProtocolEventContracts[NetworkStateConfiguration.ID]),
+        sourceContract = requireNotNull(ProtocolEventSourceRegistry[NetworkStateV1ProfileConfiguration.SOURCE_ID]),
     )
 
     override fun create(
-        configuration: CollectorConfiguration,
+        configuration: CollectorProfileConfiguration,
         context: CollectorContext,
     ): Collector = NetworkStateCollector(
         applicationContext,
-        configuration as? NetworkStateConfiguration
+        configuration as? NetworkStateV1ProfileConfiguration
             ?: throw IllegalArgumentException("Invalid network-state configuration"),
         context,
     )
@@ -46,7 +46,7 @@ class NetworkStateCollectorPlugin(
 
 private class NetworkStateCollector(
     androidContext: Context,
-    private val configuration: NetworkStateConfiguration,
+    private val configuration: NetworkStateV1ProfileConfiguration,
     collectorContext: CollectorContext,
 ) : SerializedCallbackCollector(collectorContext, CHANNEL_CAPACITY) {
     private val connectivityManager = androidContext.getSystemService(ConnectivityManager::class.java)
@@ -129,10 +129,8 @@ private class NetworkStateCollector(
     ) {
         capture {
             EventDraft(
-                collectorId = NetworkStateConfiguration.ID,
-                payloadSchemaVersion = 1,
+                type = EventTypeKey(EventSourceId(NetworkStateV1ProfileConfiguration.SOURCE_ID), 1, type),
                 observedTime = context.clocks.now(),
-                payloadType = type,
                 fields = fields,
             )
         }

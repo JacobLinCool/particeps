@@ -8,27 +8,40 @@ For anything larger than a bug fix, open an issue first. A new data source is a 
 
 ## Adding a collector
 
-A collector is three pieces:
+A collector is four generated/typed pieces:
 
-- a `CollectorConfiguration` — typed parameters that appear in the signed study configuration, with validated ranges
-- a `CollectorPlugin` — a fixed descriptor, the access requirements it needs, and a factory
-- a `Collector` — the runtime instance, with start, pause, resume, and stop
+- one profile schema in `protocol/v1/event-source-registry.json`, from which the typed configuration
+  and exact codec are generated;
+- event contracts in that same registry;
+- a `CollectorPlugin` descriptor that references the generated source contract, declares access,
+  and constructs the resource; and
+- a `Collector` runtime with generation-bound activation, batch/coverage emission, boundary flush,
+  health, and stop.
 
 ### Design constraints
 
-Collectors observe a source and emit events. They do not write files, change study state, start activities, schedule interventions, render surveys, export, or request permissions. This is not a rule imposed on collector authors so much as a consequence of the module graph. A `collector:*` module depends only on `core:collector-api` and `core:study-definition`, so storage, the runtime, and the protocol layer are not on its classpath.
+Collectors observe a source and emit events. They do not write files, change study state, start activities, schedule interventions, render surveys, export, or request permissions. This is not a rule imposed on collector authors so much as a consequence of the module graph. A `collector:*` module depends only on `core:collector-api` and `core:study-definition`, plus one of the two policy-listed narrow helpers when needed: `collector:sensor-common` for Android hardware-sensor listener lifecycle or `collector:usage-common` for the single Usage Access AppOps probe. Storage, the runtime, and the protocol layer are not on its classpath.
 
-That boundary is what keeps a new data source cheap to add and cheap to review. It also means the answer to "how do I persist this myself?" is that you do not. Everything goes through the `EventSink` in your `CollectorContext`. That is what makes sequence numbers contiguous and monotone, quota accounting correct, and a bundle able to declare the exact window it carries.
+That boundary is what keeps a new data source cheap to add and review. The answer to “how do I
+persist this myself?” is that you do not. Everything goes through `EventSink.emitBatch` or the
+zero-event coverage path. That binds source generation, producer ordinal, durable cursor, coverage,
+condition epoch, and ordered events into one authenticated commit.
 
 The boundary is checked, not merely reviewed. `tools/collector_assurance.py` reads `assurance/collector-policy.json` and fails CI on a forbidden import, a forbidden Gradle dependency, or a forbidden symbol in a compiled class. What it does not read is the manifest, so a collector module can still declare a permission or a component that nothing stops — that gap is tracked in issue #11.
 
 ### What review will look at
 
 - **An honest statement of what the data cannot establish.** Every collector needs one, in the same voice as the table in [docs/researcher-guide.md](docs/researcher-guide.md). Sensor samples are not an activity label; a location fix is not ground truth. This is what keeps researchers from overclaiming, and writing it usually clarifies the collector's design too.
-- **A field-level entry in [docs/data-dictionary.md](docs/data-dictionary.md)** — name, type, unit, semantics, and whether the field is always present. Researchers paste that document into ethics submissions.
+- **A complete registry contract and generated documentation.** Include field type/unit/presence,
+  operator/clock/completeness/privacy/rate bounds, and honest meaning. Do not add a handwritten
+  parallel schema to the data dictionary.
 - **Accurate access requirements.** A missing optional permission should block only your collector, never the study.
-- **Visible failure.** A collector that cannot observe reports `BLOCKED_ACCESS` or `FAILED`. It never synthesises a plausible-looking value to cover a gap — a silent placeholder is worse than a documented hole in the data.
-- **Pause behaviour.** Events carry their original observation time and are admitted against an epoch token. Do not buffer across a pause and flush afterwards.
+- **Fail-closed evidence.** A collector that cannot observe reports typed resource failure to the
+  coordinator. Required failure closes admission and pauses; an allowed optional source can remain
+  inactive. It never fabricates a plausible-looking value.
+- **Boundary behaviour.** Events carry their original occurrence/observation clocks and are admitted
+  against one epoch token. Retrospective state implements exact `flushThrough(boundary, cursor)`;
+  never buffer across a pause and later label it current.
 - **Event rate against the quota.** Say what your collector does to a study's storage budget at its default configuration.
 - **Privacy surface.** If the collector can observe something outside its own surface, or something a participant would not expect from its name, say so in the issue before you build it. This is the part most worth discussing early.
 
@@ -40,10 +53,17 @@ These are not off-limits, but they need discussion in an issue before implementa
 
 ## Development
 
-Requirements: JDK 17, Android SDK platform and build tools for API 37.
+Requirements: JDK 17, Android SDK platform/build tools for API 37, Go 1.26.3, and Android NDK
+30.0.14904198. Native builds use the exact checked-in module/sum policy, never a downloaded prebuilt
+AAR.
 
 ```bash
-./gradlew test testDebugUnitTest lintDebug assembleDebug assembleRelease
+./gradlew test testDebugUnitTest lintDebug lintRelease assembleDebug assembleRelease
+go -C native/traffic-shaping vet ./...
+go -C native/traffic-shaping test -race ./...
+cd web && pnpm check && pnpm test && pnpm build
+cd ../particeps-analysis && uv run ruff check src tests
+uv run python -m unittest discover -s tests
 ```
 
 The debug APK lands at `app/build/outputs/apk/debug/app-debug.apk`. A clean checkout has no signing material, so `assembleRelease` produces an unsigned release APK.
@@ -75,16 +95,21 @@ adb -s emulator-5554 emu sensor set proximity 1
   -Pandroid.testInstrumentationRunnerArguments.p2SyntheticInputs=true
 ```
 
-CI runs unit tests, Android lint, debug and release builds, then the complete connected suite on an
-API 34 Google APIs emulator on every pull request. Please check the host-side and attached-device
-commands above locally first. Note that `allWarningsAsErrors` is on, so an unhandled branch in an
-exhaustive `when` is a build failure rather than a warning.
+CI runs registry/conformance, host tests, lint/build/release verification, and complete connected
+suites on API 34 plus API 37 `google_apis_ps16k` revision 5 or newer. The API 37 lane proves a 16 KiB
+page size. Host orchestration covers kill/reboot/competing-VPN/package changes that cannot remain in
+one instrumentation process. `allWarningsAsErrors` is on, so an unhandled exhaustive branch is a
+build failure rather than a warning.
 
 ### Tests
 
-New behaviour needs tests. For a collector, at minimum: configuration parsing rejects invalid parameters, the collector honours pause and stop, and missing access produces `BLOCKED_ACCESS` rather than silence or fabricated events.
+New collector behaviour needs registry-generator parity, hostile profile/config bounds, batch and
+zero-event coverage tests, exact boundary flush/cursor tests, resource-generation lifecycle tests,
+and required/optional access failure tests without fabricated events.
 
-Changes touching the protocol, storage, export, or the state machine need tests for the failure path as well as the success path. Most of the guarantees in this project are about what happens when something goes wrong.
+Changes touching protocol, storage, reducer, resources, export, or lifecycle need crash, digest,
+ordering, and fail-closed tests as well as success. Most guarantees in this project are about
+containment when something goes wrong.
 
 ## Documentation
 

@@ -1,13 +1,20 @@
 package cool.jacoblin.particeps.core.protocol
 
-import cool.jacoblin.particeps.core.definition.AppLifecycleConfiguration
+import cool.jacoblin.particeps.core.definition.AppLifecycleV1ProfileConfiguration
+import cool.jacoblin.particeps.core.definition.AutomationDefinition
+import cool.jacoblin.particeps.core.definition.CollectorResourceConfiguration
 import cool.jacoblin.particeps.core.definition.ExportConfiguration
-import cool.jacoblin.particeps.core.definition.LocationConfiguration
-import cool.jacoblin.particeps.core.definition.LocationPriority
+import cool.jacoblin.particeps.core.definition.LocationV1PriorityValue
+import cool.jacoblin.particeps.core.definition.LocationV1ProfileConfiguration
+import cool.jacoblin.particeps.core.definition.NamedCollectorProfile
 import cool.jacoblin.particeps.core.definition.ProtocolBase64Url
+import cool.jacoblin.particeps.core.definition.ResourceBindingAutomation
+import cool.jacoblin.particeps.core.definition.ResourceConditionCase
 import cool.jacoblin.particeps.core.definition.SignerIdentity
+import cool.jacoblin.particeps.core.definition.StateCondition
 import cool.jacoblin.particeps.core.definition.StudyConfiguration
 import cool.jacoblin.particeps.core.definition.StudyConfigurationCodec
+import cool.jacoblin.particeps.core.definition.TrafficShapingConfiguration
 import cool.jacoblin.particeps.core.definition.UploadConfiguration
 import java.nio.ByteBuffer
 import java.security.KeyPair
@@ -195,11 +202,60 @@ class ConfigurationProtocolTest {
             consentDocumentVersion = "v1",
             consentSummary = "Protocol test consent summary.",
             collectors = listOf(
-                AppLifecycleConfiguration(true),
-                LocationConfiguration(false, 10_000, 5_000, 30_000, 5_000, LocationPriority.BALANCED),
+                CollectorResourceConfiguration(
+                    AppLifecycleV1ProfileConfiguration.SOURCE_ID,
+                    required = true,
+                    profiles = listOf(
+                        NamedCollectorProfile("continuous", AppLifecycleV1ProfileConfiguration()),
+                    ),
+                ),
+                CollectorResourceConfiguration(
+                    LocationV1ProfileConfiguration.SOURCE_ID,
+                    required = false,
+                    profiles = listOf(
+                        NamedCollectorProfile(
+                            "continuous",
+                            LocationV1ProfileConfiguration(
+                                intervalMillis = 10_000,
+                                minimumIntervalMillis = 5_000,
+                                maximumBatchDelayMillis = 30_000,
+                                minimumDisplacementMillimeters = 5_000,
+                                priority = LocationV1PriorityValue.BALANCED,
+                            ),
+                        ),
+                    ),
+                ),
             ),
             surveys = emptyList(),
             interventions = emptyList(),
+            automations = listOf(
+                ResourceBindingAutomation(
+                    id = "bind-app-lifecycle",
+                    resource = CollectorResourceConfiguration(
+                        AppLifecycleV1ProfileConfiguration.SOURCE_ID,
+                        true,
+                        listOf(NamedCollectorProfile("continuous", AppLifecycleV1ProfileConfiguration())),
+                    ).resourceKey,
+                    cases = listOf(ResourceConditionCase(StateCondition.StudySessionActive, "continuous")),
+                    defaultProfileId = null,
+                ),
+                ResourceBindingAutomation(
+                    id = "bind-location",
+                    resource = CollectorResourceConfiguration(
+                        LocationV1ProfileConfiguration.SOURCE_ID,
+                        false,
+                        listOf(
+                            NamedCollectorProfile(
+                                "continuous",
+                                LocationV1ProfileConfiguration(10_000, 30_000, 5_000, 5_000, LocationV1PriorityValue.BALANCED),
+                            ),
+                        ),
+                    ).resourceKey,
+                    cases = listOf(ResourceConditionCase(StateCondition.StudySessionActive, "continuous")),
+                    defaultProfileId = null,
+                ),
+            ).sortedBy(AutomationDefinition::id),
+            trafficShaping = TrafficShapingConfiguration.Disabled,
             maximumLocalBytes = 16_777_216,
             signer = SignerIdentity("test-signer", signerPublicKey),
             export = ExportConfiguration("test-hpke", ProtocolBase64Url.encode(ByteArray(32) { 2 })),

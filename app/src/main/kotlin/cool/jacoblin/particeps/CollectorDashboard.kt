@@ -1,8 +1,6 @@
 package cool.jacoblin.particeps
 
 import android.text.format.DateUtils
-import android.content.ClipData
-import android.content.ClipboardManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,6 +24,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -34,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -55,18 +55,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import cool.jacoblin.particeps.core.application.StudyAccessFeature
-import cool.jacoblin.particeps.core.application.RecoveryStatus
-import cool.jacoblin.particeps.core.application.StudyAccessOwner
-import cool.jacoblin.particeps.core.application.StudyAccessStatus
+import cool.jacoblin.particeps.core.application.StartupStage
 import cool.jacoblin.particeps.core.collector.AccessKind
-import cool.jacoblin.particeps.core.collector.AccessResolution
 import cool.jacoblin.particeps.core.collector.SetupAction
-import cool.jacoblin.particeps.core.collector.CollectorStatus
-import cool.jacoblin.particeps.core.definition.StudyConfiguration
-import cool.jacoblin.particeps.core.definition.UploadConfiguration
 import cool.jacoblin.particeps.core.model.ExperimentState
-import cool.jacoblin.particeps.core.model.StudyMetadata
 import java.text.NumberFormat
 import kotlinx.coroutines.delay
 
@@ -81,6 +73,7 @@ object UiTags {
     const val START = "start"
     const val PAUSE = "pause"
     const val RESUME = "resume"
+    const val COMPLETE = "complete"
     const val WITHDRAW = "withdraw"
     const val EXPORT = "export"
     const val EVENT_COUNT = "event_count"
@@ -88,6 +81,8 @@ object UiTags {
     const val RECOVERY_RETRY = "recovery_retry"
     const val RECOVERY_COPY = "recovery_copy"
     const val RECOVERY_RESET = "recovery_reset"
+    const val STARTUP_STAGE = "startup_stage"
+    const val TRAFFIC_SHAPING_DISCLOSURE = "traffic_shaping_disclosure"
 
     fun accessItem(kind: AccessKind) = "access_item_${kind.name}"
     fun accessOwners(kind: AccessKind) = "access_owners_${kind.name}"
@@ -106,6 +101,7 @@ data class StudyUiActions(
     val start: () -> Unit,
     val pause: () -> Unit,
     val resume: () -> Unit,
+    val complete: () -> Unit,
     val withdraw: () -> Unit,
     val export: () -> Unit,
     val delete: () -> Unit,
@@ -150,6 +146,7 @@ fun CollectorApp(
                     state = state,
                     actions = actions.copy(
                         withdraw = { confirmAction = ConfirmAction.WITHDRAW },
+                        complete = { confirmAction = ConfirmAction.COMPLETE },
                         delete = { confirmAction = ConfirmAction.DELETE },
                         resetAndRestart = { confirmAction = ConfirmAction.RESET },
                     ),
@@ -168,6 +165,7 @@ fun CollectorApp(
                 onConfirm = {
                     confirmAction = null
                     when (action) {
+                        ConfirmAction.COMPLETE -> actions.complete()
                         ConfirmAction.WITHDRAW -> actions.withdraw()
                         ConfirmAction.DELETE -> actions.delete()
                         ConfirmAction.RESET -> actions.resetAndRestart()
@@ -186,13 +184,13 @@ private fun Dashboard(
     modifier: Modifier = Modifier,
 ) {
     val study = state as? StudyUiState.ActiveStudy
-    val metadata = study?.metadata
+    val model = study?.model
     // Re-entering CONSENT_PENDING starts at the data page again, so nobody lands on the checkbox
     // without the list of sources having been on screen.
-    var page by remember(metadata?.state) { mutableStateOf(SetupStep.DATA) }
-    val requiredAccessMissing = study?.access?.any { it.requirement.required && !it.granted } == true
-    val step = metadata?.state?.let { setupStep(it, page) }
-    val accessRemediation = requiredAccessMissing && when (metadata?.state) {
+    var page by remember(model?.state) { mutableStateOf(SetupStep.DATA) }
+    val requiredAccessMissing = model?.access?.any { it.required && !it.granted } == true
+    val step = model?.state?.let { setupStep(it, page) }
+    val accessRemediation = requiredAccessMissing && when (model.state) {
         ExperimentState.READY, ExperimentState.RUNNING, ExperimentState.PAUSED -> true
         else -> false
     }
@@ -205,29 +203,34 @@ private fun Dashboard(
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         Header(
-            title = study?.configuration?.title ?: stringResource(R.string.header_no_study),
+            title = model?.title ?: stringResource(R.string.header_no_study),
             step = step,
             initializing = state is StudyUiState.Initializing,
-            state = metadata?.state,
-            metadata = metadata,
+            state = model?.state,
+            startedAtUtcMillis = model?.startedAtUtcMillis,
+            pausedAtUtcMillis = model?.pausedAtUtcMillis,
+            endedAtUtcMillis = model?.endedAtUtcMillis,
             onOpenLanguage = onOpenLanguage,
         )
         state.message?.let { Alert(it) }
 
-        if (state is StudyUiState.Initializing) return@Column
-        (state.recoveryStatus as? RecoveryStatus.ActionRequired)?.let { recovery ->
-            RecoveryPanel(recovery, study, actions, state.busy)
+        if (state is StudyUiState.Initializing) {
+            StartupPatience(state.stage)
             return@Column
         }
-        if (study == null || metadata == null) {
+        if (state.recoveryStatus == ParticipantRecoveryState.ACTION_REQUIRED) {
+            RecoveryPanel(study, actions, state.busy)
+            return@Column
+        }
+        if (study == null || model == null) {
             NoStudyPanel(actions)
             return@Column
         }
 
         if (accessRemediation) {
             AccessPanel(
-                configuration = study.configuration,
-                checks = study.access,
+                study = model,
+                checks = model.access,
                 actions = actions,
                 busy = state.busy,
                 completesInitialSetup = false,
@@ -236,15 +239,15 @@ private fun Dashboard(
             when (step) {
                 SetupStep.STUDY -> StudyPanel(study, actions, state.busy)
                 SetupStep.DATA -> DataPanel(
-                    configuration = study.configuration,
+                    study = model,
                     actions = actions,
                     busy = state.busy,
                     onContinue = { page = SetupStep.CONSENT },
                 )
                 SetupStep.CONSENT -> ConsentPanel(study, actions, state.busy)
                 SetupStep.ACCESS -> AccessPanel(
-                    configuration = study.configuration,
-                    checks = study.access,
+                    study = model,
+                    checks = model.access,
                     actions = actions,
                     busy = state.busy,
                     completesInitialSetup = true,
@@ -258,45 +261,21 @@ private fun Dashboard(
 
 @Composable
 private fun RecoveryPanel(
-    recovery: RecoveryStatus.ActionRequired,
     study: StudyUiState.ActiveStudy?,
     actions: StudyUiActions,
     busy: Boolean,
 ) {
-    val context = LocalContext.current
-    val diagnosticCode = "RECOVERY_${recovery.code.name}"
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(stringResource(R.string.recovery_panel_title), style = MaterialTheme.typography.titleLarge)
         Text(stringResource(R.string.recovery_panel_body))
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(10.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(
-                diagnosticCode,
-                modifier = Modifier.padding(12.dp),
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
         Button(
             onClick = actions.retryRecovery,
             enabled = !busy,
             modifier = Modifier.fillMaxWidth().testTag(UiTags.RECOVERY_RETRY),
         ) { Text(stringResource(R.string.action_retry_recovery)) }
-        OutlinedButton(
-            onClick = {
-                context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(
-                    ClipData.newPlainText("Particeps recovery diagnostic", diagnosticCode),
-                )
-            },
-            modifier = Modifier.fillMaxWidth().testTag(UiTags.RECOVERY_COPY),
-        ) { Text(stringResource(R.string.action_copy_diagnostic)) }
-        if (recovery.code == cool.jacoblin.particeps.core.application.RecoveryFailureCode.ACCESS_MISSING) {
-            study?.access
-                ?.filter { it.requirement.required && !it.granted }
-                ?.forEach { check -> AccessCard(study.configuration, check, actions, busy) }
-        }
+        study?.model?.access
+            ?.filter { it.required && !it.granted }
+            ?.forEach { check -> AccessCard(check, actions, busy) }
         TextButton(
             onClick = actions.resetAndRestart,
             enabled = !busy,
@@ -331,7 +310,9 @@ private fun Header(
     initializing: Boolean,
     step: SetupStep?,
     state: ExperimentState?,
-    metadata: StudyMetadata?,
+    startedAtUtcMillis: Long?,
+    pausedAtUtcMillis: Long?,
+    endedAtUtcMillis: Long?,
     onOpenLanguage: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -358,11 +339,50 @@ private fun Header(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             step != null -> StepRail(step)
-            state != null -> StatusLine(state, metadata)
+            state != null -> StatusLine(
+                state,
+                startedAtUtcMillis,
+                pausedAtUtcMillis,
+                endedAtUtcMillis,
+            )
             // No study imported: the title is the app's own name and there is no position to
             // report, so the header stops here rather than inventing a line.
             else -> Unit
         }
+    }
+}
+
+/**
+ * Nothing at first, then which startup stage is running and a bar that keeps moving.
+ *
+ * A normal start resolves in well under a second, and drawing progress for it would make every
+ * launch look slow. Only a start that has already kept the participant waiting owes them an
+ * account of what it is doing and evidence that it has not hung — the report that finally
+ * distinguished a long storage validation from a freeze arrived as a photo of this screen.
+ */
+@Composable
+private fun StartupPatience(stage: StartupStage?) {
+    var waited by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(STARTUP_PATIENCE_MILLIS)
+        waited = true
+    }
+    if (!waited) return
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        Text(
+            stringResource(
+                when (stage) {
+                    StartupStage.LOADING_STUDY -> R.string.startup_stage_loading_study
+                    StartupStage.VERIFYING_STORAGE -> R.string.startup_stage_validating_storage
+                    StartupStage.RESTORING_RUNTIME -> R.string.startup_stage_restoring_runtime
+                    null -> R.string.startup_stage_generic
+                },
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag(UiTags.STARTUP_STAGE),
+        )
     }
 }
 
@@ -390,12 +410,14 @@ private fun StepRail(step: SetupStep) {
 }
 
 @Composable
-private fun StatusLine(state: ExperimentState, metadata: StudyMetadata?) {
-    val started = metadata?.transitions?.firstOrNull { it.to == ExperimentState.RUNNING }
-        ?.time?.wallTimeUtcMillis
+private fun StatusLine(
+    state: ExperimentState,
+    startedAtUtcMillis: Long?,
+    pausedAtUtcMillis: Long?,
+    endedAtUtcMillis: Long?,
+) {
     // A study that is over has a length, not an age. Freezing it at the terminal transition is
     // what makes the figure mean the same thing on a finished study as on a running one.
-    val ended = metadata?.transitions?.lastOrNull { it.to in TERMINAL_STATES }?.time?.wallTimeUtcMillis
     val now by produceState(System.currentTimeMillis()) {
         while (true) {
             delay(TICK_MILLIS)
@@ -405,10 +427,7 @@ private fun StatusLine(state: ExperimentState, metadata: StudyMetadata?) {
     // A pause is the one state a participant can leave the study in by accident, so it reports both
     // halves: when it started, and how long ago that was. The elapsed figure beside the state name
     // is the study's own age and keeps running through a pause, which is why it cannot carry this.
-    val pausedAt = state.takeIf { it == ExperimentState.PAUSED }?.let {
-        metadata?.transitions?.lastOrNull { transition -> transition.to == ExperimentState.PAUSED }
-            ?.time?.wallTimeUtcMillis
-    }
+    val pausedAt = pausedAtUtcMillis.takeIf { state == ExperimentState.PAUSED }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(10.dp).background(stateTint(state), CircleShape))
@@ -418,8 +437,8 @@ private fun StatusLine(state: ExperimentState, metadata: StudyMetadata?) {
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.testTag(UiTags.STATE),
             )
-            started?.let {
-                Text(elapsedLabel((ended ?: now) - it), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            startedAtUtcMillis?.let {
+                Text(elapsedLabel((endedAtUtcMillis ?: now) - it), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         pausedAt?.let {
@@ -477,7 +496,7 @@ private fun NoStudyPanel(actions: StudyUiActions) {
 /** Step 1. What this study is, who is asking, and for how long — all of it the researcher's text. */
 @Composable
 private fun StudyPanel(study: StudyUiState.ActiveStudy, actions: StudyUiActions, busy: Boolean) {
-    val configuration = study.configuration
+    val configuration = study.model
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
         Text(configuration.purpose)
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -502,20 +521,17 @@ private fun FactRow(glyph: Glyph, value: String) {
     }
 }
 
-/**
- * Step 2. Every source the signed study enables, described from a template rather than from the
- * researcher's prose, so the parameters on screen are the ones the app will actually run.
- */
+/** Step 2. Every enabled data category, without treatment-dependent profile parameters. */
 @Composable
 private fun DataPanel(
-    configuration: StudyConfiguration,
+    study: ParticipantStudyUiModel,
     actions: StudyUiActions,
     busy: Boolean,
     onContinue: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        configuration.collectors.forEach { collector ->
-            val summary = collector.summarize()
+        study.dataCategories.forEach { category ->
+            val summary = category.summarize()
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 GlyphIcon(summary.glyph, MaterialTheme.colorScheme.primary, 22.dp)
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -546,13 +562,13 @@ private fun DataPanel(
 private fun ConsentPanel(study: StudyUiState.ActiveStudy, actions: StudyUiActions, busy: Boolean) {
     var consentChecked by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text(study.configuration.consentSummary)
+        Text(study.model.consentSummary)
         // Both blocks are rendered from the signed configuration rather than the researcher's
         // prose, so they describe what the app will actually do even if the summary leaves it out.
         // Their wording is deliberately complete.
-        PublisherDisclosure(study.configuration, study.signerAnchored)
-        IdentityDisclosure(study.configuration.assignedParticipantId)
-        UploadDisclosure(study.configuration.upload)
+        PublisherDisclosure(study.model.signerFingerprint, study.model.signerAnchored)
+        IdentityDisclosure(study.model.assignedParticipantId)
+        UploadDisclosure(study.model.upload)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(
                 checked = consentChecked,
@@ -629,7 +645,7 @@ private fun Disclosure(
  * instead is an instruction — check this fingerprint — with the reason kept quiet underneath it.
  */
 @Composable
-private fun PublisherDisclosure(configuration: StudyConfiguration, anchored: Boolean) {
+private fun PublisherDisclosure(fingerprint: String, anchored: Boolean) {
     Disclosure(
         mark = {
             if (anchored) CheckMark(MaterialTheme.colorScheme.secondary, 16.dp) else PendingMark(blocking = false)
@@ -637,7 +653,7 @@ private fun PublisherDisclosure(configuration: StudyConfiguration, anchored: Boo
         title = stringResource(R.string.consent_signature_title),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(configuration.signer.fingerprint, fontWeight = FontWeight.SemiBold)
+            Text(fingerprint, fontWeight = FontWeight.SemiBold)
             if (anchored) {
                 Text(stringResource(R.string.consent_signature_anchored))
             } else {
@@ -661,7 +677,7 @@ private fun PublisherDisclosure(configuration: StudyConfiguration, anchored: Boo
  * from an absence, and an absence is not a disclosure.
  */
 @Composable
-private fun UploadDisclosure(upload: UploadConfiguration?) {
+private fun UploadDisclosure(upload: ParticipantUploadDisclosure?) {
     if (upload == null) {
         Disclosure(
             mark = { CheckMark(MaterialTheme.colorScheme.secondary, 16.dp) },
@@ -669,13 +685,12 @@ private fun UploadDisclosure(upload: UploadConfiguration?) {
         ) { Text(stringResource(R.string.consent_upload_none_body)) }
         return
     }
-    val host = runCatching { java.net.URI(upload.endpoint).host }.getOrNull() ?: upload.endpoint
     Disclosure(
         mark = { GlyphIcon(Glyph.DATA_VOLUME, MaterialTheme.colorScheme.primary, 16.dp) },
         title = stringResource(R.string.consent_upload_title),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(stringResource(R.string.consent_upload_destination, host))
+            Text(stringResource(R.string.consent_upload_destination, upload.destinationHost))
             Text(uploadCadenceLabel(upload))
             Text(stringResource(R.string.consent_upload_encrypted))
             Text(stringResource(R.string.consent_upload_instance_id))
@@ -696,16 +711,24 @@ private fun UploadDisclosure(upload: UploadConfiguration?) {
  */
 @Composable
 private fun AccessPanel(
-    configuration: StudyConfiguration,
-    checks: List<StudyAccessStatus>,
+    study: ParticipantStudyUiModel,
+    checks: List<ParticipantAccessItem>,
     actions: StudyUiActions,
     busy: Boolean,
     completesInitialSetup: Boolean,
 ) {
-    val requiredReady = checks.none { it.requirement.required && !it.granted }
+    val requiredReady = checks.none { it.required && !it.granted }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         checks.forEach { check ->
-            AccessCard(configuration, check, actions, busy)
+            AccessCard(check, actions, busy)
+        }
+        if (completesInitialSetup && study.trafficShapingDisclosureRequired) {
+            Text(
+                stringResource(R.string.traffic_shaping_disclosure),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag(UiTags.TRAFFIC_SHAPING_DISCLOSURE),
+            )
         }
         if (completesInitialSetup) {
             Spacer(Modifier.height(4.dp))
@@ -721,12 +744,11 @@ private fun AccessPanel(
 
 @Composable
 internal fun AccessCard(
-    configuration: StudyConfiguration,
-    check: StudyAccessStatus,
+    check: ParticipantAccessItem,
     actions: StudyUiActions,
     busy: Boolean,
 ) {
-    val kind = check.requirement.kind
+    val kind = check.kind
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -741,14 +763,14 @@ internal fun AccessCard(
             if (check.granted) {
                 CheckMark(MaterialTheme.colorScheme.secondary, 16.dp)
             } else {
-                PendingMark(blocking = check.requirement.required)
+                PendingMark(blocking = check.required)
             }
             Text(
                 stringResource(kind.labelRes()),
                 modifier = Modifier.weight(1f),
                 fontWeight = FontWeight.SemiBold,
             )
-            if (!check.requirement.required) {
+                if (!check.required) {
                 Text(
                     stringResource(R.string.data_optional),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -756,11 +778,11 @@ internal fun AccessCard(
             }
         }
 
-        AccessOwners(configuration, kind, check.owners)
+        AccessOwners(kind, check.owners)
 
         if (!check.granted) {
             check.guidance
-                ?.takeUnless { check.resolution is AccessResolution.Unavailable }
+                ?.takeUnless { check.resolution is ParticipantAccessResolution.Unavailable }
                 ?.presentation()
                 ?.let { guidance ->
                 Column(
@@ -779,13 +801,13 @@ internal fun AccessCard(
             }
 
             when (val resolution = check.resolution) {
-                AccessResolution.Satisfied -> Unit
-                is AccessResolution.ActionRequired -> OutlinedButton(
+                ParticipantAccessResolution.Satisfied -> Unit
+                is ParticipantAccessResolution.ActionRequired -> OutlinedButton(
                     onClick = { actions.requestAccess(resolution.action) },
                     enabled = !busy,
                     modifier = Modifier.testTag(UiTags.accessAction(kind)),
                 ) { Text(stringResource(resolution.action.labelRes())) }
-                is AccessResolution.BlockedByPrerequisites -> resolution.missing
+                is ParticipantAccessResolution.BlockedByPrerequisites -> resolution.missing
                     .sortedBy { it.name }
                     .forEach { prerequisite ->
                         Text(
@@ -796,8 +818,8 @@ internal fun AccessCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                is AccessResolution.Unavailable -> Text(
-                    stringResource(resolution.reason.messageRes()),
+                ParticipantAccessResolution.Unavailable -> Text(
+                    stringResource(R.string.access_system_screen_unavailable),
                     color = MaterialTheme.colorScheme.error,
                 )
             }
@@ -817,18 +839,10 @@ private fun guidanceStepText(stepResource: Int): String = when (stepResource) {
 
 @Composable
 private fun AccessOwners(
-    configuration: StudyConfiguration,
     kind: AccessKind,
-    owners: Set<StudyAccessOwner>,
+    owners: List<ParticipantAccessOwner>,
 ) {
-    val collectorOrder = configuration.collectors.mapIndexed { index, collector -> collector.id to index }.toMap()
-    val collectors = configuration.collectors.associateBy { it.id }
-    val orderedOwners = owners.sortedBy { owner ->
-        when (owner) {
-            is StudyAccessOwner.Feature -> -1
-            is StudyAccessOwner.Collector -> collectorOrder.getValue(owner.collectorId)
-        }
-    }
+    val orderedOwners = owners.sortedBy { owner -> owner::class.simpleName }
     Column(
         modifier = Modifier.testTag(UiTags.accessOwners(kind)),
         verticalArrangement = Arrangement.spacedBy(3.dp),
@@ -840,11 +854,10 @@ private fun AccessOwners(
         )
         orderedOwners.forEach { owner ->
             val label = when (owner) {
-                is StudyAccessOwner.Collector -> collectors.getValue(owner.collectorId).summarize().name
-                is StudyAccessOwner.Feature -> when (owner.feature) {
-                    StudyAccessFeature.STUDY_NOTIFICATIONS ->
-                        stringResource(R.string.access_owner_study_notifications)
-                }
+                is ParticipantAccessOwner.DataCategory ->
+                    ParticipantDataCategory(owner.kind, optional = !owner.required).summarize().name
+                ParticipantAccessOwner.StudyNotifications ->
+                    stringResource(R.string.access_owner_study_notifications)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.access_owner_item, label))
@@ -874,12 +887,12 @@ private fun StartPanel(actions: StudyUiActions, busy: Boolean) {
 
 @Composable
 private fun CollectionPanel(study: StudyUiState.ActiveStudy, actions: StudyUiActions, busy: Boolean) {
-    val state = study.metadata.state
+    val state = study.model.state
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
         CollectorGrid(study)
         OptionalAccessRemediation(
-            configuration = study.configuration,
-            checks = study.access,
+            study = study.model,
+            checks = study.model.access,
             actions = actions,
             busy = busy,
         )
@@ -892,6 +905,13 @@ private fun CollectionPanel(study: StudyUiState.ActiveStudy, actions: StudyUiAct
                 stringResource(R.string.action_resume), UiTags.RESUME, actions.resume, busy,
             )
             else -> Unit
+        }
+        if (state == ExperimentState.RUNNING || state == ExperimentState.PAUSED) {
+            OutlinedButton(
+                onClick = actions.complete,
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth().testTag(UiTags.COMPLETE),
+            ) { Text(stringResource(R.string.action_complete_study)) }
         }
         Button(
             onClick = actions.export,
@@ -910,12 +930,12 @@ private fun CollectionPanel(study: StudyUiState.ActiveStudy, actions: StudyUiAct
 
 @Composable
 internal fun OptionalAccessRemediation(
-    configuration: StudyConfiguration,
-    checks: List<StudyAccessStatus>,
+    study: ParticipantStudyUiModel,
+    checks: List<ParticipantAccessItem>,
     actions: StudyUiActions,
     busy: Boolean,
 ) {
-    val missing = checks.filter { !it.requirement.required && !it.granted }
+    val missing = checks.filter { !it.required && !it.granted }
     if (missing.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(stringResource(R.string.optional_access_title), fontWeight = FontWeight.SemiBold)
@@ -923,7 +943,7 @@ internal fun OptionalAccessRemediation(
             stringResource(R.string.optional_access_body),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        missing.forEach { AccessCard(configuration, it, actions, busy) }
+        missing.forEach { AccessCard(it, actions, busy) }
     }
 }
 
@@ -939,21 +959,25 @@ private fun WithdrawLink(actions: StudyUiActions, busy: Boolean) {
 @Composable
 private fun CollectorGrid(study: StudyUiState.ActiveStudy) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        study.configuration.collectors.forEach { collector ->
-            val health = study.collectorHealth[collector.id]
-            val summary = collector.summarize()
+        study.model.dataCategories.forEach { category ->
+            val summary = category.summarize()
             Row(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Box(Modifier.size(10.dp).background(collectorTint(health?.status), CircleShape))
+                Box(
+                    Modifier.size(10.dp).background(
+                        if (study.model.state == ExperimentState.RUNNING) {
+                            MaterialTheme.colorScheme.secondary
+                        } else {
+                            MaterialTheme.colorScheme.outline
+                        },
+                        CircleShape,
+                    ),
+                )
                 GlyphIcon(summary.glyph, MaterialTheme.colorScheme.onSurfaceVariant, 18.dp)
                 Text(summary.name, Modifier.weight(1f))
-                // Normal is silent. CollectorHealth carries a reason code for exactly the states
-                // that need attention and for no others, so its presence is the condition, and the
-                // code itself is what a participant would quote to the research team.
-                health?.reasonCode?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         }
     }
@@ -965,9 +989,10 @@ private fun CollectorGrid(study: StudyUiState.ActiveStudy) {
  */
 @Composable
 private fun EventMeter(study: StudyUiState.ActiveStudy) {
-    val total = study.metadata.eventCount
-    val delivered = study.metadata.uploadedThroughSequence
-    val uploads = study.configuration.upload != null
+    val total = study.model.lifetimeDataEventCount
+    val durableCommits = study.model.durableThroughCommit
+    val delivered = study.model.uploadedThroughCommit
+    val uploads = study.model.upload != null
     val numbers = remember { NumberFormat.getIntegerInstance() }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -980,19 +1005,14 @@ private fun EventMeter(study: StudyUiState.ActiveStudy) {
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f).testTag(UiTags.EVENT_COUNT),
             )
-            if (uploads && total > 0) {
+            if (uploads && durableCommits > 0) {
                 Text(
-                    study.upload?.lastFailureCode
-                        ?: stringResource(R.string.meter_sent, numbers.format(delivered)),
-                    color = if (study.upload?.lastFailureCode != null) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
+                    stringResource(R.string.meter_sent, numbers.format(delivered)),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
-        if (uploads && total > 0) {
+        if (uploads && durableCommits > 0) {
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -1001,17 +1021,21 @@ private fun EventMeter(study: StudyUiState.ActiveStudy) {
             ) {
                 Box(
                     Modifier
-                        .fillMaxWidth(fraction = (delivered.toFloat() / total).coerceIn(0f, 1f))
+                        .fillMaxWidth(
+                            fraction = if (durableCommits == 0L) 0f else {
+                                (delivered.toFloat() / durableCommits).coerceIn(0f, 1f)
+                            },
+                        )
                         .height(6.dp)
                         .background(MaterialTheme.colorScheme.secondary, RoundedCornerShape(3.dp)),
                 )
             }
         }
-        if (study.metadata.retainedFromSequence > 1) {
+        if (study.model.retainedFromCommit > 1) {
             Text(
                 stringResource(
                     R.string.meter_reclaimed,
-                    numbers.format(study.metadata.retainedFromSequence - 1),
+                    numbers.format(study.model.retainedFromCommit - 1),
                 ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1023,21 +1047,21 @@ private fun EventMeter(study: StudyUiState.ActiveStudy) {
 @Composable
 private fun StudyDetails(study: StudyUiState.ActiveStudy) {
     var expanded by remember { mutableStateOf(false) }
-    val configuration = study.configuration
+    val configuration = study.model
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (expanded) {
             HorizontalDivider()
             DetailRow(stringResource(R.string.details_configuration), configuration.configurationId)
-            DetailRow(stringResource(R.string.details_instance_id), study.metadata.participantInstanceId)
+            DetailRow(stringResource(R.string.details_instance_id), configuration.participantInstanceId)
             configuration.assignedParticipantId?.let {
                 DetailRow(stringResource(R.string.details_assigned_id), it)
             }
             DetailRow(stringResource(R.string.details_consent_document), configuration.consentDocumentVersion)
-            DetailRow(stringResource(R.string.details_signature), configuration.signer.fingerprint)
-            study.lastExport?.let {
+            DetailRow(stringResource(R.string.details_signature), configuration.signerFingerprint)
+            configuration.lastExport?.let {
                 DetailRow(
                     stringResource(R.string.details_last_export),
-                    stringResource(R.string.details_last_export_value, it.eventCount, it.sha256.take(12)),
+                    stringResource(R.string.details_last_export_value, it.eventCount, it.commitCount),
                 )
             }
         }
@@ -1127,6 +1151,7 @@ private fun ConfirmDialog(
 ) {
     // Irreversible actions are exactly where text earns its place.
     val (title, body) = when (action) {
+        ConfirmAction.COMPLETE -> R.string.confirm_complete_title to R.string.confirm_complete_body
         ConfirmAction.WITHDRAW -> R.string.confirm_withdraw_title to R.string.confirm_withdraw_body
         ConfirmAction.DELETE -> R.string.confirm_delete_title to R.string.confirm_delete_body
         ConfirmAction.RESET -> R.string.confirm_reset_title to R.string.confirm_reset_body
@@ -1221,9 +1246,8 @@ private fun Chevron(up: Boolean) {
     }
 }
 
-/** Incident codes are the one place raw identifiers reach the participant, so they stay legible. */
 @Composable
-private fun Alert(code: String) {
+private fun Alert(message: ParticipantMessage) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -1233,11 +1257,14 @@ private fun Alert(code: String) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         PendingMark(blocking = true)
-        Text(code, color = MaterialTheme.colorScheme.onErrorContainer)
+        Text(
+            stringResource(message.textResource()),
+            color = MaterialTheme.colorScheme.onErrorContainer,
+        )
     }
 }
 
-private enum class ConfirmAction { WITHDRAW, DELETE, RESET }
+private enum class ConfirmAction { COMPLETE, WITHDRAW, DELETE, RESET }
 
 @Composable
 private fun stateTint(state: ExperimentState): Color = when (state) {
@@ -1245,11 +1272,17 @@ private fun stateTint(state: ExperimentState): Color = when (state) {
     else -> MaterialTheme.colorScheme.outline
 }
 
-@Composable
-private fun collectorTint(status: CollectorStatus?): Color = when (status) {
-    CollectorStatus.ACTIVE -> MaterialTheme.colorScheme.secondary
-    CollectorStatus.BLOCKED_ACCESS, CollectorStatus.FAILED -> MaterialTheme.colorScheme.error
-    else -> MaterialTheme.colorScheme.outline
+private fun ParticipantMessage.textResource(): Int = when (this) {
+    ParticipantMessage.CONFIGURATION_IMPORT_FAILED -> R.string.message_configuration_import_failed
+    ParticipantMessage.JOIN_IMPORT_FAILED -> R.string.message_join_import_failed
+    ParticipantMessage.EXPORT_FAILED -> R.string.message_export_failed
+    ParticipantMessage.ACCESS_INSPECTION_FAILED -> R.string.message_access_inspection_failed
+    ParticipantMessage.OPERATION_FAILED -> R.string.message_operation_failed
+    ParticipantMessage.RESET_FAILED -> R.string.message_reset_failed
+    ParticipantMessage.DELETE_FAILED -> R.string.message_delete_failed
+    ParticipantMessage.EXPORT_COMPLETE -> R.string.message_export_complete
+    ParticipantMessage.LOCAL_DATA_DELETED -> R.string.message_local_data_deleted
+    ParticipantMessage.STUDY_PAUSED_FOR_SAFETY -> R.string.message_study_paused_for_safety
 }
 
 /** Setup states never reach here: during setup the header shows a position, not a name. */
@@ -1263,3 +1296,4 @@ private fun ExperimentState.labelRes(): Int = when (this) {
 private val TERMINAL_STATES = setOf(ExperimentState.COMPLETED, ExperimentState.WITHDRAWN)
 
 private const val TICK_MILLIS = 30_000L
+private const val STARTUP_PATIENCE_MILLIS = 2_500L

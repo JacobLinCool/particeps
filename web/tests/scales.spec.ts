@@ -135,7 +135,7 @@ for (const [name, catalogue, locale] of CATALOGUES) {
       // 30 000 ms on 30 103, 600 000 ms on 599 489, 512 MiB on 535 218 657 B, 720 min on 715, and
       // the upload interval's 12 hours on 722 min.
       const wanted: Partial<Record<ScaleKey, number[]>> = {
-        poll_interval_minutes: [120, 720],
+        poll_interval_seconds: [120, 7_200],
         interval_millis: [30_000, 120_000],
         maximum_batch_delay_millis: [600_000],
         duration_hours: [504, 2_160, 4_320],

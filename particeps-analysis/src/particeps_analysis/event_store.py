@@ -1,4 +1,4 @@
-"""Owner-only SQLite spill storage for authenticated event reassembly."""
+"""Owner-only SQLite spill storage for verified event reassembly."""
 
 from __future__ import annotations
 
@@ -22,12 +22,13 @@ from .models import (
 
 EVENT_COLUMNS = (
     "experiment_id, configuration_id, participant_instance_id, sequence_number, "
-    "assigned_participant_id, collector_id, payload_schema_version, payload_type, "
-    "boot_session_id, monotonic_time_nanos, wall_time_utc_millis, fields_json, "
-    "canonical_bytes, source_ciphertext_sha256, source_bundle_id, "
-    "source_configuration_sha256, source_object, content_sha256"
+    "assigned_participant_id, source_id, schema_version, event_type, "
+    "condition_epoch_id, source_condition_epoch_id, boot_session_id, "
+    "monotonic_time_nanos, wall_time_utc_millis, fields_json, canonical_bytes, "
+    "source_ciphertext_sha256, source_bundle_id, source_configuration_sha256, "
+    "source_object, source_commit_sequence, source_observation_sequence, content_sha256"
 )
-EVENT_PLACEHOLDERS = ",".join("?" for _ in range(18))
+EVENT_PLACEHOLDERS = ",".join("?" for _ in range(22))
 
 
 class EventDatabase:
@@ -41,9 +42,7 @@ class EventDatabase:
         self.connection.execute("PRAGMA trusted_schema = OFF")
         self.connection.execute("PRAGMA synchronous = FULL")
         self.connection.execute("PRAGMA journal_mode = DELETE")
-        self.connection.execute(
-            f"CREATE TABLE candidates ({_column_definitions()})"
-        )
+        self.connection.execute(f"CREATE TABLE candidates ({_column_definitions()})")
 
     def add(self, event: VerifiedEvent) -> None:
         self.connection.execute(
@@ -55,26 +54,22 @@ class EventDatabase:
         self.connection.commit()
         self.connection.execute(
             "CREATE INDEX candidate_identity ON candidates "
-            "(experiment_id, configuration_id, participant_instance_id, "
-            "sequence_number, content_sha256, source_ciphertext_sha256, "
-            "source_object, source_bundle_id)"
+            "(experiment_id, configuration_id, participant_instance_id, sequence_number, "
+            "content_sha256, source_ciphertext_sha256, source_object, source_bundle_id)"
         )
         self.connection.execute(f"CREATE TABLE accepted ({_column_definitions()})")
         self.connection.commit()
 
     def candidate_rows(self):
         return self.connection.execute(
-            f"SELECT {EVENT_COLUMNS} FROM candidates ORDER BY "
-            "experiment_id, configuration_id, participant_instance_id, "
-            "sequence_number, content_sha256, canonical_bytes, "
-            "source_ciphertext_sha256, "
-            "source_object, source_bundle_id"
+            f"SELECT {EVENT_COLUMNS} FROM candidates ORDER BY experiment_id, "
+            "configuration_id, participant_instance_id, sequence_number, content_sha256, "
+            "canonical_bytes, source_ciphertext_sha256, source_object, source_bundle_id"
         )
 
     def accept(self, row: tuple) -> None:
         self.connection.execute(
-            f"INSERT INTO accepted ({EVENT_COLUMNS}) VALUES ({EVENT_PLACEHOLDERS})",
-            row,
+            f"INSERT INTO accepted ({EVENT_COLUMNS}) VALUES ({EVENT_PLACEHOLDERS})", row
         )
 
     def seal(self) -> DiskEventCollection:
@@ -85,9 +80,8 @@ class EventDatabase:
         )
         self.connection.execute(
             "CREATE INDEX accepted_partition ON accepted "
-            "(experiment_id, configuration_id, collector_id, "
-            "payload_schema_version, payload_type, participant_instance_id, "
-            "sequence_number)"
+            "(experiment_id, configuration_id, source_id, schema_version, event_type, "
+            "participant_instance_id, sequence_number)"
         )
         count = self.connection.execute("SELECT COUNT(*) FROM accepted").fetchone()[0]
         self.connection.commit()
@@ -100,12 +94,8 @@ class EventDatabase:
 
 
 class DiskEventCollection:
-    """Repeatable, query-ordered event iterable backed by a private database."""
-
     def __init__(self, path: Path, count: int):
-        self.path = path
-        self.count = count
-        self.closed = False
+        self.path, self.count, self.closed = path, count, False
 
     def __len__(self) -> int:
         return self.count
@@ -117,42 +107,36 @@ class DiskEventCollection:
 
     def iter_partitioned(self) -> Iterator[VerifiedEvent]:
         yield from self._query(
-            "experiment_id, configuration_id, collector_id, "
-            "payload_schema_version, payload_type, participant_instance_id, "
-            "sequence_number"
+            "experiment_id, configuration_id, source_id, schema_version, event_type, "
+            "participant_instance_id, sequence_number"
         )
 
     def iter_boot_sessions(self) -> Iterator[BootSession]:
         query = (
-            "SELECT experiment_id, configuration_id, participant_instance_id, "
-            "boot_session_id FROM accepted GROUP BY experiment_id, configuration_id, "
-            "participant_instance_id, boot_session_id ORDER BY experiment_id, "
-            "configuration_id, participant_instance_id, boot_session_id"
+            "SELECT experiment_id, configuration_id, participant_instance_id, boot_session_id "
+            "FROM accepted GROUP BY experiment_id, configuration_id, participant_instance_id, "
+            "boot_session_id ORDER BY experiment_id, configuration_id, participant_instance_id, "
+            "boot_session_id"
         )
         for row in self._raw_query(query):
             yield BootSession(*row)
 
     def iter_sampling_groups(
-        self,
-        source_clock_fields: Mapping[tuple[str, int, str], str],
+        self, source_clock_fields: Mapping[tuple[str, int, str], str]
     ) -> Iterator[SamplingGroup]:
         query = (
-            "SELECT experiment_id, configuration_id, participant_instance_id, "
-            "collector_id, boot_session_id, payload_schema_version, payload_type, "
-            "fields_json FROM accepted ORDER BY experiment_id, configuration_id, "
-            "participant_instance_id, collector_id, boot_session_id, sequence_number"
+            "SELECT experiment_id, configuration_id, participant_instance_id, source_id, "
+            "boot_session_id, schema_version, event_type, fields_json FROM accepted ORDER BY "
+            "experiment_id, configuration_id, participant_instance_id, source_id, "
+            "boot_session_id, sequence_number"
         )
-        current_key: tuple[str, str, str, str, str] | None = None
-        current_field = ""
-        first = 0
-        last = 0
-        count = 0
+        current_key = None
+        current_field, first, last, count = "", 0, 0, 0
         for row in self._raw_query(query):
             field = source_clock_fields.get((row[3], row[5], row[6]))
             if field is None:
                 continue
-            fields = json.loads(row[7])
-            timestamp = fields.get(field)
+            timestamp = json.loads(row[7]).get(field)
             if isinstance(timestamp, bool) or not isinstance(timestamp, int):
                 raise ValidationError("sampling source clock is not an integer")
             key = row[:5]
@@ -160,29 +144,21 @@ class DiskEventCollection:
                 yield SamplingGroup(*current_key, current_field, first, last, count)
                 count = 0
             if count == 0:
-                current_key = key
-                current_field = field
-                first = timestamp
-                last = timestamp
+                current_key, current_field, first, last = key, field, timestamp, timestamp
             else:
                 if field != current_field:
-                    raise ValidationError(
-                        "collector uses inconsistent sampling source clocks"
-                    )
-                first = min(first, timestamp)
-                last = max(last, timestamp)
+                    raise ValidationError("source uses inconsistent sampling clocks")
+                first, last = min(first, timestamp), max(last, timestamp)
             count += 1
         if current_key is not None:
             yield SamplingGroup(*current_key, current_field, first, last, count)
 
     def iter_survey_lifecycle_counts(self) -> Iterator[SurveyLifecycleCount]:
         query = (
-            "SELECT experiment_id, configuration_id, participant_instance_id, "
-            "payload_type, COUNT(*) FROM accepted WHERE collector_id = "
-            "'interventions.v1' AND payload_type LIKE 'SURVEY_%' GROUP BY "
-            "experiment_id, configuration_id, participant_instance_id, payload_type "
-            "ORDER BY experiment_id, configuration_id, participant_instance_id, "
-            "payload_type"
+            "SELECT experiment_id, configuration_id, participant_instance_id, event_type, "
+            "COUNT(*) FROM accepted WHERE source_id = 'interventions.v1' AND event_type LIKE "
+            "'SURVEY_%' GROUP BY experiment_id, configuration_id, participant_instance_id, "
+            "event_type ORDER BY experiment_id, configuration_id, participant_instance_id, event_type"
         )
         for row in self._raw_query(query):
             yield SurveyLifecycleCount(*row)
@@ -203,10 +179,7 @@ class DiskEventCollection:
             raise ValidationError("reassembled event store is closed")
         connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
         try:
-            cursor = connection.execute(
-                f"SELECT {EVENT_COLUMNS} FROM accepted ORDER BY {ordering}"
-            )
-            for row in cursor:
+            for row in connection.execute(f"SELECT {EVENT_COLUMNS} FROM accepted ORDER BY {ordering}"):
                 yield _row_event(row)
         finally:
             connection.close()
@@ -225,60 +198,36 @@ def _column_definitions() -> str:
     return (
         "experiment_id TEXT NOT NULL, configuration_id TEXT NOT NULL, "
         "participant_instance_id TEXT NOT NULL, sequence_number INTEGER NOT NULL, "
-        "assigned_participant_id TEXT, collector_id TEXT NOT NULL, "
-        "payload_schema_version INTEGER NOT NULL, payload_type TEXT NOT NULL, "
+        "assigned_participant_id TEXT, source_id TEXT NOT NULL, schema_version INTEGER NOT NULL, "
+        "event_type TEXT NOT NULL, condition_epoch_id TEXT, source_condition_epoch_id TEXT, "
         "boot_session_id TEXT NOT NULL, monotonic_time_nanos INTEGER NOT NULL, "
-        "wall_time_utc_millis INTEGER NOT NULL, fields_json TEXT NOT NULL, "
-        "canonical_bytes BLOB NOT NULL, source_ciphertext_sha256 TEXT NOT NULL, "
-        "source_bundle_id TEXT NOT NULL, source_configuration_sha256 TEXT NOT NULL, "
-        "source_object TEXT NOT NULL, content_sha256 TEXT NOT NULL"
+        "wall_time_utc_millis INTEGER NOT NULL, fields_json TEXT NOT NULL, canonical_bytes BLOB NOT NULL, "
+        "source_ciphertext_sha256 TEXT NOT NULL, source_bundle_id TEXT NOT NULL, "
+        "source_configuration_sha256 TEXT NOT NULL, source_object TEXT NOT NULL, "
+        "source_commit_sequence INTEGER NOT NULL, source_observation_sequence INTEGER, "
+        "content_sha256 TEXT NOT NULL"
     )
 
 
 def _event_row(event: VerifiedEvent) -> tuple:
-    fields = json.dumps(
-        event.fields,
-        ensure_ascii=False,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    fields = json.dumps(event.fields, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
+    provenance = event.provenance
     return (
-        event.experiment_id,
-        event.configuration_id,
-        event.participant_instance_id,
-        event.sequence_number,
-        event.assigned_participant_id,
-        event.collector_id,
-        event.payload_schema_version,
-        event.payload_type,
-        event.boot_session_id,
-        event.monotonic_time_nanos,
-        event.wall_time_utc_millis,
-        fields,
-        event.canonical_bytes,
-        event.provenance.source_ciphertext_sha256,
-        event.provenance.source_bundle_id,
-        event.provenance.source_configuration_sha256,
-        event.provenance.source_object,
+        event.experiment_id, event.configuration_id, event.participant_instance_id,
+        event.sequence_number, event.assigned_participant_id, event.source_id,
+        event.schema_version, event.event_type, event.condition_epoch_id,
+        event.source_condition_epoch_id, event.boot_session_id, event.monotonic_time_nanos,
+        event.wall_time_utc_millis, fields, event.canonical_bytes,
+        provenance.source_ciphertext_sha256, provenance.source_bundle_id,
+        provenance.source_configuration_sha256, provenance.source_object,
+        provenance.source_commit_sequence, provenance.source_observation_sequence,
         hashlib.sha256(event.canonical_bytes).hexdigest(),
     )
 
 
 def _row_event(row: tuple) -> VerifiedEvent:
     return VerifiedEvent(
-        row[0],
-        row[1],
-        row[2],
-        row[4],
-        row[3],
-        row[5],
-        row[6],
-        row[7],
-        row[8],
-        row[9],
-        row[10],
-        json.loads(row[11]),
-        bytes(row[12]),
-        EventProvenance(row[13], row[14], row[15], row[16]),
+        row[0], row[1], row[2], row[4], row[3], row[5], row[6], row[7], row[8],
+        row[9], row[10], row[11], row[12], json.loads(row[13]), bytes(row[14]),
+        EventProvenance(row[15], row[16], row[17], row[18], row[19], row[20]),
     )

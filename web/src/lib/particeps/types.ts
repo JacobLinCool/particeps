@@ -1,82 +1,52 @@
-/**
- * The study configuration schema, mirrored from `core/study-definition`.
- *
- * This file is the contract every other module in `lib/particeps` codes against. It exists because the
- * configuration this site produces is only useful if the Android app accepts it, and the app's
- * codec is a closed world: a root key too many, a number in the wrong form, or a bound off by one
- * and the file is refused outright with no fallback reader and no migration path.
- *
- * Bounds are transcribed from `StudyConfiguration.kt` and `StudyConfigurationCodec.kt`. Keep them
- * in step: `tests/compat.spec.ts` proves the encoder byte-matches the Kotlin one, but nothing
- * proves these numbers still match, so they are worth re-reading against the source when the
- * schema moves.
- */
+/** Exact, closed-world Protocol v1 study configuration types. */
+
+import { EVENT_SOURCE_REGISTRY } from './generated/event-source-registry.ts';
 
 export const SCHEMA_VERSION = 1;
-export const MAXIMUM_INTERVENTION_OCCURRENCES = 512;
-
-/**
- * Pinned. The lowest `versionCode` the schema allows, and the only one this page authors — there is
- * no control for it, because a floor a researcher has no way to measure is a floor they cannot set
- * honestly. `BOUNDS.minimumClientVersion` stays: `validate` still has to judge documents written
- * elsewhere, and `researcher-tools` can raise the floor deliberately.
- */
 export const PLATFORM = 'android' as const;
 export const DEFAULT_MINIMUM_CLIENT_VERSION = '1';
+export const MAXIMUM_CONFIGURATION_BYTES = 1_048_576;
+export const MAXIMUM_INTERVENTION_OCCURRENCES = 512;
 
-/** `[a-z0-9][a-z0-9-]{2,63}` — stable schema IDs. */
 export const ID_PATTERN = /^[a-z0-9][a-z0-9-]{2,63}$/;
 export const ASSIGNED_PARTICIPANT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+export const ANDROID_APPLICATION_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/;
+export const PARTICEPS_APPLICATION_ID = 'cool.jacoblin.particeps';
 
 export const MINIMUM_LOCAL_BYTES = 8 * 1024 * 1024;
 export const MAXIMUM_LOCAL_BYTES = 8 * 1024 * 1024 * 1024;
-
 export const UPLOAD_MINIMUM_INTERVAL_MINUTES = 1;
 export const UPLOAD_MAXIMUM_INTERVAL_MINUTES = 10_080;
 
 export type NetworkTransport = 'mobile' | 'wifi';
 export type LocationPriority = 'BALANCED' | 'HIGH_ACCURACY';
 
+const selectableCollectors = EVENT_SOURCE_REGISTRY.sources
+  .filter((source) => source.source_kind === 'COLLECTOR' && source.selectable)
+  .map((source) => source.source_id)
+  .sort();
+
+export const COLLECTOR_ORDER = selectableCollectors as readonly CollectorId[];
 export type CollectorId =
-  | 'app_lifecycle.v1'
   | 'accelerometer.v1'
-  | 'battery_state.v1'
-  | 'temporal_context.v1'
-  | 'gyroscope.v1'
   | 'ambient_light.v1'
-  | 'proximity.v1'
+  | 'app_lifecycle.v1'
+  | 'battery_state.v1'
+  | 'gyroscope.v1'
+  | 'keyboard_touch.v1'
+  | 'location.v1'
   | 'network_state.v1'
   | 'network_usage.v1'
-  | 'usage_events.v1'
-  | 'location.v1'
-  | 'keyboard_touch.v1';
-
-/**
- * The codec's emission order, which is also the docs' table order and the demo file's. It is a
- * value as well as a type because two things need it at runtime: the editor keeps `collectors` in
- * this order, and `parse.ts` has to decide whether an id read out of a file is one of these at all.
- */
-export const COLLECTOR_ORDER: readonly CollectorId[] = [
-  'app_lifecycle.v1',
-  'accelerometer.v1',
-  'battery_state.v1',
-  'temporal_context.v1',
-  'gyroscope.v1',
-  'ambient_light.v1',
-  'proximity.v1',
-  'network_state.v1',
-  'network_usage.v1',
-  'usage_events.v1',
-  'location.v1',
-  'keyboard_touch.v1'
-];
-
-export const NETWORK_TRANSPORTS: readonly NetworkTransport[] = ['mobile', 'wifi'];
-export const LOCATION_PRIORITIES: readonly LocationPriority[] = ['BALANCED', 'HIGH_ACCURACY'];
+  | 'proximity.v1'
+  | 'temporal_context.v1'
+  | 'usage_events.v1';
 
 export function isCollectorId(value: unknown): value is CollectorId {
   return typeof value === 'string' && (COLLECTOR_ORDER as readonly string[]).includes(value);
 }
+
+export const NETWORK_TRANSPORTS: readonly NetworkTransport[] = ['mobile', 'wifi'];
+export const LOCATION_PRIORITIES: readonly LocationPriority[] = ['BALANCED', 'HIGH_ACCURACY'];
 
 export function isNetworkTransport(value: unknown): value is NetworkTransport {
   return typeof value === 'string' && (NETWORK_TRANSPORTS as readonly string[]).includes(value);
@@ -86,55 +56,36 @@ export function isLocationPriority(value: unknown): value is LocationPriority {
   return typeof value === 'string' && (LOCATION_PRIORITIES as readonly string[]).includes(value);
 }
 
-/** The order the app's codec emits collectors in is the order of this array in the document. */
+export type SensorProfile = { sampling_period_us: number; maximum_report_latency_us: number };
+export type AmbientLightProfile = { sampling_period_us: number; change_threshold_millilux: number };
+export type LocationProfile = {
+  interval_millis: number; minimum_interval_millis: number; maximum_batch_delay_millis: number;
+  minimum_displacement_millimeters: number; priority: LocationPriority;
+};
+export type CollectorProfileConfiguration = SensorProfile | AmbientLightProfile | Record<string, never>
+  | { trajectory_sampling_hz: number } | LocationProfile | { include_bandwidth_estimates: boolean }
+  | { poll_interval_seconds: number; transports: NetworkTransport[] }
+  | { minimum_event_interval_ms: number; change_threshold_millimeters: number }
+  | { poll_interval_seconds: number };
+
+export interface NamedCollectorProfile<C extends CollectorProfileConfiguration = CollectorProfileConfiguration> {
+  id: string;
+  config: C;
+}
+
+type CollectorResource<I extends CollectorId, C extends CollectorProfileConfiguration> = {
+  id: I; required: boolean; profiles: NamedCollectorProfile<C>[];
+};
 export type CollectorConfig =
-  | { id: 'app_lifecycle.v1'; required: boolean; config: Record<string, never> }
-  | {
-      id: 'accelerometer.v1';
-      required: boolean;
-      config: { sampling_period_us: number; maximum_report_latency_us: number };
-    }
-  | { id: 'battery_state.v1'; required: boolean; config: Record<string, never> }
-  | { id: 'temporal_context.v1'; required: boolean; config: Record<string, never> }
-  | {
-      id: 'gyroscope.v1';
-      required: boolean;
-      config: { sampling_period_us: number; maximum_report_latency_us: number };
-    }
-  | {
-      id: 'ambient_light.v1';
-      required: boolean;
-      config: { sampling_period_us: number; change_threshold_millilux: number };
-    }
-  | {
-      id: 'proximity.v1';
-      required: boolean;
-      config: { minimum_event_interval_ms: number; change_threshold_millimeters: number };
-    }
-  | {
-      id: 'network_state.v1';
-      required: boolean;
-      config: { include_bandwidth_estimates: boolean };
-    }
-  | {
-      id: 'network_usage.v1';
-      required: boolean;
-      config: { transports: NetworkTransport[]; poll_interval_minutes: number };
-    }
-  | { id: 'usage_events.v1'; required: boolean; config: { poll_interval_minutes: number } }
-  | {
-      id: 'location.v1';
-      required: boolean;
-      config: {
-        interval_millis: number;
-        minimum_interval_millis: number;
-        maximum_batch_delay_millis: number;
-        /** Integer millimetres on the wire; the editor presents metres. */
-        minimum_displacement_millimeters: number;
-        priority: LocationPriority;
-      };
-    }
-  | { id: 'keyboard_touch.v1'; required: boolean; config: { trajectory_sampling_hz: number } };
+  | CollectorResource<'accelerometer.v1' | 'gyroscope.v1', SensorProfile>
+  | CollectorResource<'ambient_light.v1', AmbientLightProfile>
+  | CollectorResource<'app_lifecycle.v1' | 'battery_state.v1' | 'temporal_context.v1', Record<string, never>>
+  | CollectorResource<'keyboard_touch.v1', { trajectory_sampling_hz: number }>
+  | CollectorResource<'location.v1', LocationProfile>
+  | CollectorResource<'network_state.v1', { include_bandwidth_estimates: boolean }>
+  | CollectorResource<'network_usage.v1', { poll_interval_seconds: number; transports: NetworkTransport[] }>
+  | CollectorResource<'proximity.v1', { minimum_event_interval_ms: number; change_threshold_millimeters: number }>
+  | CollectorResource<'usage_events.v1', { poll_interval_seconds: number }>;
 
 export interface LocalizedText {
   default: string;
@@ -165,10 +116,58 @@ export interface SurveyDefinition {
   questions: SurveyQuestion[];
 }
 
-export type RelativeClock = 'CALENDAR_TIME' | 'ACTIVE_RUNNING_TIME';
-export type InterventionSchedule =
-  | { type: 'one_time'; offset_minutes: number; clock: RelativeClock }
-  | { type: 'interval'; start_offset_minutes: number; interval_minutes: number; clock: RelativeClock }
+export type InterventionAction =
+  | { type: 'notification'; notification_title: string; notification_message: string }
+  | { type: 'survey'; notification_title: string; notification_message: string; survey_id: string };
+
+export interface InterventionConfig {
+  id: string;
+  required: boolean;
+  action: InterventionAction;
+}
+
+export type EvaluationClock = 'OBSERVED_RESEARCH_TIME' | 'PRIMARY_SOURCE_TIME';
+export type DurationClock = 'ACTIVE_RUNNING_TIME' | 'CALENDAR_TIME';
+export type FieldOperator = 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte' | 'in';
+export type ResourceKind = 'collector' | 'actuator';
+
+export interface EventIdentity {
+  source_id: string;
+  schema_version: number;
+  event_type: string;
+}
+
+export type FieldPredicate =
+  | { field: string; operator: Exclude<FieldOperator, 'in'>; value: string }
+  | { field: string; operator: 'in'; values: string[] };
+
+export interface EventMatcher {
+  event: EventIdentity;
+  predicates: FieldPredicate[];
+}
+
+export type Aggregate = { type: 'count' } | { type: 'sum'; field: string };
+export interface NumericComparison {
+  operator: Exclude<FieldOperator, 'in'>;
+  value: string;
+}
+
+export type StateCondition =
+  | { type: 'study_session_active' }
+  | { type: 'event_latch'; set_when: EventMatcher[]; reset_when: EventMatcher[] }
+  | { type: 'keyed_presence'; enter_when: EventMatcher[]; exit_when: EventMatcher[]; key_field: string }
+  | { type: 'held_for'; condition: StateCondition; duration_seconds: number; clock: DurationClock }
+  | { type: 'elapsed_at_least'; duration_seconds: number; clock: DurationClock }
+  | {
+      type: 'window_threshold'; selector: EventMatcher; window_seconds: number;
+      evaluation_clock: EvaluationClock; aggregate: Aggregate; comparison: NumericComparison;
+    }
+  | { type: 'all' | 'any'; conditions: StateCondition[] }
+  | { type: 'not'; condition: StateCondition };
+
+export type AutomationSchedule =
+  | { type: 'one_time'; offset_minutes: number; clock: DurationClock }
+  | { type: 'interval'; start_offset_minutes: number; interval_minutes: number; clock: DurationClock }
   | { type: 'daily_local'; local_time: string }
   | {
       type: 'random_window';
@@ -179,20 +178,51 @@ export type InterventionSchedule =
       minimum_separation_minutes: number;
     };
 
-export interface InterventionTrigger {
+export type AutomationTrigger =
+  | { type: 'event_match'; selector: EventMatcher; evaluation_clock: EvaluationClock }
+  | { type: 'sequence'; steps: EventMatcher[]; within_seconds: number; evaluation_clock: EvaluationClock }
+  | {
+      type: 'window_threshold'; selector: EventMatcher; window_seconds: number;
+      evaluation_clock: EvaluationClock; aggregate: Aggregate; comparison: NumericComparison;
+    }
+  | { type: 'condition_rising_edge'; condition: StateCondition }
+  | { type: 'schedule'; schedule: AutomationSchedule };
+
+export interface OccurrenceAutomation {
+  type: 'occurrence';
   id: string;
-  schedule: InterventionSchedule;
-  availability_minutes: number;
+  trigger: AutomationTrigger;
+  guard: StateCondition | null;
+  intervention_id: string;
+  availability_seconds: number;
+  cooldown: { duration_seconds: number; clock: DurationClock } | null;
+  maximum_activations: number;
 }
 
-export type InterventionAction =
-  | { type: 'notification'; notification_title: string; notification_message: string }
-  | { type: 'survey'; notification_title: string; notification_message: string; survey_id: string };
-
-export interface InterventionConfig {
+export interface ResourceBindingAutomation {
+  type: 'resource_binding';
   id: string;
-  action: InterventionAction;
-  triggers: InterventionTrigger[];
+  resource: { kind: ResourceKind; id: string };
+  cases: { condition: StateCondition; profile_id: string | null }[];
+  default_profile_id: string | null;
+}
+
+export type AutomationDefinition = OccurrenceAutomation | ResourceBindingAutomation;
+
+export interface TrafficShapingProfile {
+  id: string;
+  uplink_kbps: number | null;
+  downlink_kbps: number | null;
+}
+
+export type TrafficShapingConfiguration =
+  | Record<string, never>
+  | { target_packages: string[]; profiles: TrafficShapingProfile[] };
+
+export function trafficShapingEnabled(
+  value: TrafficShapingConfiguration
+): value is Extract<TrafficShapingConfiguration, { target_packages: string[] }> {
+  return Object.hasOwn(value, 'target_packages');
 }
 
 export interface UploadConfig {
@@ -207,10 +237,8 @@ export interface StudyConfiguration {
   experiment_id: string;
   configuration_id: string;
   assigned_participant_id: string | null;
-  /** ISO-8601 instant, exactly as `Instant.toString()` renders it. */
   issued_at: string;
   expires_at: string;
-  /** Positive build number, encoded as a canonical decimal string. */
   minimum_client_version: string;
   title: string;
   researcher: { name: string; contact: string };
@@ -220,44 +248,24 @@ export interface StudyConfiguration {
   collectors: CollectorConfig[];
   surveys: SurveyDefinition[];
   interventions: InterventionConfig[];
+  automations: AutomationDefinition[];
+  traffic_shaping: TrafficShapingConfiguration;
   storage: { maximum_local_bytes: number };
   signer: { key_id: string; public_key: string };
   export: { researcher_key_id: string; hpke_public_key: string };
-  /** `null` means the study does not upload; the encoder writes `"upload":{}` for it. */
   upload: UploadConfig | null;
 }
 
-/** Field bounds, in the same units the schema uses. Inclusive at both ends. */
 export const BOUNDS = {
-  title: [1, 120],
-  researcherName: [1, 120],
-  researcherContact: [3, 240],
-  purpose: [1, 2_000],
-  durationHours: [1, 8_760],
-  consentDocumentVersion: [1, 64],
-  consentSummary: [1, 8_000],
-  // The Android build number must fit a positive Kotlin `Int`; the wire form is decimal text.
-  minimumClientVersion: [1, 2_147_483_647],
-  notificationTitle: [1, 120],
-  notificationMessage: [1, 500],
-  availabilityMinutes: [1, 525_600],
-  surveyText: [1, 2_000],
-  shortTextMaximumLength: [1, 4_000],
-  rawPublicKey: [43, 43],
-  uploadEndpoint: [8, 2_048],
-  samplingPeriodUs: [5_000, 1_000_000],
-  ambientLightSamplingPeriodUs: [200_000, 10_000_000],
-  maximumReportLatencyUs: [0, 60_000_000],
-  changeThresholdMillilux: [0, 100_000_000],
-  minimumEventIntervalMs: [100, 60_000],
-  changeThresholdMillimeters: [0, 10_000],
-  pollIntervalMinutes: [1, 1_440],
-  intervalMillis: [1_000, 3_600_000],
-  minimumIntervalMillis: [500, 3_600_000],
-  maximumBatchDelayMillis: [0, 86_400_000],
-  minimumDisplacementMillimeters: [0, 10_000_000],
-  trajectorySamplingHz: [1, 120]
+  title: [1, 120], researcherName: [1, 120], researcherContact: [3, 240], purpose: [1, 2_000],
+  durationHours: [1, 8_760], consentDocumentVersion: [1, 64], consentSummary: [1, 8_000],
+  minimumClientVersion: [1, 2_147_483_647], notificationTitle: [1, 120], notificationMessage: [1, 500],
+  availabilitySeconds: [1, 31_536_000], surveyText: [1, 2_000], shortTextMaximumLength: [1, 4_000],
+  rawPublicKey: [43, 43], uploadEndpoint: [8, 2_048], samplingPeriodUs: [5_000, 1_000_000],
+  ambientLightSamplingPeriodUs: [200_000, 10_000_000], maximumReportLatencyUs: [0, 60_000_000],
+  changeThresholdMillilux: [0, 100_000_000], minimumEventIntervalMs: [100, 60_000],
+  changeThresholdMillimeters: [0, 10_000], pollIntervalSeconds: [15, 86_400],
+  intervalMillis: [1_000, 3_600_000], minimumIntervalMillis: [500, 3_600_000],
+  maximumBatchDelayMillis: [0, 86_400_000], minimumDisplacementMillimeters: [0, 10_000_000],
+  trajectorySamplingHz: [1, 120], trafficKbps: [1, 1_000_000]
 } as const satisfies Record<string, readonly [number, number]>;
-
-/** Whole configuration document, in bytes. */
-export const MAXIMUM_CONFIGURATION_BYTES = 1_048_576;

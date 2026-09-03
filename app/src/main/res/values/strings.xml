@@ -21,6 +21,7 @@
     <string name="collection_channel">Active research collection</string>
     <string name="collection_channel_description">Shown while a consented research study is collecting data</string>
     <string name="collection_notification_title">Research collection active</string>
+    <string name="collection_notification_text">Particeps is running a research study.</string>
     <string name="collection_recovery_notification_text">Checking whether collection should continue</string>
     <string name="collection_recovery_notification_title">Restoring research status</string>
     <string name="daily_running">Still collecting. Open the app to pause, export, or withdraw.</string>
@@ -49,6 +50,10 @@
     -->
     <string name="header_no_study" translatable="false">@string/app_name</string>
     <string name="header_starting">Starting up</string>
+    <string name="startup_stage_generic">Still starting up.</string>
+    <string name="startup_stage_loading_study">Reading the saved study.</string>
+    <string name="startup_stage_validating_storage">Checking recorded study data. A study that has been collecting for a while can take longer here.</string>
+    <string name="startup_stage_restoring_runtime">Restoring the study runtime.</string>
     <string name="header_elapsed_minutes">%1$dm</string>
     <string name="header_elapsed_hours">%1$dh %2$dm</string>
     <!-- %1$s is a locale-formatted date and time; %2$s is a duration such as "2h 15m". -->
@@ -77,6 +82,7 @@
     <string name="action_start">Start study</string>
     <string name="action_pause">Pause</string>
     <string name="action_resume">Resume</string>
+    <string name="action_complete_study">Complete study</string>
     <string name="action_export">Export encrypted data</string>
     <string name="action_withdraw">Withdraw</string>
     <string name="action_delete">Delete local data</string>
@@ -103,6 +109,13 @@
 
     <!-- Step 2: what is collected. One template per collector, filled from the signed study. -->
     <string name="data_optional">Optional</string>
+    <string name="participant_data_accelerometer_detail">Movement measured by the phone’s motion sensor</string>
+    <string name="participant_data_gyroscope_detail">Raw rotation measured by the phone; no activity is inferred</string>
+    <string name="participant_data_ambient_light_detail">Raw surrounding light level; it does not record images or environmental content</string>
+    <string name="participant_data_proximity_detail">The phone’s raw near or distance sensor reading; it is not a presence claim</string>
+    <string name="participant_data_network_usage_detail">Total bytes this phone sends and receives</string>
+    <string name="participant_data_usage_events_detail">Which apps open and close, and when the screen turns on</string>
+    <string name="participant_data_location_detail">The phone’s location</string>
 
     <string name="collector_app_lifecycle_name">App activity</string>
     <string name="collector_app_lifecycle_detail">When this app itself is opened and closed</string>
@@ -219,6 +232,7 @@
     <string name="access_location_settings_change_unavailable">Android reports that this phone cannot satisfy the location settings required by this study. Contact the research team before starting.</string>
     <string name="access_location_settings_check_failed">Particeps could not verify whether this phone can satisfy the study’s configured location request. Contact the research team before starting.</string>
     <string name="access_system_screen_unavailable">This phone does not provide the required Android settings screen. Contact the research team before starting.</string>
+    <string name="traffic_shaping_disclosure">This study may use a VPN on this device to adjust how quickly some apps transfer data. Traffic stays on your usual network and is not sent through a Particeps server. Particeps only checks whether the study’s apps are installed; it does not save or upload your installed-app list. On Android 17 or later, local-network access is used only to forward local connections those apps initiate; Particeps does not discover local devices. Another VPN can interrupt this function; if that happens, the study pauses.</string>
 
     <string name="access_fine_location_settings_description">Android no longer offers the permission dialog after repeated denial. Restore precise location from Particeps App info.</string>
     <string name="access_fine_location_settings_step_permissions">In App info, open Permissions, then Location.</string>
@@ -258,8 +272,8 @@
         <item quantity="one">%1$s event</item>
         <item quantity="other">%1$s events</item>
     </plurals>
-    <string name="meter_sent">%1$s sent</string>
-    <string name="meter_reclaimed">The first %1$s events have been sent and removed from this phone. A later export will not include them.</string>
+    <string name="meter_sent">%1$s data batches sent</string>
+    <string name="meter_reclaimed">The first %1$s data batches have been sent and removed from this phone. A later export will not include them.</string>
 
     <!-- Details, behind a toggle: identifiers matter when something goes wrong and are noise otherwise -->
     <string name="details_configuration">Configuration</string>
@@ -268,9 +282,11 @@
     <string name="details_assigned_id">Assigned code</string>
     <string name="details_signature">Signature</string>
     <string name="details_last_export">Last export</string>
-    <string name="details_last_export_value">%1$s events · %2$s</string>
+    <string name="details_last_export_value">%1$s events · %2$s data batches</string>
 
     <!-- Irreversible actions are exactly where text earns its place -->
+    <string name="confirm_complete_title">Complete this study?</string>
+    <string name="confirm_complete_body">Collection will stop permanently. You can still export what was already collected.</string>
     <string name="confirm_withdraw_title">Withdraw from this study?</string>
     <string name="confirm_withdraw_body">All collection stops permanently. You can still export what was already collected, until you delete it.</string>
     <string name="confirm_delete_title">Delete local data permanently?</string>
@@ -284,10 +300,20 @@
     <string name="recovery_notification_title">Research collection needs attention</string>
     <string name="recovery_notification_body">Open Particeps to safely restore collection.</string>
     <string name="recovery_panel_title">Collection is safely paused</string>
-    <string name="recovery_panel_body">Particeps could not finish automatic recovery. Fix any requested Android access, then try again. The code below contains no study or participant details.</string>
+    <string name="recovery_panel_body">Particeps could not finish automatic recovery. Fix any requested Android access, then try again.</string>
     <string name="action_retry_recovery">Try again</string>
     <string name="action_copy_diagnostic">Copy diagnostic code</string>
     <string name="action_reset_and_restart">Delete old data and restart</string>
     <string name="confirm_reset_title">Delete old study data and restart?</string>
     <string name="confirm_reset_body">This permanently deletes the existing study instance and all data that has not been exported. If the configuration is still valid, you will review consent and permissions again with a new installation code and a full study duration. This cannot be undone.</string>
+    <string name="message_configuration_import_failed">Particeps could not open that study configuration.</string>
+    <string name="message_join_import_failed">Particeps could not join that study.</string>
+    <string name="message_export_failed">Particeps could not export the study data.</string>
+    <string name="message_access_inspection_failed">Particeps could not check the required Android access.</string>
+    <string name="message_operation_failed">Particeps could not complete that action.</string>
+    <string name="message_reset_failed">Particeps could not reset the local study.</string>
+    <string name="message_delete_failed">Particeps could not delete the local study data.</string>
+    <string name="message_export_complete">The encrypted study export is ready.</string>
+    <string name="message_local_data_deleted">The local study data was deleted.</string>
+    <string name="message_study_paused_for_safety">The study paused because Particeps could not verify safe collection. Review any Android access shown below, then resume.</string>
 </resources>

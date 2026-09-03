@@ -83,7 +83,7 @@ const EXACT = new Map<string, StepId>([
 ]);
 
 /**
- * Longest-prefix match on segment boundaries. `validate` emits `collectors.2.config.interval_millis`
+ * Longest-prefix match on segment boundaries. `validate` emits `collectors.2.profiles.0.config.interval_millis`
  * and `interventions.0.id`, so the first segment decides. A path nothing claims — including the empty
  * path `validate` uses for the whole document — lands on `sign`, where the issue list is: an issue
  * with no home must still be visible somewhere.

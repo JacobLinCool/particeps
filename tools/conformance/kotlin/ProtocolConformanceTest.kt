@@ -64,11 +64,15 @@ class ProtocolConformanceTest {
         val expected = receiptVector.objectAt("value")
         assertEquals(expected.stringAt("bundle_id"), receipt.bundleId.toString())
         assertEquals(expected.stringAt("byte_count"), receipt.byteCount.toString())
+        assertEquals(expected.stringAt("commit_count"), receipt.commitCount.toString())
+        assertEquals(expected.stringAt("event_count"), receipt.eventCount.toString())
+        assertEquals(expected.stringAt("first_commit_sequence"), receipt.firstCommitSequence.toString())
+        assertEquals(expected.stringAt("last_commit_sequence"), receipt.lastCommitSequence.toString())
         assertEquals(expected.stringAt("sha256"), receipt.sha256)
     }
 
     @Test
-    fun requiredAccessPauseSharedBundleIsAcceptedByKotlin() {
+    fun eventDrivenCommitChainIsAcceptedByKotlin() {
         val valid = corpus.objectAt("valid")
         val signed = valid.objectAt("signed_configuration")
         val configuration = StudyConfigurationCodec.decode(
@@ -88,11 +92,26 @@ class ProtocolConformanceTest {
         val experiment = JsonParser.parseString(plaintext.toString(Charsets.UTF_8))
             .asJsonObject
             .objectAt("experiment")
-        assertEquals("PAUSED", experiment.stringAt("state"))
-        val transition = experiment.getAsJsonArray("transitions").last().asJsonObject
-        assertEquals("RUNNING", transition.stringAt("from"))
-        assertEquals("PAUSED", transition.stringAt("to"))
-        assertEquals("REQUIRED_ACCESS_MISSING", transition.stringAt("reason"))
+        assertEquals("RUNNING", experiment.stringAt("state"))
+        assertEquals("3", experiment.stringAt("commit_count"))
+        assertEquals("5", experiment.stringAt("event_count"))
+        val commits = experiment.getAsJsonArray("commits")
+        assertEquals(3, commits.size())
+        val deadline = commits[0].asJsonObject.getAsJsonArray("events")[1].asJsonObject
+        val activation = commits[1].asJsonObject.getAsJsonArray("events")[0].asJsonObject
+        val observationCommit = commits[2].asJsonObject
+        val dataEvent = observationCommit.getAsJsonArray("events")[0].asJsonObject
+        val observation = observationCommit.getAsJsonArray("source_observations")[0].asJsonObject
+        assertEquals("study_condition.v1", activation.stringAt("source_id"))
+        assertEquals("timer.v1", deadline.stringAt("source_id"))
+        assertEquals("TIMER_SCHEDULED", deadline.stringAt("event_type"))
+        assertEquals("study-deadline", deadline.objectAt("fields").stringAt("producer_key"))
+        assertEquals("CONDITION_EPOCH_ACTIVATED", activation.stringAt("event_type"))
+        assertEquals("battery_state.v1", dataEvent.stringAt("source_id"))
+        assertEquals("BATTERY_STATE", dataEvent.stringAt("event_type"))
+        assertEquals(dataEvent.stringAt("condition_epoch_id"), observation.stringAt("condition_epoch_id"))
+        assertEquals("5", observation.stringAt("first_event_sequence"))
+        assertEquals("5", observation.stringAt("last_event_sequence"))
     }
 
     @Test

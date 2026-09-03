@@ -12,12 +12,23 @@ describe('participant page structure', () => {
   });
 
   it('offers the verified Android release from the hero in both locales', () => {
-    expect(ANDROID_RELEASE_VERSION).toBe('v1.0.0-rc.7');
+    expect(ANDROID_RELEASE_VERSION).toBe('v1.0.0-rc.8');
     expect(ANDROID_APK_URL).toBe(
-      'https://github.com/JacobLinCool/particeps/releases/download/v1.0.0-rc.7/particeps-v1.0.0-rc.7.apk'
+      'https://github.com/JacobLinCool/particeps/releases/download/v1.0.0-rc.8/particeps-v1.0.0-rc.8.apk'
     );
     expect(en.hero.download).toBe('Download App');
     expect(zhTW.hero.download).toBe('下載 App');
+  });
+
+  it('keeps public source tiles independent of signed collector profiles', () => {
+    expect('tokens' in en.sources).toBe(false);
+    expect('tokens' in zhTW.sources).toBe(false);
+    expect(Object.values(en.sources.detail).join(' ')).not.toMatch(
+      /\{[ntd]\}|times per second|every \{|after it moves at least|selected limits/i
+    );
+    expect(Object.values(zhTW.sources.detail).join(' ')).not.toMatch(
+      /\{[ntd]\}|每秒約記錄|每隔 \{|移動超過|實作保證的限制/
+    );
   });
 });
 

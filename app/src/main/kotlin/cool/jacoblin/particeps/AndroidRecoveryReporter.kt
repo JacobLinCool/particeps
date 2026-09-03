@@ -4,9 +4,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import cool.jacoblin.particeps.core.application.RecoveryFailureCode
 import cool.jacoblin.particeps.core.application.RecoveryReporter
 
 /** Safe participant notification plus full local exception-chain reporting. */
@@ -15,8 +15,12 @@ class AndroidRecoveryReporter(
 ) : RecoveryReporter {
     private val notifications = context.getSystemService(NotificationManager::class.java)
 
-    override fun actionRequired(code: RecoveryFailureCode, failure: Throwable?) {
-        if (failure != null) Log.e(TAG, "Study recovery failed: ${code.name}", failure)
+    override fun actionRequired(failure: Throwable?) {
+        if (failure != null && context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            Log.e(TAG, "Study recovery failed", failure)
+        } else {
+            Log.e(TAG, "Study recovery requires participant action")
+        }
         val intent = Intent(context, MainActivity::class.java).apply {
             action = ACTION_OPEN_RECOVERY
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP

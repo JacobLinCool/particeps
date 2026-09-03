@@ -34,6 +34,31 @@ describe('closed-world configuration parser', () => {
           tink_hpke_public_keyset: { primaryKeyId: 1, key: [] }
         };
       }
+    ],
+    [
+      'configuration without mandatory automations',
+      (value: Record<string, unknown>) => { delete value.automations; }
+    ],
+    [
+      'configuration without mandatory traffic shaping',
+      (value: Record<string, unknown>) => { delete value.traffic_shaping; }
+    ],
+    [
+      'legacy collector config without named profiles',
+      (value: Record<string, unknown>) => {
+        const collectors = value.collectors as Record<string, unknown>[];
+        collectors[0] = { id: collectors[0].id, required: collectors[0].required, config: {} };
+      }
+    ],
+    [
+      'legacy intervention with an embedded trigger',
+      (value: Record<string, unknown>) => {
+        value.interventions = [{
+          id: 'legacy-prompt', required: false,
+          action: { type: 'notification', notification_title: 'Prompt', notification_message: 'Prompt' },
+          trigger: { type: 'one_time', offset_minutes: 1 }
+        }];
+      }
     ]
   ])('rejects %s', (_name, mutate) => {
     const value = wire();
@@ -90,7 +115,7 @@ describe('configuration validation', () => {
       StudyConfiguration['collectors'][number],
       { id: 'location.v1' }
     >;
-    location.config.minimum_displacement_millimeters = -1;
+    location.profiles[0].config.minimum_displacement_millimeters = -1;
     expect(validate(configuration).some((issue) =>
       issue.path.endsWith('minimum_displacement_millimeters')
     )).toBe(true);

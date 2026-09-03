@@ -57,9 +57,7 @@
 
   <Section id="collect" icon="sources" title={m('sources.title')} lead={m('sources.lead')}>
     <SourceGrid entries={SOURCES} />
-    <p class="fine faint">{m('sources.tokens')}</p>
     <p class="fine">
-      {m('sources.more')}
       <a href={PARTICIPANT_GUIDE} target="_blank" rel="noreferrer">{m('sources.moreLink')}</a>
     </p>
   </Section>

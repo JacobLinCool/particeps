@@ -14,17 +14,17 @@ import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
 import cool.jacoblin.particeps.core.collector.CollectorPlugin
 import cool.jacoblin.particeps.core.collector.LatestValueRateGate
-import cool.jacoblin.particeps.core.collector.PrivacyClass
-import cool.jacoblin.particeps.core.collector.ProtocolEventContracts
+import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
 import cool.jacoblin.particeps.core.collector.SerializedCallbackCollector
 import cool.jacoblin.particeps.core.collector.SourceRegistrationResult
 import cool.jacoblin.particeps.core.collector.SourceTeardownResult
 import cool.jacoblin.particeps.core.collector.completeSourceTeardown
 import cool.jacoblin.particeps.core.collector.registerSourceWithRollback
-import cool.jacoblin.particeps.core.definition.BatteryStateConfiguration
-import cool.jacoblin.particeps.core.definition.CollectorConfiguration
+import cool.jacoblin.particeps.core.definition.BatteryStateV1ProfileConfiguration
+import cool.jacoblin.particeps.core.definition.CollectorProfileConfiguration
 import cool.jacoblin.particeps.core.model.EventDraft
-import cool.jacoblin.particeps.core.model.RecordedEvent
+import cool.jacoblin.particeps.core.model.EventSourceId
+import cool.jacoblin.particeps.core.model.EventTypeKey
 import cool.jacoblin.particeps.core.model.ResearchTime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -33,15 +33,14 @@ class BatteryStateCollectorPlugin(context: Context) : CollectorPlugin {
     private val applicationContext = context.applicationContext
 
     override val descriptor = CollectorDescriptor(
-        id = BatteryStateConfiguration.ID,
+        id = BatteryStateV1ProfileConfiguration.SOURCE_ID,
         displayName = "Battery state",
-        privacyClass = PrivacyClass.SENSITIVE,
         accessKinds = emptySet(),
-        eventContract = requireNotNull(ProtocolEventContracts[BatteryStateConfiguration.ID]),
+        sourceContract = requireNotNull(ProtocolEventSourceRegistry[BatteryStateV1ProfileConfiguration.SOURCE_ID]),
     )
 
-    override fun create(configuration: CollectorConfiguration, context: CollectorContext): Collector {
-        require(configuration is BatteryStateConfiguration) { "Invalid battery-state configuration" }
+    override fun create(configuration: CollectorProfileConfiguration, context: CollectorContext): Collector {
+        require(configuration is BatteryStateV1ProfileConfiguration) { "Invalid battery-state configuration" }
         return BatteryStateCollector(applicationContext, context)
     }
 }
@@ -66,7 +65,6 @@ private class BatteryStateCollector(
     }
 
     override suspend fun registerSource(): SourceRegistrationResult = withContext(Dispatchers.Main.immediate) {
-        restoreRateGate()
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_BATTERY_CHANGED)
             addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
@@ -84,14 +82,6 @@ private class BatteryStateCollector(
                     ::clearPending,
                 )
             },
-        )
-    }
-
-    private suspend fun restoreRateGate() {
-        val latest = context.eventSink.latestEvent(BatteryStateConfiguration.ID) ?: return
-        rateGate.restoreLastEmission(
-            value = latest.batterySnapshotOrNull(),
-            currentElapsedMillis = SystemClock.elapsedRealtime(),
         )
     }
 
@@ -201,10 +191,8 @@ internal fun chargingSource(bits: Int): String {
 }
 
 internal fun BatterySnapshot.eventDraft() = EventDraft(
-    collectorId = BatteryStateConfiguration.ID,
-    payloadSchemaVersion = 1,
+    type = EventTypeKey(EventSourceId(BatteryStateV1ProfileConfiguration.SOURCE_ID), 1, "BATTERY_STATE"),
     observedTime = observedTime,
-    payloadType = "BATTERY_STATE",
     fields = mapOf(
         "percentage" to percentage.toString(),
         "charging_state" to chargingState,
@@ -212,19 +200,3 @@ internal fun BatterySnapshot.eventDraft() = EventDraft(
         "power_save_enabled" to powerSaveEnabled.toString(),
     ),
 )
-
-internal fun RecordedEvent.batterySnapshotOrNull(): BatterySnapshot? {
-    if (
-        collectorId != BatteryStateConfiguration.ID ||
-        payloadSchemaVersion != 1 ||
-        payloadType != "BATTERY_STATE"
-    ) return null
-    val percentage = fields["percentage"]?.toIntOrNull()?.takeIf { it in 0..100 } ?: return null
-    val chargingState = fields["charging_state"]?.takeIf(BATTERY_CHARGING_STATES::contains) ?: return null
-    val chargingSource = fields["charging_source"]?.takeIf(BATTERY_CHARGING_SOURCES::contains) ?: return null
-    val powerSaveEnabled = fields["power_save_enabled"]?.toBooleanStrictOrNull() ?: return null
-    return BatterySnapshot(observedTime, percentage, chargingState, chargingSource, powerSaveEnabled)
-}
-
-private val BATTERY_CHARGING_STATES = setOf("CHARGING", "DISCHARGING", "FULL", "NOT_CHARGING", "UNKNOWN")
-private val BATTERY_CHARGING_SOURCES = setOf("AC", "DOCK", "MULTIPLE", "NONE", "UNKNOWN", "USB", "WIRELESS")

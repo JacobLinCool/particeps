@@ -1,21 +1,16 @@
 package cool.jacoblin.particeps.platform
 
-import cool.jacoblin.particeps.core.application.StudyUploadException
-import cool.jacoblin.particeps.core.application.StudyUploader
-import cool.jacoblin.particeps.core.export.BundleKind
-import cool.jacoblin.particeps.core.export.BundleProducer
+import cool.jacoblin.particeps.core.application.StudySessionManager
+import cool.jacoblin.particeps.core.application.StudyUploadPlan
 import cool.jacoblin.particeps.core.export.ExportReceipt
-import cool.jacoblin.particeps.core.export.ExportSnapshot
 import cool.jacoblin.particeps.core.export.ResearchExport
 import cool.jacoblin.particeps.core.export.UploadReceiptCodec
-import cool.jacoblin.particeps.core.model.StudyMetadata
-import cool.jacoblin.particeps.core.model.StudyStore
-import cool.jacoblin.particeps.core.protocol.VerifiedConfiguration
 import java.io.IOException
 import java.util.Base64
+import java.util.UUID
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
@@ -30,56 +25,64 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.Response
 
-/** Stages one immutable encrypted bundle, sends it once, and accepts only its exact receipt. */
+/**
+ * Stages one immutable encrypted EngineCommit range, sends exactly those bytes, and accepts only
+ * the canonical receipt for that same idempotency key and complete-commit boundary.
+ */
 class OkHttpStudyUploader internal constructor(
     private val outbox: FileUploadOutbox,
-    private val producer: BundleProducer,
     private val client: OkHttpClient = defaultClient(),
-    private val nowUtcMillis: () -> Long = System::currentTimeMillis,
-) : StudyUploader {
+    private val bundleIds: () -> UUID = UUID::randomUUID,
+) {
     private val mutex = Mutex()
     private val deletionRequested = AtomicBoolean(false)
     private val activeCall = AtomicReference<Call?>(null)
 
-    override suspend fun reconcile(configuration: VerifiedConfiguration, metadata: StudyMetadata) {
-        mutex.withLock {
-            requireUploadAllowed()
-            recover(configuration, metadata)
+    internal suspend fun reconcile(plan: StudyUploadPlan, uploadedThroughCommit: Long): StagedUpload? = mutex.withLock {
+        requireUploadAllowed()
+        recoverLocked(plan, uploadedThroughCommit)
+    }
+
+    internal suspend fun recover(plan: StudyUploadPlan, uploadedThroughCommit: Long): StagedUpload? = mutex.withLock {
+        requireUploadAllowed()
+        recoverLocked(plan, uploadedThroughCommit)
+    }
+
+    internal suspend fun stage(session: StudySessionManager, plan: StudyUploadPlan): StagedUpload? = mutex.withLock {
+        requireUploadAllowed()
+        recoverLocked(plan, session.snapshot.value.runtime.uploadedThroughCommit)?.let { return@withLock it }
+        val runtime = session.snapshot.value.runtime
+        if (runtime.uploadedThroughCommit >= runtime.durableThroughCommit) return@withLock null
+        val bundleId = bundleIds()
+        try {
+            outbox.stage { destination ->
+                checkNotNull(
+                    session.prepareAutomaticUpload(
+                        destination = destination,
+                        bundleId = bundleId,
+                        maximumPlaintextBytes = TARGET_PLAINTEXT_BYTES,
+                    ),
+                ) { "Upload range disappeared while staging" }
+            }
+        } catch (failure: Exception) {
+            failure.rethrowCancellation()
+            throw failure.asOutboxFailure()
         }
     }
 
-    override suspend fun upload(
-        configuration: VerifiedConfiguration,
-        metadata: StudyMetadata,
-        events: StudyStore,
-        fromSequence: Long,
-        toSequence: Long,
-    ): ExportReceipt = mutex.withLock {
+    internal suspend fun send(plan: StudyUploadPlan, staged: StagedUpload): ExportReceipt = mutex.withLock {
         requireUploadAllowed()
-        val upload = requireNotNull(configuration.configuration.upload) {
-            "Study does not define an upload endpoint"
+        require(staged.receipt.configurationSha256 == plan.configurationSha256) {
+            "Staged upload configuration digest mismatch"
         }
-        val staged = recover(configuration, metadata) ?: stage(
-            configuration,
-            metadata,
-            events,
-            fromSequence,
-            toSequence,
-        )
-        require(staged.receipt.firstSequence == fromSequence) { "Staged upload range start mismatch" }
-        require(staged.receipt.lastSequence in fromSequence..toSequence) { "Staged upload range end mismatch" }
-        requireUploadAllowed()
-
+        staged.terminalFailureCode?.let { throw UploadTransportException(it, retryable = false) }
         val request = Request.Builder()
-            .url(upload.endpoint)
+            .url(plan.endpoint)
             .apply {
-                uploadHeaders(configuration, staged.receipt).forEach { (name, value) ->
-                    header(name, value)
-                }
+                uploadHeaders(plan, staged.receipt).forEach { (name, value) -> header(name, value) }
             }
             .post(staged.body.asRequestBody(BUNDLE_MEDIA_TYPE))
             .build()
-
         val call = client.newCall(request)
         check(activeCall.compareAndSet(null, call)) { "Only one upload call may be active" }
         if (deletionRequested.get()) call.cancel()
@@ -95,12 +98,9 @@ class OkHttpStudyUploader internal constructor(
         response.use {
             if (it.code !in ACCEPTED_STATUS_CODES) {
                 val reason = "UPLOAD_HTTP_${it.code}"
-                if (it.code.isRetryableStatus()) {
-                    throw StudyUploadException(reason, retryable = true)
-                }
+                if (it.code.isRetryableStatus()) throw UploadTransportException(reason, retryable = true)
                 markTerminal(staged, reason)
             }
-
             val receipt = try {
                 val body = requireNotNull(it.body) { "Upload receipt body is missing" }
                 require(body.contentType()?.let { type -> type.type == "application" && type.subtype == "json" } == true) {
@@ -110,80 +110,43 @@ class OkHttpStudyUploader internal constructor(
                 require(declaredLength == -1L || declaredLength <= MAXIMUM_RECEIPT_BYTES) {
                     "Upload receipt body is too large"
                 }
-                val bytes = body.byteStream().use { input ->
-                    input.readNBytes(MAXIMUM_RECEIPT_BYTES + 1)
-                }
+                val bytes = body.byteStream().use { input -> input.readNBytes(MAXIMUM_RECEIPT_BYTES + 1) }
                 require(bytes.size <= MAXIMUM_RECEIPT_BYTES) { "Upload receipt body is too large" }
                 UploadReceiptCodec.decode(bytes)
             } catch (failure: Exception) {
                 failure.rethrowCancellation()
                 markTerminal(staged, "UPLOAD_RECEIPT_INVALID", failure)
             }
-            if (receipt != staged.receipt) {
-                markTerminal(staged, "UPLOAD_RECEIPT_MISMATCH")
-            }
+            if (receipt != staged.receipt) markTerminal(staged, "UPLOAD_RECEIPT_MISMATCH")
             receipt
         }
     }
 
-    override suspend fun acknowledge(bundleId: java.util.UUID) = mutex.withLock {
+    suspend fun acknowledge(bundleId: UUID) = mutex.withLock {
         outboxCall { outbox.acknowledge(bundleId) }
     }
 
-    override suspend fun prepareDeletion() {
+    suspend fun prepareDeletion() {
         deletionRequested.set(true)
         activeCall.get()?.cancel()
-        // Wait for staging/request teardown. A stage created concurrently observes the flag
-        // before opening HTTP; an active call is cancelled above.
         mutex.withLock { activeCall.get()?.cancel() }
     }
 
-    override suspend fun clear() = mutex.withLock {
+    suspend fun clear() = mutex.withLock {
         outboxCall { outbox.clear() }
         deletionRequested.set(false)
     }
 
-    private suspend fun stage(
-        configuration: VerifiedConfiguration,
-        metadata: StudyMetadata,
-        events: StudyStore,
-        fromSequence: Long,
-        toSequence: Long,
-    ): StagedUpload = try {
-        outbox.stage { destination ->
-            ResearchExport.encrypt(
-                ExportSnapshot(
-                    verifiedConfiguration = configuration,
-                    metadata = metadata,
-                    producer = producer,
-                    bundleKind = BundleKind.AUTOMATIC_UPLOAD,
-                    exportedAtUtcMillis = nowUtcMillis(),
-                    fromSequence = fromSequence,
-                    toSequence = toSequence,
-                    maximumPlaintextBytes = TARGET_PLAINTEXT_BYTES,
-                ),
-                events,
-                destination,
-            )
-        }
-    } catch (failure: Exception) {
-        failure.rethrowCancellation()
-        throw failure.asOutboxFailure()
-    }
-
-    private fun recover(
-        configuration: VerifiedConfiguration,
-        metadata: StudyMetadata,
-    ): StagedUpload? = outboxCall {
+    private fun recoverLocked(plan: StudyUploadPlan, uploadedThroughCommit: Long): StagedUpload? = outboxCall {
         outbox.recover(
-            configurationSha256 = configuration.configurationSha256,
-            uploadedThroughSequence = metadata.uploadedThroughSequence,
+            configurationSha256 = plan.configurationSha256,
+            uploadedThroughCommit = uploadedThroughCommit,
         )
     }
 
     private fun markTerminal(staged: StagedUpload, reasonCode: String, cause: Throwable? = null): Nothing {
         outboxCall { outbox.markTerminal(staged.receipt.bundleId, reasonCode) }
-        throw StudyUploadException(reasonCode, retryable = false, cause = cause)
+        throw UploadTransportException(reasonCode, retryable = false, cause = cause)
     }
 
     private fun requireUploadAllowed() {
@@ -191,13 +154,13 @@ class OkHttpStudyUploader internal constructor(
     }
 
     private fun deletionFailure(cause: Throwable? = null) =
-        StudyUploadException("UPLOAD_CANCELLED_FOR_DELETION", retryable = false, cause = cause)
+        UploadTransportException("UPLOAD_CANCELLED_FOR_DELETION", retryable = false, cause = cause)
 
     private fun <T> outboxCall(block: () -> T): T = try {
         block()
     } catch (failure: Exception) {
         failure.rethrowCancellation()
-        if (failure is StudyUploadException) throw failure
+        if (failure is UploadTransportException) throw failure
         throw failure.asOutboxFailure()
     }
 
@@ -219,12 +182,19 @@ class OkHttpStudyUploader internal constructor(
     }
 }
 
-/** Complete unencrypted request surface. Assigned participant IDs are deliberately absent. */
-internal fun uploadHeaders(
-    configuration: VerifiedConfiguration,
-    receipt: ExportReceipt,
-): Map<String, String> {
-    require(receipt.configurationSha256 == configuration.configurationSha256) {
+class UploadTransportException(
+    val reason: String,
+    val retryable: Boolean,
+    cause: Throwable? = null,
+) : IOException(reason, cause) {
+    init { require(REASON.matches(reason)) { "Invalid upload failure reason" } }
+
+    private companion object { val REASON = Regex("[A-Z][A-Z0-9_]{2,63}") }
+}
+
+/** Complete unencrypted request surface. Participant and automation identities are absent. */
+internal fun uploadHeaders(plan: StudyUploadPlan, receipt: ExportReceipt): Map<String, String> {
+    require(receipt.configurationSha256 == plan.configurationSha256) {
         "Upload receipt configuration digest mismatch"
     }
     return mapOf(
@@ -234,32 +204,32 @@ internal fun uploadHeaders(
         "X-Particeps-Bundle-Id" to receipt.bundleId.toString(),
         "X-Particeps-Bundle-Format" to ResearchExport.BUNDLE_FORMAT,
         "X-Particeps-Configuration-SHA256" to receipt.configurationSha256,
-        "X-Particeps-Researcher-Key-Id" to configuration.configuration.export.researcherKeyId,
-        "X-Particeps-Sequence-From" to receipt.firstSequence.toString(),
-        "X-Particeps-Sequence-To" to receipt.lastSequence.toString(),
+        "X-Particeps-Researcher-Key-Id" to plan.researcherKeyId,
+        "X-Particeps-Commit-From" to receipt.firstCommitSequence.toString(),
+        "X-Particeps-Commit-To" to receipt.lastCommitSequence.toString(),
+        "X-Particeps-Commit-Count" to receipt.commitCount.toString(),
         "X-Particeps-Event-Count" to receipt.eventCount.toString(),
     )
 }
 
 private fun Int.isRetryableStatus(): Boolean = this in setOf(408, 425, 429) || this in 500..599
 
-private fun Throwable.asUploadFailure(): StudyUploadException = when (this) {
-    is StudyUploadException -> this
-    is java.net.SocketTimeoutException -> StudyUploadException("UPLOAD_TIMEOUT", retryable = true, cause = this)
-    is java.net.UnknownHostException -> StudyUploadException("UPLOAD_HOST_UNRESOLVED", retryable = true, cause = this)
-    is java.net.ConnectException -> StudyUploadException("UPLOAD_CONNECT_REFUSED", retryable = true, cause = this)
-    is javax.net.ssl.SSLHandshakeException ->
-        StudyUploadException("UPLOAD_TLS_HANDSHAKE_FAILED", retryable = true, cause = this)
-    is javax.net.ssl.SSLException -> StudyUploadException("UPLOAD_TLS_FAILED", retryable = true, cause = this)
-    is java.io.InterruptedIOException -> StudyUploadException("UPLOAD_INTERRUPTED", retryable = true, cause = this)
-    is IOException -> StudyUploadException("UPLOAD_IO_FAILED", retryable = true, cause = this)
-    else -> StudyUploadException("UPLOAD_FAILED", retryable = false, cause = this)
+private fun Throwable.asUploadFailure(): UploadTransportException = when (this) {
+    is UploadTransportException -> this
+    is java.net.SocketTimeoutException -> UploadTransportException("UPLOAD_TIMEOUT", retryable = true, cause = this)
+    is java.net.UnknownHostException -> UploadTransportException("UPLOAD_HOST_UNRESOLVED", true, this)
+    is java.net.ConnectException -> UploadTransportException("UPLOAD_CONNECT_REFUSED", true, this)
+    is javax.net.ssl.SSLHandshakeException -> UploadTransportException("UPLOAD_TLS_HANDSHAKE_FAILED", true, this)
+    is javax.net.ssl.SSLException -> UploadTransportException("UPLOAD_TLS_FAILED", true, this)
+    is java.io.InterruptedIOException -> UploadTransportException("UPLOAD_INTERRUPTED", true, this)
+    is IOException -> UploadTransportException("UPLOAD_IO_FAILED", true, this)
+    else -> UploadTransportException("UPLOAD_FAILED", false, this)
 }
 
-private fun Throwable.asOutboxFailure(): StudyUploadException = when (this) {
-    is StudyUploadException -> this
-    is IOException -> StudyUploadException("UPLOAD_OUTBOX_IO", retryable = true, cause = this)
-    else -> StudyUploadException("UPLOAD_OUTBOX_CORRUPT", retryable = false, cause = this)
+private fun Throwable.asOutboxFailure(): UploadTransportException = when (this) {
+    is UploadTransportException -> this
+    is IOException -> UploadTransportException("UPLOAD_OUTBOX_IO", true, this)
+    else -> UploadTransportException("UPLOAD_OUTBOX_CORRUPT", false, this)
 }
 
 private fun Throwable.rethrowCancellation() {

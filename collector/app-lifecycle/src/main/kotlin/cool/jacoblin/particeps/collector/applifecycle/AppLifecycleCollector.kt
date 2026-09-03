@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.Application
 import android.os.Bundle
 import cool.jacoblin.particeps.core.model.EventDraft
+import cool.jacoblin.particeps.core.model.EventSourceId
+import cool.jacoblin.particeps.core.model.EventTypeKey
 import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
@@ -11,10 +13,9 @@ import cool.jacoblin.particeps.core.collector.CollectorPlugin
 import cool.jacoblin.particeps.core.collector.SerializedCallbackCollector
 import cool.jacoblin.particeps.core.collector.SourceRegistrationResult
 import cool.jacoblin.particeps.core.collector.SourceTeardownResult
-import cool.jacoblin.particeps.core.definition.AppLifecycleConfiguration
-import cool.jacoblin.particeps.core.definition.CollectorConfiguration
-import cool.jacoblin.particeps.core.collector.PrivacyClass
-import cool.jacoblin.particeps.core.collector.ProtocolEventContracts
+import cool.jacoblin.particeps.core.definition.AppLifecycleV1ProfileConfiguration
+import cool.jacoblin.particeps.core.definition.CollectorProfileConfiguration
+import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -22,24 +23,18 @@ class AppLifecycleCollectorPlugin(
     private val application: Application,
 ) : CollectorPlugin {
     override val descriptor = CollectorDescriptor(
-        id = COLLECTOR_ID,
+        id = AppLifecycleV1ProfileConfiguration.SOURCE_ID,
         displayName = "Own-app lifecycle",
-        privacyClass = PrivacyClass.SENSITIVE,
         accessKinds = emptySet(),
-        eventContract = requireNotNull(ProtocolEventContracts[COLLECTOR_ID]),
+        sourceContract = requireNotNull(ProtocolEventSourceRegistry[AppLifecycleV1ProfileConfiguration.SOURCE_ID]),
     )
 
     override fun create(
-        configuration: CollectorConfiguration,
+        configuration: CollectorProfileConfiguration,
         context: CollectorContext,
     ): Collector {
-        require(configuration is AppLifecycleConfiguration) { "Invalid app-lifecycle configuration" }
+        require(configuration is AppLifecycleV1ProfileConfiguration) { "Invalid app-lifecycle configuration" }
         return AppLifecycleCollector(application = application, collectorContext = context)
-    }
-
-    private companion object {
-        const val COLLECTOR_ID = "app_lifecycle.v1"
-        const val PAYLOAD_SCHEMA_VERSION = 1
     }
 }
 
@@ -74,10 +69,12 @@ private class AppLifecycleCollector(
     ) {
         capture {
             EventDraft(
-                collectorId = COLLECTOR_ID,
-                payloadSchemaVersion = PAYLOAD_SCHEMA_VERSION,
+                type = EventTypeKey(
+                    EventSourceId(AppLifecycleV1ProfileConfiguration.SOURCE_ID),
+                    1,
+                    payloadType,
+                ),
                 observedTime = context.clocks.now(),
-                payloadType = payloadType,
                 fields = mapOf("activity_class" to activity.javaClass.name),
             )
         }
@@ -94,8 +91,6 @@ private class AppLifecycleCollector(
     }
 
     private companion object {
-        const val COLLECTOR_ID = "app_lifecycle.v1"
-        const val PAYLOAD_SCHEMA_VERSION = 1
         const val CHANNEL_CAPACITY = 128
     }
 }

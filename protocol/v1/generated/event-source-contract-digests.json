@@ -1,0 +1,96 @@
+{
+  "contract_digest_format": "particeps-event-source-contract-digests-v1",
+  "registry_sha256": "53e3814c0f159a579d303f51bff94293188d4afd4f8fb82d19616c782483299c",
+  "sources": [
+    {
+      "schema_version": 1,
+      "sha256": "8ee29f90f9f388397d556104d50f77d7ab9d4eaed6f6db192b92b48f093136e7",
+      "source_id": "accelerometer.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "4c0b2f3ce3bd12cbb65178ae529ee0778b89a7703fc8cc56c7f309a648e6268e",
+      "source_id": "ambient_light.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "0ebc0de03a7178b96a301bc77d36634f5db0e7c9f9e02eb81d31acf25259bed7",
+      "source_id": "app_lifecycle.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "93cc3f9dd131f846977235fcaef034597224dcfc2262f8d64b649dce9ee9637a",
+      "source_id": "automation_runtime.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "ed9f1dfce9b8db5a7d2d09bbaeb0354fee0cb2234522f95ec67884421630f6a9",
+      "source_id": "battery_state.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "ca6692e67b26d35b9d96300cb3f591e20ff67041f52c944a1e860ad6ca38ac07",
+      "source_id": "gyroscope.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "c789e62f3e06260d00a5b327f8e1eb075902e08222b409c6836bcf1c271d13bf",
+      "source_id": "interventions.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "ea4dbcf10311abd52c8c1c908f960da990755bc17bde1b4e668ed43ecd76061b",
+      "source_id": "keyboard_touch.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "3642a45da8e0cf0442be1789faf9371d1f7d67f9e213751f61cf5d11b929cc00",
+      "source_id": "location.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "fc3a466e1c24af0ebd9f976929b365d1f1020a04571e6e20266cd2175e643992",
+      "source_id": "network_state.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "26c43d28f87cc7302dbffd3c041ca465f4a201c64a20524640cade5179fc415b",
+      "source_id": "network_usage.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "47353f02a47f32a93c3e32b0e32392fb2415922d2e94eb8ce28ae205d0529dea",
+      "source_id": "proximity.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "8b7f0c57eee3b47d5c2f3e1ee3376bab9135ea2eda55f2d0892ac406b76314c1",
+      "source_id": "study_condition.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "bf04df062697ced5259d4898591b54755526a03c952a8fa6fdbfd7ff09156f48",
+      "source_id": "study_runtime.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "4448b04dcdd3ba24375b4961184d8a3041db9a31ba6dc8de7f455b77e3f99806",
+      "source_id": "temporal_context.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "e92c103fd162f5ab5add019facb8f3ba2c01c5073f14baafbd889c798bea4a12",
+      "source_id": "timer.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "1b75446a3f1e8c16f06b8a4c3306aeacd8d990eabe9e4ac0b1e93ddd061c6bb0",
+      "source_id": "traffic_shaping.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "9f640f7840c0ced01fe90872f55174eef7bda151ba4b1ffaff0adfb4f6049089",
+      "source_id": "usage_events.v1"
+    }
+  ]
+}

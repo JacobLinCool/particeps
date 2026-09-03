@@ -4,8 +4,14 @@
 `tools/collector_assurance.py`. The check covers collector source imports, direct Gradle
 dependencies, and compiled production class constant pools.
 
-`:collector:sensor-common` is the sole allowed collector-to-collector dependency. It is scanned by
-the same policy and exposes only shared Android sensor-listener lifecycle ownership.
+Exactly two narrow collector-to-collector dependencies are allowed and scanned by the same policy:
+
+- `:collector:sensor-common` exposes only shared Android hardware-sensor listener lifecycle
+  ownership;
+- `:collector:usage-common` exposes only the single Usage Access AppOps probe shared by
+  UsageStats-backed collectors and `:core:access`.
+
+The allowlist is not a general permission for collector modules to depend on one another.
 
 Run the check after compiling collector modules:
 

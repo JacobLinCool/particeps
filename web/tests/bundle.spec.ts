@@ -1,332 +1,176 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { bundleContext, openBundle, type ResearchDocument } from '../src/lib/particeps/bundle';
+import {
+  bundleContext,
+  isRuntimeComponentKind,
+  openBundle,
+  verifySourceObservationEventOrder
+} from '../src/lib/particeps/bundle';
 import { canonicalize } from '../src/lib/particeps/canonical';
 import { generateHpkeKeyPair } from '../src/lib/particeps/crypto';
-import { HPKE, SIGNING, validConfiguration } from './fixture';
-import { sealBundle } from './seal';
+import type { StudyConfiguration } from '../src/lib/particeps/types';
+import { parseConfiguration } from '../src/routes/researcher/parse';
 
-const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+type BundleVector = {
+  container_hex: string;
+  document_jcs_utf8_hex: string;
+  researcher_private_key_base64url: string;
+};
 
-describe('PTCEXP01 Protocol v1 reader', () => {
-  it('opens the fixed RFC 9180 framing and preserves decimal 64-bit values', async () => {
-    const configuration = validConfiguration();
-    const bytes = await sealBundle(configuration, SIGNING.privateKey);
-    expect(new TextDecoder().decode(bytes.subarray(0, 8))).toBe('PTCEXP01');
-    expect(new DataView(bytes.buffer).getUint16(56)).toBe(
-      new TextEncoder().encode(configuration.export.researcher_key_id).length
+const corpus = JSON.parse(
+  readFileSync(new URL('../../protocol/v1/conformance-vectors.json', import.meta.url), 'utf8')
+) as {
+  hostile: Array<{ entrypoint: string; id: string; input_hex: string }>;
+  valid: {
+    bundle: BundleVector;
+    signed_configuration: { canonical_jcs_utf8_hex: string };
+  };
+};
+const bytes = (value: string) => Uint8Array.from(Buffer.from(value, 'hex'));
+const configuration = parseConfiguration(
+  bytes(corpus.valid.signed_configuration.canonical_jcs_utf8_hex)
+);
+const bundle = corpus.valid.bundle;
+const container = bytes(bundle.container_hex);
+
+describe('PTCEXP01 Protocol v1 EngineCommit reader', () => {
+  it('keeps random selection as an engine input rather than a component kind', () => {
+    expect(isRuntimeComponentKind('TIMER')).toBe(true);
+    expect(isRuntimeComponentKind('AUTOMATION_CHECKPOINT')).toBe(true);
+    expect(isRuntimeComponentKind('RANDOM_SELECTION')).toBe(false);
+  });
+
+  it('allows only the exact pending-barrier manifest/event rotation', () => {
+    const observation = (
+      eventSequence: string,
+      admissionKind: 'NORMAL' | 'BARRIER_FLUSH' = 'NORMAL'
+    ) => ({
+      admission_kind: admissionKind,
+      event_count: 1,
+      first_event_sequence: eventSequence,
+      last_event_sequence: eventSequence
+    });
+
+    expect(verifySourceObservationEventOrder(
+      [observation('5'), observation('6')],
+      null
+    )).toBe(true);
+    expect(verifySourceObservationEventOrder(
+      [observation('6'), observation('5', 'BARRIER_FLUSH')],
+      'f'.repeat(64)
+    )).toBe(true);
+    expect(verifySourceObservationEventOrder(
+      [observation('7'), observation('6'), observation('5', 'BARRIER_FLUSH')],
+      'f'.repeat(64)
+    )).toBe(false);
+  });
+
+  it('opens the authenticated commit range and preserves the current event envelope', async () => {
+    const result = await openBundle(
+      container,
+      configuration,
+      bundle.researcher_private_key_base64url
     );
-
-    const result = await openBundle(bytes, configuration, HPKE.privateKey);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.bundle.document.bundle_id).toBe('00112233-4455-4677-8899-aabbccddeeff');
-    expect(result.bundle.document.experiment.events[0].observed_time.monotonic_time_nanos).toBe(
-      '9007199254740993'
-    );
-    expect(result.bundle.document.experiment.event_count).toBe('2');
+    expect(result.bundle.document.experiment).toMatchObject({
+      commit_count: '3',
+      event_count: '5',
+      first_commit_sequence: '1',
+      last_commit_sequence: '3',
+      state: 'RUNNING'
+    });
+    expect(result.bundle.document.experiment.commits[2].events[0]).toMatchObject({
+      condition_epoch_id: '00000000-0000-4000-8000-000000000023',
+      event_type: 'BATTERY_STATE',
+      schema_version: 1,
+      source_id: 'battery_state.v1'
+    });
+    expect(
+      result.bundle.document.experiment.commits[2].events[0].observed_time
+        .elapsed_realtime_nanos
+    ).toBe('2000');
     expect(canonicalize(JSON.parse(result.bundle.text))).toBe(result.bundle.text);
   });
 
-  it('accepts required-access loss as a legal RUNNING-to-PAUSED transition', async () => {
-    const configuration = validConfiguration();
-    const bytes = await sealBundle(configuration, SIGNING.privateKey, {
-      document: (value) => {
-        const changed = clone(value);
-        const transitions = changed.experiment.transitions;
-        const time = transitions[transitions.length - 1].time;
-        changed.experiment.state = 'PAUSED';
-        transitions.push({
-          from: 'RUNNING',
-          to: 'PAUSED',
-          reason: 'REQUIRED_ACCESS_MISSING',
-          time
-        });
-        return changed;
-      }
-    });
-
-    const result = await openBundle(bytes, configuration, HPKE.privateKey);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.bundle.document.experiment.state).toBe('PAUSED');
-    const transitions = result.bundle.document.experiment.transitions;
-    expect(transitions[transitions.length - 1]).toMatchObject({
-      from: 'RUNNING',
-      to: 'PAUSED',
-      reason: 'REQUIRED_ACCESS_MISSING'
-    });
-  });
-
-  it('accepts collection-host failure as a legal RUNNING-to-PAUSED transition', async () => {
-    const configuration = validConfiguration();
-    const bytes = await sealBundle(configuration, SIGNING.privateKey, {
-      document: (value) => {
-        const changed = clone(value);
-        const transitions = changed.experiment.transitions;
-        const time = transitions[transitions.length - 1].time;
-        changed.experiment.state = 'PAUSED';
-        transitions.push({
-          from: 'RUNNING',
-          to: 'PAUSED',
-          reason: 'COLLECTION_HOST_FAILURE',
-          time
-        });
-        return changed;
-      }
-    });
-
-    const result = await openBundle(bytes, configuration, HPKE.privateKey);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.bundle.document.experiment.transitions.at(-1)).toMatchObject({
-      from: 'RUNNING',
-      to: 'PAUSED',
-      reason: 'COLLECTION_HOST_FAILURE'
-    });
-  });
-
-  it('accepts collection teardown failure as a legal RUNNING-to-PAUSED transition', async () => {
-    const configuration = validConfiguration();
-    const bytes = await sealBundle(configuration, SIGNING.privateKey, {
-      document: (value) => {
-        const changed = clone(value);
-        const transitions = changed.experiment.transitions;
-        const time = transitions[transitions.length - 1].time;
-        changed.experiment.state = 'PAUSED';
-        transitions.push({
-          from: 'RUNNING',
-          to: 'PAUSED',
-          reason: 'COLLECTION_TEARDOWN_FAILURE',
-          time
-        });
-        return changed;
-      }
-    });
-
-    const result = await openBundle(bytes, configuration, HPKE.privateKey);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.bundle.document.experiment.transitions.at(-1)).toMatchObject({
-      from: 'RUNNING',
-      to: 'PAUSED',
-      reason: 'COLLECTION_TEARDOWN_FAILURE'
-    });
-  });
-
-  it('accepts work scheduling failure as a legal RUNNING-to-PAUSED transition', async () => {
-    const configuration = validConfiguration();
-    const bytes = await sealBundle(configuration, SIGNING.privateKey, {
-      document: (value) => {
-        const changed = clone(value);
-        const transitions = changed.experiment.transitions;
-        const time = transitions[transitions.length - 1].time;
-        changed.experiment.state = 'PAUSED';
-        transitions.push({
-          from: 'RUNNING',
-          to: 'PAUSED',
-          reason: 'WORK_SCHEDULING_FAILURE',
-          time
-        });
-        return changed;
-      }
-    });
-
-    const result = await openBundle(bytes, configuration, HPKE.privateKey);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.bundle.document.experiment.transitions.at(-1)).toMatchObject({
-      from: 'RUNNING',
-      to: 'PAUSED',
-      reason: 'WORK_SCHEDULING_FAILURE'
-    });
+  it('rejects every authenticated commit, observation, registry, and epoch hostile', async () => {
+    const relevant = corpus.hostile.filter((vector) =>
+      vector.entrypoint === 'bundle' && /(?:commit|checkpoint|event|observation|ordinal|epoch|registry|flat)/
+        .test(vector.id)
+    );
+    expect(relevant.length).toBeGreaterThan(10);
+    for (const vector of relevant) {
+      await expect(openBundle(
+        bytes(vector.input_hex),
+        configuration,
+        bundle.researcher_private_key_base64url
+      ), vector.id).resolves.toEqual({ ok: false, failure: 'unreadable' });
+    }
   });
 
   it('uses one JCS context for HPKE info and content AAD', () => {
-    expect(
-      new TextDecoder().decode(
-        bundleContext(
-          '00112233-4455-4677-8899-aabbccddeeff',
-          '00'.repeat(32),
-          'protocol-export'
-        )
-      )
-    ).toBe(
-      '{"bundle_format":"particeps-research-bundle-v1","bundle_id":"00112233-4455-4677-8899-aabbccddeeff","configuration_sha256":"' +
-        '00'.repeat(32) +
-        '","researcher_key_id":"protocol-export"}'
+    expect(new TextDecoder().decode(bundleContext(
+      '00112233-4455-4677-8899-aabbccddeeff',
+      '00'.repeat(32),
+      'protocol-export'
+    ))).toBe(
+      '{"bundle_format":"particeps-research-bundle-v1","bundle_id":' +
+      '"00112233-4455-4677-8899-aabbccddeeff","configuration_sha256":"' +
+      '00'.repeat(32) +
+      '","researcher_key_id":"protocol-export"}'
     );
   });
 
-  it.each(['', ' ', '0x10', '0b10', 'NaN', 'Infinity'])(
-    'rejects a non-decimal sensor float spelling: %j',
-    async (hostile) => {
-      const base = validConfiguration();
-      const configuration = validConfiguration({
-        collectors: [
-          ...base.collectors,
-          {
-            id: 'gyroscope.v1',
-            required: false,
-            config: { maximum_report_latency_us: 1_000_000, sampling_period_us: 20_000 }
-          }
-        ]
-      });
-      const bytes = await sealBundle(configuration, SIGNING.privateKey, {
-        document: (value) => {
-          const changed = clone(value);
-          changed.experiment.events[0] = {
-            sequence_number: '1',
-            collector_id: 'gyroscope.v1',
-            payload_schema_version: 1,
-            observed_time: changed.experiment.events[0].observed_time,
-            payload_type: 'GYROSCOPE_SAMPLE',
-            fields: {
-              accuracy: '3',
-              source_elapsed_realtime_nanos: '1000000000',
-              x_radians_per_second: hostile,
-              y_radians_per_second: '0.2',
-              z_radians_per_second: '0.3'
-            }
-          };
-          return changed;
-        }
-      });
-
-      expect(await openBundle(bytes, configuration, HPKE.privateKey)).toEqual({
-        ok: false,
-        failure: 'unreadable'
-      });
-    }
-  );
-
   it('distinguishes wrong configuration, wrong key, HPKE corruption, and body corruption', async () => {
-    const configuration = validConfiguration();
-    const valid = await sealBundle(configuration, SIGNING.privateKey);
+    const wrongConfiguration = {
+      ...configuration,
+      configuration_id: 'other-config'
+    } satisfies StudyConfiguration;
+    expect(await openBundle(
+      container,
+      wrongConfiguration,
+      bundle.researcher_private_key_base64url
+    )).toEqual({ ok: false, failure: 'wrong_study' });
+    expect(await openBundle(
+      container,
+      configuration,
+      generateHpkeKeyPair().privateKey
+    )).toEqual({ ok: false, failure: 'wrong_key' });
 
-    expect(await openBundle(valid, { ...configuration, configuration_id: 'other-config' }, HPKE.privateKey))
-      .toEqual({ ok: false, failure: 'wrong_study' });
-    expect(await openBundle(valid, configuration, generateHpkeKeyPair().privateKey)).toEqual({
-      ok: false,
-      failure: 'wrong_key'
-    });
-
-    const wrapped = valid.slice();
-    const wrappedAt = 70 + new DataView(valid.buffer).getUint16(56);
+    const wrapped = container.slice();
+    const wrappedAt = 70 + new DataView(container.buffer).getUint16(56);
     wrapped[wrappedAt + 40] ^= 1;
-    expect(await openBundle(wrapped, configuration, HPKE.privateKey)).toEqual({
-      ok: false,
-      failure: 'unwrap_failed'
-    });
+    expect(await openBundle(
+      wrapped,
+      configuration,
+      bundle.researcher_private_key_base64url
+    )).toEqual({ ok: false, failure: 'unwrap_failed' });
 
-    const body = valid.slice();
+    const body = container.slice();
     body[body.length - 1] ^= 1;
-    expect(await openBundle(body, configuration, HPKE.privateKey)).toEqual({
-      ok: false,
-      failure: 'tag_failed'
-    });
+    expect(await openBundle(
+      body,
+      configuration,
+      bundle.researcher_private_key_base64url
+    )).toEqual({ ok: false, failure: 'tag_failed' });
   });
 
-  it.each([
-    {
-      name: 'unknown root member',
-      mutate: (value: ResearchDocument) => ({ ...value, future: true })
-    },
-    {
-      name: 'numeric sequence instead of decimal string',
-      mutate: (value: ResearchDocument) => {
-        const changed = clone(value) as unknown as { experiment: { events: Array<{ sequence_number: unknown }> } };
-        changed.experiment.events[0].sequence_number = 1;
-        return changed;
-      }
-    },
-    {
-      name: 'conflicting event count',
-      mutate: (value: ResearchDocument) => {
-        const changed = clone(value);
-        changed.experiment.event_count = '3';
-        return changed;
-      }
-    },
-    {
-      name: 'wrong actual range',
-      mutate: (value: ResearchDocument) => {
-        const changed = clone(value);
-        changed.experiment.first_sequence_number = '0';
-        return changed;
-      }
-    },
-    {
-      name: 'non-contiguous event range',
-      mutate: (value: ResearchDocument) => {
-        const changed = clone(value);
-        changed.experiment.events[1].sequence_number = '3';
-        changed.experiment.last_sequence_number = '3';
-        return changed;
-      }
-    },
-    {
-      name: 'empty automatic upload',
-      mutate: (value: ResearchDocument) => {
-        const changed = clone(value);
-        changed.bundle_kind = 'automatic_upload';
-        changed.experiment.events = [];
-        changed.experiment.event_count = '0';
-        changed.experiment.first_sequence_number = '3';
-        changed.experiment.last_sequence_number = '2';
-        return changed;
-      }
-    },
-    {
-      name: 'old padded signature encoding',
-      mutate: (value: ResearchDocument) => {
-        const changed = clone(value);
-        changed.configuration_signature.signature += '==';
-        return changed;
-      }
-    }
-  ])('fails closed on $name', async ({ mutate }) => {
-    const configuration = validConfiguration();
-    const bytes = await sealBundle(configuration, SIGNING.privateKey, { document: mutate });
-    expect(await openBundle(bytes, configuration, HPKE.privateKey)).toEqual({
-      ok: false,
-      failure: 'unreadable'
-    });
-  });
-
-  it('rejects a truncated PTCEXP01 header and the retired ADCEXP01 magic on an otherwise valid bundle', async () => {
-    const configuration = validConfiguration();
+  it('rejects truncated and retired container identities before decryption', async () => {
     const truncated = new Uint8Array(64);
     truncated.set(new TextEncoder().encode('PTCEXP01'));
-    expect(await openBundle(truncated, configuration, HPKE.privateKey)).toEqual({
-      ok: false,
-      failure: 'not_a_bundle'
-    });
+    expect(await openBundle(
+      truncated,
+      configuration,
+      bundle.researcher_private_key_base64url
+    )).toEqual({ ok: false, failure: 'not_a_bundle' });
 
-    const valid = await sealBundle(configuration, SIGNING.privateKey);
-    expect(await openBundle(valid, configuration, HPKE.privateKey)).toMatchObject({ ok: true });
-    const retired = valid.slice();
-    // Retired-identity rejection fixture. `ADCEXP01` is the old export magic and must stay spelled
-    // out here: a rename sweep that "fixes" it would leave this test proving nothing.
+    const retired = container.slice();
+    // Deliberate hostile fixture for the retired product identity.
     retired.set(new TextEncoder().encode('ADCEXP01'));
-    expect(await openBundle(retired, configuration, HPKE.privateKey)).toEqual({
-      ok: false,
-      failure: 'not_a_bundle'
-    });
-  });
-
-  it('rejects a non-random bundle UUID and a noncanonical key ID before decryption', async () => {
-    const configuration = validConfiguration();
-    const invalidUuid = await sealBundle(configuration, SIGNING.privateKey, {
-      bundleId: '00112233-4455-0677-8899-aabbccddeeff'
-    });
-    expect(await openBundle(invalidUuid, configuration, HPKE.privateKey)).toEqual({
-      ok: false,
-      failure: 'not_a_bundle'
-    });
-    const invalidKeyId = await sealBundle(configuration, SIGNING.privateKey, { keyId: 'Bad' });
-    expect(await openBundle(invalidKeyId, configuration, HPKE.privateKey)).toEqual({
-      ok: false,
-      failure: 'not_a_bundle'
-    });
+    expect(await openBundle(
+      retired,
+      configuration,
+      bundle.researcher_private_key_base64url
+    )).toEqual({ ok: false, failure: 'not_a_bundle' });
   });
 });

@@ -3,13 +3,14 @@ package cool.jacoblin.particeps
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import cool.jacoblin.particeps.core.application.RecoveryStatus
-import cool.jacoblin.particeps.core.runtime.CommandResult
-import cool.jacoblin.particeps.platform.InterventionDeliveryCoordinator
+import cool.jacoblin.particeps.core.application.StudyRecoveryStatus
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-/** Reconciles durable work after boot, clock, or time-zone changes. */
+/**
+ * Wakes durable adapters after boot or a civil-clock change. It never reconstructs state from the
+ * signed configuration and never resumes a study; recovery truth comes from the commit chain.
+ */
 class ScheduledWorkRecoveryReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action !in RECOVERY_ACTIONS) return
@@ -17,20 +18,15 @@ class ScheduledWorkRecoveryReceiver : BroadcastReceiver() {
         val application = context.applicationContext as CollectorApplication
         application.applicationScope.launch {
             try {
-                val initialized = application.session.snapshot.first { it.initialized }
-                val recovery = if (initialized.recoveryStatus is RecoveryStatus.ActionRequired) {
-                    application.session.retryRecovery()
-                } else {
-                    CommandResult.Success
+                val snapshot = application.session.snapshot.first { it.initialized }
+                if (snapshot.recoveryStatus == StudyRecoveryStatus.ACTION_REQUIRED || snapshot.study == null) {
+                    return@launch
                 }
-                if (recovery != CommandResult.Success) return@launch
-                if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
-                    InterventionDeliveryCoordinator.recoverStalePosting {
-                        application.session.reconcileScheduledWork(recoverStalePosting = true)
-                    }
-                } else {
-                    application.session.reconcileScheduledWork()
+                if (intent.action != Intent.ACTION_BOOT_COMPLETED) {
+                    application.session.onClockDiscontinuity()
                 }
+                application.session.reconcileActionOutbox()
+                application.currentTimerAdapter?.reconcile(application.session)
             } finally {
                 pending.finish()
             }

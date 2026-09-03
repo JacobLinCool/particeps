@@ -76,7 +76,7 @@
   const highFill = $derived(highIndex / span);
 </script>
 
-<!-- One `Field`, two schema paths. `location_interval_order` is reported against the low thumb, so
+<!-- One `Field`, two schema paths. The cross-field profile rule is reported against the low thumb, so
      the shell answers for both or that issue row lands nowhere. -->
 <Field {label} path={highPath} {hint} issueHost={[lowPath, highPath]}>
   {#snippet children({ id, describedby })}

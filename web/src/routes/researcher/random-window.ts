@@ -1,9 +1,9 @@
-import type { InterventionSchedule } from '$lib/particeps/types';
+import type { AutomationSchedule } from '$lib/particeps/types';
 
-type RandomWindowSchedule = Extract<InterventionSchedule, { type: 'random_window' }>;
-type RandomLocalWindow = RandomWindowSchedule['local_windows'][number];
+type RandomWindowAutomationSchedule = Extract<AutomationSchedule, { type: 'random_window' }>;
+type RandomLocalWindow = RandomWindowAutomationSchedule['local_windows'][number];
 
-export function nextRandomWindow(schedule: RandomWindowSchedule): RandomLocalWindow | null {
+export function nextRandomWindow(schedule: RandomWindowAutomationSchedule): RandomLocalWindow | null {
   const minute = (value: string) => Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
   const clock = (value: number) =>
     `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;

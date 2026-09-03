@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Bundle
+import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -11,8 +12,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
-import cool.jacoblin.particeps.platform.InterventionWorker
+import cool.jacoblin.particeps.actuator.trafficshaping.TrafficShapingAndroidPrerequisites
 import cool.jacoblin.particeps.core.collector.SetupAction
+import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.protocol.JoinLink
 import cool.jacoblin.particeps.core.protocol.SignedConfigurationCodec
 import java.time.Instant
@@ -64,8 +66,35 @@ class MainActivity : ComponentActivity() {
         viewModel.refreshAccess()
     }
 
+    private val localNetworkPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            continueTrafficPrerequisites()
+        } else {
+            pendingTrafficAction = null
+            viewModel.reportMessage(ParticipantMessage.ACCESS_INSPECTION_FAILED)
+        }
+    }
+
+    private val vpnConsentLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            executePendingTrafficAction()
+        } else {
+            pendingTrafficAction = null
+            viewModel.reportMessage(ParticipantMessage.ACCESS_INSPECTION_FAILED)
+        }
+    }
+
+    private var pendingTrafficAction: PendingTrafficAction? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingTrafficAction = savedInstanceState
+            ?.getString(STATE_PENDING_TRAFFIC_ACTION)
+            ?.let(PendingTrafficAction::valueOf)
         handleIntent(intent)
         enableEdgeToEdge()
         setContent {
@@ -77,14 +106,17 @@ class MainActivity : ComponentActivity() {
                     demo = demoAction,
                     review = viewModel::reviewStudy,
                     acceptConsent = viewModel::acceptConsent,
-                    completeAccess = viewModel::completeAccessSetup,
+                    completeAccess = {
+                        runAfterTrafficPrerequisites(PendingTrafficAction.COMPLETE_ACCESS)
+                    },
                     requestAccess = ::requestAccess,
-                    start = viewModel::start,
+                    start = { runAfterTrafficPrerequisites(PendingTrafficAction.START) },
                     pause = viewModel::pause,
-                    resume = viewModel::resume,
+                    resume = { runAfterTrafficPrerequisites(PendingTrafficAction.RESUME) },
+                    complete = viewModel::complete,
                     withdraw = viewModel::withdraw,
                     export = {
-                        val id = (state as? StudyUiState.ActiveStudy)?.configuration?.experimentId ?: "research"
+                        val id = (state as? StudyUiState.ActiveStudy)?.model?.experimentId ?: "research"
                         exportLauncher.launch("$id-${Instant.now().epochSecond}.partexp")
                     },
                     delete = viewModel::deleteLocalData,
@@ -98,6 +130,17 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshAccess()
+        val active = viewModel.state.value as? StudyUiState.ActiveStudy
+        if (
+            active?.model?.trafficShapingDisclosureRequired == true &&
+            active.model.state == ExperimentState.RUNNING &&
+            (
+                !TrafficShapingAndroidPrerequisites.hasLocalNetworkPermission(this) ||
+                    TrafficShapingAndroidPrerequisites.vpnConsentIntent(this) != null
+                )
+        ) {
+            viewModel.safetyPauseForPlatformAccessLoss()
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -114,15 +157,13 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        pendingTrafficAction?.let { outState.putString(STATE_PENDING_TRAFFIC_ACTION, it.name) }
+        super.onSaveInstanceState(outState)
+    }
+
     private fun handleIntent(intent: Intent) {
         when (intent.action) {
-            InterventionWorker.ACTION_OPEN_OCCURRENCE -> {
-                val occurrenceId = intent.getStringExtra(InterventionWorker.KEY_OCCURRENCE_ID) ?: return
-                lifecycleScope.launch {
-                    val ready = collectorApplication.session.snapshot.first { it.initialized }
-                    if (ready.configuration != null) collectorApplication.session.openOccurrence(occurrenceId)
-                }
-            }
             Intent.ACTION_VIEW -> {
                 val encoded = intent.dataString ?: return
                 // Prevent an Activity recreation from starting a second download for the same URI.
@@ -130,13 +171,13 @@ class MainActivity : ComponentActivity() {
                 val link = try {
                     JoinLink.parse(encoded)
                 } catch (_: IllegalArgumentException) {
-                    viewModel.reportMessage("JOIN_LINK_INVALID")
+                    viewModel.reportMessage(ParticipantMessage.JOIN_IMPORT_FAILED)
                     return
                 }
                 lifecycleScope.launch {
                     val ready = collectorApplication.session.snapshot.first { it.initialized }
-                    if (ready.configuration != null || ready.deletionPending) {
-                        viewModel.reportMessage("JOIN_ACTIVE_STUDY")
+                    if (ready.study != null || ready.deletionPending) {
+                        viewModel.reportMessage(ParticipantMessage.JOIN_IMPORT_FAILED)
                     } else {
                         viewModel.importJoin(link) {
                             collectorApplication.joinArtifactDownloader.download(link)
@@ -145,6 +186,44 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun runAfterTrafficPrerequisites(action: PendingTrafficAction) {
+        val active = viewModel.state.value as? StudyUiState.ActiveStudy
+        if (active?.model?.trafficShapingDisclosureRequired != true) {
+            executeTrafficAction(action)
+            return
+        }
+        pendingTrafficAction = action
+        if (
+            Build.VERSION.SDK_INT >= 37 &&
+            !TrafficShapingAndroidPrerequisites.hasLocalNetworkPermission(this)
+        ) {
+            localNetworkPermissionLauncher.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
+            return
+        }
+        continueTrafficPrerequisites()
+    }
+
+    private fun continueTrafficPrerequisites() {
+        val consent = TrafficShapingAndroidPrerequisites.vpnConsentIntent(this)
+        if (consent != null) {
+            vpnConsentLauncher.launch(consent)
+        } else {
+            executePendingTrafficAction()
+        }
+    }
+
+    private fun executePendingTrafficAction() {
+        val action = pendingTrafficAction ?: return
+        pendingTrafficAction = null
+        executeTrafficAction(action)
+    }
+
+    private fun executeTrafficAction(action: PendingTrafficAction) = when (action) {
+        PendingTrafficAction.COMPLETE_ACCESS -> viewModel.completeAccessSetup()
+        PendingTrafficAction.START -> viewModel.start()
+        PendingTrafficAction.RESUME -> viewModel.resume()
     }
 
     /**
@@ -168,21 +247,27 @@ class MainActivity : ComponentActivity() {
             is SetupAction.SystemSettings -> {
                 val settingsIntent = collectorApplication.accessManager.settingsIntent(action)
                 if (settingsIntent == null) {
-                    viewModel.reportMessage("ACCESS_SETTINGS_UNAVAILABLE")
+                    viewModel.reportMessage(ParticipantMessage.ACCESS_INSPECTION_FAILED)
                     return
                 }
                 try {
                     startActivity(settingsIntent)
                 } catch (_: ActivityNotFoundException) {
-                    viewModel.reportMessage("ACCESS_SETTINGS_UNAVAILABLE")
+                    viewModel.reportMessage(ParticipantMessage.ACCESS_INSPECTION_FAILED)
                     viewModel.refreshAccess()
                 } catch (_: SecurityException) {
-                    viewModel.reportMessage("ACCESS_SETTINGS_UNAVAILABLE")
+                    viewModel.reportMessage(ParticipantMessage.ACCESS_INSPECTION_FAILED)
                     viewModel.refreshAccess()
                 }
             }
             SetupAction.ShowInputMethodPicker -> collectorApplication.accessManager.showInputMethodPicker()
         }
+    }
+
+    private enum class PendingTrafficAction { COMPLETE_ACCESS, START, RESUME }
+
+    private companion object {
+        const val STATE_PENDING_TRAFFIC_ACTION = "pending_traffic_action"
     }
 
 }

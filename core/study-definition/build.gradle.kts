@@ -13,6 +13,8 @@ kotlin.compilerOptions {
 }
 
 dependencies {
+    api(project(":core:model"))
+    api(project(":core:resource-api"))
     implementation(libs.gson)
     testImplementation(libs.junit4)
 }

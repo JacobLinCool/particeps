@@ -12,7 +12,7 @@ class StudyTimelineTest {
 
     @Test
     fun sameBootUsesOnlyMonotonicTimeAndNeverWallClock() {
-        val checkpoint = timeline.startedAt(start)
+        val checkpoint = timeline.startedAt(start, trustedUtcMillis = null, zoneId = "UTC")
         val observed = time("boot-a", monotonicNanos = 4_500_000_000, utcMillis = 1)
 
         val advanced = timeline.advance(
@@ -23,15 +23,15 @@ class StudyTimelineTest {
         ) as StudyTimelineAdvance.Advanced
 
         assertFalse(advanced.crossedBoot)
-        assertEquals(3_500_000_000, advanced.checkpoint.studyElapsedNanos)
-        assertEquals(3_500_000_000, advanced.checkpoint.activeCollectionElapsedNanos)
+        assertEquals(3_500_000_000, advanced.checkpoint.calendarElapsedNanos)
+        assertEquals(3_500_000_000, advanced.checkpoint.activeRunningElapsedNanos)
         assertEquals(observed, advanced.checkpoint.anchor)
     }
 
     @Test
     fun rebootDowntimeCountsTowardLifetimeButNotActiveCollection() {
         val beforeReboot = (timeline.advance(
-            timeline.startedAt(start, trustedUtcMillis = start.wallTimeUtcMillis),
+            timeline.startedAt(start, trustedUtcMillis = start.wallTimeUtcMillis, zoneId = "UTC"),
             ExperimentState.RUNNING,
             time("boot-a", 6_000_000_000, 15_000),
             trustedUtcMillis = null,
@@ -45,15 +45,15 @@ class StudyTimelineTest {
         ) as StudyTimelineAdvance.Advanced
 
         assertTrue(recovered.crossedBoot)
-        assertEquals(30_000_000_000, recovered.checkpoint.studyElapsedNanos)
-        assertEquals(5_000_000_000, recovered.checkpoint.activeCollectionElapsedNanos)
+        assertEquals(30_000_000_000, recovered.checkpoint.calendarElapsedNanos)
+        assertEquals(5_000_000_000, recovered.checkpoint.activeRunningElapsedNanos)
     }
 
     @Test
     fun participantPauseDoesNotAdvanceActiveCollectionClock() {
-        val paused = timeline.startedAt(start).copy(
-            studyElapsedNanos = 10_000_000_000,
-            activeCollectionElapsedNanos = 4_000_000_000,
+        val paused = timeline.startedAt(start, trustedUtcMillis = null, zoneId = "UTC").copy(
+            calendarElapsedNanos = 10_000_000_000,
+            activeRunningElapsedNanos = 4_000_000_000,
             anchor = time("boot-a", 11_000_000_000, 20_000),
         )
 
@@ -64,8 +64,8 @@ class StudyTimelineTest {
             trustedUtcMillis = null,
         ) as StudyTimelineAdvance.Advanced
 
-        assertEquals(20_000_000_000, advanced.checkpoint.studyElapsedNanos)
-        assertEquals(4_000_000_000, advanced.checkpoint.activeCollectionElapsedNanos)
+        assertEquals(20_000_000_000, advanced.checkpoint.calendarElapsedNanos)
+        assertEquals(4_000_000_000, advanced.checkpoint.activeRunningElapsedNanos)
     }
 
     @Test
@@ -73,7 +73,7 @@ class StudyTimelineTest {
         assertSame(
             StudyTimelineAdvance.TrustedUtcRequired,
             timeline.advance(
-                timeline.startedAt(start),
+                timeline.startedAt(start, trustedUtcMillis = null, zoneId = "UTC"),
                 ExperimentState.RUNNING,
                 time("boot-b", 1, 20_000),
                 trustedUtcMillis = null,
@@ -86,7 +86,7 @@ class StudyTimelineTest {
         assertSame(
             StudyTimelineAdvance.TrustedUtcRequired,
             timeline.advance(
-                timeline.startedAt(start),
+                timeline.startedAt(start, trustedUtcMillis = null, zoneId = "UTC"),
                 ExperimentState.RUNNING,
                 time("boot-b", 1, 20_000),
                 trustedUtcMillis = 20_000,
@@ -97,7 +97,7 @@ class StudyTimelineTest {
     @Test
     fun sameBootTrustedReadingEstablishesDeadlineForLaterReboot() {
         val anchored = timeline.advance(
-            timeline.startedAt(start),
+            timeline.startedAt(start, trustedUtcMillis = null, zoneId = "UTC"),
             ExperimentState.RUNNING,
             time("boot-a", 6_000_000_000, 15_000),
             trustedUtcMillis = 15_000,
@@ -111,14 +111,14 @@ class StudyTimelineTest {
 
         assertTrue(anchored.checkpoint.deadlineUtcTrusted)
         assertTrue(recovered.crossedBoot)
-        assertEquals(10_000_000_000, recovered.checkpoint.studyElapsedNanos)
-        assertEquals(5_000_000_000, recovered.checkpoint.activeCollectionElapsedNanos)
+        assertEquals(10_000_000_000, recovered.checkpoint.calendarElapsedNanos)
+        assertEquals(5_000_000_000, recovered.checkpoint.activeRunningElapsedNanos)
     }
 
     @Test
     fun trustedClockRollbackAcrossRepeatedRebootsCannotReduceElapsedTime() {
         val firstRecovery = (timeline.advance(
-            timeline.startedAt(start, trustedUtcMillis = start.wallTimeUtcMillis),
+            timeline.startedAt(start, trustedUtcMillis = start.wallTimeUtcMillis, zoneId = "UTC"),
             ExperimentState.RUNNING,
             time("boot-b", 1, 50_000),
             trustedUtcMillis = 50_000,
@@ -130,14 +130,14 @@ class StudyTimelineTest {
             trustedUtcMillis = 30_000,
         ) as StudyTimelineAdvance.Advanced
 
-        assertEquals(40_000_000_000, firstRecovery.studyElapsedNanos)
-        assertEquals(firstRecovery.studyElapsedNanos, secondRecovery.checkpoint.studyElapsedNanos)
-        assertEquals(firstRecovery.activeCollectionElapsedNanos, secondRecovery.checkpoint.activeCollectionElapsedNanos)
+        assertEquals(40_000_000_000, firstRecovery.calendarElapsedNanos)
+        assertEquals(firstRecovery.calendarElapsedNanos, secondRecovery.checkpoint.calendarElapsedNanos)
+        assertEquals(firstRecovery.activeRunningElapsedNanos, secondRecovery.checkpoint.activeRunningElapsedNanos)
     }
 
     @Test
     fun exactDeadlineIsRejectedWhilePreviousNanosecondIsAdmitted() {
-        val checkpoint = timeline.startedAt(start)
+        val checkpoint = timeline.startedAt(start, trustedUtcMillis = null, zoneId = "UTC")
 
         assertTrue(timeline.admits(checkpoint, time("boot-a", 60_999_999_999, 0)))
         assertFalse(timeline.admits(checkpoint, time("boot-a", 61_000_000_000, 0)))
@@ -147,7 +147,7 @@ class StudyTimelineTest {
     @Test(expected = IllegalArgumentException::class)
     fun sameBootMonotonicRollbackIsRejected() {
         timeline.advance(
-            timeline.startedAt(start),
+            timeline.startedAt(start, trustedUtcMillis = null, zoneId = "UTC"),
             ExperimentState.RUNNING,
             time("boot-a", 999_999_999, 10_001),
             trustedUtcMillis = null,

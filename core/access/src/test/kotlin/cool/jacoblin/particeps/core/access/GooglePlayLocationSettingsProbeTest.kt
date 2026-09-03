@@ -7,7 +7,7 @@ import com.google.android.gms.common.api.Status
 import com.google.android.gms.location.LocationSettingsStatusCodes
 import com.google.android.gms.location.Priority
 import cool.jacoblin.particeps.core.collector.LocationAccessProfile
-import cool.jacoblin.particeps.core.definition.LocationPriority
+import cool.jacoblin.particeps.core.definition.LocationV1PriorityValue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
@@ -22,11 +22,11 @@ class GooglePlayLocationSettingsProbeTest {
     fun prioritiesMatchTheCollectorLocationRequestContract() {
         assertEquals(
             Priority.PRIORITY_BALANCED_POWER_ACCURACY,
-            LocationPriority.BALANCED.toGooglePlayPriority(),
+            LocationV1PriorityValue.BALANCED.toGooglePlayPriority(),
         )
         assertEquals(
             Priority.PRIORITY_HIGH_ACCURACY,
-            LocationPriority.HIGH_ACCURACY.toGooglePlayPriority(),
+            LocationV1PriorityValue.HIGH_ACCURACY.toGooglePlayPriority(),
         )
         assertEquals(1.25f, profile().minimumDisplacementMeters(), 0f)
     }
@@ -105,6 +105,6 @@ class GooglePlayLocationSettingsProbeTest {
         minimumIntervalMillis = 2_000,
         maximumBatchDelayMillis = 60_000,
         minimumDisplacementMillimeters = 1_250,
-        priority = LocationPriority.BALANCED,
+        priority = LocationV1PriorityValue.BALANCED,
     )
 }

@@ -5,8 +5,8 @@ import cool.jacoblin.particeps.core.collector.AccessKind
 import cool.jacoblin.particeps.core.collector.AccessRequirement
 import cool.jacoblin.particeps.core.collector.LocationAccessProfile
 import cool.jacoblin.particeps.core.collector.NotificationAccessFeature
-import cool.jacoblin.particeps.core.definition.LocationConfiguration
-import cool.jacoblin.particeps.core.definition.LocationPriority
+import cool.jacoblin.particeps.core.definition.LocationV1PriorityValue
+import cool.jacoblin.particeps.core.definition.LocationV1ProfileConfiguration
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -14,13 +14,12 @@ import org.junit.Test
 class AccessInspectionRequestTest {
     @Test
     fun locationProfilePreservesEverySignedLocationRequestField() {
-        val configuration = LocationConfiguration(
-            required = true,
+        val configuration = LocationV1ProfileConfiguration(
             intervalMillis = 12_345,
             minimumIntervalMillis = 2_345,
             maximumBatchDelayMillis = 67_890,
             minimumDisplacementMillimeters = 4_321,
-            priority = LocationPriority.HIGH_ACCURACY,
+            priority = LocationV1PriorityValue.HIGH_ACCURACY,
         )
 
         assertEquals(
@@ -29,7 +28,7 @@ class AccessInspectionRequestTest {
                 minimumIntervalMillis = 2_345,
                 maximumBatchDelayMillis = 67_890,
                 minimumDisplacementMillimeters = 4_321,
-                priority = LocationPriority.HIGH_ACCURACY,
+                priority = LocationV1PriorityValue.HIGH_ACCURACY,
             ),
             LocationAccessProfile.from(configuration),
         )
@@ -104,6 +103,6 @@ class AccessInspectionRequestTest {
         minimumIntervalMillis = 5_000,
         maximumBatchDelayMillis = 30_000,
         minimumDisplacementMillimeters = 1_000,
-        priority = LocationPriority.BALANCED,
+        priority = LocationV1PriorityValue.BALANCED,
     )
 }

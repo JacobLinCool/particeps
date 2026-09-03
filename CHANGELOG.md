@@ -7,6 +7,51 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
+## v1.0.0-rc.8 — 2026-09-03
+
+- Protocol v1 is replaced in place by a durable event-driven study runtime. The event-source
+  registry now defines both collector and system events; signed configurations define named
+  resource profiles, reusable one-shot actions, and closed-world automations. Lifecycle, timer,
+  action, resource, and condition-epoch records share one ordered event and commit history.
+- Encrypted storage now uses authenticated append-only `EngineCommit` frames. A source observation,
+  reducer checkpoint, timer/action/resource mutation, generated audit event, and successor
+  projection either commit together or do not exist. Encrypted snapshots are recovery caches;
+  opening replays only complete commits after the newest authenticated snapshot, and export/upload
+  revalidate every complete commit they read. This preserves the cold-start performance work that
+  avoids reconstructing a long study one event at a time without weakening the commit-chain truth.
+- Collectors are stateful resources controlled by signed binding automations. Start and Resume do
+  not hard-code continuous collection: required resources must apply and verify before the first
+  condition epoch is committed and collector data admission opens. Any resource-vector change uses
+  one global flush/drain/apply/verify barrier.
+- Added source-built, fail-closed Android per-App traffic shaping. A local `VpnService` forwards only
+  signed target packages through a gVisor userspace stack and applies aggregate uplink/downlink token
+  buckets. VPN ownership, TUN/native health, package identity, socket protection, and the exact
+  applied profile must all verify; loss closes admission and safely pauses the study.
+- The participant App keeps the existing five setup steps and compact running surface. Shaping
+  studies add one fixed high-level inline disclosure and Android's mandatory permission/consent
+  surfaces, but no trigger, treatment, profile, rate, timer, epoch, digest, or diagnostic dashboard.
+  Web authoring and encrypted analysis retain the complete signed and causal record.
+- The starting screen reports what startup is doing. After a short patience window it shows the
+  running activation stage — reading the study, checking authenticated storage, and restoring the
+  runtime — with an indeterminate bar. Participant UI remains generic; debug builds log stage
+  transitions with elapsed time so a development-device stall can be located.
+- Platform acknowledgements are bounded: durable timer/action wakeups, foreground-host acquisition,
+  and Play services location registration/removal cannot leave startup waiting indefinitely. A
+  timeout follows the same fail-closed resource path as an explicit platform failure.
+
+**This is a destructive pre-1.0 Protocol v1 cut.** Signed configurations, encrypted storage,
+bundles, receipts, readers, and scheduled-work state from every earlier build are invalid. There is
+no migration, dual reader, or fallback. The app does not silently delete an incompatible local
+study; the existing generic recovery/reset flow requires participant confirmation.
+
+**Coming from `v1.0.0-rc.7`:** export any research data that must be retained before upgrading,
+then install the signed rc.8 APK directly over rc.7; do not uninstall rc.7 first. The Android
+application ID and production signing certificate remain unchanged, but an rc.7 study cannot resume
+under this destructive Protocol/storage cut. After upgrading, use the participant-confirmed recovery
+reset, import a newly issued rc.8-compatible signed configuration, and repeat consent/access setup.
+
+**Fresh install:** install the signed rc.8 APK, then import an rc.8-compatible signed configuration.
+
 ## v1.0.0-rc.7 — 2026-08-17
 
 - Running studies now recover automatically after a device reboot. The app durably records

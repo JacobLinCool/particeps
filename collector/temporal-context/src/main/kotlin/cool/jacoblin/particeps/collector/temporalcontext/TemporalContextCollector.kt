@@ -12,17 +12,17 @@ import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
 import cool.jacoblin.particeps.core.collector.CollectorPlugin
 import cool.jacoblin.particeps.core.collector.LatestValueRateGate
-import cool.jacoblin.particeps.core.collector.PrivacyClass
-import cool.jacoblin.particeps.core.collector.ProtocolEventContracts
+import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
 import cool.jacoblin.particeps.core.collector.SerializedCallbackCollector
 import cool.jacoblin.particeps.core.collector.SourceRegistrationResult
 import cool.jacoblin.particeps.core.collector.SourceTeardownResult
 import cool.jacoblin.particeps.core.collector.completeSourceTeardown
 import cool.jacoblin.particeps.core.collector.registerSourceWithRollback
-import cool.jacoblin.particeps.core.definition.CollectorConfiguration
-import cool.jacoblin.particeps.core.definition.TemporalContextConfiguration
+import cool.jacoblin.particeps.core.definition.CollectorProfileConfiguration
+import cool.jacoblin.particeps.core.definition.TemporalContextV1ProfileConfiguration
 import cool.jacoblin.particeps.core.model.EventDraft
-import cool.jacoblin.particeps.core.model.RecordedEvent
+import cool.jacoblin.particeps.core.model.EventSourceId
+import cool.jacoblin.particeps.core.model.EventTypeKey
 import cool.jacoblin.particeps.core.model.ResearchTime
 import java.time.Instant
 import java.time.ZoneId
@@ -33,15 +33,14 @@ class TemporalContextCollectorPlugin(context: Context) : CollectorPlugin {
     private val applicationContext = context.applicationContext
 
     override val descriptor = CollectorDescriptor(
-        id = TemporalContextConfiguration.ID,
+        id = TemporalContextV1ProfileConfiguration.SOURCE_ID,
         displayName = "Temporal context",
-        privacyClass = PrivacyClass.SENSITIVE,
         accessKinds = emptySet(),
-        eventContract = requireNotNull(ProtocolEventContracts[TemporalContextConfiguration.ID]),
+        sourceContract = requireNotNull(ProtocolEventSourceRegistry[TemporalContextV1ProfileConfiguration.SOURCE_ID]),
     )
 
-    override fun create(configuration: CollectorConfiguration, context: CollectorContext): Collector {
-        require(configuration is TemporalContextConfiguration) { "Invalid temporal-context configuration" }
+    override fun create(configuration: CollectorProfileConfiguration, context: CollectorContext): Collector {
+        require(configuration is TemporalContextV1ProfileConfiguration) { "Invalid temporal-context configuration" }
         return TemporalContextCollector(applicationContext, context)
     }
 }
@@ -58,6 +57,7 @@ private class TemporalContextCollector(
     private val pendingRunnable = Runnable(::publishPending)
     private var observedContext: TemporalSnapshot? = null
     private var pendingScheduled = false
+    private var hasRegistered = false
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val observedTime = this@TemporalContextCollector.context.clocks.now()
@@ -74,14 +74,6 @@ private class TemporalContextCollector(
     }
 
     override suspend fun registerSource(): SourceRegistrationResult = withContext(Dispatchers.Main.immediate) {
-        val latest = context.eventSink.latestEvent(TemporalContextConfiguration.ID)
-        if (latest != null) {
-            rateGate.restoreLastEmission(
-                value = latest.temporalEventOrNull(),
-                currentElapsedMillis = SystemClock.elapsedRealtime(),
-            )
-        }
-        val hasPriorEvent = latest != null
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_TIME_TICK)
             addAction(Intent.ACTION_TIME_CHANGED)
@@ -95,7 +87,8 @@ private class TemporalContextCollector(
                 val observedTime = context.clocks.now()
                 val current = snapshot(observedTime)
                 observedContext = current
-                offer(TemporalEvent(if (hasPriorEvent) "RECONCILED" else "STUDY_STARTED", current, observedTime))
+                offer(TemporalEvent(if (hasRegistered) "RECONCILED" else "STUDY_STARTED", current, observedTime))
+                hasRegistered = true
             },
             rollback = {
                 completeSourceTeardown(
@@ -183,39 +176,12 @@ internal fun temporalSnapshot(zone: ZoneId, observedTime: ResearchTime): Tempora
 }
 
 internal fun TemporalEvent.eventDraft() = EventDraft(
-    collectorId = TemporalContextConfiguration.ID,
-    payloadSchemaVersion = 1,
+    type = EventTypeKey(EventSourceId(TemporalContextV1ProfileConfiguration.SOURCE_ID), 1, "TEMPORAL_CONTEXT"),
     observedTime = observedTime,
-    payloadType = "TEMPORAL_CONTEXT",
     fields = mapOf(
         "change_reason" to reason,
         "timezone_id" to snapshot.timezoneId,
         "utc_offset_seconds" to snapshot.utcOffsetSeconds.toString(),
         "daylight_saving_time" to snapshot.daylightSavingTime.toString(),
     ),
-)
-
-internal fun RecordedEvent.temporalEventOrNull(): TemporalEvent? {
-    if (
-        collectorId != TemporalContextConfiguration.ID ||
-        payloadSchemaVersion != 1 ||
-        payloadType != "TEMPORAL_CONTEXT"
-    ) return null
-    val reason = fields["change_reason"]?.takeIf(TEMPORAL_REASONS::contains) ?: return null
-    val timezoneId = fields["timezone_id"] ?: return null
-    val utcOffsetSeconds = fields["utc_offset_seconds"]?.toIntOrNull() ?: return null
-    val daylightSavingTime = fields["daylight_saving_time"]?.toBooleanStrictOrNull() ?: return null
-    return TemporalEvent(
-        reason,
-        TemporalSnapshot(timezoneId, utcOffsetSeconds, daylightSavingTime),
-        observedTime,
-    )
-}
-
-private val TEMPORAL_REASONS = setOf(
-    "RECONCILED",
-    "STUDY_STARTED",
-    "TIMEZONE_CHANGED",
-    "TIME_SET",
-    "UTC_OFFSET_CHANGED",
 )

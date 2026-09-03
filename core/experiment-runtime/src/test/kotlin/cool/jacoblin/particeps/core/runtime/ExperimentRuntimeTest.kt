@@ -1,1956 +1,2450 @@
 package cool.jacoblin.particeps.core.runtime
 
-import cool.jacoblin.particeps.core.model.EventDraft
-import cool.jacoblin.particeps.core.model.ExperimentState
-import cool.jacoblin.particeps.core.model.ExperimentStateMachine
-import cool.jacoblin.particeps.core.model.ExperimentTransition
-import cool.jacoblin.particeps.core.model.InterventionOccurrence
-import cool.jacoblin.particeps.core.model.OccurrenceState
-import cool.jacoblin.particeps.core.model.RecordedEvent
-import cool.jacoblin.particeps.core.model.ResearchTime
-import cool.jacoblin.particeps.core.model.SafetyPauseReason
-import cool.jacoblin.particeps.core.model.StorageUsage
-import cool.jacoblin.particeps.core.model.StudyMetadata
-import cool.jacoblin.particeps.core.model.StudyStore
-import cool.jacoblin.particeps.core.model.StudyStoreMutationFailedClosed
-import cool.jacoblin.particeps.core.model.TransitionReason
-import cool.jacoblin.particeps.core.collector.AccessKind
+import cool.jacoblin.particeps.core.automation.AutomationCompiler
+import cool.jacoblin.particeps.core.automation.CompilationResult
+import cool.jacoblin.particeps.core.automation.DeliveryMode
+import cool.jacoblin.particeps.core.automation.DeterministicIds
+import cool.jacoblin.particeps.core.automation.DurableTimer
+import cool.jacoblin.particeps.core.automation.EventClockSupport
+import cool.jacoblin.particeps.core.automation.EventConditionKind
+import cool.jacoblin.particeps.core.automation.EventContractRegistry
+import cool.jacoblin.particeps.core.automation.EventRateBound
+import cool.jacoblin.particeps.core.automation.EventSourceKind
+import cool.jacoblin.particeps.core.automation.EventTypeContract
+import cool.jacoblin.particeps.core.automation.FieldContract
+import cool.jacoblin.particeps.core.automation.ScalarType
+import cool.jacoblin.particeps.core.automation.TimerProductionResult
+import cool.jacoblin.particeps.core.automation.TimerTarget
+import cool.jacoblin.particeps.core.automation.TriggerScope
+import cool.jacoblin.particeps.core.collector.EmitBatchResult
 import cool.jacoblin.particeps.core.collector.AdmissionToken
-import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
-import cool.jacoblin.particeps.core.collector.CollectorDescriptor
-import cool.jacoblin.particeps.core.collector.CollectorEventContract
-import cool.jacoblin.particeps.core.collector.EventFieldContract
-import cool.jacoblin.particeps.core.collector.EventFieldType
-import cool.jacoblin.particeps.core.collector.EventPayloadContract
-import cool.jacoblin.particeps.core.collector.CollectorHealth
-import cool.jacoblin.particeps.core.collector.CollectorPlugin
-import cool.jacoblin.particeps.core.collector.CollectorRegistry
-import cool.jacoblin.particeps.core.collector.CollectorStatus
-import cool.jacoblin.particeps.core.collector.EmitResult
+import cool.jacoblin.particeps.core.collector.CoverageAdvance
 import cool.jacoblin.particeps.core.collector.EventSink
-import cool.jacoblin.particeps.core.definition.AppLifecycleConfiguration
-import cool.jacoblin.particeps.core.definition.BatteryStateConfiguration
-import cool.jacoblin.particeps.core.definition.CollectorConfiguration
-import cool.jacoblin.particeps.core.definition.ExportConfiguration
-import cool.jacoblin.particeps.core.definition.ChoiceOption
-import cool.jacoblin.particeps.core.definition.InterventionConfiguration
-import cool.jacoblin.particeps.core.definition.InterventionTrigger
-import cool.jacoblin.particeps.core.definition.LocalizedText
-import cool.jacoblin.particeps.core.definition.MultipleChoiceQuestion
-import cool.jacoblin.particeps.core.definition.OneTimeSchedule
-import cool.jacoblin.particeps.core.definition.RelativeClock
-import cool.jacoblin.particeps.core.definition.ScaleQuestion
-import cool.jacoblin.particeps.core.definition.ShortTextQuestion
-import cool.jacoblin.particeps.core.definition.SingleChoiceQuestion
-import cool.jacoblin.particeps.core.collector.PrivacyClass
+import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
+import cool.jacoblin.particeps.core.collector.SerializedCallbackCollector
+import cool.jacoblin.particeps.core.collector.SourceRegistrationResult
+import cool.jacoblin.particeps.core.collector.SourceTeardownResult
+import cool.jacoblin.particeps.core.collector.StudyScopedTokenEncoder
 import cool.jacoblin.particeps.core.collector.ResearchClocks
-import cool.jacoblin.particeps.core.definition.SignerIdentity
-import cool.jacoblin.particeps.core.definition.StudyConfiguration
-import cool.jacoblin.particeps.core.definition.SurveyAction
-import cool.jacoblin.particeps.core.definition.SurveyDefinition
+import cool.jacoblin.particeps.core.collector.SourceEventBatch
+import cool.jacoblin.particeps.core.definition.AutomationCompilerInput
+import cool.jacoblin.particeps.core.definition.DeclaredResource
+import cool.jacoblin.particeps.core.definition.DurationClock
+import cool.jacoblin.particeps.core.definition.EvaluationClock
+import cool.jacoblin.particeps.core.definition.EventMatcher
+import cool.jacoblin.particeps.core.definition.FieldOperator
+import cool.jacoblin.particeps.core.definition.FieldPredicate
+import cool.jacoblin.particeps.core.definition.InterventionDefinition
+import cool.jacoblin.particeps.core.definition.OccurrenceAutomation
+import cool.jacoblin.particeps.core.definition.ResourceBindingAutomation
+import cool.jacoblin.particeps.core.definition.ResourceConditionCase
+import cool.jacoblin.particeps.core.definition.StateCondition
+import cool.jacoblin.particeps.core.definition.Trigger
+import cool.jacoblin.particeps.core.model.ConditionEpochId
+import cool.jacoblin.particeps.core.model.EngineCommit
+import cool.jacoblin.particeps.core.model.EngineInputKind
+import cool.jacoblin.particeps.core.model.EventDraft
+import cool.jacoblin.particeps.core.model.EventSourceId
+import cool.jacoblin.particeps.core.model.EventTypeKey
+import cool.jacoblin.particeps.core.model.ExperimentState
+import cool.jacoblin.particeps.core.model.PendingEngineInput
+import cool.jacoblin.particeps.core.model.PendingSourceSubmission
+import cool.jacoblin.particeps.core.model.ResearchTime
+import cool.jacoblin.particeps.core.model.RuntimeDocument
+import cool.jacoblin.particeps.core.model.SourceCoverage
+import cool.jacoblin.particeps.core.model.SourceClockBasis
+import cool.jacoblin.particeps.core.model.StorageUsage
+import cool.jacoblin.particeps.core.model.StudyStore
+import cool.jacoblin.particeps.core.model.withComputedDigest
+import cool.jacoblin.particeps.core.resource.ApplyReceipt
+import cool.jacoblin.particeps.core.resource.DesiredResourceState
+import cool.jacoblin.particeps.core.resource.FlushReceipt
+import cool.jacoblin.particeps.core.resource.PrepareReceipt
+import cool.jacoblin.particeps.core.resource.PeriodicResourceAuditSource
+import cool.jacoblin.particeps.core.resource.ReleaseReceipt
+import cool.jacoblin.particeps.core.resource.ReleaseEvidence
+import cool.jacoblin.particeps.core.resource.ResourceAuditReceipt
+import cool.jacoblin.particeps.core.resource.ResourceAuditRequest
+import cool.jacoblin.particeps.core.resource.ResourceGeneration
+import cool.jacoblin.particeps.core.resource.ResourceHealth
+import cool.jacoblin.particeps.core.resource.ResourceHealthStatus
+import cool.jacoblin.particeps.core.resource.ResourceKey
+import cool.jacoblin.particeps.core.resource.ResourceKind
+import cool.jacoblin.particeps.core.resource.ResourceTerminalFailureListener
+import cool.jacoblin.particeps.core.resource.ResumeReceipt
+import cool.jacoblin.particeps.core.resource.SignedResourceProfile
+import cool.jacoblin.particeps.core.resource.StatefulResourceActuator
+import cool.jacoblin.particeps.core.resource.SuspendReceipt
+import cool.jacoblin.particeps.core.resource.VerifyReceipt
 import java.io.IOException
-import java.time.Instant
-import kotlinx.coroutines.CancellationException
+import java.math.BigInteger
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ExperimentRuntimeTest {
     @Test
-    fun requiredMissingHardwareBlocksEnrollment() = runTest {
-        val clocks = FakeClocks()
-        val plugin = FakeCollectorPlugin(
-            clocks,
-            setOf(AccessKind.GYROSCOPE_HARDWARE),
-        )
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = InMemoryStudyStore(),
-            collectorRegistry = CollectorRegistry(listOf(plugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
+    fun startCreatesVerifiedEpochAndOnlyThenOpensAdmission() = runTest {
+        val fixture = fixture(backgroundScope)
+        fixture.battery.admissionProbe = { fixture.runtime.captureToken() }
 
-        assertEquals(CommandResult.Success, runtime.initialize())
-        assertEquals(CommandResult.Success, runtime.reviewStudy())
-        assertEquals(CommandResult.Success, runtime.acceptConsent())
-        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), runtime.completeAccessSetup(emptySet()))
-        assertEquals(ExperimentState.ACCESS_SETUP, runtime.snapshot.value.metadata?.state)
-        assertEquals(0, plugin.collector.startCount)
+        assertTrue(fixture.runtime.initialize() is RuntimeInitializationResult.Ready)
+        completeSetup(fixture.runtime)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.start())
+
+        assertEquals(ExperimentState.RUNNING, fixture.runtime.snapshot.value.state)
+        assertTrue(fixture.runtime.snapshot.value.admissionOpen)
+        assertEquals(2, fixture.battery.resumeCount + fixture.traffic.resumeCount)
+        assertTrue(fixture.battery.tokensDuringResume.all { it == null })
+        assertTrue(fixture.battery.tokensAfterAdmissionOpened.all { it != null })
+        assertTrue(fixture.store.commits.flatMap(EngineCommit::events).any {
+            it.type.eventType == "CONDITION_EPOCH_ACTIVATED"
+        })
+        assertTrue(fixture.store.commits.flatMap(EngineCommit::events).any {
+            it.type.eventType == "STUDY_RUNNING"
+        })
     }
 
     @Test
-    fun optionalMissingHardwareBlocksOnlyItsCollectorAndStartsWhenAccessAppears() = runTest {
-        val clocks = FakeClocks()
-        val plugin = FakeCollectorPlugin(
-            clocks,
-            setOf(AccessKind.GYROSCOPE_HARDWARE),
-        )
-        val runtime = ExperimentRuntime(
-            configuration = configuration(
-                collectors = listOf(AppLifecycleConfiguration(required = false)),
-            ),
-            store = InMemoryStudyStore(),
-            collectorRegistry = CollectorRegistry(listOf(plugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
+    fun localNetworkPermissionFailureIsAuditedAsVpnPermissionRevocation() = runTest {
+        val fixture = fixture(backgroundScope, withTrafficAudit = true)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
 
-        assertEquals(CommandResult.Success, runtime.initialize())
-        assertEquals(CommandResult.Success, runtime.reviewStudy())
-        assertEquals(CommandResult.Success, runtime.acceptConsent())
-        assertEquals(CommandResult.Success, runtime.completeAccessSetup(emptySet()))
-        assertEquals(CommandResult.Success, runtime.start(emptySet()))
-        assertEquals(0, plugin.collector.startCount)
-        assertEquals(
-            CollectorHealth(CollectorStatus.BLOCKED_ACCESS, "ACCESS_UNAVAILABLE"),
-            runtime.snapshot.value.collectorHealth[AppLifecycleConfiguration.ID],
-        )
-
-        assertEquals(CommandResult.Success, runtime.pause())
-        assertEquals(
-            CommandResult.Success,
-            runtime.resume(setOf(AccessKind.GYROSCOPE_HARDWARE)),
-        )
-        assertEquals(1, plugin.collector.startCount)
-        assertEquals(CollectorStatus.ACTIVE, plugin.collector.health.value.status)
-    }
-
-    @Test
-    fun optionalAccessLossClosesAdmissionBeforeAFailedPauseWhileTheSourceKeepsEmitting() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val accessKind = AccessKind.GYROSCOPE_HARDWARE
-        val plugin = FakeCollectorPlugin(clocks, setOf(accessKind))
-        val runtime = ExperimentRuntime(
-            configuration = configuration(
-                collectors = listOf(AppLifecycleConfiguration(required = false)),
-            ),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(plugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        start(runtime, setOf(accessKind))
-        val emissionsDuringFailedPause = mutableListOf<EmitResult>()
-        plugin.collector.beforePause = {
-            repeat(16) {
-                emissionsDuringFailedPause += plugin.emit("ACTIVITY_STOPPED")
-            }
-        }
-        plugin.collector.failNextPauseWithOwnedResources = true
-
-        assertEquals(CommandResult.Success, runtime.reconcileCollectorAccess(emptySet()))
-
-        assertEquals(1, plugin.collector.pauseCount)
-        assertTrue(plugin.collector.requiresStop)
-        assertEquals(
-            List(16) { EmitResult.RejectedByAdmissionGate },
-            emissionsDuringFailedPause,
-        )
-        repeat(16) {
-            assertEquals(EmitResult.RejectedByAdmissionGate, plugin.emit("ACTIVITY_STOPPED"))
-        }
-        assertEquals(0L, runtime.snapshot.value.metadata?.eventCount)
-        assertEquals(
-            CollectorHealth(CollectorStatus.FAILED, "COLLECTOR_PAUSE_FAILED"),
-            runtime.snapshot.value.collectorHealth[AppLifecycleConfiguration.ID],
-        )
-    }
-
-    @Test
-    fun optionalAccessLossTearsDownAFailedCollectorWhoseSourceIsStillLive() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val accessKind = AccessKind.GYROSCOPE_HARDWARE
-        val plugin = FakeCollectorPlugin(clocks, setOf(accessKind))
-        val runtime = ExperimentRuntime(
-            configuration = configuration(
-                collectors = listOf(AppLifecycleConfiguration(required = false)),
-            ),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(plugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        start(runtime, setOf(accessKind))
-        plugin.collector.reportFailedWithOwnedResources()
-        assertTrue(plugin.collector.requiresStop)
-        assertTrue(plugin.emit("ACTIVITY_RESUMED") is EmitResult.Accepted)
-
-        assertEquals(CommandResult.Success, runtime.reconcileCollectorAccess(emptySet()))
-
-        assertEquals(1, plugin.collector.pauseCount)
-        assertEquals(EmitResult.RejectedByAdmissionGate, plugin.emit("ACTIVITY_STOPPED"))
-        assertEquals(1L, runtime.snapshot.value.metadata?.eventCount)
-        assertEquals(
-            CollectorHealth(CollectorStatus.BLOCKED_ACCESS, "ACCESS_UNAVAILABLE"),
-            runtime.snapshot.value.collectorHealth[AppLifecycleConfiguration.ID],
-        )
-    }
-
-    @Test
-    fun optionalAccessRestorationKeepsAdmissionClosedUntilResumeSucceeds() = runTest {
-        val clocks = FakeClocks()
-        val accessKind = AccessKind.GYROSCOPE_HARDWARE
-        val plugin = FakeCollectorPlugin(clocks, setOf(accessKind))
-        val runtime = ExperimentRuntime(
-            configuration = configuration(
-                collectors = listOf(AppLifecycleConfiguration(required = false)),
-            ),
-            store = InMemoryStudyStore(),
-            collectorRegistry = CollectorRegistry(listOf(plugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        start(runtime, setOf(accessKind))
-        assertEquals(CommandResult.Success, runtime.reconcileCollectorAccess(emptySet()))
-        plugin.collector.failNextResumeWithOwnedResources = true
-
-        assertEquals(
-            CommandResult.Success,
-            runtime.reconcileCollectorAccess(setOf(accessKind)),
-        )
-        assertEquals(EmitResult.RejectedByAdmissionGate, plugin.emit("ACTIVITY_RESUMED"))
-        assertEquals(
-            CollectorHealth(CollectorStatus.FAILED, "COLLECTOR_RESUME_FAILED"),
-            runtime.snapshot.value.collectorHealth[AppLifecycleConfiguration.ID],
-        )
-
-        assertEquals(
-            CommandResult.Success,
-            runtime.reconcileCollectorAccess(setOf(accessKind)),
-        )
-        assertEquals(2, plugin.collector.resumeCount)
-        assertTrue(plugin.emit("ACTIVITY_RESUMED") is EmitResult.Accepted)
-    }
-
-    @Test
-    fun collectorAdmissionIsIndependentAndTokensCannotCrossBoundaries() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val accessKind = AccessKind.GYROSCOPE_HARDWARE
-        val lifecyclePlugin = FakeCollectorPlugin(clocks, setOf(accessKind))
-        val batteryPlugin = FakeCollectorPlugin(
-            clocks = clocks,
-            collectorId = BatteryStateConfiguration.ID,
-        )
-        val runtime = ExperimentRuntime(
-            configuration = configuration(
-                collectors = listOf(
-                    AppLifecycleConfiguration(required = false),
-                    BatteryStateConfiguration(required = false),
-                ),
-            ),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(lifecyclePlugin, batteryPlugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        start(runtime, setOf(accessKind))
-        val lifecycleToken = checkNotNull(lifecyclePlugin.captureToken())
-        val forgedGlobalToken = object : AdmissionToken {}
-        assertEquals(CommandResult.Success, runtime.reconcileCollectorAccess(emptySet()))
-
-        assertFalse(runtime as Any is EventSink)
-        assertEquals(1, lifecyclePlugin.collector.pauseCount)
-        assertEquals(0, batteryPlugin.collector.pauseCount)
-        assertEquals(
-            EmitResult.RejectedByAdmissionGate,
-            batteryPlugin.emitWithToken(lifecycleToken, "ACTIVITY_RESUMED"),
-        )
-        assertEquals(
-            EmitResult.RejectedByAdmissionGate,
-            lifecyclePlugin.emitWithToken(forgedGlobalToken, "ACTIVITY_RESUMED"),
-        )
-        assertEquals(EmitResult.RejectedByAdmissionGate, lifecyclePlugin.emit("ACTIVITY_RESUMED"))
-        assertTrue(batteryPlugin.emit("ACTIVITY_RESUMED") is EmitResult.Accepted)
-        assertEquals(1L, runtime.snapshot.value.metadata?.eventCount)
-    }
-
-    @Test
-    fun participantCommandsGateAndPersistCollectorEvents() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val plugin = FakeCollectorPlugin(clocks)
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(plugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-
-        assertEquals(CommandResult.Success, runtime.initialize())
-        assertEquals(ExperimentState.IMPORTED, runtime.snapshot.value.metadata?.state)
-        assertEquals(CommandResult.Success, runtime.reviewStudy())
-        assertEquals(ExperimentState.CONSENT_PENDING, runtime.snapshot.value.metadata?.state)
-        assertEquals(CommandResult.Success, runtime.acceptConsent())
-        assertEquals(CommandResult.Success, runtime.completeAccessSetup(emptySet()))
-        assertEquals(ExperimentState.READY, runtime.snapshot.value.metadata?.state)
-
-        assertEquals(CommandResult.Success, runtime.start(emptySet()))
-        assertEquals(1, plugin.collector.startCount)
-        assertEquals(CollectorStatus.ACTIVE, plugin.collector.health.value.status)
-        assertTrue(plugin.emit("ACTIVITY_RESUMED") is EmitResult.Accepted)
-        assertEquals(1L, runtime.snapshot.value.metadata?.eventCount)
-
-        assertEquals(CommandResult.Success, runtime.pause())
-        assertEquals(ExperimentState.PAUSED, runtime.snapshot.value.metadata?.state)
-        assertEquals(1, plugin.collector.pauseCount)
-        assertEquals(EmitResult.RejectedByAdmissionGate, plugin.emit("ACTIVITY_STOPPED"))
-        assertEquals(1L, runtime.snapshot.value.metadata?.eventCount)
-
-        assertEquals(CommandResult.Success, runtime.resume(emptySet()))
-        assertEquals(1, plugin.collector.resumeCount)
-        assertTrue(plugin.emit("ACTIVITY_STARTED") is EmitResult.Accepted)
-        assertEquals(listOf(1L, 2L), store.events.map { it.sequenceNumber })
-
-        assertEquals(CommandResult.Success, runtime.completeAfterDuration())
-        assertEquals(ExperimentState.COMPLETED, runtime.snapshot.value.metadata?.state)
-        assertEquals(1, plugin.collector.stopCount)
-        assertEquals(CollectorStatus.STOPPED, plugin.collector.health.value.status)
-        assertEquals(8, runtime.snapshot.value.metadata?.transitions?.size)
-        assertTrue(store.saveCount >= 11)
-        assertNull(runtime.snapshot.value.incidentCode)
-    }
-
-    @Test
-    fun collectorReceivesAdmissionOpenedOnlyAfterItsGateCanIssueTokens() = runTest {
-        val clocks = FakeClocks()
-        val plugin = FakeCollectorPlugin(clocks)
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = InMemoryStudyStore(),
-            collectorRegistry = CollectorRegistry(listOf(plugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        assertEquals(CommandResult.Success, runtime.initialize())
-        plugin.collector.afterAdmissionOpened = {
-            assertTrue(plugin.emit("ACTIVITY_STARTED") is EmitResult.Accepted)
-        }
-
-        assertEquals(CommandResult.Success, runtime.reviewStudy())
-        assertEquals(CommandResult.Success, runtime.acceptConsent())
-        assertEquals(CommandResult.Success, runtime.completeAccessSetup(emptySet()))
-        assertEquals(CommandResult.Success, runtime.start(emptySet()))
-
-        assertEquals(1, plugin.collector.admissionOpenedCount)
-        assertEquals(1L, runtime.snapshot.value.metadata?.eventCount)
-
-        assertEquals(CommandResult.Success, runtime.pause())
-        assertEquals(CommandResult.Success, runtime.resume(emptySet()))
-        assertEquals(2, plugin.collector.admissionOpenedCount)
-        assertEquals(2L, runtime.snapshot.value.metadata?.eventCount)
-    }
-
-    @Test
-    fun admissionOpenedFailureClosesTheGateAndReportsCollectorActivationFailure() = runTest {
-        val clocks = FakeClocks()
-        val plugin = FakeCollectorPlugin(clocks)
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = InMemoryStudyStore(),
-            collectorRegistry = CollectorRegistry(listOf(plugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        assertEquals(CommandResult.Success, runtime.initialize())
-        plugin.collector.afterAdmissionOpened = { error("Initial snapshot failed") }
-
-        assertEquals(CommandResult.Success, runtime.reviewStudy())
-        assertEquals(CommandResult.Success, runtime.acceptConsent())
-        assertEquals(CommandResult.Success, runtime.completeAccessSetup(emptySet()))
-        assertEquals(CommandResult.Success, runtime.start(emptySet()))
-
-        assertEquals(
-            CollectorHealth(CollectorStatus.FAILED, "COLLECTOR_START_FAILED"),
-            runtime.snapshot.value.collectorHealth[AppLifecycleConfiguration.ID],
-        )
-        assertNull(plugin.captureToken())
-        assertEquals(0L, runtime.snapshot.value.metadata?.eventCount)
-
-        assertEquals(CommandResult.Success, runtime.pause())
-        plugin.collector.afterAdmissionOpened = {
-            assertTrue(plugin.emit("ACTIVITY_STARTED") is EmitResult.Accepted)
-        }
-        assertEquals(CommandResult.Success, runtime.resume(emptySet()))
-        assertEquals(CollectorStatus.ACTIVE, runtime.snapshot.value.collectorHealth[AppLifecycleConfiguration.ID]?.status)
-        assertEquals(1L, runtime.snapshot.value.metadata?.eventCount)
-    }
-
-    @Test
-    fun collectorAdmissionStopsAtTheExactSignedDurationBoundary() = runTest {
-        val clocks = ControlledClocks(ResearchTime(10_000, 1_000, "boot-test"))
-        val store = InMemoryStudyStore()
-        val plugin = FakeCollectorPlugin(clocks)
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(plugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        start(runtime)
-        val startedAt = runtime.snapshot.value.metadata?.transitions
-            ?.single { it.reason == TransitionReason.PARTICIPANT_STARTED }
-            ?.time ?: error("Missing participant-start boundary")
-        val deadlineElapsedNanos = startedAt.elapsedRealtimeNanos + NANOS_PER_HOUR
-
-        clocks.current = ResearchTime(
-            wallTimeUtcMillis = startedAt.wallTimeUtcMillis + 3_599_999,
-            elapsedRealtimeNanos = deadlineElapsedNanos - 1,
-            bootSessionId = startedAt.bootSessionId,
-        )
-        assertTrue(plugin.emit("ACTIVITY_RESUMED") is EmitResult.Accepted)
-
-        clocks.current = clocks.current.copy(
-            wallTimeUtcMillis = startedAt.wallTimeUtcMillis + 3_600_000,
-            elapsedRealtimeNanos = deadlineElapsedNanos,
-        )
-        assertEquals(EmitResult.RejectedByAdmissionGate, plugin.emit("ACTIVITY_STOPPED"))
-        assertEquals(1L, runtime.snapshot.value.metadata?.eventCount)
-        assertEquals(listOf(1L), store.events.map { it.sequenceNumber })
-        assertEquals(ExperimentState.RUNNING, runtime.snapshot.value.metadata?.state)
-    }
-
-    @Test
-    fun occurrenceMutationsCannotCrossTheExactSignedDurationBoundary() = runTest {
-        val clocks = ControlledClocks(ResearchTime(10_000, 1_000, "boot-test"))
-        val runtime = ExperimentRuntime(
-            configuration = configuration(
-                surveys = listOf(survey()),
-                interventions = listOf(surveyIntervention()),
-            ),
-            store = InMemoryStudyStore(),
-            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        start(runtime)
-        val startedAt = runtime.snapshot.value.metadata?.transitions
-            ?.single { it.reason == TransitionReason.PARTICIPANT_STARTED }
-            ?.time ?: error("Missing participant-start boundary")
-        val deadlineElapsedNanos = startedAt.elapsedRealtimeNanos + NANOS_PER_HOUR
-        clocks.current = ResearchTime(
-            wallTimeUtcMillis = startedAt.wallTimeUtcMillis + 3_599_999,
-            elapsedRealtimeNanos = deadlineElapsedNanos - 1,
-            bootSessionId = startedAt.bootSessionId,
-        )
-        val occurrence = surveyOccurrence(
-            prefix = "e",
-            scheduledAtUtcMillis = 1,
-            expiresAtUtcMillis = Long.MAX_VALUE,
-        )
-        runtime.ensureOccurrence(occurrence)
-        assertTrue(runtime.claimOccurrenceIfDue(occurrence.occurrenceId) is OccurrenceClaimResult.Due)
-        assertEquals(1L, runtime.snapshot.value.metadata?.eventCount)
-
-        clocks.current = clocks.current.copy(
-            wallTimeUtcMillis = startedAt.wallTimeUtcMillis + 3_600_000,
-            elapsedRealtimeNanos = deadlineElapsedNanos,
-        )
-        val second = surveyOccurrence(
-            prefix = "f",
-            scheduledAtUtcMillis = 1,
-            expiresAtUtcMillis = Long.MAX_VALUE,
-        )
-        assertTrue(runCatching { runtime.ensureOccurrence(second) }.isFailure)
-        assertEquals(OccurrenceClaimResult.InactiveStudy, runtime.claimOccurrenceIfDue(occurrence.occurrenceId))
-        assertEquals(OccurrenceExpiryResult.InactiveStudy, runtime.expireOccurrenceIfDue(occurrence.occurrenceId))
-        assertFalse(runtime.markNotificationPosted(occurrence.occurrenceId))
-        assertNull(runtime.openOccurrence(occurrence.occurrenceId))
-        assertEquals(
-            SurveySubmissionResult.INVALID,
-            runtime.submitSurvey(occurrence.occurrenceId, validSurveyAnswers()),
-        )
-        assertEquals(1L, runtime.snapshot.value.metadata?.eventCount)
-        assertEquals(
-            OccurrenceState.POSTING,
-            runtime.snapshot.value.metadata?.occurrences?.get(occurrence.occurrenceId)?.state,
-        )
-        assertFalse(runtime.snapshot.value.metadata?.occurrences.orEmpty().containsKey(second.occurrenceId))
-    }
-
-    @Test
-    fun initializationRecoversRunningStateAndRestartsCollectors() = runTest {
-        val store = InMemoryStudyStore(
-            StudyMetadata.initial(EXPERIMENT_ID, CONFIGURATION_ID).copy(
-                state = ExperimentState.RUNNING,
-                transitions = listOf(
-                    ExperimentTransition(
-                        from = ExperimentState.READY,
-                        to = ExperimentState.RUNNING,
-                        reason = TransitionReason.PARTICIPANT_STARTED,
-                        time = ResearchTime(0, 0, "boot-test"),
-                    ),
-                ),
-            ),
-        )
-        val clocks = FakeClocks()
-        val plugin = FakeCollectorPlugin(clocks)
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(plugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-
-        assertEquals(CommandResult.Success, runtime.initialize())
-        assertEquals(CommandResult.Success, runtime.activateRecoveredRunning(emptySet()))
-
-        assertEquals(ExperimentState.RUNNING, runtime.snapshot.value.metadata?.state)
-        assertEquals(1, plugin.collector.startCount)
-        assertTrue(plugin.emit("ACTIVITY_RESUMED") is EmitResult.Accepted)
-    }
-
-    @Test
-    fun failedInitialStartRetainsCollectorOwnershipUntilShutdownReleasesIt() = runTest {
-        val clocks = FakeClocks()
-        val plugin = FakeCollectorPlugin(clocks)
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = InMemoryStudyStore(),
-            collectorRegistry = CollectorRegistry(listOf(plugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        assertEquals(CommandResult.Success, runtime.initialize())
-        plugin.collector.failNextStartWithOwnedResources = true
-        assertEquals(CommandResult.Success, runtime.reviewStudy())
-        assertEquals(CommandResult.Success, runtime.acceptConsent())
-        assertEquals(CommandResult.Success, runtime.completeAccessSetup(emptySet()))
-
-        assertEquals(CommandResult.Success, runtime.start(emptySet()))
-        assertTrue(plugin.collector.requiresStop)
-        assertEquals(CollectorStatus.FAILED, runtime.snapshot.value.collectorHealth[AppLifecycleConfiguration.ID]?.status)
-
-        runtime.shutdown()
-        assertEquals(1, plugin.collector.stopCount)
-        assertFalse(plugin.collector.requiresStop)
-    }
-
-    @Test
-    fun failedTerminalStopRemainsOwnedAndShutdownRetriesIt() = runTest {
-        val clocks = FakeClocks()
-        val plugin = FakeCollectorPlugin(clocks)
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = InMemoryStudyStore(),
-            collectorRegistry = CollectorRegistry(listOf(plugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        start(runtime)
-        plugin.collector.failNextStopWithOwnedResources = true
-
-        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), runtime.completeAfterDuration())
-        assertEquals(1, plugin.collector.stopCount)
-        assertTrue(plugin.collector.requiresStop)
-        assertEquals(ExperimentState.RUNNING, runtime.snapshot.value.metadata?.state)
-        assertEquals(
-            SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE,
-            runtime.snapshot.value.pendingSafetyPauseReason,
-        )
-
-        runtime.shutdown()
-        assertEquals(2, plugin.collector.stopCount)
-        assertFalse(plugin.collector.requiresStop)
-    }
-
-    @Test
-    fun collectorEventContractIsEnforcedBeforePersistence() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val plugin = FakeCollectorPlugin(clocks)
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(plugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        start(runtime)
-
-        assertEquals(EmitResult.ContractViolation, plugin.emit("ACTIVITY_RESUMED", schemaVersion = 2))
-        assertEquals(EmitResult.ContractViolation, plugin.emit("ACTIVITY_RESUMED", collectorId = "other.v1"))
-        assertEquals(
-            EmitResult.ContractViolation,
-            plugin.emit("ACTIVITY_RESUMED", fields = mapOf("source" to "x".repeat(2_000))),
-        )
-        assertTrue(store.events.isEmpty())
-        assertEquals(0L, runtime.snapshot.value.metadata?.eventCount)
-    }
-
-    @Test
-    fun storageAppendFailureClosesEveryAdmissionBoundaryAndPublishesTypedRequest() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val lifecycle = FakeCollectorPlugin(clocks)
-        val battery = FakeCollectorPlugin(clocks, collectorId = BatteryStateConfiguration.ID)
-        val witness = RecordingSafetyPauseWitness()
-        val runtime = ExperimentRuntime(
-            configuration = configuration(
-                collectors = listOf(
-                    AppLifecycleConfiguration(required = true),
-                    BatteryStateConfiguration(required = true),
-                ),
-            ),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(lifecycle, battery)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = witness,
-        )
-        start(runtime)
-        val staleBatteryToken = checkNotNull(battery.captureToken())
-        store.appendFailure = IllegalStateException("storage unavailable")
-
-        assertEquals(EmitResult.StorageFailure, lifecycle.emit("ACTIVITY_RESUMED"))
-
-        assertEquals(SafetyPauseReason.STORAGE_FAILURE, runtime.snapshot.value.pendingSafetyPauseReason)
-        assertEquals(ExperimentState.RUNNING, runtime.snapshot.value.metadata?.state)
-        assertNull(lifecycle.captureToken())
-        assertNull(battery.captureToken())
-        assertEquals(
-            EmitResult.RejectedByAdmissionGate,
-            battery.emitWithToken(staleBatteryToken, "ACTIVITY_RESUMED"),
-        )
-        assertEquals(0L, runtime.snapshot.value.metadata?.eventCount)
-        assertEquals(listOf(SafetyPauseReason.STORAGE_FAILURE), witness.persistedReasons)
-    }
-
-    @Test
-    fun occurrenceAppendFailureUsesTheSameClosedTypedStorageBoundary() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val collector = FakeCollectorPlugin(clocks)
-        val witness = RecordingSafetyPauseWitness()
-        val runtime = ExperimentRuntime(
-            configuration = configuration(
-                surveys = listOf(survey()),
-                interventions = listOf(surveyIntervention()),
-            ),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(collector)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = witness,
-        )
-        start(runtime)
-        val occurrence = surveyOccurrence("d", scheduledAtUtcMillis = 1, expiresAtUtcMillis = 100_000)
-        runtime.ensureOccurrence(occurrence)
-        assertTrue(runtime.claimOccurrenceIfDue(occurrence.occurrenceId) is OccurrenceClaimResult.Due)
-        val staleToken = checkNotNull(collector.captureToken())
-        val storageFailure = IllegalStateException("occurrence storage unavailable")
-        store.appendFailure = storageFailure
-
-        assertEquals(storageFailure, runCatching {
-            runtime.markNotificationPosted(occurrence.occurrenceId)
-        }.exceptionOrNull())
-
-        assertEquals(SafetyPauseReason.STORAGE_FAILURE, runtime.snapshot.value.pendingSafetyPauseReason)
-        assertNull(collector.captureToken())
-        assertEquals(
-            EmitResult.RejectedByAdmissionGate,
-            collector.emitWithToken(staleToken, "ACTIVITY_RESUMED"),
-        )
-        assertEquals(OccurrenceState.POSTING, runtime.snapshot.value.metadata
-            ?.occurrences?.get(occurrence.occurrenceId)?.state)
-        assertEquals(OccurrenceClaimResult.InactiveStudy, runtime.claimOccurrenceIfDue(occurrence.occurrenceId))
-        assertEquals(OccurrenceExpiryResult.InactiveStudy, runtime.expireOccurrenceIfDue(occurrence.occurrenceId))
-        assertFalse(runtime.markNotificationPosted(occurrence.occurrenceId))
-        assertNull(runtime.openOccurrence(occurrence.occurrenceId))
-        assertEquals(
-            SurveySubmissionResult.INVALID,
-            runtime.submitSurvey(occurrence.occurrenceId, validSurveyAnswers()),
-        )
-        assertTrue(runCatching { runtime.ensureOccurrence(occurrence) }.isFailure)
-        assertEquals(listOf(SafetyPauseReason.STORAGE_FAILURE), witness.persistedReasons)
-    }
-
-    @Test
-    fun durablyRecoveredPostedOccurrenceReportsFinalizedWhileStudyFailsClosed() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val witness = RecordingSafetyPauseWitness()
-        val runtime = ExperimentRuntime(
-            configuration = configuration(
-                surveys = listOf(survey()),
-                interventions = listOf(surveyIntervention()),
-            ),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = witness,
-        )
-        start(runtime)
-        val occurrence = surveyOccurrence(
-            "e",
-            scheduledAtUtcMillis = 1,
-            expiresAtUtcMillis = 100_000,
-        )
-        runtime.ensureOccurrence(occurrence)
-        assertTrue(runtime.claimOccurrenceIfDue(occurrence.occurrenceId) is OccurrenceClaimResult.Due)
-        store.recoverNextAppendFailClosed = true
-
-        assertTrue(runtime.markNotificationPosted(occurrence.occurrenceId))
-
-        val snapshot = runtime.snapshot.value
-        assertEquals(ExperimentState.PAUSED, snapshot.metadata?.state)
-        assertEquals(SafetyPauseReason.STORAGE_FAILURE, snapshot.pendingSafetyPauseReason)
-        assertEquals(
-            OccurrenceState.NOTIFICATION_POSTED,
-            snapshot.metadata?.occurrences?.get(occurrence.occurrenceId)?.state,
-        )
-        assertEquals("NOTIFICATION_POSTED", store.events.last().payloadType)
-        assertEquals(listOf(SafetyPauseReason.STORAGE_FAILURE), witness.persistedReasons)
-    }
-
-    @Test
-    fun storageFailureWinsDeterministicallyWhenParticipantPauseWaitsForTheAppend() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val collector = FakeCollectorPlugin(clocks)
-        val witness = RecordingSafetyPauseWitness()
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(collector)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = witness,
-        )
-        start(runtime)
-        store.appendEntered = CompletableDeferred()
-        store.releaseAppend = CompletableDeferred()
-        store.appendFailure = IllegalStateException("storage unavailable")
-
-        val emission = async { collector.emit("ACTIVITY_RESUMED") }
-        store.appendEntered?.await()
-        val participantPause = async { runtime.pause() }
+        fixture.traffic.failTerminal("LOCAL_NETWORK_PERMISSION_REQUIRED")
         runCurrent()
-        assertFalse(participantPause.isCompleted)
 
-        store.releaseAppend?.complete(Unit)
-        assertEquals(EmitResult.StorageFailure, emission.await())
-        assertEquals(CommandResult.Success, participantPause.await())
-
-        assertEquals(ExperimentState.PAUSED, runtime.snapshot.value.metadata?.state)
-        assertEquals(
-            TransitionReason.STORAGE_FAILURE,
-            runtime.snapshot.value.metadata?.transitions?.last()?.reason,
-        )
-        assertEquals(SafetyPauseReason.STORAGE_FAILURE, runtime.snapshot.value.pendingSafetyPauseReason)
-        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), runtime.resume(emptySet()))
-        assertNull(collector.captureToken())
-        assertEquals(listOf(SafetyPauseReason.STORAGE_FAILURE), witness.persistedReasons)
-    }
-
-    @Test
-    fun firstPublishedSafetyReasonWinsAgainstAConcurrentStorageFailure() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val collector = FakeCollectorPlugin(clocks)
-        val witness = RecordingSafetyPauseWitness()
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(collector)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = witness,
-        )
-        start(runtime)
-        store.appendEntered = CompletableDeferred()
-        store.releaseAppend = CompletableDeferred()
-        store.appendFailure = IllegalStateException("storage unavailable")
-
-        val emission = async { collector.emit("ACTIVITY_RESUMED") }
-        store.appendEntered?.await()
-        assertEquals(
-            SafetyPauseReason.REQUIRED_ACCESS_MISSING,
-            runtime.closeAdmissionForSafetyFailure(SafetyPauseReason.REQUIRED_ACCESS_MISSING),
-        )
-        val safetyPause = async {
-            runtime.pauseForSafetyFailure(SafetyPauseReason.REQUIRED_ACCESS_MISSING)
+        assertEquals(ExperimentState.PAUSED, fixture.runtime.snapshot.value.state)
+        val removal = fixture.store.commits.flatMap(EngineCommit::events).single {
+            it.type.eventType == "TRAFFIC_SHAPING_PROFILE_REMOVED"
         }
-        runCurrent()
-        assertFalse(safetyPause.isCompleted)
-
-        store.releaseAppend?.complete(Unit)
-        assertEquals(EmitResult.StorageFailure, emission.await())
-        assertEquals(CommandResult.Success, safetyPause.await())
-
-        assertEquals(SafetyPauseReason.REQUIRED_ACCESS_MISSING, runtime.snapshot.value.pendingSafetyPauseReason)
-        assertEquals(
-            TransitionReason.REQUIRED_ACCESS_MISSING,
-            runtime.snapshot.value.metadata?.transitions?.last()?.reason,
-        )
-        assertEquals(listOf(SafetyPauseReason.REQUIRED_ACCESS_MISSING), witness.persistedReasons)
+        assertEquals("VPN_PERMISSION_REVOKED", removal.fields["removal_reason"])
+        assertTrue(fixture.battery.releaseCount > 0)
+        assertTrue(fixture.traffic.releaseCount > 0)
+        assertEquals(ResourceHealthStatus.INACTIVE, fixture.battery.health().status)
+        assertEquals(ResourceHealthStatus.INACTIVE, fixture.traffic.health().status)
     }
 
     @Test
-    fun firstPublishedReasonReplacesSyntheticRecoveredStorageTransition() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val collector = FakeCollectorPlugin(clocks)
-        val witness = RecordingSafetyPauseWitness()
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(collector)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = witness,
-        )
-        start(runtime)
-        store.appendEntered = CompletableDeferred()
-        store.releaseAppend = CompletableDeferred()
-        store.recoverNextAppendFailClosed = true
+    fun failedSecondResourceApplyContainsEverySideEffectAndPersistsCleanupUntilRecovery() = runTest {
+        val fixture = fixture(backgroundScope)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        fixture.battery.failNextVerification = true
+        fixture.battery.invalidReleaseAttempts = 2
 
-        val emission = async { collector.emit("ACTIVITY_RESUMED") }
-        store.appendEntered?.await()
-        assertEquals(
-            SafetyPauseReason.REQUIRED_ACCESS_MISSING,
-            runtime.closeAdmissionForSafetyFailure(SafetyPauseReason.REQUIRED_ACCESS_MISSING),
+        assertTrue(
+            fixture.runtime.emitBatch(
+                requireNotNull(fixture.runtime.captureToken()),
+                batteryBatch(fixture.clock.now()),
+            ) is EmitBatchResult.Accepted,
         )
-        val safetyPause = async {
-            runtime.pauseForSafetyFailure(SafetyPauseReason.REQUIRED_ACCESS_MISSING)
+        runCurrent()
+
+        assertEquals(ExperimentState.PAUSED, fixture.runtime.snapshot.value.state)
+        assertNull(fixture.store.pending)
+        assertEquals(ResourceHealthStatus.APPLIED, fixture.battery.health().status)
+        assertEquals(ResourceHealthStatus.INACTIVE, fixture.traffic.health().status)
+        assertTrue(
+            requireNotNull(fixture.store.runtime).components.keys.any {
+                it.kind == cool.jacoblin.particeps.core.model.RuntimeComponentKind.RESOURCE_CLEANUP
+            },
+        )
+        fixture.runtime.close()
+
+        val recovered = fixture(backgroundScope, fixture.store)
+        assertTrue(recovered.runtime.initialize() is RuntimeInitializationResult.Ready)
+        assertEquals(ExperimentState.PAUSED, recovered.runtime.snapshot.value.state)
+        assertTrue(
+            requireNotNull(fixture.store.runtime).components.keys.none {
+                it.kind == cool.jacoblin.particeps.core.model.RuntimeComponentKind.RESOURCE_CLEANUP
+            },
+        )
+        assertTrue(resourceStates(fixture.store).all { it.status == cool.jacoblin.particeps.core.resource.AppliedResourceStatus.INACTIVE })
+    }
+
+    @Test
+    fun crashAfterPausedCommitRecoversAppliedResourcesBeforeAnyResume() = runTest {
+        val fixture = fixture(backgroundScope)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val releaseEntered = CompletableDeferred<Unit>()
+        val neverReturn = CompletableDeferred<Unit>()
+        fixture.battery.releaseHook = {
+            releaseEntered.complete(Unit)
+            neverReturn.await()
         }
+
+        fixture.traffic.failTerminal("NATIVE_ENGINE_FAILED")
         runCurrent()
-        assertFalse(safetyPause.isCompleted)
+        withContext(Dispatchers.Default) {
+            withTimeout(5_000) { releaseEntered.await() }
+        }
+        assertEquals(ExperimentState.PAUSED, fixture.store.runtime?.state)
+        assertTrue(resourceStates(fixture.store).any { it.status == cool.jacoblin.particeps.core.resource.AppliedResourceStatus.APPLIED })
+        fixture.runtime.close()
+        runCurrent()
 
-        store.releaseAppend?.complete(Unit)
-        assertEquals(EmitResult.StorageFailure, emission.await())
-        assertEquals(CommandResult.Success, safetyPause.await())
-
-        assertEquals(ExperimentState.PAUSED, runtime.snapshot.value.metadata?.state)
-        assertEquals(
-            TransitionReason.REQUIRED_ACCESS_MISSING,
-            runtime.snapshot.value.metadata?.transitions?.last()?.reason,
-        )
-        assertEquals(SafetyPauseReason.REQUIRED_ACCESS_MISSING, runtime.snapshot.value.pendingSafetyPauseReason)
-        assertEquals(listOf(SafetyPauseReason.REQUIRED_ACCESS_MISSING), witness.persistedReasons)
+        val recovered = fixture(backgroundScope, fixture.store)
+        assertTrue(recovered.runtime.initialize() is RuntimeInitializationResult.Ready)
+        assertEquals(ExperimentState.PAUSED, recovered.runtime.snapshot.value.state)
+        assertTrue(resourceStates(fixture.store).all { it.status == cool.jacoblin.particeps.core.resource.AppliedResourceStatus.INACTIVE })
+        assertEquals(EngineInputKind.RESOURCE_RESULT, fixture.store.commits.last().inputKind)
     }
 
     @Test
-    fun terminalCommandsWaitForAdmittedWritesAndAbortOnStorageFailure() = runTest {
-        val commands = listOf<Pair<String, suspend ExperimentRuntime.() -> CommandResult>>(
-            "duration" to { completeAfterDuration() },
-            "withdraw" to { withdraw() },
+    fun periodicResourceAuditIsEpochScopedDurableAndFinalizedBeforeDeactivation() = runTest {
+        val fixture = fixture(backgroundScope, withTrafficAudit = true)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.start())
+
+        val epochId = requireNotNull(fixture.runtime.snapshot.value.conditionEpochId)
+        val activationEvents = fixture.store.commits.last().events
+        assertTrue(
+            activationEvents.indexOfFirst { it.type.eventType == "CONDITION_EPOCH_ACTIVATED" } <
+                activationEvents.indexOfFirst { it.type.eventType == "TRAFFIC_SHAPING_PROFILE_APPLIED" },
         )
-        commands.forEach { (name, command) ->
-            val store = InMemoryStudyStore()
-            val clocks = FakeClocks()
-            val collector = FakeCollectorPlugin(clocks)
-            val witness = RecordingSafetyPauseWitness()
-            val runtime = ExperimentRuntime(
-                configuration = configuration(),
-                store = store,
-                collectorRegistry = CollectorRegistry(listOf(collector)),
-                clocks = clocks,
+        val firstTimer = fixture.runtime.pendingTimers().single { it.producerKey.startsWith("resource-audit:") }
+        assertTrue(firstTimer.producerKey.startsWith("resource-audit:"))
+        assertEquals(
+            listOf(firstTimer.id),
+            fixture.timerWakeups.scheduled.filter { it.producerKey.startsWith("resource-audit:") }.map(DurableTimer::id),
+        )
+
+        fixture.clock.advanceMillis(60_001)
+        assertEquals(
+            RuntimeCommandResult.Success,
+            fixture.runtime.onTimerDue(firstTimer.id, firstTimer.generation),
+        )
+        assertEquals(
+            listOf(
+                "TIMER_DUE",
+                "TRAFFIC_SHAPING_SNAPSHOT",
+                "TIMER_RETIRED",
+                "TIMER_SCHEDULED",
+            ),
+            fixture.store.commits.last().events.map { it.type.eventType },
+        )
+        assertTrue(fixture.store.commits.last().events.all { it.conditionEpochId == epochId })
+        val successor = fixture.runtime.pendingTimers().single { it.producerKey.startsWith("resource-audit:") }
+        assertNotEquals(firstTimer.id, successor.id)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.onTimerDue(firstTimer.id, firstTimer.generation))
+
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.pause())
+        val boundaryEvents = fixture.store.commits.dropLast(1).last().events
+        val snapshotIndex = boundaryEvents.indexOfFirst {
+            it.type.eventType == "TRAFFIC_SHAPING_SNAPSHOT" && it.fields["snapshot_reason"] == "EPOCH_BOUNDARY"
+        }
+        val removedIndex = boundaryEvents.indexOfFirst { it.type.eventType == "TRAFFIC_SHAPING_PROFILE_REMOVED" }
+        val epochEndedIndex = boundaryEvents.indexOfFirst { it.type.eventType == "CONDITION_EPOCH_DEACTIVATED" }
+        assertTrue(snapshotIndex in 0 until removedIndex)
+        assertTrue(removedIndex in 0 until epochEndedIndex)
+        assertTrue(boundaryEvents.all { it.conditionEpochId == epochId })
+        assertTrue(fixture.runtime.pendingTimers().none { it.producerKey.startsWith("resource-audit:") })
+        assertTrue(successor.id in fixture.timerWakeups.retired)
+        assertEquals(
+            RuntimeCommandResult.Success,
+            fixture.runtime.onTimerDue(successor.id, successor.generation),
+        )
+    }
+
+    @Test
+    fun causalBatchIsDurablyStagedThenRotatesTheWholeResourceEpoch() = runTest {
+        val fixture = fixture(backgroundScope)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val oldEpoch = fixture.runtime.snapshot.value.conditionEpochId
+        val token = requireNotNull(fixture.runtime.captureToken())
+
+        val result = fixture.runtime.emitBatch(token, batteryBatch(fixture.clock.now()))
+        runCurrent()
+
+        assertTrue(result is EmitBatchResult.Accepted)
+        assertNotEquals(oldEpoch, fixture.runtime.snapshot.value.conditionEpochId)
+        assertNull(fixture.store.pending)
+        assertTrue(fixture.store.commits.any { it.consumedPendingInputSha256 != null })
+        assertEquals("slow", fixture.traffic.lastDesired?.profile?.id)
+        assertTrue(fixture.battery.suspendCount > 0)
+        assertTrue(fixture.traffic.suspendCount > 0)
+        assertEquals(
+            EmitBatchResult.RejectedByAdmissionGate,
+            fixture.runtime.emitBatch(token, batteryBatch(fixture.clock.now())),
+        )
+        val causalCommit = fixture.store.commits.single { it.consumedPendingInputSha256 != null }
+        assertEquals(oldEpoch, causalCommit.sourceObservations.single().conditionEpochId)
+        assertEquals(oldEpoch, causalCommit.events.first { it.type.eventType == "BATTERY_STATE" }.conditionEpochId)
+    }
+
+    @Test
+    fun stagedCausalCallbackUnwindsBeforeBarrierDrainsItsQueuedLiveEvent() = runTest {
+        val fixture = fixture(backgroundScope)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val oldEpoch = requireNotNull(fixture.runtime.snapshot.value.conditionEpochId)
+        val blockingSink = BlockingFirstEventSink(fixture.runtime)
+        val callback = RuntimeCallbackCollector(
+            CollectorContext(
                 scope = backgroundScope,
-                safetyPauseWitness = witness,
-            )
-            start(runtime)
-            store.appendEntered = CompletableDeferred()
-            store.releaseAppend = CompletableDeferred()
-            store.appendFailure = IllegalStateException("$name storage unavailable")
-
-            val emission = async { collector.emit("ACTIVITY_RESUMED") }
-            store.appendEntered?.await()
-            val terminal = async { runtime.command() }
-            runCurrent()
-            assertFalse("$name committed before its admitted write drained", terminal.isCompleted)
-
-            store.releaseAppend?.complete(Unit)
-            assertEquals(EmitResult.StorageFailure, emission.await())
-            assertEquals(CommandResult.Failed("COMMAND_REJECTED"), terminal.await())
-
-            assertEquals(ExperimentState.RUNNING, runtime.snapshot.value.metadata?.state)
-            assertEquals(SafetyPauseReason.STORAGE_FAILURE, runtime.snapshot.value.pendingSafetyPauseReason)
-            assertTrue(runtime.snapshot.value.metadata?.transitions.orEmpty().none {
-                it.to in setOf(ExperimentState.COMPLETED, ExperimentState.WITHDRAWN)
-            })
-            assertNull(collector.captureToken())
-            assertEquals(listOf(SafetyPauseReason.STORAGE_FAILURE), witness.persistedReasons)
-        }
-    }
-
-    @Test
-    fun cancelledAdmittedWriteCannotStrandTheTerminalDrainBarrier() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val collector = FakeCollectorPlugin(clocks)
-        val witness = RecordingSafetyPauseWitness()
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(collector)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = witness,
+                eventSink = blockingSink,
+                clocks = fixture.clock,
+                sourceContract = requireNotNull(ProtocolEventSourceRegistry[BATTERY_SOURCE.value]),
+                resourceGeneration = 1,
+                tokenEncoder = StudyScopedTokenEncoder { _, _ -> "0".repeat(64) },
+            ),
         )
-        start(runtime)
-        store.appendEntered = CompletableDeferred()
-        store.releaseAppend = CompletableDeferred()
+        val barrierAdmissionOpened = CompletableDeferred<Unit>()
+        callback.start()
+        callback.onAdmissionOpened()
+        fixture.battery.suspendHook = { callback.pause() }
+        fixture.battery.resumeHook = { callback.resume() }
+        fixture.battery.admissionOpenedHook = {
+            callback.onAdmissionOpened()
+            barrierAdmissionOpened.complete(Unit)
+        }
 
-        val emission = async { collector.emit("ACTIVITY_RESUMED") }
-        store.appendEntered?.await()
-        val completion = async { runtime.completeAfterDuration() }
+        callback.trigger(42)
+        withContext(Dispatchers.Default) {
+            withTimeout(5_000) { blockingSink.firstSubmissionEntered.await() }
+        }
+        callback.trigger(44)
+        blockingSink.releaseFirstSubmission.complete(Unit)
+        withContext(Dispatchers.Default) {
+            withTimeout(5_000) { fixture.store.pendingStaged.await() }
+        }
         runCurrent()
-        assertFalse(completion.isCompleted)
-
-        emission.cancelAndJoin()
+        withContext(Dispatchers.Default) {
+            withTimeout(5_000) { barrierAdmissionOpened.await() }
+        }
         runCurrent()
 
-        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), completion.await())
-        assertEquals(ExperimentState.RUNNING, runtime.snapshot.value.metadata?.state)
-        assertEquals(SafetyPauseReason.STORAGE_FAILURE, runtime.snapshot.value.pendingSafetyPauseReason)
-        assertEquals(listOf(SafetyPauseReason.STORAGE_FAILURE), witness.persistedReasons)
+        assertNotEquals(oldEpoch, fixture.runtime.snapshot.value.conditionEpochId)
+        assertNull(fixture.store.pending)
+        val barrierCommit = fixture.store.commits.single { it.consumedPendingInputSha256 != null }
+        assertEquals(listOf(0L, 1L), barrierCommit.sourceObservations.map { it.producerOrdinal })
+        assertTrue(barrierCommit.sourceObservations.all { it.coverage == null })
+        assertTrue(
+            requireNotNull(barrierCommit.sourceObservations[0].firstEventSequence) >
+                requireNotNull(barrierCommit.sourceObservations[1].firstEventSequence),
+        )
+        assertEquals(
+            listOf("44", "42"),
+            barrierCommit.events.filter { it.type == BATTERY_EVENT }.map { it.fields.getValue("percentage") },
+        )
+
+        fixture.battery.suspendHook = null
+        fixture.battery.resumeHook = null
+        fixture.battery.admissionOpenedHook = null
+        callback.stop()
     }
 
     @Test
-    fun terminalCollectorStopFailureUsesTypedTeardownPauseAndCanBeRetried() = runTest {
+    fun terminalFailureAfterDurableStageReturnsAcceptedAndRecoversOffTheEmitter() = runTest {
         val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val plugin = FakeCollectorPlugin(clocks)
-        val witness = RecordingSafetyPauseWitness()
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(plugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = witness,
-        )
-        start(runtime)
-        plugin.collector.failNextStopWithOwnedResources = true
+        val fixture = fixture(backgroundScope, store)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val token = requireNotNull(fixture.runtime.captureToken())
+        val continueAfterStage = CompletableDeferred<Unit>()
+        store.afterPendingStaged = { continueAfterStage.await() }
 
-        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), runtime.completeAfterDuration())
-
-        assertEquals(ExperimentState.RUNNING, runtime.snapshot.value.metadata?.state)
-        assertEquals(
-            SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE,
-            runtime.snapshot.value.pendingSafetyPauseReason,
-        )
-        assertNull(plugin.captureToken())
-        assertEquals(
-            listOf(SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE),
-            witness.persistedReasons,
-        )
-
-        assertEquals(
-            CommandResult.Success,
-            runtime.retrySafetyPause(SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE),
-        )
-        assertTrue(runtime.acknowledgeSafetyPauseRequest(SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE))
-        assertEquals(CommandResult.Success, runtime.completeAfterDuration())
-        assertEquals(ExperimentState.COMPLETED, runtime.snapshot.value.metadata?.state)
-        assertEquals(2, plugin.collector.stopCount)
-    }
-
-    @Test
-    fun terminalTeardownFailureFromPausedPreservesTheEarlierParticipantPause() = runTest {
-        val terminalCommands = listOf<Pair<String, suspend (ExperimentRuntime) -> CommandResult>>(
-            "duration" to { runtime -> runtime.completeAfterDuration() },
-            "withdraw" to { runtime -> runtime.withdraw() },
-        )
-        terminalCommands.forEach { (name, terminalCommand) ->
-            val store = InMemoryStudyStore()
-            val clocks = FakeClocks()
-            val plugin = FakeCollectorPlugin(clocks)
-            val witness = RecordingSafetyPauseWitness()
-            val runtime = ExperimentRuntime(
-                configuration = configuration(),
-                store = store,
-                collectorRegistry = CollectorRegistry(listOf(plugin)),
-                clocks = clocks,
-                scope = backgroundScope,
-                safetyPauseWitness = witness,
-            )
-            start(runtime)
-            assertEquals(name, CommandResult.Success, runtime.pause())
-            val participantPause = requireNotNull(runtime.snapshot.value.metadata).transitions.last()
-            plugin.collector.failNextStopWithOwnedResources = true
-
-            assertEquals(name, CommandResult.Failed("COMMAND_REJECTED"), terminalCommand(runtime))
-
-            val paused = requireNotNull(runtime.snapshot.value.metadata)
-            assertEquals(name, ExperimentState.PAUSED, paused.state)
-            assertEquals(name, participantPause, paused.transitions.last())
-            assertEquals(
-                name,
-                SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE,
-                runtime.snapshot.value.pendingSafetyPauseReason,
-            )
-            assertEquals(
-                name,
-                listOf(SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE),
-                witness.persistedReasons,
-            )
-            assertEquals(
-                name,
-                CommandResult.Success,
-                runtime.retrySafetyPause(SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE),
-            )
-            assertTrue(
-                name,
-                runtime.acknowledgeSafetyPauseRequest(SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE),
-            )
-            assertEquals(name, participantPause, runtime.snapshot.value.metadata?.transitions?.last())
+        val emission = async {
+            fixture.runtime.emitBatch(token, batteryBatch(fixture.clock.now()))
         }
+        runCurrent()
+        assertTrue(store.pendingStaged.isCompleted)
+        fixture.traffic.failTerminal("NATIVE_ENGINE_FAILED")
+        continueAfterStage.complete(Unit)
+        runCurrent()
+
+        assertTrue(emission.await() is EmitBatchResult.Accepted)
+        advanceUntilIdle()
+        assertEquals(ExperimentState.PAUSED, fixture.runtime.snapshot.value.state)
+        assertNull(store.pending)
+        val recovery = store.commits.single { it.consumedPendingInputSha256 != null }
+        assertTrue(recovery.events.any { it.type == BATTERY_EVENT })
     }
 
     @Test
-    fun cancellingAParticipantOrTerminalDrainPersistsATypedTeardownWitness() = runTest {
-        data class CancelledDrain(
-            val name: String,
-            val blocksPause: Boolean,
-            val command: suspend (ExperimentRuntime) -> CommandResult,
+    fun qualityGapCommitsBeforeIndependentBarrierResetsTheResource() = runTest {
+        val fixture = fixture(backgroundScope)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val first = batteryBatch(fixture.clock.now()).copy(
+            coverage = SourceCoverage(SourceClockBasis.SOURCE_WALL_TIME, "0", "100"),
         )
-        val commands = listOf(
-            CancelledDrain("pause", true) { runtime -> runtime.pause() },
-            CancelledDrain("duration", false) { runtime -> runtime.completeAfterDuration() },
-            CancelledDrain("withdraw", false) { runtime -> runtime.withdraw() },
+        assertTrue(
+            fixture.runtime.emitBatch(
+                requireNotNull(fixture.runtime.captureToken()),
+                first,
+            ) is EmitBatchResult.Accepted,
         )
-        commands.forEach { command ->
-            val clocks = FakeClocks()
-            val plugin = FakeCollectorPlugin(clocks)
-            val witness = RecordingSafetyPauseWitness()
-            val runtime = ExperimentRuntime(
-                configuration = configuration(),
-                store = InMemoryStudyStore(),
-                collectorRegistry = CollectorRegistry(listOf(plugin)),
-                clocks = clocks,
-                scope = backgroundScope,
-                safetyPauseWitness = witness,
-            )
-            start(runtime)
-            val teardownEntered = CompletableDeferred<Unit>()
-            val blockUntilCancelled: suspend () -> Unit = {
-                teardownEntered.complete(Unit)
-                CompletableDeferred<Unit>().await()
-            }
-            if (command.blocksPause) {
-                plugin.collector.beforePause = blockUntilCancelled
-            } else {
-                plugin.collector.beforeStop = blockUntilCancelled
-            }
+        runCurrent()
+        assertEquals("slow", fixture.traffic.lastDesired?.profile?.id)
 
-            val drain = async { command.command(runtime) }
-            teardownEntered.await()
-            drain.cancelAndJoin()
-
-            assertEquals(command.name, ExperimentState.RUNNING, runtime.snapshot.value.metadata?.state)
-            assertEquals(
-                command.name,
-                SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE,
-                runtime.snapshot.value.pendingSafetyPauseReason,
-            )
-            assertEquals(
-                command.name,
-                listOf(SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE),
-                witness.persistedReasons,
-            )
-            assertNull(command.name, plugin.captureToken())
-
-            plugin.collector.beforePause = {}
-            plugin.collector.beforeStop = {}
-            assertEquals(
-                command.name,
-                CommandResult.Success,
-                runtime.retrySafetyPause(SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE),
-            )
-            assertTrue(
-                command.name,
-                runtime.acknowledgeSafetyPauseRequest(SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE),
-            )
-            assertEquals(command.name, ExperimentState.PAUSED, runtime.snapshot.value.metadata?.state)
-        }
-    }
-
-    @Test
-    fun unacknowledgedTransitionToRunningIsWitnessedAndRollsBackTheDurableFile() = runTest {
-        val startingStore = InMemoryStudyStore()
-        val startingWitness = RecordingSafetyPauseWitness()
-        val starting = ExperimentRuntime(
-            configuration = configuration(),
-            store = startingStore,
-            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(FakeClocks()))),
-            clocks = FakeClocks(),
-            scope = backgroundScope,
-            safetyPauseWitness = startingWitness,
+        val discontinuous = batteryBatch(fixture.clock.now()).copy(
+            producerOrdinal = 1,
+            coverage = SourceCoverage(SourceClockBasis.SOURCE_WALL_TIME, "200", "300"),
         )
-        assertEquals(CommandResult.Success, starting.initialize())
-        assertEquals(CommandResult.Success, starting.reviewStudy())
-        assertEquals(CommandResult.Success, starting.acceptConsent())
-        assertEquals(CommandResult.Success, starting.completeAccessSetup(emptySet()))
-        startingStore.saveAfterCommitFailure = IllegalStateException("directory fsync was not acknowledged")
-
-        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), starting.start(emptySet()))
-        assertEquals(ExperimentState.READY, starting.snapshot.value.metadata?.state)
-        assertEquals(ExperimentState.RUNNING, startingStore.metadata?.state)
-        assertEquals(SafetyPauseReason.STORAGE_FAILURE, starting.snapshot.value.pendingSafetyPauseReason)
-        assertEquals(listOf(SafetyPauseReason.STORAGE_FAILURE), startingWitness.persistedReasons)
-
-        assertEquals(CommandResult.Success, starting.retrySafetyPause(SafetyPauseReason.STORAGE_FAILURE))
-        assertEquals(ExperimentState.READY, startingStore.metadata?.state)
-        assertTrue(starting.acknowledgeSafetyPauseRequest(SafetyPauseReason.STORAGE_FAILURE))
-
-        val resumingStore = InMemoryStudyStore()
-        val resumingWitness = RecordingSafetyPauseWitness()
-        val resuming = ExperimentRuntime(
-            configuration = configuration(),
-            store = resumingStore,
-            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(FakeClocks()))),
-            clocks = FakeClocks(),
-            scope = backgroundScope,
-            safetyPauseWitness = resumingWitness,
-        )
-        start(resuming)
-        assertEquals(CommandResult.Success, resuming.pause())
-        val participantPause = resuming.snapshot.value.metadata?.transitions?.last()
-        resumingStore.saveAfterCommitFailure = IllegalStateException("resume commit was not acknowledged")
-
-        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), resuming.resume(emptySet()))
-        assertEquals(ExperimentState.PAUSED, resuming.snapshot.value.metadata?.state)
-        assertEquals(ExperimentState.RUNNING, resumingStore.metadata?.state)
-        assertEquals(SafetyPauseReason.STORAGE_FAILURE, resuming.snapshot.value.pendingSafetyPauseReason)
-
-        assertEquals(CommandResult.Success, resuming.retrySafetyPause(SafetyPauseReason.STORAGE_FAILURE))
-        assertEquals(ExperimentState.PAUSED, resumingStore.metadata?.state)
-        assertEquals(participantPause, resumingStore.metadata?.transitions?.last())
-        assertTrue(resuming.acknowledgeSafetyPauseRequest(SafetyPauseReason.STORAGE_FAILURE))
-    }
-
-    @Test
-    fun cancellationIsNeverMisclassifiedAsAnIllegalCommand() = runTest {
-        val store = InMemoryStudyStore()
-        val witness = RecordingSafetyPauseWitness()
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(FakeClocks()))),
-            clocks = FakeClocks(),
-            scope = backgroundScope,
-            safetyPauseWitness = witness,
-        )
-        assertEquals(CommandResult.Success, runtime.initialize())
-        assertEquals(CommandResult.Success, runtime.reviewStudy())
-        assertEquals(CommandResult.Success, runtime.acceptConsent())
-        assertEquals(CommandResult.Success, runtime.completeAccessSetup(emptySet()))
-        val cancellation = CancellationException("caller cancelled the start")
-        store.saveAfterCommitFailure = cancellation
-
-        val actual = runCatching { runtime.start(emptySet()) }.exceptionOrNull()
-
-        assertTrue(actual === cancellation)
-        assertEquals(ExperimentState.READY, runtime.snapshot.value.metadata?.state)
-        assertEquals(ExperimentState.RUNNING, store.metadata?.state)
-        assertEquals(SafetyPauseReason.STORAGE_FAILURE, runtime.snapshot.value.pendingSafetyPauseReason)
-        assertEquals(listOf(SafetyPauseReason.STORAGE_FAILURE), witness.persistedReasons)
-    }
-
-    @Test
-    fun participantPauseFailureUsesTypedTeardownPauseAndCannotReportSuccess() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val plugin = FakeCollectorPlugin(clocks)
-        val witness = RecordingSafetyPauseWitness()
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(plugin)),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = witness,
-        )
-        start(runtime)
-        plugin.collector.failNextPauseWithOwnedResources = true
-
-        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), runtime.pause())
-
-        assertEquals(ExperimentState.PAUSED, runtime.snapshot.value.metadata?.state)
-        assertEquals(
-            TransitionReason.COLLECTION_TEARDOWN_FAILURE,
-            runtime.snapshot.value.metadata?.transitions?.last()?.reason,
+        val result = fixture.runtime.emitBatch(
+            requireNotNull(fixture.runtime.captureToken()),
+            discontinuous,
         )
         assertEquals(
-            SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE,
-            runtime.snapshot.value.pendingSafetyPauseReason,
+            EmitBatchResult.SourceQualityGap(
+                cool.jacoblin.particeps.core.collector.SourceQualityGapReason.RETROSPECTIVE_COVERAGE_GAP,
+            ),
+            result,
         )
-        assertNull(plugin.captureToken())
-        assertEquals(
-            listOf(SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE),
-            witness.persistedReasons,
-        )
+        runCurrent()
 
-        assertEquals(
-            CommandResult.Success,
-            runtime.retrySafetyPause(SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE),
-        )
-        assertTrue(runtime.acknowledgeSafetyPauseRequest(SafetyPauseReason.COLLECTION_TEARDOWN_FAILURE))
-        assertEquals(CommandResult.Success, runtime.resume(emptySet()))
-        assertEquals(2, plugin.collector.pauseCount)
-        assertEquals(1, plugin.collector.resumeCount)
-    }
-
-    @Test
-    fun surveySubmissionValidatesEveryQuestionTypeAndCommitsExactlyOnce() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val runtime = ExperimentRuntime(
-            configuration = configuration(surveys = listOf(survey()), interventions = listOf(surveyIntervention())),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        start(runtime)
-        val occurrence = InterventionOccurrence(
-            occurrenceId = "a".repeat(64),
-            interventionId = "survey-notice",
-            triggerId = "after-minute",
-            scheduleKey = "relative:1",
-            scheduledFor = ResearchTime(1_000, 1_000, "boot-test"),
-            expiresAtUtcMillis = 60_000,
-            state = OccurrenceState.SCHEDULED,
-        )
-        runtime.ensureOccurrence(occurrence)
-        val claim = runtime.claimOccurrenceIfDue(occurrence.occurrenceId) as OccurrenceClaimResult.Due
-        assertTrue(claim.dispatch.action is SurveyAction)
-        runtime.markNotificationPosted(occurrence.occurrenceId)
-        assertEquals(OccurrenceState.OPENED, runtime.openOccurrence(occurrence.occurrenceId)?.occurrence?.state)
-
-        val incomplete = mapOf("mood-scale" to SurveyAnswer.Integer(3))
-        assertEquals(SurveySubmissionResult.INVALID, runtime.submitSurvey(occurrence.occurrenceId, incomplete))
-        val answers = mapOf(
-            "daily-note" to SurveyAnswer.Text("felt focused"),
-            "mood-scale" to SurveyAnswer.Integer(4),
-            "primary-place" to SurveyAnswer.Choices(listOf("place-home")),
-            "symptoms" to SurveyAnswer.Choices(listOf("symptom-tired", "symptom-headache")),
-        )
-        val concurrent = listOf(
-            async { runtime.submitSurvey(occurrence.occurrenceId, answers) },
-            async { runtime.submitSurvey(occurrence.occurrenceId, answers) },
-        ).awaitAll()
-        assertEquals(1, concurrent.count { it == SurveySubmissionResult.ACCEPTED })
-        assertEquals(1, concurrent.count { it == SurveySubmissionResult.ALREADY_SUBMITTED })
-
-        val submitted = requireNotNull(runtime.surveySubmissionEvent(occurrence.occurrenceId))
-        assertEquals("SURVEY_SUBMITTED", submitted.payloadType)
-        assertEquals("daily-survey", submitted.fields["survey_id"])
-        val encoded = requireNotNull(submitted.fields["answers_json"])
-        assertTrue(encoded.contains("\"daily-note\":\"felt focused\""))
-        assertTrue(encoded.contains("\"primary-place\":[\"place-home\"]"))
-        assertTrue(encoded.contains("\"symptoms\":[\"symptom-tired\",\"symptom-headache\"]"))
-        assertTrue(!encoded.contains("Home"))
-        assertEquals(4L, store.events.count().toLong())
-    }
-
-    @Test
-    fun lateSurveyOccurrenceExpiresWithoutOpeningOrSubmission() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val runtime = ExperimentRuntime(
-            configuration = configuration(surveys = listOf(survey()), interventions = listOf(surveyIntervention())),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        start(runtime)
-        val occurrence = InterventionOccurrence(
-            occurrenceId = "b".repeat(64),
-            interventionId = "survey-notice",
-            triggerId = "after-minute",
-            scheduleKey = "relative:1",
-            scheduledFor = ResearchTime(1, 1, "boot-test"),
-            expiresAtUtcMillis = 2_500,
-            state = OccurrenceState.SCHEDULED,
-        )
-        runtime.ensureOccurrence(occurrence)
-        assertEquals(OccurrenceClaimResult.Expired, runtime.claimOccurrenceIfDue(occurrence.occurrenceId))
-        assertNull(runtime.openOccurrence(occurrence.occurrenceId))
-        assertEquals(OccurrenceState.EXPIRED, runtime.snapshot.value.metadata?.occurrences?.get(occurrence.occurrenceId)?.state)
-        assertEquals(listOf("INTERVENTION_SCHEDULED", "SURVEY_EXPIRED"), store.events.map { it.payloadType })
-    }
-
-    @Test
-    fun dedicatedExpiryCheckLeavesEarlyScheduledWorkUntouchedAndExpiresOnce() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = MutableClocks(1_000)
-        val runtime = ExperimentRuntime(
-            configuration = configuration(surveys = listOf(survey()), interventions = listOf(surveyIntervention())),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        start(runtime)
-        val occurrence = surveyOccurrence("c", expiresAtUtcMillis = 5_000)
-        runtime.ensureOccurrence(occurrence)
-
-        clocks.wallTimeUtcMillis = 4_250
-        assertEquals(OccurrenceExpiryResult.NotDue(750), runtime.expireOccurrenceIfDue(occurrence.occurrenceId))
-        assertEquals(
-            OccurrenceState.SCHEDULED,
-            runtime.snapshot.value.metadata?.occurrences?.get(occurrence.occurrenceId)?.state,
-        )
-
-        clocks.wallTimeUtcMillis = 5_000
-        assertEquals(OccurrenceExpiryResult.Expired, runtime.expireOccurrenceIfDue(occurrence.occurrenceId))
-        assertEquals(OccurrenceExpiryResult.Terminal, runtime.expireOccurrenceIfDue(occurrence.occurrenceId))
-        assertEquals(OccurrenceClaimResult.Terminal, runtime.claimOccurrenceIfDue(occurrence.occurrenceId))
+        assertEquals(ExperimentState.RUNNING, fixture.runtime.snapshot.value.state)
+        assertEquals("baseline", fixture.traffic.lastDesired?.profile?.id)
+        assertTrue(fixture.store.commits.flatMap(EngineCommit::events).any {
+            it.type.eventType == "SOURCE_QUALITY_GAP"
+        })
         assertEquals(
             1,
-            store.events.count { it.payloadType == "SURVEY_EXPIRED" && it.fields["occurrence_id"] == occurrence.occurrenceId },
+            fixture.store.commits.flatMap(EngineCommit::events).count { it.type == BATTERY_EVENT },
         )
     }
 
     @Test
-    fun deliveryClaimWaitsForItsWallInstantAndARecoveredPostingClaimIsIdempotent() = runTest {
-        val clocks = MutableClocks(1_000)
-        val runtime = ExperimentRuntime(
-            configuration = configuration(surveys = listOf(survey()), interventions = listOf(surveyIntervention())),
-            store = InMemoryStudyStore(),
-            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        start(runtime)
-        val occurrence = surveyOccurrence("9", scheduledAtUtcMillis = 3_000, expiresAtUtcMillis = 5_000)
-        runtime.ensureOccurrence(occurrence)
+    fun occurrenceActionUsesDurableDeterministicOutboxAcrossClaims() = runTest {
+        val fixture = fixture(backgroundScope)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val token = requireNotNull(fixture.runtime.captureToken())
+        fixture.runtime.emitBatch(token, batteryBatch(fixture.clock.now()))
+        runCurrent()
 
-        clocks.wallTimeUtcMillis = 2_500
-        assertEquals(OccurrenceClaimResult.NotDue(500), runtime.claimOccurrenceIfDue(occurrence.occurrenceId))
+        val ready = fixture.runtime.pendingActions().single()
+        val firstClaim = fixture.runtime.claimAction(ready.actionId)
+        val reconciliationClaim = fixture.runtime.claimAction(ready.actionId)
+
+        assertEquals(ready.actionId, firstClaim?.actionId)
         assertEquals(
-            OccurrenceState.SCHEDULED,
-            runtime.snapshot.value.metadata?.occurrences?.get(occurrence.occurrenceId)?.state,
-        )
-
-        clocks.wallTimeUtcMillis = 3_000
-        val first = runtime.claimOccurrenceIfDue(occurrence.occurrenceId) as OccurrenceClaimResult.Due
-        val recovered = runtime.claimOccurrenceIfDue(occurrence.occurrenceId) as OccurrenceClaimResult.Due
-        assertEquals(OccurrenceState.POSTING, first.dispatch.occurrence.state)
-        assertEquals(first, recovered)
-        assertTrue(runtime.markNotificationPosted(occurrence.occurrenceId))
-        assertTrue(runtime.markNotificationPosted(occurrence.occurrenceId))
-
-        clocks.wallTimeUtcMillis = 5_000
-        assertFalse(runtime.markNotificationPosted(occurrence.occurrenceId))
-        assertEquals(
-            OccurrenceState.EXPIRED,
-            runtime.snapshot.value.metadata?.occurrences?.get(occurrence.occurrenceId)?.state,
-        )
-    }
-
-    @Test
-    fun dedicatedExpiryCheckExpiresPostingPostedAndOpenedSurveyStates() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = MutableClocks(1_000)
-        val runtime = ExperimentRuntime(
-            configuration = configuration(surveys = listOf(survey()), interventions = listOf(surveyIntervention())),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        start(runtime)
-        val occurrences = listOf("d", "e", "f").mapIndexed { index, prefix ->
-            surveyOccurrence(prefix, expiresAtUtcMillis = 5_000 + index * 1_000L).also {
-                runtime.ensureOccurrence(it)
-            }
-        }
-        runtime.claimOccurrenceIfDue(occurrences[0].occurrenceId)
-        runtime.claimOccurrenceIfDue(occurrences[1].occurrenceId)
-        runtime.markNotificationPosted(occurrences[1].occurrenceId)
-        runtime.claimOccurrenceIfDue(occurrences[2].occurrenceId)
-        runtime.markNotificationPosted(occurrences[2].occurrenceId)
-        runtime.openOccurrence(occurrences[2].occurrenceId)
-
-        clocks.wallTimeUtcMillis = 10_000
-        occurrences.forEach { occurrence ->
-            assertEquals(OccurrenceExpiryResult.Expired, runtime.expireOccurrenceIfDue(occurrence.occurrenceId))
-            assertEquals(
-                OccurrenceState.EXPIRED,
-                runtime.snapshot.value.metadata?.occurrences?.get(occurrence.occurrenceId)?.state,
-            )
-        }
-        assertEquals(3, store.events.count { it.payloadType == "SURVEY_EXPIRED" })
-        assertEquals(OccurrenceExpiryResult.Missing, runtime.expireOccurrenceIfDue("0".repeat(64)))
-    }
-
-    @Test
-    fun pausedCompletedAndWithdrawnStudiesRejectEveryInterventionMutation() = runTest {
-        val lifecycleCases = listOf<Pair<String, suspend (ExperimentRuntime) -> CommandResult>>(
-            "pause" to { it.pause() },
-            "duration" to { it.completeAfterDuration() },
-            "withdraw" to { it.withdraw() },
-        )
-        lifecycleCases.forEach { (name, transition) ->
-            val store = InMemoryStudyStore()
-            val clocks = MutableClocks(1_000)
-            val runtime = ExperimentRuntime(
-                configuration = configuration(surveys = listOf(survey()), interventions = listOf(surveyIntervention())),
-                store = store,
-                collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
-                clocks = clocks,
-                scope = backgroundScope,
-                safetyPauseWitness = RecordingSafetyPauseWitness(),
-            )
-            start(runtime)
-            val posted = surveyOccurrence("1", expiresAtUtcMillis = 60_000)
-            val opened = surveyOccurrence("2", expiresAtUtcMillis = 60_000)
-            val scheduled = surveyOccurrence("3", expiresAtUtcMillis = 60_000)
-            val posting = surveyOccurrence("4", expiresAtUtcMillis = 60_000)
-            listOf(posted, opened, scheduled, posting).forEach { runtime.ensureOccurrence(it) }
-            runtime.claimOccurrenceIfDue(posted.occurrenceId)
-            assertTrue(runtime.markNotificationPosted(posted.occurrenceId))
-            runtime.claimOccurrenceIfDue(opened.occurrenceId)
-            assertTrue(runtime.markNotificationPosted(opened.occurrenceId))
-            assertTrue(runtime.openOccurrence(opened.occurrenceId)?.action is SurveyAction)
-            runtime.claimOccurrenceIfDue(posting.occurrenceId)
-            assertEquals(CommandResult.Success, transition(runtime))
-            val eventCount = store.events.size
-
-            assertEquals(OccurrenceClaimResult.InactiveStudy, runtime.claimOccurrenceIfDue(scheduled.occurrenceId))
-            assertEquals(OccurrenceExpiryResult.InactiveStudy, runtime.expireOccurrenceIfDue(posted.occurrenceId))
-            assertFalse(runtime.markNotificationPosted(posting.occurrenceId))
-            assertNull(runtime.openOccurrence(posted.occurrenceId))
-            assertEquals(
-                SurveySubmissionResult.INVALID,
-                runtime.submitSurvey(opened.occurrenceId, validSurveyAnswers()),
-            )
-            assertEquals("$name must not append intervention events", eventCount, store.events.size)
-        }
-    }
-
-    @Test
-    fun illegalCommandFailsWithoutMutatingDurableState() = runTest {
-        val store = InMemoryStudyStore()
-        val clocks = FakeClocks()
-        val runtime = ExperimentRuntime(
-            configuration = configuration(),
-            store = store,
-            collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
-            clocks = clocks,
-            scope = backgroundScope,
-            safetyPauseWitness = RecordingSafetyPauseWitness(),
-        )
-        runtime.initialize()
-
-        assertEquals(CommandResult.Failed("COMMAND_REJECTED"), runtime.start(emptySet()))
-
-        assertEquals(ExperimentState.IMPORTED, runtime.snapshot.value.metadata?.state)
-        assertEquals(1, store.saveCount)
-    }
-
-    @Test
-    fun exportSnapshotIsRepeatableInEveryDataBearingStateAndNeverMutatesState() = runTest {
-        val exportable = listOf(
-            ExperimentState.RUNNING,
-            ExperimentState.PAUSED,
-            ExperimentState.COMPLETED,
-            ExperimentState.WITHDRAWN,
-        )
-        exportable.forEach { state ->
-            val start = ResearchTime(1_000, 1_000, "boot-test")
-            val startTransition = cool.jacoblin.particeps.core.model.ExperimentTransition(
-                ExperimentState.READY,
-                ExperimentState.RUNNING,
-                TransitionReason.PARTICIPANT_STARTED,
-                start,
-            )
-            val transitions = when (state) {
-                ExperimentState.RUNNING -> listOf(startTransition)
-                ExperimentState.PAUSED -> listOf(
-                    startTransition,
-                    cool.jacoblin.particeps.core.model.ExperimentTransition(
-                        ExperimentState.RUNNING,
-                        ExperimentState.PAUSED,
-                        TransitionReason.PARTICIPANT_PAUSED,
-                        start,
-                    ),
-                )
-                ExperimentState.COMPLETED -> listOf(
-                    startTransition,
-                    cool.jacoblin.particeps.core.model.ExperimentTransition(
-                        ExperimentState.RUNNING,
-                        ExperimentState.COMPLETED,
-                        TransitionReason.STUDY_DURATION_ELAPSED,
-                        start,
-                    ),
-                )
-                ExperimentState.WITHDRAWN -> listOf(
-                    startTransition,
-                    cool.jacoblin.particeps.core.model.ExperimentTransition(
-                        ExperimentState.RUNNING,
-                        ExperimentState.WITHDRAWN,
-                        TransitionReason.PARTICIPANT_WITHDREW,
-                        start,
-                    ),
-                )
-                else -> error("Unexpected export state")
-            }
-            val store = InMemoryStudyStore(
-                StudyMetadata.initial(EXPERIMENT_ID, CONFIGURATION_ID).copy(
-                    state = state,
-                    transitions = transitions,
-                ),
-            )
-            val clocks = FakeClocks()
-            val runtime = ExperimentRuntime(
-                configuration = configuration(),
-                store = store,
-                collectorRegistry = CollectorRegistry(listOf(FakeCollectorPlugin(clocks))),
-                clocks = clocks,
-                scope = backgroundScope,
-                safetyPauseWitness = RecordingSafetyPauseWitness(),
-            )
-            assertEquals(CommandResult.Success, runtime.initialize())
-
-            assertEquals(state, runtime.metadataForExport().state)
-            assertEquals(state, runtime.metadataForExport().state)
-            assertEquals(state, runtime.snapshot.value.metadata?.state)
-        }
-    }
-
-    private class InMemoryStudyStore(
-        initial: StudyMetadata? = null,
-    ) : StudyStore {
-        var metadata: StudyMetadata? = initial
-        val events = mutableListOf<RecordedEvent>()
-        var saveCount = 0
-        var usedBytes = 0L
-        var quotaBytes = 16_777_216L
-        var appendFailure: Exception? = null
-        var recoverNextAppendFailClosed = false
-        var pendingRecoveredAppend: StudyMetadata? = null
-        var saveAfterCommitFailure: Throwable? = null
-        var appendEntered: CompletableDeferred<Unit>? = null
-        var releaseAppend: CompletableDeferred<Unit>? = null
-        val evictionTargets = mutableListOf<Long>()
-
-        override suspend fun storageUsage() = StorageUsage(usedBytes, quotaBytes)
-
-        override suspend fun evictThrough(metadata: StudyMetadata, targetBytes: Long): StudyMetadata {
-            evictionTargets += targetBytes
-            // Mirrors the real store: only delivered events go, the floor lands on the first
-            // survivor, and the newest event survives regardless, standing in for the segment
-            // still being appended to. Nothing is held back for a collector's most recent event —
-            // lastEvents is persisted in the metadata rather than rebuilt from surviving frames.
-            val newest = events.maxOfOrNull { it.sequenceNumber } ?: Long.MAX_VALUE
-            val floor = minOf(metadata.uploadedThroughSequence + 1, newest)
-            if (floor <= metadata.retainedFromSequence) return metadata
-            events.removeAll { it.sequenceNumber < floor }
-            usedBytes = 0
-            return metadata.copy(retainedFromSequence = floor).also { this.metadata = it }
-        }
-
-        override suspend fun loadMetadata(): StudyMetadata? = metadata
-
-        override suspend fun initialize(metadata: StudyMetadata) {
-            check(this.metadata == null)
-            this.metadata = metadata
-            saveCount += 1
-        }
-
-        override suspend fun saveMetadata(metadata: StudyMetadata) {
-            this.metadata = metadata
-            saveCount += 1
-            saveAfterCommitFailure?.let { failure ->
-                saveAfterCommitFailure = null
-                throw failure
-            }
-        }
-
-        override suspend fun appendEvent(event: RecordedEvent) {
-            val current = requireNotNull(metadata)
-            require(event.sequenceNumber == current.nextSequenceNumber)
-            events += event
-            metadata = current.copy(
-                eventCount = event.sequenceNumber,
-                nextSequenceNumber = event.sequenceNumber + 1,
-                lastEvents = current.lastEvents + (event.collectorId to event),
-            )
-            saveCount += 1
-        }
-
-        override suspend fun appendEventAtomically(
-            event: RecordedEvent,
-            metadata: StudyMetadata,
-            failureTime: ResearchTime,
-        ) {
-            appendEntered?.complete(Unit)
-            releaseAppend?.await()
-            appendFailure?.let { throw it }
-            require(event.sequenceNumber == requireNotNull(this.metadata).nextSequenceNumber)
-            if (recoverNextAppendFailClosed) {
-                recoverNextAppendFailClosed = false
-                events += event
-                val recovered = ExperimentStateMachine().transition(
-                    metadata,
-                    ExperimentState.PAUSED,
-                    TransitionReason.STORAGE_FAILURE,
-                    failureTime,
-                )
-                this.metadata = recovered
-                pendingRecoveredAppend = recovered
-                throw StudyStoreMutationFailedClosed(
-                    recovered,
-                    IOException("injected acknowledged append failure"),
-                )
-            }
-            events += event
-            this.metadata = metadata
-            saveCount += 1
-        }
-
-        override suspend fun resolvePendingAppendFailure(reason: TransitionReason): StudyMetadata? {
-            val pending = pendingRecoveredAppend ?: return null
-            val transition = requireNotNull(pending.transitions.lastOrNull())
-            val resolved = pending.copy(
-                transitions = pending.transitions.dropLast(1) + transition.copy(reason = reason),
-            )
-            metadata = resolved
-            pendingRecoveredAppend = null
-            return resolved
-        }
-
-        override suspend fun readEvents(
-            fromSequenceInclusive: Long,
-            upToSequenceInclusive: Long,
-            consume: (RecordedEvent) -> Unit,
-        ) {
-            events.asSequence()
-                .takeWhile { it.sequenceNumber <= upToSequenceInclusive }
-                .filter { it.sequenceNumber >= fromSequenceInclusive }
-                .forEach(consume)
-        }
-
-        override suspend fun clear() {
-            metadata = null
-            events.clear()
-        }
-    }
-
-    private class RecordingSafetyPauseWitness : SafetyPauseWitness {
-        val persistedReasons = mutableListOf<SafetyPauseReason>()
-        var failure: Throwable? = null
-
-        override suspend fun persist(reason: SafetyPauseReason) {
-            failure?.let { throw it }
-            persistedReasons += reason
-        }
-    }
-
-    private class FakeClocks : ResearchClocks {
-        private var tick = 1L
-
-        override fun now(): ResearchTime = ResearchTime(
-            wallTimeUtcMillis = tick * 1_000,
-            elapsedRealtimeNanos = tick++ * 1_000,
-            bootSessionId = "boot-test",
-        )
-    }
-
-    private class ControlledClocks(
-        var current: ResearchTime,
-    ) : ResearchClocks {
-        override fun now(): ResearchTime = current
-    }
-
-    private class MutableClocks(
-        var wallTimeUtcMillis: Long,
-    ) : ResearchClocks {
-        private var elapsedRealtimeNanos = 0L
-
-        override fun now(): ResearchTime = ResearchTime(
-            wallTimeUtcMillis = wallTimeUtcMillis,
-            elapsedRealtimeNanos = ++elapsedRealtimeNanos,
-            bootSessionId = "boot-test",
-        )
-    }
-
-    private class FakeCollectorPlugin(
-        private val clocks: ResearchClocks,
-        accessKinds: Set<AccessKind> = emptySet(),
-        collectorId: String = AppLifecycleConfiguration.ID,
-    ) : CollectorPlugin {
-        override val descriptor = CollectorDescriptor(
-            id = collectorId,
-            displayName = "Fake collector",
-            privacyClass = PrivacyClass.SENSITIVE,
-            eventContract = CollectorEventContract(
-                payloadSchemaVersion = 1,
-                maximumEncodedEventBytes = 512,
-                payloads = listOf("ACTIVITY_RESUMED", "ACTIVITY_STOPPED", "ACTIVITY_STARTED")
-                    .associateWith {
-                        EventPayloadContract(
-                            mapOf("source" to EventFieldContract(EventFieldType.STRING, required = true)),
-                        )
-                    },
+            DeterministicIds.actionId(
+                CONFIG_DIGEST,
+                "notify-battery",
+                "prompt",
+                "event_match",
+                "event:3",
+                "",
             ),
-            accessKinds = accessKinds,
+            ready.actionId,
         )
-        lateinit var context: CollectorContext
-        lateinit var collector: FakeCollector
+        assertEquals(firstClaim, reconciliationClaim)
+        assertEquals(RuntimeActionState.CLAIMED, reconciliationClaim?.state)
+        assertEquals(
+            RuntimeCommandResult.Success,
+            fixture.runtime.recordActionResult(ready.actionId, succeeded = true),
+        )
+        assertTrue(fixture.runtime.pendingActions().isEmpty())
+        assertTrue(fixture.store.commits.flatMap(EngineCommit::events).any {
+            it.type.eventType == "ACTION_SUCCEEDED"
+        })
+    }
 
-        override fun create(
-            configuration: CollectorConfiguration,
-            context: CollectorContext,
-        ): Collector {
-            require(configuration.id == descriptor.id)
-            this.context = context
-            collector = FakeCollector()
-            return collector
+    @Test
+    fun optionalOutboxSchedulingFailureCommitsNeutralFailureAndKeepsRunning() = runTest {
+        val notifier = RecordingActionNotifier(failReady = true)
+        val fixture = fixture(backgroundScope, actionNotifier = notifier)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+
+        fixture.runtime.emitBatch(
+            requireNotNull(fixture.runtime.captureToken()),
+            batteryBatch(fixture.clock.now()),
+        )
+        runCurrent()
+
+        assertEquals(ExperimentState.RUNNING, fixture.runtime.snapshot.value.state)
+        assertTrue(fixture.runtime.pendingActions().isEmpty())
+        assertEquals(1, notifier.readyAttempts.size)
+        val failed = fixture.store.commits.flatMap(EngineCommit::events).single {
+            it.type.eventType == "ACTION_FAILED"
+        }
+        assertEquals(ActionExecutionFailure.RECONCILIATION_FAILED.name, failed.fields["failure_reason"])
+    }
+
+    @Test
+    fun requiredOutboxSchedulingFailureCommitsFailureBeforeWorkSchedulingSafetyPause() = runTest {
+        val notifier = RecordingActionNotifier(failReady = true)
+        val fixture = fixture(
+            backgroundScope,
+            interventionRequired = true,
+            actionNotifier = notifier,
+        )
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+
+        fixture.runtime.emitBatch(
+            requireNotNull(fixture.runtime.captureToken()),
+            batteryBatch(fixture.clock.now()),
+        )
+        runCurrent()
+
+        assertEquals(ExperimentState.PAUSED, fixture.runtime.snapshot.value.state)
+        val events = fixture.store.commits.flatMap(EngineCommit::events)
+        val failedIndex = events.indexOfFirst { it.type.eventType == "ACTION_FAILED" }
+        val pausedIndex = events.indexOfFirst { it.type.eventType == "STUDY_SAFETY_PAUSED" }
+        assertTrue(failedIndex >= 0 && pausedIndex > failedIndex)
+        assertEquals(
+            ActionExecutionFailure.REQUIRED_ACTION_FAILED.name,
+            events[failedIndex].fields["failure_reason"],
+        )
+        assertEquals("WORK_SCHEDULING_FAILURE", events[pausedIndex].fields["transition_reason"])
+    }
+
+    @Test
+    fun requiredDeliveryFailureIsNormalizedByRuntimeThenFailsClosed() = runTest {
+        val fixture = fixture(backgroundScope, interventionRequired = true)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        fixture.runtime.emitBatch(
+            requireNotNull(fixture.runtime.captureToken()),
+            batteryBatch(fixture.clock.now()),
+        )
+        runCurrent()
+        val action = fixture.runtime.pendingActions().single()
+
+        assertEquals(
+            RuntimeCommandResult.FailedClosed(cool.jacoblin.particeps.core.model.SafetyPauseReason.WORK_SCHEDULING_FAILURE),
+            fixture.runtime.recordActionResult(
+                action.actionId,
+                succeeded = false,
+                failure = ActionExecutionFailure.DELIVERY_FAILED,
+            ),
+        )
+        assertEquals(ExperimentState.PAUSED, fixture.runtime.snapshot.value.state)
+        val failed = fixture.store.commits.flatMap(EngineCommit::events).single {
+            it.type.eventType == "ACTION_FAILED"
+        }
+        assertEquals(ActionExecutionFailure.REQUIRED_ACTION_FAILED.name, failed.fields["failure_reason"])
+    }
+
+    @Test
+    fun pauseAndTerminalRetractButRetainActionAndResumeRearmsIt() = runTest {
+        val fixture = fixture(backgroundScope)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        fixture.runtime.emitBatch(
+            requireNotNull(fixture.runtime.captureToken()),
+            batteryBatch(fixture.clock.now()),
+        )
+        runCurrent()
+        val action = fixture.runtime.pendingActions().single()
+        assertEquals(listOf(action.actionId), fixture.actionNotifier.readyAttempts)
+
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.pause())
+        assertEquals(listOf(listOf(action.actionId)), fixture.actionNotifier.inactiveCalls)
+        assertEquals(action.actionId, fixture.runtime.pendingActions().single().actionId)
+        assertNull(fixture.runtime.claimAction(action.actionId))
+
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.resume())
+        assertEquals(listOf(action.actionId, action.actionId), fixture.actionNotifier.readyAttempts)
+        assertEquals(action.actionId, fixture.runtime.pendingActions().single().actionId)
+
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.pause())
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.complete())
+        assertEquals(ExperimentState.COMPLETED, fixture.runtime.snapshot.value.state)
+        assertEquals(action.actionId, fixture.runtime.pendingActions().single().actionId)
+        assertEquals(4, fixture.actionNotifier.inactiveCalls.size)
+    }
+
+    @Test
+    fun claimAtExactAvailabilityDeadlineExpiresWithoutDisplay() = runTest {
+        val fixture = fixture(backgroundScope)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        fixture.runtime.emitBatch(
+            requireNotNull(fixture.runtime.captureToken()),
+            batteryBatch(fixture.clock.now()),
+        )
+        runCurrent()
+        val action = fixture.runtime.pendingActions().single()
+        fixture.clock.advanceToWallMillis(action.expiresAtUtcMillis)
+
+        assertNull(fixture.runtime.claimAction(action.actionId))
+        assertTrue(fixture.runtime.pendingActions().isEmpty())
+        assertEquals(ExperimentState.RUNNING, fixture.runtime.snapshot.value.state)
+        assertEquals(
+            listOf("SURVEY_EXPIRED", "ACTION_FAILED"),
+            fixture.store.commits.last().events.map { it.type.eventType },
+        )
+        assertEquals(
+            ActionExecutionFailure.EXPIRED.name,
+            fixture.store.commits.last().events.last().fields["failure_reason"],
+        )
+    }
+
+    @Test
+    fun surveyThatExpiresWhilePausedIsRetiredBeforeResumeCanRearmIt() = runTest {
+        val fixture = fixture(backgroundScope)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        fixture.runtime.emitBatch(
+            requireNotNull(fixture.runtime.captureToken()),
+            batteryBatch(fixture.clock.now()),
+        )
+        runCurrent()
+        val action = fixture.runtime.pendingActions().single()
+        assertEquals(listOf(action.actionId), fixture.actionNotifier.readyAttempts)
+
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.pause())
+        fixture.clock.advanceToWallMillis(action.expiresAtUtcMillis)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.resume())
+
+        assertTrue(fixture.runtime.pendingActions().isEmpty())
+        assertEquals(listOf(action.actionId), fixture.actionNotifier.readyAttempts)
+        assertEquals(
+            listOf("SURVEY_EXPIRED", "ACTION_FAILED"),
+            fixture.store.commits.last().events.map { it.type.eventType },
+        )
+        assertEquals(
+            ActionExecutionFailure.EXPIRED.name,
+            fixture.store.commits.last().events.last().fields["failure_reason"],
+        )
+    }
+
+    @Test
+    fun surveyOpenDismissAndSubmitAreOneDurableActionLifecycle() = runTest {
+        val fixture = fixture(backgroundScope)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        fixture.runtime.emitBatch(
+            requireNotNull(fixture.runtime.captureToken()),
+            batteryBatch(fixture.clock.now()),
+        )
+        runCurrent()
+        val action = fixture.runtime.pendingActions().single()
+
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.openSurvey(action.actionId, "prompt"))
+        val opened = fixture.runtime.pendingActions().single()
+        assertEquals(RuntimeActionState.OPENED, opened.state)
+        assertNotNull(opened.openedAt)
+        assertTrue(fixture.store.commits.last().events.any { it.type.eventType == "SURVEY_OPENED" })
+
+        val revisionBeforeDismiss = fixture.runtime.snapshot.value.revision
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.dismissSurvey(action.actionId, "prompt"))
+        assertEquals(revisionBeforeDismiss, fixture.runtime.snapshot.value.revision)
+        assertEquals(RuntimeActionState.OPENED, fixture.runtime.pendingActions().single().state)
+
+        assertEquals(
+            RuntimeCommandResult.Success,
+            fixture.runtime.submitSurvey(action.actionId, "prompt", "check-in", "{}"),
+        )
+        assertTrue(fixture.runtime.pendingActions().isEmpty())
+        assertEquals(
+            listOf("SURVEY_SUBMITTED", "ACTION_SUCCEEDED"),
+            fixture.store.commits.last().events.map { it.type.eventType },
+        )
+        assertEquals(
+            RuntimeCommandResult.Rejected(RuntimeCommandRejection.ACTION_ALREADY_TERMINAL),
+            fixture.runtime.openSurvey(action.actionId, "prompt"),
+        )
+    }
+
+    @Test
+    fun surveyExpirationIsDurableAndRequiresTheAvailabilityDeadline() = runTest {
+        val fixture = fixture(backgroundScope)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        fixture.runtime.emitBatch(
+            requireNotNull(fixture.runtime.captureToken()),
+            batteryBatch(fixture.clock.now()),
+        )
+        runCurrent()
+        val action = fixture.runtime.pendingActions().single()
+
+        assertEquals(
+            RuntimeCommandResult.Rejected(RuntimeCommandRejection.INVALID_STATE),
+            fixture.runtime.expireSurvey(action.actionId, "prompt"),
+        )
+        fixture.clock.advanceMillis(301_000)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.expireSurvey(action.actionId, "prompt"))
+        assertTrue(fixture.runtime.pendingActions().isEmpty())
+        assertEquals(
+            listOf("SURVEY_EXPIRED", "ACTION_FAILED"),
+            fixture.store.commits.last().events.map { it.type.eventType },
+        )
+    }
+
+    @Test
+    fun uploadAcknowledgementAtomicallyAdvancesTheWatermarkAndReplaysIdempotently() = runTest {
+        val fixture = fixture(backgroundScope)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        val throughCommit = fixture.runtime.snapshot.value.revision
+        val bundleId = "123e4567-e89b-42d3-a456-426614174099"
+        val bundleDigest = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+        assertEquals(
+            RuntimeCommandResult.Success,
+            fixture.runtime.acknowledgeUpload(bundleId, 1, throughCommit, bundleDigest),
+        )
+        assertEquals(throughCommit, fixture.runtime.snapshot.value.uploadedThroughCommit)
+        assertEquals(EngineInputKind.UPLOAD_ACKNOWLEDGEMENT, fixture.store.commits.last().inputKind)
+        val acknowledgedRevision = fixture.runtime.snapshot.value.revision
+
+        assertEquals(
+            RuntimeCommandResult.Success,
+            fixture.runtime.acknowledgeUpload(bundleId, 1, throughCommit, bundleDigest),
+        )
+        assertEquals(acknowledgedRevision, fixture.runtime.snapshot.value.revision)
+        fixture.runtime.close()
+
+        val recovered = fixture(backgroundScope, fixture.store)
+        assertTrue(recovered.runtime.initialize() is RuntimeInitializationResult.Ready)
+        assertEquals(throughCommit, recovered.runtime.snapshot.value.uploadedThroughCommit)
+        assertEquals(
+            RuntimeCommandResult.Success,
+            recovered.runtime.acknowledgeUpload(bundleId, 1, throughCommit, bundleDigest),
+        )
+        assertEquals(acknowledgedRevision, recovered.runtime.snapshot.value.revision)
+        assertEquals(
+            RuntimeCommandResult.Rejected(RuntimeCommandRejection.UPLOAD_RECEIPT_MISMATCH),
+            recovered.runtime.acknowledgeUpload(
+                "123e4567-e89b-42d3-a456-426614174098",
+                1,
+                throughCommit,
+                bundleDigest,
+            ),
+        )
+    }
+
+    @Test
+    fun clockDiscontinuityCommitsQualityGapWithoutPausingOrResettingActiveClock() = runTest {
+        val fixture = fixture(backgroundScope)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val activeBefore = fixture.runtime.snapshot.value.activeRunningElapsedNanos
+
+        fixture.clock.advanceMillis(10_000)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.onClockDiscontinuity())
+
+        assertEquals(ExperimentState.RUNNING, fixture.runtime.snapshot.value.state)
+        assertTrue(fixture.runtime.snapshot.value.activeRunningElapsedNanos > activeBefore)
+        assertTrue(fixture.store.commits.flatMap(EngineCommit::events).any {
+            it.type.eventType == "SOURCE_QUALITY_GAP" && it.fields["reason"] == "WALL_CLOCK_CHANGED"
+        })
+        assertEquals(true, fixture.store.runtime?.clockCheckpoint?.deadlineUtcTrusted)
+    }
+
+    @Test
+    fun signedDurationClosesAdmissionAtTheExactDeadlineAndLateWakeCompletes() = runTest {
+        val fixture = fixture(backgroundScope, durationSeconds = 1)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val token = requireNotNull(fixture.runtime.captureToken())
+        val timer = fixture.runtime.pendingTimers().single { it.producerKey == "study-deadline" }
+        val target = timer.target as TimerTarget.SameBootMonotonic
+
+        fixture.clock.advanceToElapsedNanos(target.elapsedRealtimeNanos)
+
+        assertNull(fixture.runtime.captureToken())
+        assertEquals(
+            EmitBatchResult.RejectedByAdmissionGate,
+            fixture.runtime.emitBatch(token, batteryBatch(fixture.clock.now())),
+        )
+        fixture.clock.advanceMillis(5_000)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.onTimerDue(timer.id, timer.generation))
+        assertEquals(ExperimentState.COMPLETED, fixture.runtime.snapshot.value.state)
+        assertNull(fixture.runtime.captureToken())
+        assertTrue(fixture.runtime.pendingTimers().none { it.producerKey == "study-deadline" })
+        assertTrue(fixture.store.commits.flatMap(EngineCommit::events).any {
+            it.type.eventType == "TIMER_DUE" && it.fields["producer_key"] == "study-deadline"
+        })
+    }
+
+    @Test
+    fun pausedRebootWithTrustedUtcRecordsGapAndCanResumeWithoutBackfill() = runTest {
+        val store = InMemoryStudyStore()
+        val first = fixture(backgroundScope, store)
+        first.runtime.initialize()
+        completeSetup(first.runtime)
+        first.runtime.start()
+        first.runtime.pause()
+        first.runtime.close()
+        val rebootedClock = FakeClocks("boot-after-reboot", trustedUtcAvailable = true)
+        val recovered = fixture(backgroundScope, store, clock = rebootedClock)
+
+        assertTrue(recovered.runtime.initialize() is RuntimeInitializationResult.Ready)
+        assertTrue(store.commits.last().events.any {
+            it.type.eventType == "SOURCE_QUALITY_GAP" && it.fields["reason"] == "PROCESS_RECOVERY"
+        })
+        assertEquals(RuntimeCommandResult.Success, recovered.runtime.resume())
+        assertEquals(ExperimentState.RUNNING, recovered.runtime.snapshot.value.state)
+        assertTrue(store.runtime?.sourceCheckpoints?.isEmpty() == true)
+    }
+
+    @Test
+    fun pausedRebootWithoutTrustedUtcDeniesResumeButAllowsCompleteAndWithdraw() = runTest {
+        suspend fun pausedStore(): InMemoryStudyStore {
+            val store = InMemoryStudyStore()
+            val first = fixture(backgroundScope, store)
+            first.runtime.initialize()
+            completeSetup(first.runtime)
+            first.runtime.start()
+            first.runtime.pause()
+            first.runtime.close()
+            return store
         }
 
-        fun captureToken(): AdmissionToken? = context.eventSink.captureToken()
+        val completeStore = pausedStore()
+        val completeRuntime = fixture(
+            backgroundScope,
+            completeStore,
+            clock = FakeClocks("boot-complete", trustedUtcAvailable = false),
+        ).runtime
+        completeRuntime.initialize()
+        assertEquals(
+            RuntimeCommandResult.Rejected(RuntimeCommandRejection.INVALID_STATE),
+            completeRuntime.resume(),
+        )
+        assertEquals(RuntimeCommandResult.Success, completeRuntime.complete())
+        assertEquals(ExperimentState.COMPLETED, completeRuntime.snapshot.value.state)
+        completeRuntime.close()
 
-        suspend fun emit(
-            type: String,
-            collectorId: String = descriptor.id,
-            schemaVersion: Int = descriptor.payloadSchemaVersion,
-            fields: Map<String, String> = mapOf("source" to "test"),
-        ): EmitResult {
-            val token = captureToken() ?: return EmitResult.RejectedByAdmissionGate
-            return emitWithToken(token, type, collectorId, schemaVersion, fields)
+        val withdrawStore = pausedStore()
+        val withdrawRuntime = fixture(
+            backgroundScope,
+            withdrawStore,
+            clock = FakeClocks("boot-withdraw", trustedUtcAvailable = false),
+        ).runtime
+        withdrawRuntime.initialize()
+        assertEquals(RuntimeCommandResult.Success, withdrawRuntime.withdraw())
+        assertEquals(ExperimentState.WITHDRAWN, withdrawRuntime.snapshot.value.state)
+    }
+
+    @Test
+    fun runningRebootWithoutTrustedUtcPreservesReliableAnchorDropsBacklogAndDeniesResume() = runTest {
+        suspend fun runningStoreWithRetrospectiveCursor(): Pair<InMemoryStudyStore, String> {
+            val first = retrospectiveFixture(backgroundScope)
+            first.runtime.initialize()
+            completeSetup(first.runtime)
+            first.runtime.start()
+            val oldBoot = requireNotNull(first.store.runtime?.clockCheckpoint).anchor.bootSessionId
+            assertTrue(
+                first.runtime.advanceCoverage(
+                    requireNotNull(first.runtime.captureToken()),
+                    CoverageAdvance(
+                        USAGE_SOURCE,
+                        1,
+                        1,
+                        0,
+                        SourceCoverage(SourceClockBasis.SOURCE_WALL_TIME, "0", "100"),
+                    ),
+                ) is EmitBatchResult.Accepted,
+            )
+            assertNotNull(first.store.runtime?.sourceCheckpoints?.get(USAGE_SOURCE))
+            first.runtime.close()
+            return first.store to oldBoot
         }
 
-        suspend fun emitWithToken(
-            token: AdmissionToken,
-            type: String,
-            collectorId: String = descriptor.id,
-            schemaVersion: Int = descriptor.payloadSchemaVersion,
-            fields: Map<String, String> = mapOf("source" to "test"),
-        ): EmitResult {
-            return context.eventSink.emit(
-                token,
-                EventDraft(
-                    collectorId = collectorId,
-                    payloadSchemaVersion = schemaVersion,
-                    observedTime = clocks.now(),
-                    payloadType = type,
-                    fields = fields,
+        val (completeStore, oldBoot) = runningStoreWithRetrospectiveCursor()
+        val complete = retrospectiveFixture(
+            backgroundScope,
+            store = completeStore,
+            clock = FakeClocks("untrusted-recovery", trustedUtcAvailable = false),
+        )
+        assertTrue(complete.runtime.initialize() is RuntimeInitializationResult.Ready)
+        assertEquals(ExperimentState.PAUSED, complete.runtime.snapshot.value.state)
+        assertEquals(oldBoot, completeStore.runtime?.clockCheckpoint?.anchor?.bootSessionId)
+        assertNull(completeStore.runtime?.sourceCheckpoints?.get(USAGE_SOURCE))
+        assertEquals(
+            RuntimeCommandResult.Rejected(RuntimeCommandRejection.INVALID_STATE),
+            complete.runtime.resume(),
+        )
+        assertEquals(RuntimeCommandResult.Success, complete.runtime.complete())
+        assertEquals(ExperimentState.COMPLETED, complete.runtime.snapshot.value.state)
+        complete.runtime.close()
+
+        val withdrawStore = runningStoreWithRetrospectiveCursor().first
+        val withdraw = retrospectiveFixture(
+            backgroundScope,
+            store = withdrawStore,
+            clock = FakeClocks("untrusted-withdraw", trustedUtcAvailable = false),
+        )
+        assertTrue(withdraw.runtime.initialize() is RuntimeInitializationResult.Ready)
+        assertEquals(RuntimeCommandResult.Success, withdraw.runtime.withdraw())
+        assertEquals(ExperimentState.WITHDRAWN, withdraw.runtime.snapshot.value.state)
+    }
+
+    @Test
+    fun runningRebootWithTrustedUtcReanchorsAndCanResumeWithoutBackfill() = runTest {
+        val first = retrospectiveFixture(backgroundScope)
+        first.runtime.initialize()
+        completeSetup(first.runtime)
+        first.runtime.start()
+        assertTrue(
+            first.runtime.advanceCoverage(
+                requireNotNull(first.runtime.captureToken()),
+                CoverageAdvance(
+                    USAGE_SOURCE,
+                    1,
+                    1,
+                    0,
+                    SourceCoverage(SourceClockBasis.SOURCE_WALL_TIME, "0", "100"),
                 ),
+            ) is EmitBatchResult.Accepted,
+        )
+        val store = first.store
+        first.runtime.close()
+        val recovered = retrospectiveFixture(
+            backgroundScope,
+            store = store,
+            clock = FakeClocks("trusted-recovery", trustedUtcAvailable = true),
+        )
+
+        assertTrue(recovered.runtime.initialize() is RuntimeInitializationResult.Ready)
+        assertEquals(ExperimentState.PAUSED, recovered.runtime.snapshot.value.state)
+        assertEquals("trusted-recovery", store.runtime?.clockCheckpoint?.anchor?.bootSessionId)
+        assertNull(store.runtime?.sourceCheckpoints?.get(USAGE_SOURCE))
+        assertEquals(RuntimeCommandResult.Success, recovered.runtime.resume())
+        assertEquals(ExperimentState.RUNNING, recovered.runtime.snapshot.value.state)
+    }
+
+    @Test
+    fun trustedRunningRecoveryPastSignedDurationCompletesWithoutOpeningAdmission() = runTest {
+        val first = fixture(backgroundScope, durationSeconds = 1)
+        first.runtime.initialize()
+        completeSetup(first.runtime)
+        first.runtime.start()
+        val store = first.store
+        first.runtime.close()
+        val recovered = fixture(
+            backgroundScope,
+            store,
+            durationSeconds = 1,
+            clock = FakeClocks(
+                bootSessionId = "trusted-late-recovery",
+                trustedUtcAvailable = true,
+                wallBaseMillis = 1_700_000_100_000L,
+            ),
+        )
+
+        assertTrue(recovered.runtime.initialize() is RuntimeInitializationResult.Ready)
+        assertEquals(ExperimentState.COMPLETED, recovered.runtime.snapshot.value.state)
+        assertNull(recovered.runtime.captureToken())
+        assertTrue(store.commits.flatMap(EngineCommit::events).any {
+            it.type.eventType == "TIMER_DUE" && it.fields["producer_key"] == "study-deadline"
+        })
+    }
+
+    @Test
+    fun retrospectiveBarrierCommitsTheExactFlushCursorWithZeroEventCoverage() = runTest {
+        val store = InMemoryStudyStore()
+        val profile = SignedResourceProfile("continuous", "{\"mode\":\"continuous\"}".toByteArray())
+        val key = ResourceKey(ResourceKind.COLLECTOR, USAGE_SOURCE.value)
+        val program = AutomationCompiler(EventContractRegistry { null }).compile(
+            AutomationCompilerInput(
+                configurationSha256 = CONFIG_DIGEST,
+                studyDurationSeconds = 3_600,
+                resources = listOf(
+                    DeclaredResource(key, true, mapOf("continuous" to profile.expectedSha256.value)),
+                ),
+                interventions = emptyList(),
+                automations = listOf(
+                    ResourceBindingAutomation(
+                        "usage-binding",
+                        key,
+                        listOf(ResourceConditionCase(StateCondition.StudySessionActive, "continuous")),
+                        "continuous",
+                    ),
+                ),
+            ),
+        ).let { result ->
+            (result as? CompilationResult.Success)?.program
+                ?: error("Compilation failed: ${(result as CompilationResult.Failure).issues}")
+        }
+        val actuator = RetrospectiveActuator(key, USAGE_SOURCE)
+        val runtime = ExperimentRuntime(
+            study = RuntimeStudyIdentity("experiment-one", "configuration-one", CONFIG_DIGEST, 3_600),
+            store = store,
+            program = program,
+            surveyInterventionIds = emptySet(),
+            resourceHosts = listOf(RuntimeResourceHost(key, true, mapOf("continuous" to profile), actuator)),
+            clocks = FakeClocks(),
+            scope = backgroundScope,
+            zoneId = { "UTC" },
+            timerProducer = RuntimeTimerProducer { TimerProductionResult.Deferred },
+            entropy = DeterministicEntropy(),
+        )
+        actuator.sink = runtime
+        runtime.initialize()
+        completeSetup(runtime)
+        runtime.start()
+
+        assertEquals(RuntimeCommandResult.Success, runtime.pause())
+
+        val checkpoint = requireNotNull(store.runtime).sourceCheckpoints.getValue(USAGE_SOURCE)
+        assertEquals("0", checkpoint.coverage?.startInclusive)
+        val observation = store.commits.flatMap(EngineCommit::sourceObservations).single()
+        assertEquals(observation.coverage?.endExclusive, checkpoint.coverage?.endExclusive)
+        assertEquals(checkpoint.coverage?.endExclusive, checkpoint.cursor)
+        assertEquals(0, observation.eventCount)
+        assertEquals(cool.jacoblin.particeps.core.model.ObservationAdmissionKind.BARRIER_FLUSH, observation.admissionKind)
+    }
+
+    @Test
+    fun wallClockGapDropsRetrospectiveCursorWithoutFlushingBacklogAndRotatesEpoch() = runTest {
+        val (runtime, store, actuator, clock) = retrospectiveFixture(backgroundScope)
+        runtime.initialize()
+        completeSetup(runtime)
+        runtime.start()
+        val oldEpoch = requireNotNull(runtime.snapshot.value.conditionEpochId)
+        val oldToken = requireNotNull(runtime.captureToken())
+        assertTrue(
+            runtime.advanceCoverage(
+                oldToken,
+                CoverageAdvance(
+                    USAGE_SOURCE,
+                    1,
+                    1,
+                    0,
+                    SourceCoverage(SourceClockBasis.SOURCE_WALL_TIME, "0", "100"),
+                ),
+            ) is EmitBatchResult.Accepted,
+        )
+        assertNotNull(store.runtime?.sourceCheckpoints?.get(USAGE_SOURCE))
+
+        clock.advanceMillis(10_000)
+        assertEquals(RuntimeCommandResult.Success, runtime.onClockDiscontinuity())
+
+        assertEquals(0, actuator.flushCalls)
+        assertNull(store.runtime?.sourceCheckpoints?.get(USAGE_SOURCE))
+        assertNotEquals(oldEpoch, runtime.snapshot.value.conditionEpochId)
+        assertEquals(2uL, resourceStates(store).single().desiredGeneration.value)
+        assertEquals(
+            EmitBatchResult.RejectedByAdmissionGate,
+            runtime.advanceCoverage(
+                oldToken,
+                CoverageAdvance(
+                    USAGE_SOURCE,
+                    1,
+                    1,
+                    1,
+                    SourceCoverage(SourceClockBasis.SOURCE_WALL_TIME, "100", "200"),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun elapsedWallClockGapCompletesWithoutFlushingRetrospectiveBacklog() = runTest {
+        val (runtime, store, actuator, clock) = retrospectiveFixture(backgroundScope, durationSeconds = 1)
+        runtime.initialize()
+        completeSetup(runtime)
+        runtime.start()
+        val token = requireNotNull(runtime.captureToken())
+        assertTrue(
+            runtime.advanceCoverage(
+                token,
+                CoverageAdvance(
+                    USAGE_SOURCE,
+                    1,
+                    1,
+                    0,
+                    SourceCoverage(SourceClockBasis.SOURCE_WALL_TIME, "0", "100"),
+                ),
+            ) is EmitBatchResult.Accepted,
+        )
+
+        clock.advanceMillis(10_000)
+        assertEquals(RuntimeCommandResult.Success, runtime.onClockDiscontinuity())
+
+        assertEquals(ExperimentState.COMPLETED, runtime.snapshot.value.state)
+        assertEquals(0, actuator.flushCalls)
+        assertNull(store.runtime?.sourceCheckpoints?.get(USAGE_SOURCE))
+        assertNull(runtime.captureToken())
+        assertTrue(store.commits.flatMap(EngineCommit::events).any {
+            it.type.eventType == "SOURCE_QUALITY_GAP" && it.fields["reason"] == "WALL_CLOCK_CHANGED"
+        })
+        assertTrue(store.commits.flatMap(EngineCommit::events).any {
+            it.type.eventType == "TIMER_DUE" && it.fields["producer_key"] == "study-deadline"
+        })
+    }
+
+    @Test
+    fun retrospectiveInFlightPollPrecedesItsExactBoundaryFlushWithoutOrdinalGap() = runTest {
+        val store = InMemoryStudyStore()
+        val profile = SignedResourceProfile("continuous", "{\"mode\":\"continuous\"}".toByteArray())
+        val key = ResourceKey(ResourceKind.COLLECTOR, USAGE_SOURCE.value)
+        val program = AutomationCompiler(EventContractRegistry { null }).compile(
+            AutomationCompilerInput(
+                configurationSha256 = CONFIG_DIGEST,
+                studyDurationSeconds = 3_600,
+                resources = listOf(
+                    DeclaredResource(key, true, mapOf("continuous" to profile.expectedSha256.value)),
+                ),
+                interventions = emptyList(),
+                automations = listOf(
+                    ResourceBindingAutomation(
+                        "usage-binding",
+                        key,
+                        listOf(ResourceConditionCase(StateCondition.StudySessionActive, "continuous")),
+                        "continuous",
+                    ),
+                ),
+            ),
+        ).let { result ->
+            (result as? CompilationResult.Success)?.program
+                ?: error("Compilation failed: ${(result as CompilationResult.Failure).issues}")
+        }
+        val actuator = RetrospectiveActuator(key, USAGE_SOURCE).apply {
+            emitInFlightPollOnSuspend = true
+        }
+        val runtime = ExperimentRuntime(
+            study = RuntimeStudyIdentity("experiment-one", "configuration-one", CONFIG_DIGEST, 3_600),
+            store = store,
+            program = program,
+            surveyInterventionIds = emptySet(),
+            resourceHosts = listOf(RuntimeResourceHost(key, true, mapOf("continuous" to profile), actuator)),
+            clocks = FakeClocks(),
+            scope = backgroundScope,
+            zoneId = { "UTC" },
+            timerProducer = RuntimeTimerProducer { TimerProductionResult.Deferred },
+            entropy = DeterministicEntropy(),
+        )
+        actuator.sink = runtime
+        runtime.initialize()
+        completeSetup(runtime)
+        runtime.start()
+
+        assertEquals(RuntimeCommandResult.Success, runtime.pause())
+
+        val observations = store.commits.flatMap(EngineCommit::sourceObservations)
+        assertEquals(listOf(0L, 1L), observations.map { it.producerOrdinal })
+        assertEquals(
+            listOf(
+                cool.jacoblin.particeps.core.model.ObservationAdmissionKind.NORMAL,
+                cool.jacoblin.particeps.core.model.ObservationAdmissionKind.BARRIER_FLUSH,
+            ),
+            observations.map { it.admissionKind },
+        )
+        assertEquals(observations[0].coverage?.endExclusive, observations[1].coverage?.startInclusive)
+        assertEquals(observations[1].coverage?.endExclusive, store.runtime?.sourceCheckpoints?.get(USAGE_SOURCE)?.cursor)
+    }
+
+    @Test
+    fun durablyAcceptedBoundaryFlushIsRecoveredWithItsCoverageAfterCrash() = runTest {
+        val store = InMemoryStudyStore()
+        val profile = SignedResourceProfile("continuous", "{\"mode\":\"continuous\"}".toByteArray())
+        val key = ResourceKey(ResourceKind.COLLECTOR, USAGE_SOURCE.value)
+        val program = AutomationCompiler(EventContractRegistry { null }).compile(
+            AutomationCompilerInput(
+                configurationSha256 = CONFIG_DIGEST,
+                studyDurationSeconds = 3_600,
+                resources = listOf(DeclaredResource(key, true, mapOf("continuous" to profile.expectedSha256.value))),
+                interventions = emptyList(),
+                automations = listOf(
+                    ResourceBindingAutomation(
+                        "usage-binding",
+                        key,
+                        listOf(ResourceConditionCase(StateCondition.StudySessionActive, "continuous")),
+                        "continuous",
+                    ),
+                ),
+            ),
+        ).let { result ->
+            (result as? CompilationResult.Success)?.program
+                ?: error("Compilation failed: ${(result as CompilationResult.Failure).issues}")
+        }
+        fun runtime(actuator: RetrospectiveActuator, clock: FakeClocks) = ExperimentRuntime(
+            study = RuntimeStudyIdentity("experiment-one", "configuration-one", CONFIG_DIGEST, 3_600),
+            store = store,
+            program = program,
+            surveyInterventionIds = emptySet(),
+            resourceHosts = listOf(RuntimeResourceHost(key, true, mapOf("continuous" to profile), actuator)),
+            clocks = clock,
+            scope = backgroundScope,
+            zoneId = { "UTC" },
+            timerProducer = RuntimeTimerProducer { TimerProductionResult.Deferred },
+            entropy = DeterministicEntropy(),
+        ).also { actuator.sink = it }
+        val firstClock = FakeClocks()
+        val first = runtime(RetrospectiveActuator(key, USAGE_SOURCE), firstClock)
+        first.initialize()
+        completeSetup(first)
+        first.start()
+        val epoch = requireNotNull(first.snapshot.value.conditionEpochId)
+        val boundary = firstClock.now()
+        val pending = PendingEngineInput(
+            conditionEpochId = epoch,
+            submissions = listOf(
+                PendingSourceSubmission(
+                    sourceId = USAGE_SOURCE,
+                    schemaVersion = 1,
+                    resourceGeneration = 1,
+                    producerOrdinal = 0,
+                    admissionKind = cool.jacoblin.particeps.core.model.ObservationAdmissionKind.BARRIER_FLUSH,
+                    events = emptyList(),
+                    coverage = SourceCoverage(
+                        SourceClockBasis.SOURCE_WALL_TIME,
+                        "0",
+                        boundary.wallTimeUtcMillis.toString(),
+                    ),
+                ),
+            ),
+            stagedAt = boundary,
+            encodedSha256 = ZERO_DIGEST,
+        ).withComputedDigest()
+        store.stagePendingInput(pending)
+        first.close()
+
+        val recoveryClock = FakeClocks.continuingAfter(
+            requireNotNull(store.runtime?.clockCheckpoint).anchor,
+        )
+        val recovered = runtime(RetrospectiveActuator(key, USAGE_SOURCE), recoveryClock)
+        assertTrue(recovered.initialize() is RuntimeInitializationResult.Ready)
+        val commit = store.commits.single { it.consumedPendingInputSha256 == pending.encodedSha256 }
+        val observation = commit.sourceObservations.single()
+        assertEquals(cool.jacoblin.particeps.core.model.ObservationAdmissionKind.BARRIER_FLUSH, observation.admissionKind)
+        assertEquals(pending.submissions.single().coverage, observation.coverage)
+        assertEquals(0, observation.eventCount)
+    }
+
+    @Test
+    fun timerDrivenBarrierReducesNonEmptyRetrospectiveFlushAndTimerCausalInputTogether() = runTest {
+        val store = InMemoryStudyStore()
+        val usageProfile = SignedResourceProfile("continuous", "{\"mode\":\"continuous\"}".toByteArray())
+        val baseline = SignedResourceProfile("baseline", "{\"id\":\"baseline\"}".toByteArray())
+        val slow = SignedResourceProfile("slow", "{\"id\":\"slow\"}".toByteArray())
+        val usageKey = ResourceKey(ResourceKind.COLLECTOR, USAGE_SOURCE.value)
+        val trafficKey = ResourceKey(ResourceKind.ACTUATOR, "traffic-shaping.v1")
+        val program = AutomationCompiler(EventContractRegistry { null }).compile(
+            AutomationCompilerInput(
+                configurationSha256 = CONFIG_DIGEST,
+                studyDurationSeconds = 3_600,
+                resources = listOf(
+                    DeclaredResource(
+                        trafficKey,
+                        true,
+                        mapOf("baseline" to baseline.expectedSha256.value, "slow" to slow.expectedSha256.value),
+                    ),
+                    DeclaredResource(usageKey, true, mapOf("continuous" to usageProfile.expectedSha256.value)),
+                ),
+                interventions = emptyList(),
+                automations = listOf(
+                    ResourceBindingAutomation(
+                        "traffic-binding",
+                        trafficKey,
+                        listOf(
+                            ResourceConditionCase(
+                                StateCondition.ElapsedAtLeast(1, DurationClock.ACTIVE_RUNNING_TIME),
+                                "slow",
+                            ),
+                        ),
+                        "baseline",
+                    ),
+                    ResourceBindingAutomation(
+                        "usage-binding",
+                        usageKey,
+                        listOf(ResourceConditionCase(StateCondition.StudySessionActive, "continuous")),
+                        "continuous",
+                    ),
+                ),
+            ),
+        ).let { result ->
+            (result as? CompilationResult.Success)?.program
+                ?: error("Compilation failed: ${(result as CompilationResult.Failure).issues}")
+        }
+        val usage = RetrospectiveActuator(usageKey, USAGE_SOURCE).apply {
+            emitEventOnFlush = true
+        }
+        val traffic = FakeActuator(trafficKey)
+        val clock = FakeClocks()
+        val runtime = ExperimentRuntime(
+            study = RuntimeStudyIdentity("experiment-one", "configuration-one", CONFIG_DIGEST, 3_600),
+            store = store,
+            program = program,
+            surveyInterventionIds = emptySet(),
+            resourceHosts = listOf(
+                RuntimeResourceHost(usageKey, true, mapOf("continuous" to usageProfile), usage),
+                RuntimeResourceHost(trafficKey, true, mapOf("baseline" to baseline, "slow" to slow), traffic),
+            ),
+            clocks = clock,
+            scope = backgroundScope,
+            zoneId = { "UTC" },
+            timerProducer = RuntimeTimerProducer { TimerProductionResult.Deferred },
+            entropy = DeterministicEntropy(),
+        )
+        usage.sink = runtime
+        runtime.initialize()
+        completeSetup(runtime)
+        runtime.start()
+        val timer = runtime.pendingTimers().single { it.producerKey != "study-deadline" }
+        clock.advanceMillis(1_100)
+
+        assertEquals(RuntimeCommandResult.Success, runtime.onTimerDue(timer.id, timer.generation))
+
+        assertEquals("slow", traffic.lastDesired?.profile?.id)
+        val barrierCommit = store.commits.last { commit ->
+            commit.inputKind == EngineInputKind.TIMER_WAKE &&
+                commit.sourceObservations.any { it.sourceId == USAGE_SOURCE }
+        }
+        assertEquals(
+            cool.jacoblin.particeps.core.model.ObservationAdmissionKind.BARRIER_FLUSH,
+            barrierCommit.sourceObservations.single().admissionKind,
+        )
+        val usageIndex = barrierCommit.events.indexOfFirst { it.type.eventType == "ACTIVITY_RESUMED" }
+        val timerIndex = barrierCommit.events.indexOfFirst { it.type.eventType == "TIMER_DUE" }
+        assertTrue(usageIndex >= 0 && timerIndex > usageIndex)
+    }
+
+    @Test
+    fun sameSourceBarrierKeepsCausalOrdinalFirstButReducesExactFlushBeforeCausalEvent() = runTest {
+        val store = InMemoryStudyStore()
+        val usageProfile = SignedResourceProfile("continuous", "{\"mode\":\"continuous\"}".toByteArray())
+        val baseline = SignedResourceProfile("baseline", "{\"id\":\"baseline\"}".toByteArray())
+        val slow = SignedResourceProfile("slow", "{\"id\":\"slow\"}".toByteArray())
+        val usageKey = ResourceKey(ResourceKind.COLLECTOR, USAGE_SOURCE.value)
+        val trafficKey = ResourceKey(ResourceKind.ACTUATOR, "traffic-shaping.v1")
+        val pausedEvent = EventTypeKey(USAGE_SOURCE, 1, "ACTIVITY_PAUSED")
+        val resumedEvent = EventTypeKey(USAGE_SOURCE, 1, "ACTIVITY_RESUMED")
+        val program = AutomationCompiler(GeneratedEventContractRegistry).compile(
+            AutomationCompilerInput(
+                configurationSha256 = CONFIG_DIGEST,
+                studyDurationSeconds = 3_600,
+                resources = listOf(
+                    DeclaredResource(
+                        trafficKey,
+                        true,
+                        mapOf("baseline" to baseline.expectedSha256.value, "slow" to slow.expectedSha256.value),
+                    ),
+                    DeclaredResource(usageKey, true, mapOf("continuous" to usageProfile.expectedSha256.value)),
+                ),
+                interventions = emptyList(),
+                automations = listOf(
+                    ResourceBindingAutomation(
+                        "traffic-binding",
+                        trafficKey,
+                        listOf(
+                            ResourceConditionCase(
+                                StateCondition.EventLatch(
+                                    setWhen = listOf(EventMatcher(pausedEvent)),
+                                    resetWhen = listOf(EventMatcher(resumedEvent)),
+                                ),
+                                "slow",
+                            ),
+                        ),
+                        "baseline",
+                    ),
+                    ResourceBindingAutomation(
+                        "usage-binding",
+                        usageKey,
+                        listOf(ResourceConditionCase(StateCondition.StudySessionActive, "continuous")),
+                        "continuous",
+                    ),
+                ),
+            ),
+        ).let { result ->
+            (result as? CompilationResult.Success)?.program
+                ?: error("Compilation failed: ${(result as CompilationResult.Failure).issues}")
+        }
+        val usage = RetrospectiveActuator(usageKey, USAGE_SOURCE).apply { emitEventOnFlush = true }
+        val traffic = FakeActuator(trafficKey)
+        val clock = FakeClocks()
+        val runtime = ExperimentRuntime(
+            study = RuntimeStudyIdentity("experiment-one", "configuration-one", CONFIG_DIGEST, 3_600),
+            store = store,
+            program = program,
+            surveyInterventionIds = emptySet(),
+            resourceHosts = listOf(
+                RuntimeResourceHost(usageKey, true, mapOf("continuous" to usageProfile), usage),
+                RuntimeResourceHost(trafficKey, true, mapOf("baseline" to baseline, "slow" to slow), traffic),
+            ),
+            clocks = clock,
+            scope = backgroundScope,
+            zoneId = { "UTC" },
+            timerProducer = RuntimeTimerProducer { TimerProductionResult.Deferred },
+            entropy = DeterministicEntropy(),
+        ).also { usage.sink = it }
+        runtime.initialize()
+        completeSetup(runtime)
+        runtime.start()
+
+        assertTrue(usage.emitActivity("ACTIVITY_PAUSED", clock.now()) is EmitBatchResult.Accepted)
+        runCurrent()
+
+        val barrierCommit = store.commits.single { it.consumedPendingInputSha256 != null }
+        assertEquals(
+            listOf(USAGE_SOURCE, USAGE_SOURCE),
+            barrierCommit.sourceObservations.map { it.sourceId },
+        )
+        assertEquals(
+            listOf(
+                cool.jacoblin.particeps.core.model.ObservationAdmissionKind.NORMAL,
+                cool.jacoblin.particeps.core.model.ObservationAdmissionKind.BARRIER_FLUSH,
+            ),
+            barrierCommit.sourceObservations.map { it.admissionKind },
+        )
+        assertEquals(listOf(0L, 1L), barrierCommit.sourceObservations.map { it.producerOrdinal })
+        assertTrue(
+            requireNotNull(barrierCommit.sourceObservations[0].firstEventSequence) >
+                requireNotNull(barrierCommit.sourceObservations[1].firstEventSequence),
+        )
+        assertEquals(
+            listOf("ACTIVITY_RESUMED", "ACTIVITY_PAUSED"),
+            barrierCommit.events
+                .filter { it.type.sourceId == USAGE_SOURCE }
+                .map { it.type.eventType },
+        )
+        assertEquals("slow", traffic.lastDesired?.profile?.id)
+    }
+
+    @Test
+    fun pendingSlotAndDurableRunningStateRecoverOnlyAsSafetyPaused() = runTest {
+        val store = InMemoryStudyStore()
+        val first = fixture(backgroundScope, store, withTrafficAudit = true)
+        first.runtime.initialize()
+        completeSetup(first.runtime)
+        first.runtime.start()
+        val epoch = requireNotNull(first.runtime.snapshot.value.conditionEpochId)
+        val pending = PendingEngineInput(
+            conditionEpochId = epoch,
+            submissions = listOf(
+                PendingSourceSubmission(
+                    sourceId = BATTERY_SOURCE,
+                    schemaVersion = 1,
+                    resourceGeneration = 1,
+                    producerOrdinal = 0,
+                    admissionKind = cool.jacoblin.particeps.core.model.ObservationAdmissionKind.NORMAL,
+                    events = batteryBatch(first.clock.now()).events,
+                    coverage = null,
+                ),
+            ),
+            stagedAt = first.clock.now(),
+            encodedSha256 = ZERO_DIGEST,
+        ).withComputedDigest()
+        store.stagePendingInput(pending)
+        first.runtime.close()
+
+        val recovered = fixture(backgroundScope, store, withTrafficAudit = true)
+        val result = recovered.runtime.initialize()
+
+        assertTrue(result is RuntimeInitializationResult.Ready && result.recoveredFailClosed)
+        assertEquals(ExperimentState.PAUSED, recovered.runtime.snapshot.value.state)
+        assertNull(store.pending)
+        val recoveryCommit = store.commits.single { it.consumedPendingInputSha256 != null }
+        assertTrue(recoveryCommit.events.any { it.type.eventType == "STUDY_SAFETY_PAUSED" })
+        assertTrue(recoveryCommit.events.any { it.type.eventType == "SOURCE_QUALITY_GAP" })
+        assertTrue(recoveryCommit.events.any { it.type.eventType == "TIMER_RETIRED" })
+        assertEquals(EngineInputKind.RESOURCE_RESULT, store.commits.last().inputKind)
+        assertEquals(
+            listOf("study-deadline"),
+            recovered.runtime.pendingTimers().map(DurableTimer::producerKey),
+        )
+    }
+
+    @Test
+    fun acceptedPreDrainBatchIsInTheDurablePendingBundleBeforeBarrierCommit() = runTest {
+        val store = InMemoryStudyStore().apply { failPendingConsumption = true }
+        val fixture = fixture(backgroundScope, store)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val token = requireNotNull(fixture.runtime.captureToken())
+        val suspendEntered = CompletableDeferred<Unit>()
+        val continueSuspend = CompletableDeferred<Unit>()
+        fixture.traffic.suspendHook = {
+            suspendEntered.complete(Unit)
+            continueSuspend.await()
+        }
+        val causal = batteryBatch(fixture.clock.now())
+        val queued = batteryBatch(fixture.clock.now()).copy(
+            producerOrdinal = 1,
+            events = batteryBatch(fixture.clock.now()).events.map { event ->
+                event.copy(fields = event.fields + ("percentage" to "44"))
+            },
+        )
+
+        assertTrue(fixture.runtime.emitBatch(token, causal) is EmitBatchResult.Accepted)
+        runCurrent()
+        withContext(Dispatchers.Default) {
+            withTimeout(5_000) { suspendEntered.await() }
+        }
+        assertTrue(fixture.runtime.emitBatch(token, queued) is EmitBatchResult.Accepted)
+        assertEquals(listOf(0L, 1L), requireNotNull(store.pending).submissions.map { it.producerOrdinal })
+        continueSuspend.complete(Unit)
+        runCurrent()
+        assertNotNull(store.pending)
+        fixture.runtime.close()
+
+        store.failPendingConsumption = false
+        val recovered = fixture(backgroundScope, store)
+        assertTrue(recovered.runtime.initialize() is RuntimeInitializationResult.Ready)
+        val recoveryCommit = store.commits.single { it.consumedPendingInputSha256 != null }
+        assertEquals(listOf(0L, 1L), recoveryCommit.sourceObservations.map { it.producerOrdinal })
+        assertTrue(
+            requireNotNull(recoveryCommit.sourceObservations[0].firstEventSequence) >
+                requireNotNull(recoveryCommit.sourceObservations[1].firstEventSequence),
+        )
+        assertEquals(
+            listOf("44", "42"),
+            recoveryCommit.events.filter { it.type == BATTERY_EVENT }.map { it.fields.getValue("percentage") },
+        )
+    }
+
+    @Test
+    fun pendingBundleAllowsMaximumCausalBatchFollowedByExactZeroEventFlush() {
+        val now = ResearchTime(1_700_000_000_000L, 1_000_000_000L, "boot-test")
+        val event = batteryBatch(now).events.single()
+        val pending = PendingEngineInput(
+            conditionEpochId = ConditionEpochId("123e4567-e89b-42d3-a456-426614174010"),
+            submissions = listOf(
+                PendingSourceSubmission(
+                    BATTERY_SOURCE,
+                    1,
+                    1,
+                    0,
+                    cool.jacoblin.particeps.core.model.ObservationAdmissionKind.NORMAL,
+                    List(4_096) { event },
+                    null,
+                ),
+                PendingSourceSubmission(
+                    USAGE_SOURCE,
+                    1,
+                    1,
+                    0,
+                    cool.jacoblin.particeps.core.model.ObservationAdmissionKind.BARRIER_FLUSH,
+                    emptyList(),
+                    SourceCoverage(SourceClockBasis.SOURCE_WALL_TIME, "0", now.wallTimeUtcMillis.toString()),
+                ),
+            ),
+            stagedAt = now,
+            encodedSha256 = ZERO_DIGEST,
+        ).withComputedDigest()
+
+        assertEquals(4_096, pending.submissions.sumOf { it.events.size })
+        assertEquals(
+            cool.jacoblin.particeps.core.model.ObservationAdmissionKind.BARRIER_FLUSH,
+            pending.submissions.last().admissionKind,
+        )
+    }
+
+    private suspend fun completeSetup(runtime: ExperimentRuntime) {
+        assertEquals(RuntimeCommandResult.Success, runtime.markConfigurationVerified())
+        assertEquals(RuntimeCommandResult.Success, runtime.beginConsentReview())
+        assertEquals(RuntimeCommandResult.Success, runtime.acceptConsent())
+        assertEquals(RuntimeCommandResult.Success, runtime.markReady())
+    }
+
+    private fun fixture(
+        scope: kotlinx.coroutines.CoroutineScope,
+        store: InMemoryStudyStore = InMemoryStudyStore(),
+        withTrafficAudit: Boolean = false,
+        durationSeconds: Long = 3_600,
+        clock: FakeClocks? = null,
+        interventionRequired: Boolean = false,
+        actionNotifier: RecordingActionNotifier = RecordingActionNotifier(),
+    ): Fixture {
+        val runtimeClock = clock ?: store.runtime?.clockCheckpoint?.anchor?.let(FakeClocks::continuingAfter)
+            ?: FakeClocks()
+        val batteryProfile = SignedResourceProfile("continuous", "{\"mode\":\"continuous\"}".toByteArray())
+        val baseline = SignedResourceProfile("baseline", "{\"id\":\"baseline\"}".toByteArray())
+        val slow = SignedResourceProfile("slow", "{\"id\":\"slow\"}".toByteArray())
+        val batteryKey = ResourceKey(ResourceKind.COLLECTOR, BATTERY_SOURCE.value)
+        val trafficKey = ResourceKey(ResourceKind.ACTUATOR, "traffic-shaping.v1")
+        val compilerInput = AutomationCompilerInput(
+            configurationSha256 = CONFIG_DIGEST,
+            studyDurationSeconds = durationSeconds,
+            resources = listOf(
+                DeclaredResource(
+                    trafficKey,
+                    true,
+                    mapOf("baseline" to baseline.expectedSha256.value, "slow" to slow.expectedSha256.value),
+                ),
+                DeclaredResource(batteryKey, true, mapOf("continuous" to batteryProfile.expectedSha256.value)),
+            ),
+            interventions = listOf(InterventionDefinition("prompt", required = interventionRequired)),
+            automations = listOf(
+                ResourceBindingAutomation(
+                    "battery-binding",
+                    batteryKey,
+                    listOf(ResourceConditionCase(StateCondition.StudySessionActive, "continuous")),
+                    "continuous",
+                ),
+                OccurrenceAutomation(
+                    "notify-battery",
+                    Trigger.EventMatch(
+                        EventMatcher(
+                            BATTERY_EVENT,
+                            listOf(FieldPredicate("percentage", FieldOperator.EQ, value = "42")),
+                        ),
+                        EvaluationClock.OBSERVED_RESEARCH_TIME,
+                    ),
+                    guard = null,
+                    interventionId = "prompt",
+                    availabilitySeconds = 300,
+                    cooldown = null,
+                    maximumActivations = 1,
+                ),
+                ResourceBindingAutomation(
+                    "traffic-binding",
+                    trafficKey,
+                    listOf(
+                        ResourceConditionCase(
+                            StateCondition.EventLatch(
+                                setWhen = listOf(
+                                    EventMatcher(
+                                        BATTERY_EVENT,
+                                        listOf(FieldPredicate("percentage", FieldOperator.EQ, value = "42")),
+                                    ),
+                                ),
+                                resetWhen = listOf(
+                                    EventMatcher(
+                                        BATTERY_EVENT,
+                                        listOf(FieldPredicate("percentage", FieldOperator.EQ, value = "43")),
+                                    ),
+                                ),
+                            ),
+                            "slow",
+                        ),
+                    ),
+                    "baseline",
+                ),
+            ),
+        )
+        val eventContract = EventTypeContract(
+            key = BATTERY_EVENT,
+            sourceKind = EventSourceKind.COLLECTOR,
+            fields = mapOf(
+                "percentage" to FieldContract(
+                    ScalarType.INTEGER,
+                    FieldOperator.entries.toSet(),
+                    minimumInteger = BigInteger.ZERO,
+                    maximumInteger = BigInteger.valueOf(100),
+                ),
+            ),
+            triggerScope = TriggerScope.RESEARCHER,
+            deliveryMode = DeliveryMode.LIVE,
+            clockSupport = setOf(EventClockSupport.OBSERVED_RESEARCH_TIME),
+            conditionKinds = setOf(EventConditionKind.EVENT_MATCH),
+            presence = null,
+            rateBound = EventRateBound(60, 60),
+        )
+        val compilation = AutomationCompiler(EventContractRegistry { key -> eventContract.takeIf { it.key == key } })
+            .compile(compilerInput)
+        val program = (compilation as? CompilationResult.Success)?.program
+            ?: error("Compilation failed: ${(compilation as CompilationResult.Failure).issues}")
+        val battery = FakeActuator(batteryKey)
+        val traffic = FakeActuator(trafficKey)
+        val entropy = DeterministicEntropy()
+        val trafficAudit = FakeTrafficAuditSource(trafficKey).takeIf { withTrafficAudit }
+        val timerWakeups = RecordingTimerWakeups()
+        val runtime = ExperimentRuntime(
+            study = RuntimeStudyIdentity("experiment-one", "configuration-one", CONFIG_DIGEST, durationSeconds),
+            store = store,
+            program = program,
+            surveyInterventionIds = setOf("prompt"),
+            resourceHosts = listOf(
+                RuntimeResourceHost(batteryKey, true, mapOf("continuous" to batteryProfile), battery),
+                RuntimeResourceHost(
+                    trafficKey,
+                    true,
+                    mapOf("baseline" to baseline, "slow" to slow),
+                    traffic,
+                    trafficAudit,
+                ),
+            ),
+            clocks = runtimeClock,
+            scope = scope,
+            zoneId = { "UTC" },
+            timerProducer = RuntimeTimerProducer { TimerProductionResult.Deferred },
+            timerWakeups = timerWakeups,
+            actionNotifier = actionNotifier,
+            entropy = entropy,
+        )
+        return Fixture(runtime, store, battery, traffic, runtimeClock, timerWakeups, actionNotifier)
+    }
+
+    private fun retrospectiveFixture(
+        scope: kotlinx.coroutines.CoroutineScope,
+        durationSeconds: Long = 3_600,
+        store: InMemoryStudyStore = InMemoryStudyStore(),
+        clock: FakeClocks = FakeClocks(),
+    ): RetrospectiveFixture {
+        val profile = SignedResourceProfile("continuous", "{\"mode\":\"continuous\"}".toByteArray())
+        val key = ResourceKey(ResourceKind.COLLECTOR, USAGE_SOURCE.value)
+        val compilation = AutomationCompiler(EventContractRegistry { null }).compile(
+            AutomationCompilerInput(
+                configurationSha256 = CONFIG_DIGEST,
+                studyDurationSeconds = durationSeconds,
+                resources = listOf(
+                    DeclaredResource(key, true, mapOf("continuous" to profile.expectedSha256.value)),
+                ),
+                interventions = emptyList(),
+                automations = listOf(
+                    ResourceBindingAutomation(
+                        "usage-binding",
+                        key,
+                        listOf(ResourceConditionCase(StateCondition.StudySessionActive, "continuous")),
+                        "continuous",
+                    ),
+                ),
+            ),
+        )
+        val program = (compilation as? CompilationResult.Success)?.program
+            ?: error("Compilation failed: ${(compilation as CompilationResult.Failure).issues}")
+        val actuator = RetrospectiveActuator(key, USAGE_SOURCE)
+        val runtime = ExperimentRuntime(
+            study = RuntimeStudyIdentity(
+                "experiment-one",
+                "configuration-one",
+                CONFIG_DIGEST,
+                durationSeconds,
+            ),
+            store = store,
+            program = program,
+            surveyInterventionIds = emptySet(),
+            resourceHosts = listOf(
+                RuntimeResourceHost(key, true, mapOf("continuous" to profile), actuator),
+            ),
+            clocks = clock,
+            scope = scope,
+            zoneId = { "UTC" },
+            timerProducer = RuntimeTimerProducer { TimerProductionResult.Deferred },
+            entropy = DeterministicEntropy(),
+        ).also { actuator.sink = it }
+        return RetrospectiveFixture(runtime, store, actuator, clock)
+    }
+
+    private fun batteryBatch(now: ResearchTime) = SourceEventBatch(
+        sourceId = BATTERY_SOURCE,
+        schemaVersion = 1,
+        resourceGeneration = 1,
+        producerOrdinal = 0,
+        events = listOf(
+            EventDraft(
+                BATTERY_EVENT,
+                now,
+                mapOf(
+                    "charging_source" to "NONE",
+                    "charging_state" to "DISCHARGING",
+                    "percentage" to "42",
+                    "power_save_enabled" to "false",
+                ),
+            ),
+        ),
+    )
+
+    private data class Fixture(
+        val runtime: ExperimentRuntime,
+        val store: InMemoryStudyStore,
+        val battery: FakeActuator,
+        val traffic: FakeActuator,
+        val clock: FakeClocks,
+        val timerWakeups: RecordingTimerWakeups,
+        val actionNotifier: RecordingActionNotifier,
+    )
+
+    private data class RetrospectiveFixture(
+        val runtime: ExperimentRuntime,
+        val store: InMemoryStudyStore,
+        val actuator: RetrospectiveActuator,
+        val clock: FakeClocks,
+    )
+
+    private class RecordingTimerWakeups : TimerWakeupAdapter {
+        val scheduled = mutableListOf<DurableTimer>()
+        val retired = mutableListOf<String>()
+
+        override suspend fun schedule(timer: DurableTimer) {
+            scheduled += timer
+        }
+
+        override suspend fun retire(timerId: String, generation: ULong) {
+            retired += timerId
+        }
+    }
+
+    private class RecordingActionNotifier(
+        private val failReady: Boolean = false,
+    ) : ActionOutboxNotifier {
+        val readyAttempts = mutableListOf<String>()
+        val inactiveCalls = mutableListOf<List<String>>()
+
+        override suspend fun onActionReady(actionId: String) {
+            readyAttempts += actionId
+            if (failReady) throw IOException("fixture outbox rejection")
+        }
+
+        override suspend fun onActionsInactive(actionIds: List<String>) {
+            inactiveCalls += actionIds
+        }
+    }
+
+    private class FakeTrafficAuditSource(override val key: ResourceKey) : PeriodicResourceAuditSource {
+        override val sourceId = EventSourceId("traffic_shaping.v1")
+        override val schemaVersion = 1
+        override val intervalSeconds = 60L
+
+        override suspend fun audit(request: ResourceAuditRequest): ResourceAuditReceipt {
+            val common = mapOf(
+                "condition_epoch_id" to request.conditionEpochId.value,
+                "profile_id" to request.evidence.profileId,
+                "resource_generation" to request.evidence.generation.toString(),
+                "vpn_generation_id" to "123e4567-e89b-42d3-a456-426614174090",
+            )
+            val events = when (request) {
+                is ResourceAuditRequest.EpochActivated -> listOf(
+                    EventDraft(
+                        EventTypeKey(sourceId, schemaVersion, "TRAFFIC_SHAPING_PROFILE_APPLIED"),
+                        request.observedAt,
+                        common + mapOf(
+                            "activation_research_time" to request.activatedAt.json(),
+                            "applied_profile_sha256" to request.evidence.appliedProfileSha256.value,
+                            "signed_configuration_sha256" to request.signedConfigurationSha256.value,
+                            "target_package_list_sha256" to "b".repeat(64),
+                            "verification_completed_research_time" to request.observedAt.json(),
+                        ),
+                    ),
+                )
+                is ResourceAuditRequest.Periodic -> listOf(
+                    snapshot(request, common, "PERIODIC", request.logicalDeadline),
+                )
+                is ResourceAuditRequest.EpochBoundary -> listOf(
+                    snapshot(request, common, "EPOCH_BOUNDARY", request.boundary),
+                    EventDraft(
+                        EventTypeKey(sourceId, schemaVersion, "TRAFFIC_SHAPING_PROFILE_REMOVED"),
+                        request.observedAt,
+                        common + counters() + mapOf(
+                            "boundary_research_time" to request.boundary.json(),
+                            "removal_reason" to request.reason.name,
+                        ),
+                    ),
+                )
+            }
+            return ResourceAuditReceipt(request.evidence, events)
+        }
+
+        private fun snapshot(
+            request: ResourceAuditRequest,
+            common: Map<String, String>,
+            reason: String,
+            logicalDeadline: ResearchTime,
+        ) = EventDraft(
+            EventTypeKey(sourceId, schemaVersion, "TRAFFIC_SHAPING_SNAPSHOT"),
+            request.observedAt,
+            common + counters() + mapOf(
+                "logical_deadline_research_time" to logicalDeadline.json(),
+                "observation_research_time" to request.observedAt.json(),
+                "snapshot_reason" to reason,
+            ),
+        )
+
+        private fun counters() = mapOf(
+            "downlink_bytes" to "200",
+            "downlink_packets" to "2",
+            "downlink_throttled_nanoseconds" to "20",
+            "uplink_bytes" to "100",
+            "uplink_packets" to "1",
+            "uplink_throttled_nanoseconds" to "10",
+        )
+
+        private fun ResearchTime.json() =
+            "{\"boot_session_id\":\"$bootSessionId\",\"monotonic_time_nanos\":\"$elapsedRealtimeNanos\"," +
+                "\"wall_time_utc_millis\":\"$wallTimeUtcMillis\"}"
+    }
+
+    private class FakeClocks(
+        private var bootSessionId: String = "boot-test",
+        private var trustedUtcAvailable: Boolean = true,
+        private var nanos: Long = 1_000_000_000L,
+        private var wallBaseMillis: Long = 1_700_000_000_000L,
+    ) : ResearchClocks {
+        override fun now(): ResearchTime = ResearchTime(
+            wallBaseMillis + nanos / 1_000_000,
+            nanos,
+            bootSessionId,
+        )
+            .also { nanos += 1_000_000 }
+        override fun trustedUtcMillis(): Long? = now().wallTimeUtcMillis.takeIf { trustedUtcAvailable }
+
+        fun advanceMillis(millis: Long) {
+            require(millis >= 0)
+            nanos = Math.addExact(nanos, Math.multiplyExact(millis, 1_000_000L))
+        }
+
+        fun advanceToWallMillis(target: Long) {
+            val current = wallBaseMillis + nanos / 1_000_000L
+            require(target >= current)
+            advanceMillis(target - current)
+        }
+
+        fun advanceToElapsedNanos(target: Long) {
+            require(target >= nanos)
+            nanos = target
+        }
+
+        fun reboot(newBootSessionId: String, trustedUtc: Boolean) {
+            wallBaseMillis = now().wallTimeUtcMillis
+            nanos = 1_000_000_000L
+            bootSessionId = newBootSessionId
+            trustedUtcAvailable = trustedUtc
+        }
+
+        companion object {
+            fun continuingAfter(anchor: ResearchTime) = FakeClocks(
+                bootSessionId = anchor.bootSessionId,
+                trustedUtcAvailable = true,
+                nanos = Math.addExact(anchor.elapsedRealtimeNanos, 1_000_000L),
+                wallBaseMillis = anchor.wallTimeUtcMillis - anchor.elapsedRealtimeNanos / 1_000_000L,
             )
         }
     }
 
-    private class FakeCollector : Collector {
-        private val mutableHealth = MutableStateFlow(CollectorHealth(CollectorStatus.STOPPED))
-        override val health: StateFlow<CollectorHealth> = mutableHealth
-        override var requiresStop = false
-            private set
-        var startCount = 0
-        var pauseCount = 0
+    private class DeterministicEntropy : RuntimeEntropySource {
+        private var epochOrdinal = 0
+        override fun next(kind: RuntimeEntropyKind): String = when (kind) {
+            RuntimeEntropyKind.PARTICIPANT_INSTANCE_UUID -> "123e4567-e89b-42d3-a456-426614174001"
+            RuntimeEntropyKind.ACTIVITY_TOKEN_KEY -> "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            RuntimeEntropyKind.CONDITION_EPOCH_UUID -> when (epochOrdinal++) {
+                0 -> "123e4567-e89b-42d3-a456-426614174010"
+                1 -> "123e4567-e89b-42d3-a456-426614174011"
+                else -> "123e4567-e89b-42d3-a456-426614174012"
+            }
+        }
+    }
+
+    private class FakeActuator(override val key: ResourceKey) : StatefulResourceActuator {
+        override val supportsHotProfileSwap = true
+        var lastDesired: DesiredResourceState? = null
         var resumeCount = 0
-        var stopCount = 0
-        var admissionOpenedCount = 0
-        var failNextStartWithOwnedResources = false
-        var failNextPauseWithOwnedResources = false
-        var failNextResumeWithOwnedResources = false
-        var failNextStopWithOwnedResources = false
-        var beforePause: suspend () -> Unit = {}
-        var beforeStop: suspend () -> Unit = {}
-        var afterAdmissionOpened: suspend () -> Unit = {}
+        var suspendCount = 0
+        var releaseCount = 0
+        var failNextVerification = false
+        var invalidReleaseAttempts = 0
+        private var listener: ResourceTerminalFailureListener? = null
+        private var health = inactiveHealth(key)
+        var admissionProbe: (() -> AdmissionToken?)? = null
+        val tokensDuringResume = mutableListOf<AdmissionToken?>()
+        val tokensAfterAdmissionOpened = mutableListOf<AdmissionToken?>()
+        var suspendHook: (suspend () -> Unit)? = null
+        var resumeHook: (suspend () -> Unit)? = null
+        var admissionOpenedHook: (suspend () -> Unit)? = null
+        var releaseHook: (suspend () -> Unit)? = null
 
-        override suspend fun start() {
-            startCount += 1
-            requiresStop = true
-            if (failNextStartWithOwnedResources) {
-                failNextStartWithOwnedResources = false
-                mutableHealth.value = CollectorHealth(CollectorStatus.FAILED, "SOURCE_REGISTRATION_FAILED")
-                error("Start left collector resources requiring cleanup")
+        override fun setTerminalFailureListener(listener: ResourceTerminalFailureListener?) {
+            this.listener = listener
+        }
+
+        override suspend fun prepare(desired: DesiredResourceState, requestId: String): PrepareReceipt {
+            health = desiredHealth(desired, ResourceHealthStatus.PREPARED, applied = false)
+            return PrepareReceipt(
+                key,
+                desired.generation,
+                desired.profile?.id,
+                desired.profile?.expectedSha256,
+                null,
+                requestId,
+            )
+        }
+
+        override suspend fun suspendAt(desired: DesiredResourceState, boundary: ResearchTime): SuspendReceipt {
+            suspendCount++
+            health = desiredHealth(desired, ResourceHealthStatus.SUSPENDED, applied = true)
+            suspendHook?.invoke()
+            return SuspendReceipt(
+                key,
+                desired.generation,
+                desired.profile?.id,
+                desired.profile?.expectedSha256,
+                desired.profile?.expectedSha256,
+                boundary,
+            )
+        }
+
+        override suspend fun flushThrough(
+            desired: DesiredResourceState,
+            boundary: ResearchTime,
+            cursor: String?,
+        ): FlushReceipt = FlushReceipt(
+            key,
+            desired.generation,
+            desired.profile?.id,
+            desired.profile?.expectedSha256,
+            desired.profile?.expectedSha256,
+            boundary,
+            cursor,
+            complete = true,
+        )
+
+        override suspend fun apply(desired: DesiredResourceState): ApplyReceipt {
+            lastDesired = desired
+            health = desiredHealth(desired, ResourceHealthStatus.APPLIED, applied = true)
+            return ApplyReceipt(
+                key,
+                desired.generation,
+                desired.profile?.id,
+                desired.profile?.expectedSha256,
+                desired.profile?.expectedSha256,
+            )
+        }
+
+        override suspend fun verify(desired: DesiredResourceState): VerifyReceipt {
+            if (failNextVerification) {
+                failNextVerification = false
+                return VerifyReceipt(
+                    key,
+                    desired.generation,
+                    desired.profile?.id,
+                    desired.profile?.expectedSha256,
+                    desired.profile?.expectedSha256,
+                    healthy = false,
+                    failureReason = "FORGED_VERIFY",
+                )
             }
-            mutableHealth.value = CollectorHealth(CollectorStatus.ACTIVE)
+            return VerifyReceipt(
+                key,
+                desired.generation,
+                desired.profile?.id,
+                desired.profile?.expectedSha256,
+                desired.profile?.expectedSha256,
+                healthy = true,
+                failureReason = null,
+            )
         }
 
-        override suspend fun onAdmissionOpened() {
-            admissionOpenedCount += 1
-            afterAdmissionOpened()
+        override suspend fun resume(desired: DesiredResourceState): ResumeReceipt {
+            resumeCount++
+            require(lastDesired == desired)
+            tokensDuringResume += admissionProbe?.invoke()
+            health = desiredHealth(desired, ResourceHealthStatus.APPLIED, applied = true)
+            resumeHook?.invoke()
+            return ResumeReceipt(
+                key,
+                desired.generation,
+                desired.profile?.id,
+                desired.profile?.expectedSha256,
+                desired.profile?.expectedSha256,
+                resumed = true,
+                failureReason = null,
+            )
         }
 
-        override suspend fun pause() {
-            pauseCount += 1
-            beforePause()
-            if (failNextPauseWithOwnedResources) {
-                failNextPauseWithOwnedResources = false
-                error("Pause left collector resources requiring cleanup")
+        override suspend fun onAdmissionOpened(desired: DesiredResourceState): ResourceHealth {
+            require(lastDesired == desired)
+            tokensAfterAdmissionOpened += admissionProbe?.invoke()
+            admissionOpenedHook?.invoke()
+            return health
+        }
+
+        fun failTerminal(reason: String) {
+            listener?.onTerminalFailure(
+                cool.jacoblin.particeps.core.resource.ResourceTerminalFailure(
+                    key = key,
+                    generation = requireNotNull(lastDesired).generation,
+                    reason = reason,
+                ),
+            )
+        }
+
+        override suspend fun release(desired: DesiredResourceState): ReleaseReceipt {
+            releaseCount++
+            releaseHook?.invoke()
+            if (invalidReleaseAttempts > 0) {
+                invalidReleaseAttempts--
+                return ReleaseReceipt(
+                    key,
+                    desired.generation,
+                    desired.profile?.id,
+                    desired.profile?.expectedSha256,
+                    desired.profile?.expectedSha256,
+                    ReleaseEvidence.APPLIED,
+                    released = false,
+                )
             }
-            mutableHealth.value = CollectorHealth(CollectorStatus.PAUSED)
+            lastDesired = null
+            health = inactiveHealth(key)
+            return ReleaseReceipt(
+                key,
+                desired.generation,
+                desired.profile?.id,
+                desired.profile?.expectedSha256,
+                desired.profile?.expectedSha256,
+                ReleaseEvidence.APPLIED,
+                released = true,
+            )
         }
 
-        override suspend fun resume() {
-            resumeCount += 1
-            if (failNextResumeWithOwnedResources) {
-                failNextResumeWithOwnedResources = false
-                error("Resume did not establish a usable source")
+        override fun health(): ResourceHealth = health
+    }
+
+    private class BlockingFirstEventSink(
+        private val delegate: EventSink,
+    ) : EventSink {
+        val firstSubmissionEntered = CompletableDeferred<Unit>()
+        val releaseFirstSubmission = CompletableDeferred<Unit>()
+        private var submissionCount = 0
+
+        override fun captureToken(): AdmissionToken? = delegate.captureToken()
+
+        override fun captureBarrierFlushToken(boundary: ResearchTime): AdmissionToken? =
+            delegate.captureBarrierFlushToken(boundary)
+
+        override suspend fun emitBatch(token: AdmissionToken, batch: SourceEventBatch): EmitBatchResult {
+            if (submissionCount++ == 0) {
+                firstSubmissionEntered.complete(Unit)
+                releaseFirstSubmission.await()
             }
-            mutableHealth.value = CollectorHealth(CollectorStatus.ACTIVE)
+            return delegate.emitBatch(token, batch)
         }
 
-        override suspend fun stop() {
-            stopCount += 1
-            beforeStop()
-            if (failNextStopWithOwnedResources) {
-                failNextStopWithOwnedResources = false
-                mutableHealth.value = CollectorHealth(CollectorStatus.FAILED, "SOURCE_UNREGISTRATION_FAILED")
-                error("Stop left collector resources requiring cleanup")
+        override suspend fun advanceCoverage(
+            token: AdmissionToken,
+            advance: CoverageAdvance,
+        ): EmitBatchResult = delegate.advanceCoverage(token, advance)
+    }
+
+    private class RuntimeCallbackCollector(
+        context: CollectorContext,
+    ) : SerializedCallbackCollector(context, queueCapacity = 4) {
+        fun trigger(percentage: Int) = capture {
+            EventDraft(
+                BATTERY_EVENT,
+                context.clocks.now(),
+                mapOf(
+                    "charging_source" to "NONE",
+                    "charging_state" to "DISCHARGING",
+                    "percentage" to percentage.toString(),
+                    "power_save_enabled" to "false",
+                ),
+            )
+        }
+
+        override suspend fun registerSource() = SourceRegistrationResult.Registered
+
+        override suspend fun unregisterSource() = SourceTeardownResult.Released
+    }
+
+    private class RetrospectiveActuator(
+        override val key: ResourceKey,
+        private val sourceId: EventSourceId,
+    ) : StatefulResourceActuator {
+        override val supportsHotProfileSwap = false
+        lateinit var sink: cool.jacoblin.particeps.core.collector.EventSink
+        private var desired: DesiredResourceState? = null
+        private var producerOrdinal = 0L
+        private var admissionToken: AdmissionToken? = null
+        private var localCursor = "0"
+        var emitInFlightPollOnSuspend = false
+        var emitEventOnFlush = false
+        var flushCalls = 0
+
+        suspend fun emitActivity(eventType: String, now: ResearchTime): EmitBatchResult {
+            val active = requireNotNull(desired)
+            val coverage = SourceCoverage(
+                SourceClockBasis.SOURCE_WALL_TIME,
+                localCursor,
+                now.wallTimeUtcMillis.toString(),
+            )
+            val result = sink.emitBatch(
+                requireNotNull(admissionToken),
+                SourceEventBatch(
+                    sourceId = sourceId,
+                    schemaVersion = 1,
+                    resourceGeneration = active.generation.value.toLong(),
+                    producerOrdinal = producerOrdinal,
+                    events = listOf(
+                        EventDraft(
+                            EventTypeKey(sourceId, 1, eventType),
+                            now,
+                            mapOf(
+                                "activity_component_token" to "0".repeat(64),
+                                "package_name" to "com.example.target",
+                                "source_time_utc_millis" to now.wallTimeUtcMillis.toString(),
+                            ),
+                        ),
+                    ),
+                    coverage = coverage,
+                ),
+            )
+            if (result is EmitBatchResult.Accepted) {
+                producerOrdinal = Math.addExact(producerOrdinal, 1L)
+                localCursor = coverage.endExclusive
             }
-            requiresStop = false
-            mutableHealth.value = CollectorHealth(CollectorStatus.STOPPED)
+            return result
         }
 
-        fun reportFailedWithOwnedResources() {
-            check(requiresStop) { "Collector must own a live source before reporting failure" }
-            mutableHealth.value = CollectorHealth(CollectorStatus.FAILED, "SOURCE_FAILED")
+        override fun setTerminalFailureListener(listener: ResourceTerminalFailureListener?) = Unit
+        override suspend fun prepare(desired: DesiredResourceState, requestId: String) = PrepareReceipt(
+            key,
+            desired.generation,
+            desired.profile?.id,
+            desired.profile?.expectedSha256,
+            null,
+            requestId,
+        )
+        override suspend fun suspendAt(desired: DesiredResourceState, boundary: ResearchTime): SuspendReceipt {
+            if (emitInFlightPollOnSuspend) {
+                val ordinal = producerOrdinal
+                val end = Math.subtractExact(boundary.wallTimeUtcMillis, 1L).toString()
+                val result = sink.advanceCoverage(
+                    requireNotNull(admissionToken),
+                    CoverageAdvance(
+                        sourceId = sourceId,
+                        schemaVersion = 1,
+                        resourceGeneration = desired.generation.value.toLong(),
+                        producerOrdinal = ordinal,
+                        coverage = SourceCoverage(SourceClockBasis.SOURCE_WALL_TIME, localCursor, end),
+                    ),
+                )
+                require(result is EmitBatchResult.Accepted)
+                producerOrdinal = Math.addExact(ordinal, 1L)
+                localCursor = end
+            }
+            return SuspendReceipt(
+                key,
+                desired.generation,
+                desired.profile?.id,
+                desired.profile?.expectedSha256,
+                desired.profile?.expectedSha256,
+                boundary,
+            )
+        }
+
+        override suspend fun flushThrough(
+            desired: DesiredResourceState,
+            boundary: ResearchTime,
+            cursor: String?,
+        ): FlushReceipt {
+            flushCalls += 1
+            val ordinal = producerOrdinal
+            val token = requireNotNull(sink.captureBarrierFlushToken(boundary))
+            val coverage = SourceCoverage(
+                SourceClockBasis.SOURCE_WALL_TIME,
+                localCursor,
+                boundary.wallTimeUtcMillis.toString(),
+            )
+            val result = if (emitEventOnFlush) {
+                sink.emitBatch(
+                    token,
+                    SourceEventBatch(
+                        sourceId = sourceId,
+                        schemaVersion = 1,
+                        resourceGeneration = desired.generation.value.toLong(),
+                        producerOrdinal = ordinal,
+                        events = listOf(
+                            EventDraft(
+                                EventTypeKey(sourceId, 1, "ACTIVITY_RESUMED"),
+                                boundary,
+                                mapOf(
+                                    "activity_component_token" to "0".repeat(64),
+                                    "package_name" to "com.example.target",
+                                    "source_time_utc_millis" to boundary.wallTimeUtcMillis.toString(),
+                                ),
+                            ),
+                        ),
+                        coverage = coverage,
+                    ),
+                )
+            } else {
+                sink.advanceCoverage(
+                    token,
+                    CoverageAdvance(
+                        sourceId = sourceId,
+                        schemaVersion = 1,
+                        resourceGeneration = desired.generation.value.toLong(),
+                        producerOrdinal = ordinal,
+                        coverage = coverage,
+                    ),
+                )
+            }
+            require(result is EmitBatchResult.Accepted)
+            producerOrdinal = Math.addExact(producerOrdinal, 1L)
+            localCursor = boundary.wallTimeUtcMillis.toString()
+            return FlushReceipt(
+                key,
+                desired.generation,
+                desired.profile?.id,
+                desired.profile?.expectedSha256,
+                desired.profile?.expectedSha256,
+                boundary,
+                boundary.wallTimeUtcMillis.toString(),
+                complete = true,
+            )
+        }
+
+        override suspend fun apply(desired: DesiredResourceState): ApplyReceipt {
+            this.desired = desired
+            return ApplyReceipt(
+                key,
+                desired.generation,
+                desired.profile?.id,
+                desired.profile?.expectedSha256,
+                desired.profile?.expectedSha256,
+            )
+        }
+
+        override suspend fun verify(desired: DesiredResourceState) = VerifyReceipt(
+            key,
+            desired.generation,
+            desired.profile?.id,
+            desired.profile?.expectedSha256,
+            desired.profile?.expectedSha256,
+            healthy = true,
+            failureReason = null,
+        )
+
+        override suspend fun resume(desired: DesiredResourceState): ResumeReceipt {
+            return ResumeReceipt(
+                key,
+                desired.generation,
+                desired.profile?.id,
+                desired.profile?.expectedSha256,
+                desired.profile?.expectedSha256,
+                resumed = true,
+                failureReason = null,
+            )
+        }
+
+        override suspend fun onAdmissionOpened(desired: DesiredResourceState): ResourceHealth {
+            admissionToken = sink.captureToken()
+            return health()
+        }
+
+        override suspend fun release(desired: DesiredResourceState): ReleaseReceipt {
+            this.desired = null
+            return ReleaseReceipt(
+                key,
+                desired.generation,
+                desired.profile?.id,
+                desired.profile?.expectedSha256,
+                desired.profile?.expectedSha256,
+                ReleaseEvidence.APPLIED,
+                released = true,
+            )
+        }
+
+        override fun health() = if (desired == null) {
+            inactiveHealth(key)
+        } else {
+            desiredHealth(requireNotNull(desired), ResourceHealthStatus.APPLIED, applied = true)
+        }
+    }
+
+    private class InMemoryStudyStore : StudyStore {
+        var runtime: RuntimeDocument? = null
+        var pending: PendingEngineInput? = null
+        val commits = mutableListOf<EngineCommit>()
+        val pendingStaged = CompletableDeferred<Unit>()
+        var failPendingConsumption = false
+        var afterPendingStaged: suspend () -> Unit = {}
+
+        override suspend fun loadRuntime(): RuntimeDocument? = runtime
+        override suspend fun initialize(runtime: RuntimeDocument) {
+            check(this.runtime == null)
+            this.runtime = runtime
+        }
+        override suspend fun appendCommit(commit: EngineCommit, successor: RuntimeDocument) {
+            commits += commit
+            runtime = successor
+        }
+        override suspend fun stagePendingInput(input: PendingEngineInput) {
+            check(pending == null)
+            pending = input
+            pendingStaged.complete(Unit)
+            afterPendingStaged()
+        }
+        override suspend fun replacePendingInput(expectedSha256: String, input: PendingEngineInput) {
+            check(pending?.encodedSha256 == expectedSha256)
+            check(input.submissions.size == requireNotNull(pending).submissions.size + 1)
+            pending = input
+        }
+        override suspend fun loadPendingInput(): PendingEngineInput? = pending
+        override suspend fun appendCommitConsumingPending(commit: EngineCommit, successor: RuntimeDocument) {
+            if (failPendingConsumption) throw IOException("simulated process death before pending consume")
+            check(commit.consumedPendingInputSha256 == pending?.encodedSha256)
+            commits += commit
+            runtime = successor
+            pending = null
+        }
+        override suspend fun readCommits(
+            fromCommitInclusive: Long,
+            throughCommitInclusive: Long,
+            consume: (EngineCommit) -> Unit,
+        ) {
+            commits.filter { it.commitSequence in fromCommitInclusive..throughCommitInclusive }.forEach(consume)
+        }
+        override suspend fun storageUsage() = StorageUsage(0, 1)
+        override suspend fun evictThrough(runtime: RuntimeDocument, targetBytes: Long): RuntimeDocument = runtime
+        override suspend fun clear() {
+            runtime = null
+            pending = null
+            commits.clear()
         }
     }
 
     private companion object {
-        const val EXPERIMENT_ID = "runtime-test"
-        const val CONFIGURATION_ID = "runtime-config"
-        const val NANOS_PER_HOUR = 60L * 60L * 1_000_000_000L
+        fun resourceStates(store: InMemoryStudyStore) = requireNotNull(store.runtime).components
+            .filterKeys { it.kind == cool.jacoblin.particeps.core.model.RuntimeComponentKind.RESOURCE }
+            .values
+            .map(RuntimeComponentCodec::decodeResource)
 
-        fun configuration(
-            collectors: List<CollectorConfiguration> = listOf(AppLifecycleConfiguration(required = true)),
-            surveys: List<SurveyDefinition> = emptyList(),
-            interventions: List<InterventionConfiguration> = emptyList(),
-        ) = StudyConfiguration(
-            schemaVersion = StudyConfiguration.CURRENT_SCHEMA_VERSION,
-            experimentId = EXPERIMENT_ID,
-            configurationId = CONFIGURATION_ID,
-            assignedParticipantId = null,
-            issuedAt = Instant.parse("2026-01-01T00:00:00Z"),
-            expiresAt = Instant.parse("2030-01-01T00:00:00Z"),
-            platform = StudyConfiguration.ANDROID_PLATFORM,
-            minimumClientVersion = 1,
-            title = "Runtime test",
-            researcherName = "Test researcher",
-            researcherContact = "test@example.invalid",
-            purpose = "Runtime test purpose",
-            durationHours = 1,
-            consentDocumentVersion = "test-1",
-            consentSummary = "Test consent",
-            collectors = collectors,
-            surveys = surveys,
-            interventions = interventions,
-            maximumLocalBytes = 16_777_216,
-            signer = SignerIdentity("test-signer", RAW_PUBLIC_KEY),
-            export = ExportConfiguration(
-                researcherKeyId = "test-key",
-                hpkePublicKey = RAW_PUBLIC_KEY,
-            ),
-            upload = null,
+        fun inactiveHealth(key: ResourceKey) = ResourceHealth(
+            key = key,
+            status = ResourceHealthStatus.INACTIVE,
+            generation = null,
+            profileId = null,
+            expectedProfileSha256 = null,
+            appliedProfileSha256 = null,
+            failureReason = null,
         )
 
-        suspend fun start(
-            runtime: ExperimentRuntime,
-            availableAccess: Set<AccessKind> = emptySet(),
-        ) {
-            assertEquals(CommandResult.Success, runtime.initialize())
-            assertEquals(CommandResult.Success, runtime.reviewStudy())
-            assertEquals(CommandResult.Success, runtime.acceptConsent())
-            assertEquals(CommandResult.Success, runtime.completeAccessSetup(availableAccess))
-            assertEquals(CommandResult.Success, runtime.start(availableAccess))
-        }
-
-        fun survey() = SurveyDefinition(
-            "daily-survey",
-            LocalizedText("Daily survey", mapOf("zh-TW" to "每日問卷")),
-            LocalizedText("Answer four questions."),
-            listOf(
-                ShortTextQuestion("daily-note", LocalizedText("How was today?"), false, 40),
-                ScaleQuestion("mood-scale", LocalizedText("Mood"), true, 1, 5, LocalizedText("Low"), LocalizedText("High")),
-                SingleChoiceQuestion(
-                    "primary-place",
-                    LocalizedText("Where were you?"),
-                    true,
-                    listOf(ChoiceOption("place-home", LocalizedText("Home")), ChoiceOption("place-work", LocalizedText("Work"))),
-                ),
-                MultipleChoiceQuestion(
-                    "symptoms",
-                    LocalizedText("Symptoms"),
-                    true,
-                    listOf(
-                        ChoiceOption("symptom-tired", LocalizedText("Tired")),
-                        ChoiceOption("symptom-headache", LocalizedText("Headache")),
-                        ChoiceOption("symptom-none", LocalizedText("None")),
-                    ),
-                    1,
-                    2,
-                ),
-            ),
+        fun desiredHealth(
+            desired: DesiredResourceState,
+            status: ResourceHealthStatus,
+            applied: Boolean,
+        ) = ResourceHealth(
+            key = desired.key,
+            status = status,
+            generation = desired.generation,
+            profileId = desired.profile?.id,
+            expectedProfileSha256 = desired.profile?.expectedSha256,
+            appliedProfileSha256 = desired.profile?.expectedSha256.takeIf { applied },
+            failureReason = null,
         )
 
-        fun surveyIntervention() = InterventionConfiguration(
-            "survey-notice",
-            SurveyAction("Daily survey", "Your survey is ready.", "daily-survey"),
-            listOf(InterventionTrigger("after-minute", OneTimeSchedule(1, RelativeClock.CALENDAR_TIME), 60)),
-        )
-
-        fun validSurveyAnswers(): Map<String, SurveyAnswer> = mapOf(
-            "daily-note" to SurveyAnswer.Text("complete"),
-            "mood-scale" to SurveyAnswer.Integer(4),
-            "primary-place" to SurveyAnswer.Choices(listOf("place-home")),
-            "symptoms" to SurveyAnswer.Choices(listOf("symptom-none")),
-        )
-
-        fun surveyOccurrence(
-            prefix: String,
-            scheduledAtUtcMillis: Long = 100,
-            expiresAtUtcMillis: Long,
-        ) = InterventionOccurrence(
-            occurrenceId = prefix.repeat(64),
-            interventionId = "survey-notice",
-            triggerId = "after-minute",
-            scheduleKey = "relative:$prefix",
-            scheduledFor = ResearchTime(scheduledAtUtcMillis, scheduledAtUtcMillis, "boot-test"),
-            expiresAtUtcMillis = expiresAtUtcMillis,
-            state = OccurrenceState.SCHEDULED,
-        )
+        val BATTERY_SOURCE = EventSourceId("battery_state.v1")
+        val USAGE_SOURCE = EventSourceId("usage_events.v1")
+        val BATTERY_EVENT = EventTypeKey(BATTERY_SOURCE, 1, "BATTERY_STATE")
+        const val CONFIG_DIGEST = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        const val ZERO_DIGEST = "0000000000000000000000000000000000000000000000000000000000000000"
     }
 }
-
-private const val RAW_PUBLIC_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"

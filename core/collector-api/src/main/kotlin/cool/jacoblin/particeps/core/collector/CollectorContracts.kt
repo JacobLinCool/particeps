@@ -1,23 +1,16 @@
 package cool.jacoblin.particeps.core.collector
 
-import cool.jacoblin.particeps.core.definition.CollectorConfiguration
-import cool.jacoblin.particeps.core.definition.LocationConfiguration
-import cool.jacoblin.particeps.core.definition.LocationPriority
+import cool.jacoblin.particeps.core.definition.CollectorProfileConfiguration
+import cool.jacoblin.particeps.core.definition.LocationV1PriorityValue
+import cool.jacoblin.particeps.core.definition.LocationV1ProfileConfiguration
+import cool.jacoblin.particeps.core.model.ConditionEpochId
 import cool.jacoblin.particeps.core.model.EventDraft
-import cool.jacoblin.particeps.core.model.RecordedEvent
-import com.google.gson.JsonParser
-import com.google.gson.JsonParseException
-import com.google.gson.Strictness
-import com.google.gson.stream.JsonReader
-import com.google.gson.stream.JsonToken
-import java.io.StringReader
+import cool.jacoblin.particeps.core.model.EventSourceId
+import cool.jacoblin.particeps.core.model.MAX_OBSERVATION_EVENTS
+import cool.jacoblin.particeps.core.model.ResearchTime
+import cool.jacoblin.particeps.core.model.SourceCoverage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
-
-enum class PrivacyClass {
-    SENSITIVE,
-    RESTRICTED,
-}
 
 enum class AccessKind {
     FINE_LOCATION,
@@ -57,7 +50,7 @@ data class LocationAccessProfile(
     val minimumIntervalMillis: Long,
     val maximumBatchDelayMillis: Long,
     val minimumDisplacementMillimeters: Int,
-    val priority: LocationPriority,
+    val priority: LocationV1PriorityValue,
 ) {
     init {
         require(intervalMillis in 1_000..3_600_000) { "Invalid location interval" }
@@ -67,11 +60,11 @@ data class LocationAccessProfile(
     }
 
     companion object {
-        fun from(configuration: LocationConfiguration) = LocationAccessProfile(
+        fun from(configuration: LocationV1ProfileConfiguration) = LocationAccessProfile(
             intervalMillis = configuration.intervalMillis,
             minimumIntervalMillis = configuration.minimumIntervalMillis,
             maximumBatchDelayMillis = configuration.maximumBatchDelayMillis,
-            minimumDisplacementMillimeters = configuration.minimumDisplacementMillimeters,
+            minimumDisplacementMillimeters = configuration.minimumDisplacementMillimeters.toInt(),
             priority = configuration.priority,
         )
     }
@@ -199,16 +192,22 @@ data class CollectorAccessRequirement(
 data class CollectorDescriptor(
     val id: String,
     val displayName: String,
-    val privacyClass: PrivacyClass,
-    val eventContract: CollectorEventContract,
+    val sourceContract: RegistrySourceContract,
     val accessKinds: Set<AccessKind>,
 ) {
-    val payloadSchemaVersion get() = eventContract.payloadSchemaVersion
-    val maximumEncodedEventBytes get() = eventContract.maximumEncodedEventBytes
+    val schemaVersion: Int get() = sourceContract.schemaVersion
+    val maximumEncodedEventBytes: Int get() = sourceContract.maximumEncodedEventBytes
 
     init {
         require(ID_PATTERN.matches(id)) { "Invalid collector ID" }
         require(displayName.isNotBlank()) { "Collector display name must not be blank" }
+        require(sourceContract.sourceKind == RegistrySourceKind.COLLECTOR) {
+            "Collector descriptor must reference a COLLECTOR source"
+        }
+        require(sourceContract.sourceId == id) { "Collector ID must equal its generated source contract ID" }
+        require(sourceContract.emissionAuthority == RegistryEmissionAuthority.SOURCE_PLUGIN_ONLY) {
+            "Collector source must be emitted only by its source plugin"
+        }
     }
 
     fun accessRequirements(required: Boolean): Set<AccessRequirement> =
@@ -217,114 +216,6 @@ data class CollectorDescriptor(
     private companion object {
         val ID_PATTERN = Regex("[a-z][a-z0-9_.-]{2,63}")
     }
-}
-
-enum class EventFieldType {
-    BOOLEAN,
-    DECIMAL_STRING,
-    ENUM,
-    FLOAT32,
-    FLOAT64,
-    INT32,
-    JSON_STRING,
-    STRING,
-}
-
-data class EventFieldContract(
-    val type: EventFieldType,
-    val required: Boolean,
-    val enumValues: Set<String> = emptySet(),
-    val minimum: Double? = null,
-    val maximum: Double? = null,
-    val maximumLength: Int? = null,
-) {
-    init {
-        require((type == EventFieldType.ENUM) == enumValues.isNotEmpty()) { "Invalid event enum contract" }
-        require(minimum == null || minimum.isFinite()) { "Invalid event field minimum" }
-        require(maximum == null || maximum.isFinite()) { "Invalid event field maximum" }
-        require(minimum == null || maximum == null || minimum <= maximum) { "Invalid event field range" }
-        require(maximumLength == null || maximumLength > 0) { "Invalid event field length" }
-    }
-
-    internal fun accepts(value: String): Boolean {
-        if (maximumLength != null && value.length > maximumLength) return false
-        return when (type) {
-            EventFieldType.BOOLEAN -> value == "true" || value == "false"
-            EventFieldType.DECIMAL_STRING -> UNSIGNED_DECIMAL.matches(value) && value.toLongOrNull() != null
-            EventFieldType.ENUM -> value in enumValues
-            EventFieldType.FLOAT32 -> FLOAT_DECIMAL.matches(value) &&
-                value.toFloatOrNull()?.let { it.isFinite() && inRange(it.toDouble()) } == true
-            EventFieldType.FLOAT64 -> FLOAT_DECIMAL.matches(value) &&
-                value.toDoubleOrNull()?.let { it.isFinite() && inRange(it) } == true
-            EventFieldType.INT32 -> SIGNED_INTEGER.matches(value) &&
-                value.toIntOrNull()?.let { inRange(it.toDouble()) } == true
-            EventFieldType.JSON_STRING -> isStrictJson(value)
-            EventFieldType.STRING -> true
-        }
-    }
-
-    private fun inRange(value: Double): Boolean =
-        (minimum == null || value >= minimum) && (maximum == null || value <= maximum)
-
-    private companion object {
-        val UNSIGNED_DECIMAL = Regex("0|[1-9][0-9]*")
-        val SIGNED_INTEGER = Regex("0|-?[1-9][0-9]*")
-        val FLOAT_DECIMAL = Regex("[+-]?(?:(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?)")
-
-        fun isStrictJson(value: String): Boolean = try {
-            val reader = JsonReader(StringReader(value)).apply { strictness = Strictness.STRICT }
-            JsonParser.parseReader(reader)
-            reader.peek() == JsonToken.END_DOCUMENT
-        } catch (_: JsonParseException) {
-            false
-        } catch (_: java.io.IOException) {
-            false
-        }
-    }
-}
-
-data class EventPayloadContract(
-    val fields: Map<String, EventFieldContract>,
-) {
-    init {
-        require(fields.keys.all(FIELD_NAME::matches)) { "Invalid event field name" }
-    }
-
-    internal fun accepts(values: Map<String, String>): Boolean =
-        values.keys.all(fields::containsKey) &&
-            fields.all { (name, contract) ->
-                val value = values[name]
-                if (value == null) !contract.required else contract.accepts(value)
-            }
-
-    private companion object { val FIELD_NAME = Regex("[a-z][a-z0-9_]{1,63}") }
-}
-
-data class CollectorEventContract(
-    val payloadSchemaVersion: Int,
-    val maximumEncodedEventBytes: Int,
-    val payloads: Map<String, EventPayloadContract>,
-) {
-    init {
-        require(payloadSchemaVersion > 0) { "Payload schema version must be positive" }
-        require(maximumEncodedEventBytes in 128..65_536) { "Invalid maximum event size" }
-        require(payloads.isNotEmpty()) { "Collector must declare at least one payload" }
-        require(payloads.keys.all(PAYLOAD_TYPE::matches)) { "Invalid payload type" }
-    }
-
-    fun accepts(event: EventDraft, sequenceNumber: Long): Boolean {
-        if (event.payloadSchemaVersion != payloadSchemaVersion) return false
-        val payload = payloads[event.payloadType] ?: return false
-        if (!payload.accepts(event.fields)) return false
-        val encodedBytes = try {
-            event.protocolEncodedBytes(sequenceNumber)
-        } catch (_: IllegalArgumentException) {
-            return false
-        }
-        return encodedBytes <= maximumEncodedEventBytes
-    }
-
-    private companion object { val PAYLOAD_TYPE = Regex("[A-Z][A-Z0-9_]{1,63}") }
 }
 
 enum class CollectorStatus {
@@ -355,22 +246,90 @@ data class CollectorHealth(
 /** Opaque runtime-issued admission capability; collector features cannot construct a valid token. */
 interface AdmissionToken
 
-sealed interface EmitResult {
-    data class Accepted(val sequenceNumber: Long) : EmitResult
+data class SourceEventBatch(
+    val sourceId: EventSourceId,
+    val schemaVersion: Int,
+    val resourceGeneration: Long,
+    val producerOrdinal: Long,
+    val events: List<EventDraft>,
+    val coverage: SourceCoverage? = null,
+) {
+    init {
+        require(schemaVersion > 0) { "Schema version must be positive" }
+        require(resourceGeneration > 0) { "Resource generation must be positive" }
+        require(producerOrdinal >= 0) { "Producer ordinal must be non-negative" }
+        require(events.size in 1..MAX_OBSERVATION_EVENTS) {
+            "Source event batch must contain 1..$MAX_OBSERVATION_EVENTS events"
+        }
+        require(events.all { event ->
+            event.type.sourceId == sourceId && event.type.schemaVersion == schemaVersion
+        }) { "Every event must match the batch source and schema" }
+        val contract = requireNotNull(ProtocolEventSourceRegistry[sourceId.value]) {
+            "Unknown event source: $sourceId"
+        }
+        require(contract.schemaVersion == schemaVersion) { "Batch schema does not match the registry" }
+        if (contract.isRetrospective) {
+            requireNotNull(coverage) { "Retrospective source batches require half-open coverage" }
+        }
+    }
+}
 
-    data object RejectedByAdmissionGate : EmitResult
+data class CoverageAdvance(
+    val sourceId: EventSourceId,
+    val schemaVersion: Int,
+    val resourceGeneration: Long,
+    val producerOrdinal: Long,
+    val coverage: SourceCoverage,
+) {
+    init {
+        require(schemaVersion > 0) { "Schema version must be positive" }
+        require(resourceGeneration > 0) { "Resource generation must be positive" }
+        require(producerOrdinal >= 0) { "Producer ordinal must be non-negative" }
+        val contract = requireNotNull(ProtocolEventSourceRegistry[sourceId.value]) {
+            "Unknown event source: $sourceId"
+        }
+        require(contract.schemaVersion == schemaVersion) { "Coverage schema does not match the registry" }
+        require(contract.isRetrospective) { "Zero-event coverage is only valid for retrospective sources" }
+    }
+}
 
-    /** The collector crossed its declared ID, schema, or maximum encoded-size boundary. */
-    data object ContractViolation : EmitResult
+enum class SourceQualityGapReason {
+    CLOCK_DISCONTINUITY,
+    ORDER_UNPROVABLE,
+    PLATFORM_HISTORY_GAP,
+    PROCESS_RECOVERY,
+    RETROSPECTIVE_COVERAGE_GAP,
+    WALL_CLOCK_CHANGED,
+}
 
-    data object StorageFailure : EmitResult
+sealed interface EmitBatchResult {
+    data class Accepted(
+        val observationSequence: Long,
+    ) : EmitBatchResult {
+        init {
+            require(observationSequence > 0) { "Observation sequence must be positive" }
+        }
+    }
+
+    data object RejectedByAdmissionGate : EmitBatchResult
+
+    /** The source crossed its generated ID, schema, field, ordering, or encoded-size boundary. */
+    data object ContractViolation : EmitBatchResult
+
+    data class SourceQualityGap(val reason: SourceQualityGapReason) : EmitBatchResult
+
+    data object StorageFailure : EmitBatchResult
 }
 
 /** Exact byte count of this event in the authenticated Protocol v1 event representation. */
-fun EventDraft.protocolEncodedBytes(sequenceNumber: Long): Int {
+fun EventDraft.protocolEncodedBytes(
+    sequenceNumber: Long,
+    conditionEpochId: ConditionEpochId?,
+): Int {
     require(sequenceNumber > 0) { "Sequence number must be positive" }
     var size = EVENT_JSON_PUNCTUATION_BYTES
-    size += collectorId.quotedJsonBytes()
+    size += conditionEpochId?.value?.quotedJsonBytes() ?: JSON_NULL_BYTES
+    size += type.eventType.quotedJsonBytes()
     size += fields.entries.sumOf { (key, value) ->
         key.quotedJsonBytes() + JSON_NAME_SEPARATOR_BYTES + value.quotedJsonBytes()
     }
@@ -378,10 +337,23 @@ fun EventDraft.protocolEncodedBytes(sequenceNumber: Long): Int {
     size += observedTime.bootSessionId.quotedJsonBytes()
     size += observedTime.elapsedRealtimeNanos.toString().quotedJsonBytes()
     size += observedTime.wallTimeUtcMillis.toString().quotedJsonBytes()
-    size += payloadSchemaVersion.toString().length
-    size += payloadType.quotedJsonBytes()
+    size += type.schemaVersion.toString().length
     size += sequenceNumber.toString().quotedJsonBytes()
+    size += type.sourceId.value.quotedJsonBytes()
     return size
+}
+
+fun RegistrySourceContract.accepts(
+    event: EventDraft,
+    sequenceNumber: Long,
+    conditionEpochId: ConditionEpochId?,
+): Boolean {
+    if (event.type.sourceId.value != sourceId || event.type.schemaVersion != schemaVersion) return false
+    val eventContract = events[event.type.eventType] ?: return false
+    if (!eventContract.accepts(event.fields)) return false
+    val encodedBytes = runCatching { event.protocolEncodedBytes(sequenceNumber, conditionEpochId) }.getOrNull()
+        ?: return false
+    return encodedBytes <= eventContract.maximumEncodedEventBytes
 }
 
 private fun String.quotedJsonBytes(): Int {
@@ -415,6 +387,7 @@ private fun String.quotedJsonBytes(): Int {
 private const val JSON_QUOTE_BYTES = 1
 private const val JSON_NAME_SEPARATOR_BYTES = 1
 private const val JSON_VALUE_SEPARATOR_BYTES = 1
+private const val JSON_NULL_BYTES = 4
 private val JSON_NAMED_ESCAPES = setOf('\b', '\t', '\n', '\u000C', '\r')
 
 /**
@@ -422,29 +395,73 @@ private val JSON_NAMED_ESCAPES = setOf('\b', '\t', '\n', '\u000C', '\r')
  * values are counted separately above. Keeping the literal here makes protocol changes visible.
  */
 private val EVENT_JSON_PUNCTUATION_BYTES = (
-    "{\"collector_id\":" +
+    "{\"condition_epoch_id\":" +
+        ",\"event_type\":" +
         ",\"fields\":{" + "}" +
         ",\"observed_time\":{\"boot_session_id\":" +
         ",\"monotonic_time_nanos\":" +
         ",\"wall_time_utc_millis\":" + "}" +
-        ",\"payload_schema_version\":" +
-        ",\"payload_type\":" +
-        ",\"sequence_number\":" + "}"
+        ",\"schema_version\":" +
+        ",\"sequence_number\":" +
+        ",\"source_id\":" + "}"
     ).toByteArray(Charsets.UTF_8).size
 
 interface EventSink {
+    /** Captures ordinary collection admission. Returns null as soon as a barrier begins. */
     fun captureToken(): AdmissionToken?
 
-    suspend fun emit(token: AdmissionToken, event: EventDraft): EmitResult
+    /**
+     * Captures the unique drain-only capability for an exact retrospective boundary flush.
+     * Collector implementations may call this only from [Collector.flushThrough] with the
+     * runtime-provided boundary; ordinary polling and callback paths must use [captureToken].
+     */
+    fun captureBarrierFlushToken(boundary: ResearchTime): AdmissionToken?
 
-    suspend fun latestEvent(collectorId: String): RecordedEvent?
+    suspend fun emitBatch(token: AdmissionToken, batch: SourceEventBatch): EmitBatchResult
+
+    suspend fun advanceCoverage(token: AdmissionToken, advance: CoverageAdvance): EmitBatchResult
+}
+
+/** Runtime-owned HMAC capability; collectors receive no raw study key. */
+fun interface StudyScopedTokenEncoder {
+    fun encode(domain: String, value: String): String
 }
 
 data class CollectorContext(
     val scope: CoroutineScope,
     val eventSink: EventSink,
     val clocks: ResearchClocks,
-)
+    val sourceContract: RegistrySourceContract,
+    val resourceGeneration: Long,
+    val tokenEncoder: StudyScopedTokenEncoder,
+) {
+    init {
+        require(sourceContract.sourceKind == RegistrySourceKind.COLLECTOR) {
+            "Collector context requires a COLLECTOR source contract"
+        }
+        require(resourceGeneration > 0) { "Collector resource generation must be positive" }
+    }
+}
+
+enum class CollectorObservationMode {
+    LIVE,
+    RETROSPECTIVE,
+}
+
+enum class CollectorFlushFailureReason {
+    RETROSPECTIVE_FLUSH_NOT_IMPLEMENTED,
+    SOURCE_FAILURE,
+    SOURCE_QUALITY_GAP,
+}
+
+sealed interface CollectorFlushResult {
+    data class Complete(
+        val boundary: ResearchTime,
+        val cursor: String?,
+    ) : CollectorFlushResult
+
+    data class Failed(val reason: CollectorFlushFailureReason) : CollectorFlushResult
+}
 
 interface ResearchClocks {
     fun now(): cool.jacoblin.particeps.core.model.ResearchTime
@@ -456,11 +473,13 @@ interface ResearchClocks {
 interface CollectorPlugin {
     val descriptor: CollectorDescriptor
 
-    fun create(configuration: CollectorConfiguration, context: CollectorContext): Collector
+    fun create(configuration: CollectorProfileConfiguration, context: CollectorContext): Collector
 }
 
 interface Collector {
     val health: StateFlow<CollectorHealth>
+
+    val observationMode: CollectorObservationMode get() = CollectorObservationMode.LIVE
 
     /** True while the owner must keep this instance and call [stop] to release process resources. */
     val requiresStop: Boolean get() = false
@@ -477,6 +496,13 @@ interface Collector {
     suspend fun pause()
 
     suspend fun resume()
+
+    suspend fun flushThrough(boundary: ResearchTime, cursor: String?): CollectorFlushResult =
+        if (observationMode == CollectorObservationMode.LIVE) {
+            CollectorFlushResult.Complete(boundary, null)
+        } else {
+            CollectorFlushResult.Failed(CollectorFlushFailureReason.RETROSPECTIVE_FLUSH_NOT_IMPLEMENTED)
+        }
 
     suspend fun stop()
 }
@@ -495,14 +521,16 @@ class CollectorRegistry(
         require(duplicateIds.isEmpty()) { "Duplicate collector IDs: $duplicateIds" }
     }
 
-    fun pluginFor(configuration: CollectorConfiguration): CollectorPlugin =
-        plugins.singleOrNull { it.descriptor.id == configuration.id }
-            ?: throw IllegalArgumentException("Collector is not compiled into this app: ${configuration.id}")
+    fun pluginFor(configuration: CollectorProfileConfiguration): CollectorPlugin =
+        plugins.singleOrNull { it.descriptor.id == configuration.sourceId }
+            ?: throw IllegalArgumentException("Collector is not compiled into this app: ${configuration.sourceId}")
 
-    fun accessRequirements(configurations: List<CollectorConfiguration>): List<CollectorAccessRequirement> =
-        configurations.flatMap { configuration ->
+    fun accessRequirements(
+        configurations: List<Pair<CollectorProfileConfiguration, Boolean>>,
+    ): List<CollectorAccessRequirement> =
+        configurations.flatMap { (configuration, required) ->
             val descriptor = pluginFor(configuration).descriptor
-            descriptor.accessRequirements(configuration.required).map { requirement ->
+            descriptor.accessRequirements(required).map { requirement ->
                 CollectorAccessRequirement(descriptor.id, requirement)
             }
         }

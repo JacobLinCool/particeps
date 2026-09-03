@@ -67,10 +67,9 @@ export interface IssueMessages {
   integer: string;
   instant: string;
   window_order: string;
-  collectors_empty: string;
   duplicate_id: string;
-  transports_empty: string;
-  location_interval_order: string;
+  sorted_unique: string;
+  profile_invalid: string;
   endpoint_scheme: string;
   endpoint_host: string;
   document_too_large: (bounds: { max: number }) => string;
@@ -80,7 +79,15 @@ export interface IssueMessages {
   language_tag: string;
   unknown_reference: string;
   selection_bounds: string;
-  schedule_bounds: string;
+  automation_invalid: string;
+  unknown_event: string;
+  unknown_field: string;
+  unsupported_operator: string;
+  canonical_value: string;
+  resource_owner: string;
+  trigger_source_liveness: string;
+  dependency_cycle: string;
+  unbounded_state: string;
 }
 
 export type IssueCode = keyof IssueMessages;
@@ -449,7 +456,7 @@ export interface Messages {
       events: string;
       window: string;
       span: string;
-      transitions: string;
+      commits: string;
       exported: string;
       instance: string;
       state: string;

@@ -16,16 +16,20 @@ import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorPlugin
 import cool.jacoblin.particeps.core.collector.CollectorStatus
-import cool.jacoblin.particeps.core.collector.EmitResult
+import cool.jacoblin.particeps.core.collector.CoverageAdvance
+import cool.jacoblin.particeps.core.collector.EmitBatchResult
 import cool.jacoblin.particeps.core.collector.EventSink
-import cool.jacoblin.particeps.core.definition.AmbientLightConfiguration
-import cool.jacoblin.particeps.core.definition.BatteryStateConfiguration
-import cool.jacoblin.particeps.core.definition.CollectorConfiguration
-import cool.jacoblin.particeps.core.definition.GyroscopeConfiguration
-import cool.jacoblin.particeps.core.definition.ProximityConfiguration
-import cool.jacoblin.particeps.core.definition.TemporalContextConfiguration
+import cool.jacoblin.particeps.core.collector.SourceEventBatch
+import cool.jacoblin.particeps.core.collector.StudyScopedTokenEncoder
+import cool.jacoblin.particeps.core.collector.accepts
+import cool.jacoblin.particeps.core.definition.AmbientLightV1ProfileConfiguration
+import cool.jacoblin.particeps.core.definition.BatteryStateV1ProfileConfiguration
+import cool.jacoblin.particeps.core.definition.CollectorProfileConfiguration
+import cool.jacoblin.particeps.core.definition.GyroscopeV1ProfileConfiguration
+import cool.jacoblin.particeps.core.definition.ProximityV1ProfileConfiguration
+import cool.jacoblin.particeps.core.definition.TemporalContextV1ProfileConfiguration
 import cool.jacoblin.particeps.core.model.EventDraft
-import cool.jacoblin.particeps.core.model.RecordedEvent
+import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.platform.AndroidResearchClocks
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,32 +45,34 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/**
- * Exercises the five P2 collectors against Android's real broadcast and SensorManager surfaces.
- * Sensor-less devices skip this controlled-fixture test. `p2SyntheticInputs=true` instead requires
- * the host to inject the documented fixed values and fails if the fixture is incomplete.
- */
+/** Exercises the P2 Android sources through the current batch-only collector contract. */
 @RunWith(AndroidJUnit4::class)
 class P2CollectorEmulatorTest {
     @Test
-    fun p2CollectorsCaptureTypedEventsAndHonorLifecycleBoundaries() = runBlocking {
+    fun p2CollectorsCaptureTypedBatchesAndHonorLifecycleBoundaries() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val syntheticInputsExpected = syntheticInputsExpected()
         requireSensorFixture(context, syntheticInputsExpected)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val sink = RecordingEventSink()
-        val collectorContext = CollectorContext(
-            scope = scope,
-            eventSink = sink,
-            clocks = AndroidResearchClocks(context, "p2-emulator-test"),
-        )
         val fixtures = fixtures(context)
         val collectors = fixtures.map { (plugin, configuration) ->
-            plugin.create(configuration, collectorContext)
+            plugin.create(
+                configuration,
+                CollectorContext(
+                    scope = scope,
+                    eventSink = sink,
+                    clocks = AndroidResearchClocks(context, "p2-emulator-test"),
+                    sourceContract = plugin.descriptor.sourceContract,
+                    resourceGeneration = RESOURCE_GENERATION,
+                    tokenEncoder = StudyScopedTokenEncoder { domain, value -> "$domain:$value" },
+                ),
+            )
         }
 
         try {
             collectors.forEach { it.start() }
+            collectors.forEach { it.onAdmissionOpened() }
             waitForCollectors(sink)
 
             collectors.forEach { collector ->
@@ -74,9 +80,14 @@ class P2CollectorEmulatorTest {
             }
             fixtures.forEach { (plugin, _) ->
                 val captured = sink.latestCaptured(plugin.descriptor.id)
+                assertEquals(RESOURCE_GENERATION, captured.resourceGeneration)
                 assertTrue(
                     "${plugin.descriptor.id} emitted an event outside its Protocol v1 contract",
-                    plugin.descriptor.eventContract.accepts(captured.event, captured.sequenceNumber),
+                    plugin.descriptor.sourceContract.accepts(
+                        captured.event,
+                        captured.eventSequence,
+                        conditionEpochId = null,
+                    ),
                 )
             }
             assertPayloadSemantics(sink)
@@ -91,11 +102,12 @@ class P2CollectorEmulatorTest {
             assertEquals(countAtPause, sink.size)
 
             collectors.forEach { it.resume() }
+            collectors.forEach { it.onAdmissionOpened() }
             collectors.forEach { collector ->
                 assertEquals(CollectorStatus.ACTIVE, collector.health.value.status)
             }
             withTimeout(EVENT_TIMEOUT_MILLIS) {
-                while (sink.count(GyroscopeConfiguration.ID) < 2) delay(POLL_MILLIS)
+                while (sink.count(GyroscopeV1ProfileConfiguration.SOURCE_ID) < 2) delay(POLL_MILLIS)
             }
 
             collectors.asReversed().forEach { it.stop() }
@@ -111,21 +123,18 @@ class P2CollectorEmulatorTest {
         }
     }
 
-    private fun fixtures(context: Context): List<Pair<CollectorPlugin, CollectorConfiguration>> = listOf(
-        BatteryStateCollectorPlugin(context) to BatteryStateConfiguration(required = true),
-        TemporalContextCollectorPlugin(context) to TemporalContextConfiguration(required = true),
-        GyroscopeCollectorPlugin(context) to GyroscopeConfiguration(
-            required = true,
+    private fun fixtures(context: Context): List<Pair<CollectorPlugin, CollectorProfileConfiguration>> = listOf(
+        BatteryStateCollectorPlugin(context) to BatteryStateV1ProfileConfiguration(),
+        TemporalContextCollectorPlugin(context) to TemporalContextV1ProfileConfiguration(),
+        GyroscopeCollectorPlugin(context) to GyroscopeV1ProfileConfiguration(
             samplingPeriodUs = 20_000,
             maximumReportLatencyUs = 0,
         ),
-        AmbientLightCollectorPlugin(context) to AmbientLightConfiguration(
-            required = true,
+        AmbientLightCollectorPlugin(context) to AmbientLightV1ProfileConfiguration(
             samplingPeriodUs = 200_000,
             changeThresholdMillilux = 0,
         ),
-        ProximityCollectorPlugin(context) to ProximityConfiguration(
-            required = true,
+        ProximityCollectorPlugin(context) to ProximityV1ProfileConfiguration(
             minimumEventIntervalMs = 100,
             changeThresholdMillimeters = 0,
         ),
@@ -148,42 +157,42 @@ class P2CollectorEmulatorTest {
     }
 
     private fun assertPayloadSemantics(sink: RecordingEventSink) {
-        val battery = sink.latestEventDraft(BatteryStateConfiguration.ID)
+        val battery = sink.latestEventDraft(BatteryStateV1ProfileConfiguration.SOURCE_ID)
         assertTrue(requireNotNull(battery.fields["percentage"]).toInt() in 0..100)
 
-        val temporal = sink.latestEventDraft(TemporalContextConfiguration.ID)
+        val temporal = sink.latestEventDraft(TemporalContextV1ProfileConfiguration.SOURCE_ID)
         assertEquals("STUDY_STARTED", temporal.fields["change_reason"])
         assertTrue(requireNotNull(temporal.fields["timezone_id"]).isNotBlank())
 
-        val gyroscope = sink.latestEventDraft(GyroscopeConfiguration.ID)
+        val gyroscope = sink.latestEventDraft(GyroscopeV1ProfileConfiguration.SOURCE_ID)
         GYROSCOPE_FIELDS.forEach { field ->
             assertTrue(requireNotNull(gyroscope.fields[field]).toFloat().isFinite())
         }
 
-        val light = sink.latestEventDraft(AmbientLightConfiguration.ID)
+        val light = sink.latestEventDraft(AmbientLightV1ProfileConfiguration.SOURCE_ID)
         assertTrue(requireNotNull(light.fields["illuminance_lux"]).toFloat() >= 0f)
 
-        val proximity = sink.latestEventDraft(ProximityConfiguration.ID)
+        val proximity = sink.latestEventDraft(ProximityV1ProfileConfiguration.SOURCE_ID)
         val distance = requireNotNull(proximity.fields["distance_centimeters"]).toFloat()
         val maximumRange = requireNotNull(proximity.fields["maximum_range_centimeters"]).toFloat()
         assertEquals((distance < maximumRange).toString(), proximity.fields["near"])
     }
 
     private fun assertSyntheticInputs(sink: RecordingEventSink) {
-        val battery = sink.latestEventDraft(BatteryStateConfiguration.ID)
+        val battery = sink.latestEventDraft(BatteryStateV1ProfileConfiguration.SOURCE_ID)
         assertEquals("73", battery.fields["percentage"])
         assertEquals("CHARGING", battery.fields["charging_state"])
         assertEquals("AC", battery.fields["charging_source"])
 
-        val gyroscope = sink.latestEventDraft(GyroscopeConfiguration.ID)
+        val gyroscope = sink.latestEventDraft(GyroscopeV1ProfileConfiguration.SOURCE_ID)
         assertEquals(1.25f, requireNotNull(gyroscope.fields["x_radians_per_second"]).toFloat(), FLOAT_TOLERANCE)
         assertEquals(-2.5f, requireNotNull(gyroscope.fields["y_radians_per_second"]).toFloat(), FLOAT_TOLERANCE)
         assertEquals(0.5f, requireNotNull(gyroscope.fields["z_radians_per_second"]).toFloat(), FLOAT_TOLERANCE)
 
-        val light = sink.latestEventDraft(AmbientLightConfiguration.ID)
+        val light = sink.latestEventDraft(AmbientLightV1ProfileConfiguration.SOURCE_ID)
         assertEquals(123f, requireNotNull(light.fields["illuminance_lux"]).toFloat(), FLOAT_TOLERANCE)
 
-        val proximity = sink.latestEventDraft(ProximityConfiguration.ID)
+        val proximity = sink.latestEventDraft(ProximityV1ProfileConfiguration.SOURCE_ID)
         assertEquals(1f, requireNotNull(proximity.fields["distance_centimeters"]).toFloat(), FLOAT_TOLERANCE)
     }
 
@@ -196,63 +205,71 @@ class P2CollectorEmulatorTest {
     }
 
     private data class CapturedEvent(
-        val sequenceNumber: Long,
+        val eventSequence: Long,
+        val resourceGeneration: Long,
+        val producerOrdinal: Long,
         val event: EventDraft,
     )
 
     private class RecordingEventSink : EventSink {
         private val token = object : AdmissionToken {}
         private val events = mutableListOf<CapturedEvent>()
+        private var nextObservationSequence = 1L
+        private var nextEventSequence = 1L
 
         val size: Int
             get() = synchronized(events) { events.size }
 
         override fun captureToken(): AdmissionToken = token
 
-        override suspend fun emit(token: AdmissionToken, event: EventDraft): EmitResult = synchronized(events) {
-            check(token === this.token) { "Unexpected admission token" }
-            val captured = CapturedEvent(events.size.toLong() + 1, event)
-            events += captured
-            EmitResult.Accepted(captured.sequenceNumber)
-        }
+        override fun captureBarrierFlushToken(boundary: ResearchTime): AdmissionToken? = null
 
-        override suspend fun latestEvent(collectorId: String): RecordedEvent? =
+        override suspend fun emitBatch(token: AdmissionToken, batch: SourceEventBatch): EmitBatchResult =
             synchronized(events) {
-                events.lastOrNull { it.event.collectorId == collectorId }?.toRecordedEvent()
+                check(token === this.token) { "Unexpected admission token" }
+                val observationSequence = nextObservationSequence++
+                batch.events.forEach { event ->
+                    events += CapturedEvent(
+                        eventSequence = nextEventSequence++,
+                        resourceGeneration = batch.resourceGeneration,
+                        producerOrdinal = batch.producerOrdinal,
+                        event = event,
+                    )
+                }
+                EmitBatchResult.Accepted(
+                    observationSequence = observationSequence,
+                )
             }
 
-        fun count(collectorId: String): Int = synchronized(events) {
-            events.count { it.event.collectorId == collectorId }
+        override suspend fun advanceCoverage(
+            token: AdmissionToken,
+            advance: CoverageAdvance,
+        ): EmitBatchResult = error("Live P2 collectors cannot advance retrospective coverage")
+
+        fun count(sourceId: String): Int = synchronized(events) {
+            events.count { it.event.type.sourceId.value == sourceId }
         }
 
-        fun latestCaptured(collectorId: String): CapturedEvent = synchronized(events) {
-            requireNotNull(events.lastOrNull { it.event.collectorId == collectorId })
+        fun latestCaptured(sourceId: String): CapturedEvent = synchronized(events) {
+            requireNotNull(events.lastOrNull { it.event.type.sourceId.value == sourceId })
         }
 
-        fun latestEventDraft(collectorId: String): EventDraft = latestCaptured(collectorId).event
-
-        private fun CapturedEvent.toRecordedEvent() = RecordedEvent(
-            sequenceNumber = sequenceNumber,
-            collectorId = event.collectorId,
-            payloadSchemaVersion = event.payloadSchemaVersion,
-            observedTime = event.observedTime,
-            payloadType = event.payloadType,
-            fields = event.fields,
-        )
+        fun latestEventDraft(sourceId: String): EventDraft = latestCaptured(sourceId).event
     }
 
     private companion object {
+        const val RESOURCE_GENERATION = 1L
         const val EVENT_TIMEOUT_MILLIS = 10_000L
         const val PAUSE_SETTLE_MILLIS = 750L
         const val POLL_MILLIS = 25L
         const val FLOAT_TOLERANCE = 0.001f
         const val SYNTHETIC_INPUTS_ARGUMENT = "p2SyntheticInputs"
         val P2_COLLECTOR_IDS = setOf(
-            BatteryStateConfiguration.ID,
-            TemporalContextConfiguration.ID,
-            GyroscopeConfiguration.ID,
-            AmbientLightConfiguration.ID,
-            ProximityConfiguration.ID,
+            BatteryStateV1ProfileConfiguration.SOURCE_ID,
+            TemporalContextV1ProfileConfiguration.SOURCE_ID,
+            GyroscopeV1ProfileConfiguration.SOURCE_ID,
+            AmbientLightV1ProfileConfiguration.SOURCE_ID,
+            ProximityV1ProfileConfiguration.SOURCE_ID,
         )
         val GYROSCOPE_FIELDS = setOf(
             "x_radians_per_second",

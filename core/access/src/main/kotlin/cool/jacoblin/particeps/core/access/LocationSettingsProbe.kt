@@ -11,7 +11,7 @@ import com.google.android.gms.location.LocationSettingsStatusCodes
 import com.google.android.gms.location.Priority
 import com.google.android.gms.location.SettingsClient
 import cool.jacoblin.particeps.core.collector.LocationAccessProfile
-import cool.jacoblin.particeps.core.definition.LocationPriority
+import cool.jacoblin.particeps.core.definition.LocationV1PriorityValue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeoutOrNull
@@ -71,9 +71,9 @@ internal fun LocationAccessProfile.toGooglePlayLocationRequest(): LocationReques
 internal fun LocationAccessProfile.minimumDisplacementMeters(): Float =
     minimumDisplacementMillimeters / 1_000f
 
-internal fun LocationPriority.toGooglePlayPriority(): Int = when (this) {
-    LocationPriority.BALANCED -> Priority.PRIORITY_BALANCED_POWER_ACCURACY
-    LocationPriority.HIGH_ACCURACY -> Priority.PRIORITY_HIGH_ACCURACY
+internal fun LocationV1PriorityValue.toGooglePlayPriority(): Int = when (this) {
+    LocationV1PriorityValue.BALANCED -> Priority.PRIORITY_BALANCED_POWER_ACCURACY
+    LocationV1PriorityValue.HIGH_ACCURACY -> Priority.PRIORITY_HIGH_ACCURACY
 }
 
 private fun Exception.toProbeResult(): LocationSettingsProbeResult = when {

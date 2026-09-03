@@ -18,11 +18,12 @@ const BASE64_SHA256 = /^[A-Za-z0-9+/]{43}=$/;
 export const PARTICEPS_HEADERS = new Set([
   "x-particeps-bundle-format",
   "x-particeps-bundle-id",
+  "x-particeps-commit-count",
+  "x-particeps-commit-from",
+  "x-particeps-commit-to",
   "x-particeps-configuration-sha256",
-  "x-particeps-researcher-key-id",
-  "x-particeps-sequence-from",
-  "x-particeps-sequence-to",
   "x-particeps-event-count",
+  "x-particeps-researcher-key-id",
 ]);
 const CONTENT_HEADERS = new Set(["content-type", "content-length", "content-digest"]);
 // These are transport headers supplied by OkHttp or documented Cloudflare edge transforms. They
@@ -54,11 +55,12 @@ const INFRASTRUCTURE_HEADERS = new Set([
 export const CUSTOM_METADATA_KEYS = [
   "sha256",
   "byte_count",
+  "commit_count",
   "configuration_sha256",
-  "researcher_key_id",
-  "first_sequence_number",
-  "last_sequence_number",
   "event_count",
+  "first_commit_sequence",
+  "last_commit_sequence",
+  "researcher_key_id",
   "received_at_utc",
 ] as const;
 
@@ -81,8 +83,9 @@ export interface UploadClaims {
   byteCountText: string;
   configurationSha256: string;
   researcherKeyId: string;
-  firstSequenceNumber: string;
-  lastSequenceNumber: string;
+  firstCommitSequence: string;
+  lastCommitSequence: string;
+  commitCount: string;
   eventCount: string;
   sha256: string;
   sha256Bytes: Uint8Array;
@@ -144,8 +147,9 @@ export function parseUploadRequest(request: Request, deployment: Deployment): Up
   const bundleId = requiredHeader(request.headers, "x-particeps-bundle-id");
   const configurationSha256 = requiredHeader(request.headers, "x-particeps-configuration-sha256");
   const researcherKeyId = requiredHeader(request.headers, "x-particeps-researcher-key-id");
-  const firstSequenceNumber = requiredHeader(request.headers, "x-particeps-sequence-from");
-  const lastSequenceNumber = requiredHeader(request.headers, "x-particeps-sequence-to");
+  const firstCommitSequence = requiredHeader(request.headers, "x-particeps-commit-from");
+  const lastCommitSequence = requiredHeader(request.headers, "x-particeps-commit-to");
+  const commitCount = requiredHeader(request.headers, "x-particeps-commit-count");
   const eventCount = requiredHeader(request.headers, "x-particeps-event-count");
 
   if (bundleFormat !== BUNDLE_FORMAT) throw new RequestViolation("Bundle format is invalid");
@@ -155,11 +159,12 @@ export function parseUploadRequest(request: Request, deployment: Deployment): Up
   }
   if (!KEY_ID.test(researcherKeyId)) throw new RequestViolation("Researcher key ID is invalid");
 
-  const first = parsePositiveInt64("X-Particeps-Sequence-From", firstSequenceNumber);
-  const last = parsePositiveInt64("X-Particeps-Sequence-To", lastSequenceNumber);
-  const count = parsePositiveInt64("X-Particeps-Event-Count", eventCount);
+  const first = parsePositiveInt64("X-Particeps-Commit-From", firstCommitSequence);
+  const last = parsePositiveInt64("X-Particeps-Commit-To", lastCommitSequence);
+  const count = parsePositiveInt64("X-Particeps-Commit-Count", commitCount);
+  parseNonNegativeInt64("X-Particeps-Event-Count", eventCount);
   if (last < first || last - first + 1n !== count) {
-    throw new RequestViolation("Sequence range and event count do not agree");
+    throw new RequestViolation("Commit range and commit count do not agree");
   }
   if (configurationSha256 !== deployment.configurationSha256) {
     throw new RequestViolation("Configuration digest is not allowed");
@@ -174,8 +179,9 @@ export function parseUploadRequest(request: Request, deployment: Deployment): Up
     byteCountText,
     configurationSha256,
     researcherKeyId,
-    firstSequenceNumber,
-    lastSequenceNumber,
+    firstCommitSequence,
+    lastCommitSequence,
+    commitCount,
     eventCount,
     sha256: digest.hex,
     sha256Bytes: digest.bytes,
@@ -207,12 +213,16 @@ function parseBoundedNumber(name: string, raw: string, minimum: number, maximum:
 }
 
 function parsePositiveInt64(name: string, raw: string): bigint {
+  const value = parseNonNegativeInt64(name, raw);
+  if (value < 1n) throw new RequestViolation(`${name} is out of range`);
+  return value;
+}
+
+function parseNonNegativeInt64(name: string, raw: string): bigint {
   if (!CANONICAL_DECIMAL.test(raw)) throw new RequestViolation(`${name} is not canonical`);
   if (raw.length > 19) throw new RequestViolation(`${name} is out of range`);
   const value = BigInt(raw);
-  if (value < 1n || value > MAXIMUM_SIGNED_64) {
-    throw new RequestViolation(`${name} is out of range`);
-  }
+  if (value > MAXIMUM_SIGNED_64) throw new RequestViolation(`${name} is out of range`);
   return value;
 }
 
@@ -303,11 +313,12 @@ export function objectMetadata(claims: UploadClaims, receivedAtUtc: string): Rec
   return {
     sha256: claims.sha256,
     byte_count: claims.byteCountText,
+    commit_count: claims.commitCount,
     configuration_sha256: claims.configurationSha256,
-    researcher_key_id: claims.researcherKeyId,
-    first_sequence_number: claims.firstSequenceNumber,
-    last_sequence_number: claims.lastSequenceNumber,
     event_count: claims.eventCount,
+    first_commit_sequence: claims.firstCommitSequence,
+    last_commit_sequence: claims.lastCommitSequence,
+    researcher_key_id: claims.researcherKeyId,
     received_at_utc: receivedAtUtc,
   };
 }
@@ -326,11 +337,12 @@ export function isExactObject(object: R2Object, claims: UploadClaims): boolean {
     && bytesToHex(new Uint8Array(storedChecksum)) === claims.sha256
     && metadata.sha256 === claims.sha256
     && metadata.byte_count === claims.byteCountText
+    && metadata.commit_count === claims.commitCount
     && metadata.configuration_sha256 === claims.configurationSha256
-    && metadata.researcher_key_id === claims.researcherKeyId
-    && metadata.first_sequence_number === claims.firstSequenceNumber
-    && metadata.last_sequence_number === claims.lastSequenceNumber
     && metadata.event_count === claims.eventCount
+    && metadata.first_commit_sequence === claims.firstCommitSequence
+    && metadata.last_commit_sequence === claims.lastCommitSequence
+    && metadata.researcher_key_id === claims.researcherKeyId
     && isCanonicalReceiveTime(metadata.received_at_utc);
 }
 
@@ -342,7 +354,8 @@ function isCanonicalReceiveTime(value: string | undefined): boolean {
 
 export function encodeReceipt(claims: UploadClaims): string {
   return `{"bundle_id":"${claims.bundleId}","byte_count":"${claims.byteCountText}",`
+    + `"commit_count":"${claims.commitCount}",`
     + `"configuration_sha256":"${claims.configurationSha256}","event_count":"${claims.eventCount}",`
-    + `"first_sequence_number":"${claims.firstSequenceNumber}",`
-    + `"last_sequence_number":"${claims.lastSequenceNumber}","sha256":"${claims.sha256}"}`;
+    + `"first_commit_sequence":"${claims.firstCommitSequence}",`
+    + `"last_commit_sequence":"${claims.lastCommitSequence}","sha256":"${claims.sha256}"}`;
 }

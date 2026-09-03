@@ -1,7 +1,8 @@
 package cool.jacoblin.particeps.core.collector
 
 import cool.jacoblin.particeps.core.model.EventDraft
-import cool.jacoblin.particeps.core.model.RecordedEvent
+import cool.jacoblin.particeps.core.model.EventSourceId
+import cool.jacoblin.particeps.core.model.EventTypeKey
 import cool.jacoblin.particeps.core.model.ResearchTime
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
@@ -58,6 +59,19 @@ class SerializedCallbackCollectorTest {
 
         assertEquals(CollectorHealth(CollectorStatus.FAILED, "STORAGE_WRITE_FAILED"), collector.health.value)
         collector.stop()
+    }
+
+    @Test
+    fun rejectedSubmissionRetriesTheSameProducerOrdinal() = runTest {
+        val sink = FakeSink(rejectFirst = true)
+        val collector = TestCollector(context(sink), queueCapacity = 2)
+        collector.start()
+
+        collector.trigger()
+        collector.trigger()
+        collector.stop()
+
+        assertEquals(listOf(0L, 0L), sink.producerOrdinals)
     }
 
     @Test
@@ -181,6 +195,9 @@ class SerializedCallbackCollectorTest {
         clocks = object : ResearchClocks {
             override fun now() = ResearchTime(1_000, 2_000, "boot-test")
         },
+        sourceContract = requireNotNull(ProtocolEventSourceRegistry["app_lifecycle.v1"]),
+        resourceGeneration = 3,
+        tokenEncoder = StudyScopedTokenEncoder { _, _ -> "0".repeat(64) },
     )
 
     private class TestCollector(
@@ -197,7 +214,11 @@ class SerializedCallbackCollectorTest {
 
         fun trigger() = capture {
             draftConstructed = true
-            EventDraft("test_collector.v1", 1, context.clocks.now(), "TEST", emptyMap())
+            EventDraft(
+                EventTypeKey(EventSourceId("app_lifecycle.v1"), 1, "ACTIVITY_RESUMED"),
+                context.clocks.now(),
+                mapOf("activity_class" to "test.Activity"),
+            )
         }
 
         override suspend fun registerSource(): SourceRegistrationResult {
@@ -234,17 +255,34 @@ class SerializedCallbackCollectorTest {
     private class FakeSink(
         private val admit: Boolean = true,
         private val storageFailure: Boolean = false,
+        private val rejectFirst: Boolean = false,
     ) : EventSink {
         private val token = object : AdmissionToken {}
         val events = mutableListOf<EventDraft>()
+        val producerOrdinals = mutableListOf<Long>()
+        private var calls = 0
 
         override fun captureToken(): AdmissionToken? = token.takeIf { admit }
 
-        override suspend fun emit(token: AdmissionToken, event: EventDraft): EmitResult {
-            events += event
-            return if (storageFailure) EmitResult.StorageFailure else EmitResult.Accepted(events.size.toLong())
+        override fun captureBarrierFlushToken(boundary: ResearchTime): AdmissionToken? = null
+
+        override suspend fun emitBatch(token: AdmissionToken, batch: SourceEventBatch): EmitBatchResult {
+            producerOrdinals += batch.producerOrdinal
+            calls += 1
+            if (rejectFirst && calls == 1) return EmitBatchResult.RejectedByAdmissionGate
+            events += batch.events
+            return if (storageFailure) {
+                EmitBatchResult.StorageFailure
+            } else {
+                EmitBatchResult.Accepted(
+                    observationSequence = events.size.toLong(),
+                )
+            }
         }
 
-        override suspend fun latestEvent(collectorId: String): RecordedEvent? = null
+        override suspend fun advanceCoverage(
+            token: AdmissionToken,
+            advance: CoverageAdvance,
+        ): EmitBatchResult = error("Live collector must not advance retrospective coverage")
     }
 }

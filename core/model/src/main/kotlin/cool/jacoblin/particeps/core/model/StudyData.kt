@@ -1,161 +1,366 @@
 package cool.jacoblin.particeps.core.model
 
+import java.io.IOException
+import java.time.ZoneId
 import java.util.UUID
 
-data class StudyMetadata(
-    val experimentId: String,
-    val configurationId: String,
-    val state: ExperimentState,
-    val transitions: List<ExperimentTransition>,
-    val eventCount: Long,
-    val nextSequenceNumber: Long,
-    val lastEvents: Map<String, RecordedEvent>,
-    /**
-     * Pseudonymous per-install identifier used only after authentication and decryption to keep
-     * event streams distinct. It remains inside ciphertext; upload URLs and headers carry no
-     * participant identifier.
-     */
-    val participantInstanceId: String,
-    /** Optional researcher-assigned code; protected inside encrypted metadata and exports. */
-    val assignedParticipantId: String?,
-    /** Durable intervention state keyed by globally unique occurrence ID. */
-    val occurrences: Map<String, InterventionOccurrence>,
-    /** Highest sequence an endpoint has confirmed receiving; 0 when nothing has been delivered. */
-    val uploadedThroughSequence: Long,
-    /**
-     * Lowest sequence still present on the device; 1 when nothing has been reclaimed.
-     *
-     * [eventCount] stays the lifetime total, so the readable window is
-     * `[retainedFromSequence, eventCount]` while sequence numbers keep counting from the study's
-     * start. Reclaiming space must never renumber what was already delivered.
-     */
-    val retainedFromSequence: Long,
-    /**
-     * Version-2 durable timeline. Null is valid only before participant Start, or while the exact
-     * current v1 layout is being migrated during the first open after an update.
-     */
-    val clockCheckpoint: StudyClockCheckpoint? = null,
+data class StudyClockCheckpoint(
+    val calendarElapsedNanos: Long,
+    val activeRunningElapsedNanos: Long,
+    val anchor: ResearchTime,
+    val deadlineUtcMillis: Long,
+    val deadlineUtcTrusted: Boolean,
+    val zoneId: String,
 ) {
     init {
-        require(ID.matches(experimentId)) { "Invalid experiment ID" }
-        require(ID.matches(configurationId)) { "Invalid configuration ID" }
-        require(INSTANCE_ID.matches(participantInstanceId)) { "Invalid participant instance ID" }
-        assignedParticipantId?.let {
-            require(ASSIGNED_ID.matches(it) && it.toByteArray().size <= 64) { "Invalid assigned participant ID" }
+        require(calendarElapsedNanos >= 0) { "Calendar elapsed time must be non-negative" }
+        require(activeRunningElapsedNanos in 0..calendarElapsedNanos) {
+            "Active-running time must be within calendar elapsed time"
         }
-        require(occurrences.all { (id, occurrence) -> id == occurrence.occurrenceId }) {
-            "Occurrence map key mismatch"
-        }
-        require(eventCount >= 0) { "Event count must be non-negative" }
-        require(nextSequenceNumber == eventCount + 1) { "Next sequence must follow the lifetime event count" }
-        require(retainedFromSequence in 1..nextSequenceNumber) { "Invalid retained range start" }
-        require(uploadedThroughSequence in 0 until nextSequenceNumber) {
-            "Upload watermark must not exceed the lifetime event count"
-        }
-        // Space is only ever reclaimed from events an endpoint already confirmed.
-        require(retainedFromSequence <= uploadedThroughSequence + 1) {
-            "Retained range starts above the upload watermark"
-        }
-        // These are persisted alongside the metadata, so they outlive the events they describe and
-        // may point below the retained floor once space has been reclaimed.
-        require(lastEvents.values.all { it.sequenceNumber in 1 until nextSequenceNumber }) {
-            "Latest collector events must precede the next sequence"
+        require(deadlineUtcMillis >= 0) { "Study deadline must be non-negative" }
+        require(zoneId == ZoneId.of(zoneId).id && (zoneId == "UTC" || '/' in zoneId)) {
+            "Clock checkpoint requires a canonical IANA zone ID"
         }
     }
+}
 
-    companion object {
-        private val ID = Regex("[a-z0-9][a-z0-9-]{2,63}")
-        private val INSTANCE_ID = Regex("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+data class ConditionEpoch(
+    val id: ConditionEpochId,
+    val configurationSha256: String,
+    val appliedResourceVectorSha256: String,
+    val activatedAt: ResearchTime,
+) {
+    init {
+        require(SHA256.matches(configurationSha256)) { "Invalid configuration digest" }
+        require(SHA256.matches(appliedResourceVectorSha256)) { "Invalid resource-vector digest" }
+    }
+}
 
-        fun initial(
-            experimentId: String,
-            configurationId: String,
-            assignedParticipantId: String? = null,
-            participantInstanceId: String = UUID.randomUUID().toString(),
-        ) = StudyMetadata(
-            experimentId,
-            configurationId,
-            ExperimentState.IMPORTED,
-            emptyList(),
-            0,
-            1,
-            emptyMap(),
-            participantInstanceId,
-            assignedParticipantId,
-            emptyMap(),
-            0,
-            1,
-            null,
-        )
+data class SourceCheckpoint(
+    val sourceId: EventSourceId,
+    val resourceGeneration: Long,
+    val nextProducerOrdinal: Long,
+    val coverage: SourceCoverage?,
+    val cursor: String?,
+) {
+    init {
+        require(resourceGeneration >= 0) { "Source generation must be non-negative" }
+        require(nextProducerOrdinal >= 0) { "Producer ordinal must be non-negative" }
+        require(cursor == null || cursor.length <= 4_096) { "Source cursor is too large" }
+    }
+}
 
-        private val ASSIGNED_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+enum class RuntimeComponentKind {
+    AUTOMATION_CHECKPOINT,
+    TIMER,
+    STUDY_DEADLINE_TIMER,
+    RESOURCE_AUDIT_TIMER,
+    ACTION_INVOCATION,
+    UPLOAD_ACKNOWLEDGEMENT,
+    RESOURCE,
+    RESOURCE_CLEANUP,
+}
+
+data class RuntimeComponentKey(
+    val kind: RuntimeComponentKind,
+    val id: String,
+) : Comparable<RuntimeComponentKey> {
+    init {
+        require(COMPONENT_ID.matches(id)) { "Invalid runtime component ID" }
+    }
+
+    override fun compareTo(other: RuntimeComponentKey): Int =
+        compareValuesBy(this, other, { it.kind.ordinal }, { it.id })
+}
+
+enum class RuntimeMutationOperation {
+    UPSERT,
+    REMOVE,
+}
+
+data class RuntimeMutation(
+    val key: RuntimeComponentKey,
+    val operation: RuntimeMutationOperation,
+    val canonicalValue: String?,
+) {
+    init {
+        when (operation) {
+            RuntimeMutationOperation.UPSERT -> require(!canonicalValue.isNullOrBlank()) {
+                "Upsert mutation requires a canonical value"
+            }
+            RuntimeMutationOperation.REMOVE -> require(canonicalValue == null) {
+                "Remove mutation cannot carry a value"
+            }
+        }
+        require(canonicalValue == null || canonicalValue.toByteArray().size <= MAX_COMPONENT_BYTES) {
+            "Runtime component is too large"
+        }
+    }
+}
+
+enum class EngineInputKind {
+    SOURCE_OBSERVATION,
+    LIFECYCLE_COMMAND,
+    TIMER_WAKE,
+    RANDOM_SELECTION,
+    ACTION_RESULT,
+    UPLOAD_ACKNOWLEDGEMENT,
+    RESOURCE_RESULT,
+    SAFETY_FAILURE,
+    RECOVERY,
+}
+
+data class EngineCommit(
+    val commitSequence: Long,
+    val previousCommitSha256: String,
+    val inputKind: EngineInputKind,
+    val consumedPendingInputSha256: String?,
+    val sourceObservations: List<SourceObservation>,
+    val events: List<RecordedEvent>,
+    val mutations: List<RuntimeMutation>,
+    val committedAt: ResearchTime,
+    val successorProjection: RuntimeProjection,
+    val resultingCheckpointSha256: String,
+    val commitSha256: String,
+) {
+    init {
+        require(commitSequence > 0) { "Commit sequence must be positive" }
+        require(previousCommitSha256 == GENESIS_DIGEST || SHA256.matches(previousCommitSha256)) {
+            "Invalid previous commit digest"
+        }
+        require(consumedPendingInputSha256 == null || SHA256.matches(consumedPendingInputSha256)) {
+            "Invalid consumed pending-input digest"
+        }
+        require(SHA256.matches(resultingCheckpointSha256)) { "Invalid checkpoint digest" }
+        require(SHA256.matches(commitSha256)) { "Invalid commit digest" }
+        require(successorProjection.revision == commitSequence) {
+            "Successor projection must advance to the committed revision"
+        }
+        require(successorProjection.nextCommitSequence == commitSequence + 1) {
+            "Successor projection has an invalid next commit sequence"
+        }
+        require(sourceObservations.zipWithNext().all { (left, right) ->
+            left.observationSequence < right.observationSequence
+        }) { "Source observations must be strictly ordered" }
+        require(events.zipWithNext().all { (left, right) ->
+            left.sequenceNumber + 1 == right.sequenceNumber
+        }) { "Commit events must be contiguous" }
+        require(mutations.map(RuntimeMutation::key).distinct().size == mutations.size) {
+            "A commit cannot mutate one runtime component twice"
+        }
     }
 }
 
 /**
- * Monotone study clocks persisted at every durable lifecycle/event boundary.
- *
- * [studyElapsedNanos] counts calendar lifetime, including reboot and recovery downtime.
- * [activeCollectionElapsedNanos] counts only intervals durably known to have been RUNNING.
- * [deadlineUtcMillis] bridges boots only when [deadlineUtcTrusted] is true; within one boot
- * [anchor] and elapsedRealtime are authoritative.
+ * The complete scalar successor carried by every authenticated commit. Runtime components are
+ * advanced by the commit's typed mutations. Together they make the commit chain independently
+ * replayable after the most recent encrypted snapshot without treating the snapshot as truth.
  */
-data class StudyClockCheckpoint(
-    val studyElapsedNanos: Long,
-    val activeCollectionElapsedNanos: Long,
-    val anchor: ResearchTime,
-    val deadlineUtcMillis: Long,
-    val deadlineUtcTrusted: Boolean = true,
+data class RuntimeProjection(
+    val state: ExperimentState,
+    val revision: Long,
+    val nextCommitSequence: Long,
+    val nextObservationSequence: Long,
+    val nextEventSequence: Long,
+    val sourceCheckpoints: Map<EventSourceId, SourceCheckpoint>,
+    val clockCheckpoint: StudyClockCheckpoint?,
+    val activeConditionEpoch: ConditionEpoch?,
+    val lifetimeDataEventCount: Long,
+    val uploadedThroughCommit: Long,
+    val evaluatedThroughCommit: Long,
+    val retainedFromCommit: Long,
 ) {
     init {
-        require(studyElapsedNanos >= 0) { "Study elapsed time must be non-negative" }
-        require(activeCollectionElapsedNanos in 0..studyElapsedNanos) {
-            "Active-collection time must be within study elapsed time"
+        require(revision >= 0) { "Revision must be non-negative" }
+        require(nextCommitSequence == revision + 1) { "Next commit must follow revision" }
+        require(nextObservationSequence > 0 && nextEventSequence > 0) { "Invalid next sequence" }
+        require(sourceCheckpoints.all { (key, value) -> key == value.sourceId }) {
+            "Source checkpoint key mismatch"
         }
-        require(deadlineUtcMillis >= 0) { "Study deadline must be non-negative" }
+        require(lifetimeDataEventCount >= 0) { "Event count must be non-negative" }
+        require(uploadedThroughCommit in 0..revision) { "Invalid upload watermark" }
+        require(evaluatedThroughCommit in 0..revision) { "Invalid reducer watermark" }
+        require(retainedFromCommit in 1..nextCommitSequence) { "Invalid retained commit floor" }
+        require(retainedFromCommit <= minOf(uploadedThroughCommit, evaluatedThroughCommit) + 1) {
+            "Retained floor exceeds the safe reclaim watermark"
+        }
     }
 }
 
-enum class OccurrenceState {
-    SCHEDULED,
-    POSTING,
-    NOTIFICATION_POSTED,
-    OPENED,
-    SURVEY_SUBMITTED,
-    EXPIRED,
-}
-
-data class InterventionOccurrence(
-    val occurrenceId: String,
-    val interventionId: String,
-    val triggerId: String,
-    val scheduleKey: String,
-    val scheduledFor: ResearchTime,
-    val expiresAtUtcMillis: Long,
-    val state: OccurrenceState,
-    val openedAt: ResearchTime? = null,
-    val submittedAt: ResearchTime? = null,
-    val submissionSequence: Long? = null,
+data class PendingSourceSubmission(
+    val sourceId: EventSourceId,
+    val schemaVersion: Int,
+    val resourceGeneration: Long,
+    val producerOrdinal: Long,
+    val admissionKind: ObservationAdmissionKind,
+    val events: List<EventDraft>,
+    val coverage: SourceCoverage?,
 ) {
     init {
-        require(OCCURRENCE_ID.matches(occurrenceId)) { "Invalid occurrence ID" }
-        require(ID.matches(interventionId) && ID.matches(triggerId)) { "Invalid occurrence reference" }
-        require(scheduleKey.length in 1..160) { "Invalid occurrence schedule key" }
-        require(expiresAtUtcMillis > scheduledFor.wallTimeUtcMillis) { "Invalid occurrence expiry" }
-        if (state == OccurrenceState.SURVEY_SUBMITTED) {
-            require(submittedAt != null && submissionSequence != null) { "Missing submission record" }
+        require(schemaVersion > 0) { "Schema version must be positive" }
+        require(resourceGeneration > 0) { "Resource generation must be positive" }
+        require(producerOrdinal >= 0) { "Producer ordinal must be non-negative" }
+        require(events.size <= MAX_OBSERVATION_EVENTS) { "Pending submission event count is out of range" }
+        require(events.isNotEmpty() || coverage != null) { "Empty pending submission needs coverage" }
+        require(events.all { it.type.sourceId == sourceId && it.type.schemaVersion == schemaVersion }) {
+            "Pending submission events do not share one source contract"
         }
-        submissionSequence?.let { require(it > 0) { "Invalid submission sequence" } }
-        submittedAt?.let { require(openedAt != null) { "A submission must have been opened" } }
+    }
+}
+
+data class PendingEngineInput(
+    val conditionEpochId: ConditionEpochId,
+    val submissions: List<PendingSourceSubmission>,
+    val stagedAt: ResearchTime,
+    val encodedSha256: String,
+) {
+    init {
+        require(submissions.size in 1..MAX_PENDING_SUBMISSIONS) { "Pending submission count is out of range" }
+        require(SHA256.matches(encodedSha256)) { "Invalid pending input digest" }
+    }
+
+    private companion object {
+        const val MAX_PENDING_SUBMISSIONS = 4_096
+    }
+}
+
+/** Exact storage-layout document. Ordered events, not this projection, are lifecycle history. */
+data class RuntimeDocument(
+    val layoutVersion: Int,
+    val experimentId: String,
+    val configurationId: String,
+    val configurationSha256: String,
+    val participantInstanceId: String,
+    val assignedParticipantId: String?,
+    val state: ExperimentState,
+    val revision: Long,
+    val nextCommitSequence: Long,
+    val nextObservationSequence: Long,
+    val nextEventSequence: Long,
+    val lastCommitSha256: String,
+    val sourceCheckpoints: Map<EventSourceId, SourceCheckpoint>,
+    val clockCheckpoint: StudyClockCheckpoint?,
+    val activeConditionEpoch: ConditionEpoch?,
+    val components: Map<RuntimeComponentKey, String>,
+    val lifetimeDataEventCount: Long,
+    val uploadedThroughCommit: Long,
+    val evaluatedThroughCommit: Long,
+    val retainedFromCommit: Long,
+    val activityTokenKeyBase64Url: String,
+) {
+    init {
+        require(layoutVersion == LAYOUT_VERSION) { "Unsupported runtime storage layout" }
+        require(ID.matches(experimentId) && ID.matches(configurationId)) { "Invalid study ID" }
+        require(SHA256.matches(configurationSha256)) { "Invalid configuration digest" }
+        require(UUID_PATTERN.matches(participantInstanceId)) { "Invalid participant instance ID" }
+        assignedParticipantId?.let {
+            require(ASSIGNED_ID.matches(it) && it.toByteArray().size <= 64) {
+                "Invalid assigned participant ID"
+            }
+        }
+        require(revision >= 0) { "Revision must be non-negative" }
+        require(nextCommitSequence == revision + 1) { "Next commit must follow revision" }
+        require(nextObservationSequence > 0 && nextEventSequence > 0) { "Invalid next sequence" }
+        require(lastCommitSha256 == GENESIS_DIGEST || SHA256.matches(lastCommitSha256)) {
+            "Invalid last commit digest"
+        }
+        require(sourceCheckpoints.all { (key, value) -> key == value.sourceId }) {
+            "Source checkpoint key mismatch"
+        }
+        require(components.values.all { it.toByteArray().size <= MAX_COMPONENT_BYTES }) {
+            "Runtime component is too large"
+        }
+        require(lifetimeDataEventCount >= 0) { "Event count must be non-negative" }
+        require(uploadedThroughCommit in 0..revision) { "Invalid upload watermark" }
+        require(evaluatedThroughCommit in 0..revision) { "Invalid reducer watermark" }
+        require(retainedFromCommit in 1..nextCommitSequence) { "Invalid retained commit floor" }
+        require(retainedFromCommit <= minOf(uploadedThroughCommit, evaluatedThroughCommit) + 1) {
+            "Retained floor exceeds the safe reclaim watermark"
+        }
+        require(ACTIVITY_KEY.matches(activityTokenKeyBase64Url)) { "Invalid activity-token key" }
     }
 
     companion object {
-        private val ID = Regex("[a-z0-9][a-z0-9-]{2,63}")
-        private val OCCURRENCE_ID = Regex("[0-9a-f]{64}")
+        const val LAYOUT_VERSION = 3
+
+        fun initial(
+            experimentId: String,
+            configurationId: String,
+            configurationSha256: String,
+            activityTokenKeyBase64Url: String,
+            assignedParticipantId: String? = null,
+            participantInstanceId: String = UUID.randomUUID().toString(),
+        ): RuntimeDocument = RuntimeDocument(
+            layoutVersion = LAYOUT_VERSION,
+            experimentId = experimentId,
+            configurationId = configurationId,
+            configurationSha256 = configurationSha256,
+            participantInstanceId = participantInstanceId,
+            assignedParticipantId = assignedParticipantId,
+            state = ExperimentState.IMPORTED,
+            revision = 0,
+            nextCommitSequence = 1,
+            nextObservationSequence = 1,
+            nextEventSequence = 1,
+            lastCommitSha256 = GENESIS_DIGEST,
+            sourceCheckpoints = emptyMap(),
+            clockCheckpoint = null,
+            activeConditionEpoch = null,
+            components = emptyMap(),
+            lifetimeDataEventCount = 0,
+            uploadedThroughCommit = 0,
+            evaluatedThroughCommit = 0,
+            retainedFromCommit = 1,
+            activityTokenKeyBase64Url = activityTokenKeyBase64Url,
+        )
+    }
+
+    fun projection(): RuntimeProjection = RuntimeProjection(
+        state = state,
+        revision = revision,
+        nextCommitSequence = nextCommitSequence,
+        nextObservationSequence = nextObservationSequence,
+        nextEventSequence = nextEventSequence,
+        sourceCheckpoints = sourceCheckpoints,
+        clockCheckpoint = clockCheckpoint,
+        activeConditionEpoch = activeConditionEpoch,
+        lifetimeDataEventCount = lifetimeDataEventCount,
+        uploadedThroughCommit = uploadedThroughCommit,
+        evaluatedThroughCommit = evaluatedThroughCommit,
+        retainedFromCommit = retainedFromCommit,
+    )
+
+    fun advance(commit: EngineCommit): RuntimeDocument {
+        require(commit.commitSequence == nextCommitSequence) { "Commit sequence does not follow runtime" }
+        require(commit.previousCommitSha256 == lastCommitSha256) { "Commit chain does not follow runtime" }
+        val nextComponents = components.toMutableMap()
+        commit.mutations.forEach { mutation ->
+            when (mutation.operation) {
+                RuntimeMutationOperation.UPSERT ->
+                    nextComponents[mutation.key] = requireNotNull(mutation.canonicalValue)
+                RuntimeMutationOperation.REMOVE -> nextComponents.remove(mutation.key)
+            }
+        }
+        val projection = commit.successorProjection
+        return copy(
+            state = projection.state,
+            revision = projection.revision,
+            nextCommitSequence = projection.nextCommitSequence,
+            nextObservationSequence = projection.nextObservationSequence,
+            nextEventSequence = projection.nextEventSequence,
+            lastCommitSha256 = commit.commitSha256,
+            sourceCheckpoints = projection.sourceCheckpoints,
+            clockCheckpoint = projection.clockCheckpoint,
+            activeConditionEpoch = projection.activeConditionEpoch,
+            components = nextComponents.toSortedMap(),
+            lifetimeDataEventCount = projection.lifetimeDataEventCount,
+            uploadedThroughCommit = projection.uploadedThroughCommit,
+            evaluatedThroughCommit = projection.evaluatedThroughCommit,
+            retainedFromCommit = projection.retainedFromCommit,
+        )
     }
 }
 
-/** How much of a study's local budget its stored data currently occupies. */
 data class StorageUsage(val usedBytes: Long, val quotaBytes: Long) {
     init {
         require(usedBytes >= 0) { "Storage usage must be non-negative" }
@@ -165,91 +370,36 @@ data class StorageUsage(val usedBytes: Long, val quotaBytes: Long) {
     val fraction: Double get() = usedBytes.toDouble() / quotaBytes.toDouble()
 }
 
-/**
- * Durable study data port. Events are appended in sequence and never rewritten; implementations
- * must never retain the full event history in memory.
- *
- * Whole leading segments may be reclaimed once an endpoint has confirmed them — see
- * [evictThrough] — so the readable window starts at [StudyMetadata.retainedFromSequence] rather
- * than always at 1.
- */
 interface StudyStore {
-    suspend fun loadMetadata(): StudyMetadata?
-
-    suspend fun initialize(metadata: StudyMetadata)
-
-    suspend fun saveMetadata(metadata: StudyMetadata)
-
-    suspend fun appendEvent(event: RecordedEvent)
-
-    /**
-     * Commits one event and its resulting metadata as a recoverable transaction. [failureTime]
-     * pre-arms the exact fail-closed boundary before any journal or event byte is mutated.
-     */
-    suspend fun appendEventAtomically(
-        event: RecordedEvent,
-        metadata: StudyMetadata,
-        failureTime: ResearchTime,
+    suspend fun loadRuntime(): RuntimeDocument?
+    suspend fun initialize(runtime: RuntimeDocument)
+    suspend fun appendCommit(commit: EngineCommit, successor: RuntimeDocument)
+    suspend fun stagePendingInput(input: PendingEngineInput)
+    suspend fun replacePendingInput(expectedSha256: String, input: PendingEngineInput)
+    suspend fun loadPendingInput(): PendingEngineInput?
+    suspend fun appendCommitConsumingPending(commit: EngineCommit, successor: RuntimeDocument)
+    suspend fun readCommits(
+        fromCommitInclusive: Long,
+        throughCommitInclusive: Long,
+        consume: (EngineCommit) -> Unit,
     )
-
-    /**
-     * Resolves a fail-closed append journal that survived an uncertain mutation. Implementations
-     * return the authoritative PAUSED metadata when such a journal existed, or null when no append
-     * recovery is pending. [reason] must be the application-owned winning safety reason; resolving
-     * it is the only mutation allowed while that journal remains pending.
-     */
-    suspend fun resolvePendingAppendFailure(reason: TransitionReason): StudyMetadata?
-
-    /**
-     * Streams `[fromSequenceInclusive, upToSequenceInclusive]`. Implementations must deliver the
-     * whole requested range or throw; a short read is never returned, because a caller cannot
-     * distinguish it from a study that genuinely collected less.
-     */
-    suspend fun readEvents(
-        fromSequenceInclusive: Long,
-        upToSequenceInclusive: Long,
-        consume: (RecordedEvent) -> Unit,
-    )
-
     suspend fun storageUsage(): StorageUsage
-
-    /**
-     * Reclaims space by deleting whole leading segments, and returns the updated metadata.
-     *
-     * A segment may go only when every event in it is at or below
-     * [StudyMetadata.uploadedThroughSequence] and it is not the newest segment. Nothing an
-     * endpoint has not confirmed is ever discarded.
-     *
-     * Stops once usage is at or below [targetBytes], or as soon as nothing further qualifies.
-     * Returns [metadata] unchanged when nothing was reclaimed.
-     */
-    suspend fun evictThrough(metadata: StudyMetadata, targetBytes: Long): StudyMetadata
-
+    suspend fun evictThrough(runtime: RuntimeDocument, targetBytes: Long): RuntimeDocument
     suspend fun clear()
 }
 
-/**
- * A mutation failed after its fail-closed journal was acknowledged, and the store recovered a
- * durable PAUSED boundary before returning. Runtimes must adopt [metadata] before reporting the
- * original failure so they cannot reuse the pre-transaction sequence number in the same process.
- */
-class StudyStoreMutationFailedClosed(
-    val metadata: StudyMetadata,
-    cause: Throwable,
-) : java.io.IOException("Study-store mutation recovered fail-closed", cause)
-
 enum class StudyStoreRecoveryFailure {
     KEY_UNAVAILABLE,
-    METADATA_INVALID,
-    TRANSACTION_INVALID,
-    EVENT_LOG_INVALID,
-    CANDIDATE_CONFLICT,
+    SNAPSHOT_INVALID,
+    COMMIT_LOG_INVALID,
+    PENDING_INPUT_INVALID,
+    UNSUPPORTED_LAYOUT,
 }
 
 class StudyStoreRecoveryException(
     val failure: StudyStoreRecoveryFailure,
     cause: Throwable? = null,
-) : java.io.IOException("Study-store recovery failed: ${failure.name}", cause)
+) : IOException("Study-store recovery failed: ${failure.name}", cause)
 
 data class StudyResetMarker(val retainedEnvelopeBytes: ByteArray?)
 
@@ -262,3 +412,12 @@ interface StudyResetStore {
 fun interface StudyStorageResetter {
     suspend fun clearAll()
 }
+
+private const val MAX_COMPONENT_BYTES = 512 * 1_024
+const val GENESIS_DIGEST = "0000000000000000000000000000000000000000000000000000000000000000"
+private val ID = Regex("[a-z0-9][a-z0-9-]{2,63}")
+private val ASSIGNED_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+private val COMPONENT_ID = Regex("[A-Za-z0-9][A-Za-z0-9._:@/-]{0,191}")
+private val UUID_PATTERN = Regex("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+private val ACTIVITY_KEY = Regex("[A-Za-z0-9_-]{43}")
+private val SHA256 = Regex("[0-9a-f]{64}")

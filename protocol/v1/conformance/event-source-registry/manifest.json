@@ -1,0 +1,85 @@
+{
+  "corpus_format": "particeps-event-source-registry-conformance-v1",
+  "invalid_cases": [
+    {
+      "expected_error": "sorted",
+      "id": "duplicate-source",
+      "mutation": "DUPLICATE_FIRST_SOURCE"
+    },
+    {
+      "expected_error": "sorted",
+      "id": "unsorted-sources",
+      "mutation": "REVERSE_SOURCES"
+    },
+    {
+      "expected_error": "unknown member",
+      "id": "unknown-root-member",
+      "mutation": "ADD_ROOT_MEMBER"
+    },
+    {
+      "expected_error": "source_id",
+      "id": "invalid-source-id",
+      "mutation": "INVALID_FIRST_SOURCE_ID"
+    },
+    {
+      "expected_error": "schema_version",
+      "id": "invalid-schema-version",
+      "mutation": "ZERO_FIRST_SCHEMA_VERSION"
+    },
+    {
+      "expected_error": "system-source",
+      "id": "selectable-system",
+      "mutation": "MAKE_FIRST_SYSTEM_SELECTABLE"
+    },
+    {
+      "expected_error": "configuration",
+      "id": "collector-without-configuration",
+      "mutation": "REMOVE_FIRST_COLLECTOR_CONFIGURATION"
+    },
+    {
+      "expected_error": "incompatible trigger operator",
+      "id": "invalid-field-operator",
+      "mutation": "INVALID_FIRST_RESEARCHER_FIELD_OPERATOR"
+    },
+    {
+      "expected_error": "primary source",
+      "id": "invalid-primary-clock-field",
+      "mutation": "INVALID_FIRST_PRIMARY_CLOCK_FIELD"
+    },
+    {
+      "expected_error": "must have ENTER and EXIT",
+      "id": "incomplete-presence-pair",
+      "mutation": "BREAK_FIRST_PRESENCE_PAIR"
+    },
+    {
+      "expected_error": "lifecycle audit event",
+      "id": "researcher-lifecycle-feedback",
+      "mutation": "MAKE_STUDY_RUNNING_RESEARCHER"
+    },
+    {
+      "expected_error": "enforced_by",
+      "id": "finite-rate-without-enforcement",
+      "mutation": "REMOVE_FIRST_FINITE_RATE_ENFORCEMENT"
+    },
+    {
+      "expected_error": "changed in place",
+      "id": "published-contract-mutation",
+      "mutation": "MUTATE_PUBLISHED_EVENT_SIZE"
+    },
+    {
+      "expected_error": "deleted",
+      "id": "published-contract-deletion",
+      "mutation": "DELETE_PUBLISHED_SOURCE"
+    }
+  ],
+  "valid_cases": [
+    {
+      "canonical_jcs": "current-registry.jcs",
+      "id": "current-registry",
+      "registry": "../../event-source-registry.json",
+      "registry_sha256": "53e3814c0f159a579d303f51bff94293188d4afd4f8fb82d19616c782483299c",
+      "semantic_projection_digests": "../../generated/event-source-contract-digests.json",
+      "source_count": 18
+    }
+  ]
+}

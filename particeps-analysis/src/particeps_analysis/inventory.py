@@ -21,8 +21,9 @@ METADATA_KEYS = {
     "byte_count",
     "configuration_sha256",
     "researcher_key_id",
-    "first_sequence_number",
-    "last_sequence_number",
+    "first_commit_sequence",
+    "last_commit_sequence",
+    "commit_count",
     "event_count",
     "received_at_utc",
 }
@@ -218,12 +219,12 @@ def _validate_metadata(metadata: object, digest: str, byte_count: int) -> None:
     if not _HEX.fullmatch(metadata["configuration_sha256"]):
         raise ValidationError("receiver metadata configuration digest is invalid")
     first = canonical_decimal(
-        metadata["first_sequence_number"], "metadata first_sequence_number"
+        metadata["first_commit_sequence"], "metadata first_commit_sequence"
     )
     last = canonical_decimal(
-        metadata["last_sequence_number"], "metadata last_sequence_number"
+        metadata["last_commit_sequence"], "metadata last_commit_sequence"
     )
-    count = canonical_decimal(metadata["event_count"], "metadata event_count")
+    count = canonical_decimal(metadata["commit_count"], "metadata commit_count")
     if first < 1 or last != (first - 1 if count == 0 else first + count - 1):
         raise ValidationError("receiver metadata sequence range is inconsistent")
     key_id = metadata["researcher_key_id"]

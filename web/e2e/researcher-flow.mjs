@@ -172,6 +172,18 @@ if ((await motionRequired.getAttribute('aria-pressed')) !== 'true') {
   fail('pressing Required left the control unpressed');
 }
 
+// Enabling ordinary continuous collectors creates signed resource-binding automations, but those
+// bindings merely express the collection lifecycle the App already had: active selects the
+// continuous profile and inactive selects no profile. They are not participant-varying treatment,
+// so the blinding acknowledgement must not appear for this study. A broad "has automations" gate
+// makes signing silently fail after the click and looks like a broken Sign button from outside.
+const blindingAcknowledgement = page.getByRole('switch', {
+  name: /I confirm that Particeps-generated participant UI does not reveal treatment/
+});
+if ((await blindingAcknowledgement.count()) !== 0) {
+  fail('ordinary continuous collection incorrectly requires the treatment-blinding acknowledgement');
+}
+
 // Sign. The identifiers are read off the page before the click, because the claim under test is
 // that the file is named what the researcher was shown it would be named.
 await page.locator('[data-testid="rail-sign"]').click();
@@ -184,10 +196,19 @@ const [experimentId, configurationId, signerKeyId, exportKeyId] = await page
   .locator('[data-testid="identity-readout"] dd > span:first-child')
   .evaluateAll((spans) => spans.map((span) => span.textContent.trim()));
 
-await page
+const signButton = page
   .locator('[data-testid="step-sign"]')
-  .getByRole('button', { name: 'Sign', exact: true })
-  .click();
+  .getByRole('button', { name: 'Sign', exact: true });
+if (!(await signButton.isVisible()) || !(await signButton.isEnabled())) {
+  const issueRows = await page
+    .locator('[data-testid="step-sign"] [data-testid^="issue-"]')
+    .allTextContents();
+  fail(
+    'the Sign control is unavailable after completing a valid continuous-collection study' +
+      (issueRows.length ? `:\n  ${issueRows.join('\n  ')}` : ' and the page reports no validation issue')
+  );
+}
+await signButton.click();
 await page.waitForSelector('[data-testid="step-files"]');
 await page.waitForTimeout(800);
 

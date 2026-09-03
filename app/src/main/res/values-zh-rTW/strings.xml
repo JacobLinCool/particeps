@@ -11,6 +11,7 @@
     <string name="collection_channel">研究資料收集中</string>
     <string name="collection_channel_description">參與者同意的研究正在收集資料時顯示</string>
     <string name="collection_notification_title">研究資料收集中</string>
+    <string name="collection_notification_text">Particeps 正在執行一項研究。</string>
     <string name="collection_recovery_notification_text">正在確認是否應繼續收集</string>
     <string name="collection_recovery_notification_title">正在確認研究狀態</string>
     <string name="daily_running">仍在收集中。開啟 App 可以暫停、匯出或退出研究。</string>
@@ -31,6 +32,10 @@
     <string name="survey_unavailable">目前無法開啟這份問卷。</string>
     <!-- header_no_study is the product name Particeps and is not translated. -->
     <string name="header_starting">準備中</string>
+    <string name="startup_stage_generic">仍在啟動中。</string>
+    <string name="startup_stage_loading_study">正在讀取已儲存的研究。</string>
+    <string name="startup_stage_validating_storage">正在檢查已收集的研究資料，收集較久的研究這一步可能比較慢。</string>
+    <string name="startup_stage_restoring_runtime">正在恢復研究執行狀態。</string>
     <string name="header_elapsed_minutes">%1$d 分</string>
     <string name="header_elapsed_hours">%1$d 小時 %2$d 分</string>
     <string name="status_paused_since">自 %1$s 暫停，已經過 %2$s</string>
@@ -55,6 +60,7 @@
     <string name="action_start">開始研究</string>
     <string name="action_pause">暫停</string>
     <string name="action_resume">繼續收集</string>
+    <string name="action_complete_study">完成研究</string>
     <string name="action_export">匯出加密資料</string>
     <string name="action_withdraw">退出研究</string>
     <string name="action_delete">刪除本機資料</string>
@@ -76,6 +82,13 @@
     <string name="study_duration_days_hours">%1$d 天 %2$d 小時</string>
 
     <string name="data_optional">選用</string>
+    <string name="participant_data_accelerometer_detail">手機動作感測器量到的移動狀況</string>
+    <string name="participant_data_gyroscope_detail">手機量到的原始旋轉資訊；不據此推論活動</string>
+    <string name="participant_data_ambient_light_detail">周遭的原始光線強度；不會記錄影像或環境內容</string>
+    <string name="participant_data_proximity_detail">手機接近感測器量到的原始遠近或距離；不代表有人在場</string>
+    <string name="participant_data_network_usage_detail">手機傳送與接收的總位元組數</string>
+    <string name="participant_data_usage_events_detail">哪些 App 開啟或關閉，以及螢幕何時亮起</string>
+    <string name="participant_data_location_detail">手機的位置</string>
 
     <string name="collector_app_lifecycle_name">App 使用狀況</string>
     <string name="collector_app_lifecycle_detail">這個 App 本身開啟與關閉的時間</string>
@@ -183,6 +196,7 @@
     <string name="access_location_settings_change_unavailable">Android 回報這支手機無法滿足本研究要求的位置設定。開始前請聯絡研究團隊。</string>
     <string name="access_location_settings_check_failed">Particeps 無法確認這支手機是否能滿足研究設定的位置請求。開始前請聯絡研究團隊。</string>
     <string name="access_system_screen_unavailable">這支手機沒有提供所需的 Android 設定畫面，請先聯絡研究團隊，不要開始研究。</string>
+    <string name="traffic_shaping_disclosure">這項研究可能會使用此裝置上的 VPN，調整部分 App 傳輸資料的速度。流量仍使用你原本的網路，不會經由 Particeps 伺服器傳送。Particeps 只會檢查研究所需 App 是否已安裝，不會儲存或上傳已安裝 App 清單。Android 17 以上的本機網路權限只用來轉送這些 App 原本發出的本機連線；Particeps 不會搜尋本機網路裝置。其他 VPN 可能中斷此功能，屆時研究會暫停。</string>
 
     <string name="access_fine_location_settings_description">多次拒絕後，Android 不會再顯示權限對話框。請從 Particeps 的應用程式資訊恢復精確位置。</string>
     <string name="access_fine_location_settings_step_permissions">在「應用程式資訊」中開啟「權限」，再選擇「位置」。</string>
@@ -220,8 +234,8 @@
     <plurals name="meter_events">
         <item quantity="other">%1$s 筆</item>
     </plurals>
-    <string name="meter_sent">已傳送 %1$s 筆</string>
-    <string name="meter_reclaimed">前 %1$s 筆資料已傳送並從手機移除，之後匯出的檔案不會包含這些資料。</string>
+    <string name="meter_sent">已傳送 %1$s 個資料批次</string>
+    <string name="meter_reclaimed">前 %1$s 個資料批次已傳送並從手機移除，之後匯出的檔案不會包含這些資料。</string>
 
     <string name="details_configuration">設定檔</string>
     <string name="details_consent_document">同意書</string>
@@ -229,8 +243,10 @@
     <string name="details_assigned_id">參與者代碼</string>
     <string name="details_signature">簽章</string>
     <string name="details_last_export">上次匯出</string>
-    <string name="details_last_export_value">%1$s 筆 · %2$s</string>
+    <string name="details_last_export_value">%1$s 筆事件 · %2$s 個資料批次</string>
 
+    <string name="confirm_complete_title">確定完成這項研究？</string>
+    <string name="confirm_complete_body">資料收集將永久停止，你仍可匯出先前已收集的資料。</string>
     <string name="confirm_withdraw_title">確定退出研究？</string>
     <string name="confirm_withdraw_body">App 將永久停止收集資料。在刪除本機資料前，你仍可匯出既有資料。</string>
     <string name="confirm_delete_title">永久刪除本機資料？</string>
@@ -243,10 +259,20 @@
     <string name="recovery_notification_title">研究收集需要處理</string>
     <string name="recovery_notification_body">請開啟 Particeps 以安全恢復收集。</string>
     <string name="recovery_panel_title">資料收集已安全暫停</string>
-    <string name="recovery_panel_body">Particeps 無法完成自動恢復。請處理 Android 顯示的權限需求後再試一次。下方代碼不含研究或參與者資訊。</string>
+    <string name="recovery_panel_body">Particeps 無法完成自動恢復。請處理 Android 顯示的權限需求後再試一次。</string>
     <string name="action_retry_recovery">再次嘗試</string>
     <string name="action_copy_diagnostic">複製診斷代碼</string>
     <string name="action_reset_and_restart">刪除舊資料並重新開始</string>
     <string name="confirm_reset_title">刪除舊研究資料並重新開始？</string>
     <string name="confirm_reset_body">這會永久刪除目前的研究 instance 與所有尚未匯出的資料。若設定檔仍在有效期限內，你需要重新閱讀研究內容、同意並設定權限，系統會建立新的安裝代碼與完整研究期限。此操作無法復原。</string>
+    <string name="message_configuration_import_failed">Particeps 無法開啟這份研究設定檔。</string>
+    <string name="message_join_import_failed">Particeps 無法加入這項研究。</string>
+    <string name="message_export_failed">Particeps 無法匯出研究資料。</string>
+    <string name="message_access_inspection_failed">Particeps 無法檢查所需的 Android 存取權。</string>
+    <string name="message_operation_failed">Particeps 無法完成這項操作。</string>
+    <string name="message_reset_failed">Particeps 無法重設本機研究。</string>
+    <string name="message_delete_failed">Particeps 無法刪除本機研究資料。</string>
+    <string name="message_export_complete">加密的研究匯出檔已準備完成。</string>
+    <string name="message_local_data_deleted">本機研究資料已刪除。</string>
+    <string name="message_study_paused_for_safety">Particeps 無法驗證安全收集，因此研究已暫停。請先處理下方顯示的 Android 存取權，再恢復研究。</string>
 </resources>

@@ -1,7 +1,7 @@
 /**
  * `CollectorSummary.kt`'s humanisers, ported.
  *
- * A researcher setting `poll_interval_minutes` to 1440 should read the words the participant will
+ * A researcher setting a poll interval to 86,400 seconds should read the words the participant will
  * read on the consent screen, not the number they typed — the phone renders "1 day", so this does
  * too. Every rule here is the Kotlin one: coarsest unit that stays exact, never a rounded one.
  *

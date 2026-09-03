@@ -22,13 +22,14 @@ class AndroidConfigurationImportTest {
         val application = ApplicationProvider.getApplicationContext<CollectorApplication>()
         val session = application.session
         session.clearStudyDataForTest()
-        assertNull("test requires a clean study session", session.snapshot.value.configuration)
+        assertNull("test requires a clean study session", session.snapshot.value.study)
 
         try {
             val loadDemo = requireNotNull(DemoStudy.load)
             session.importSignedConfiguration(loadDemo(application.resources))
 
-            assertEquals(ExperimentState.IMPORTED, session.snapshot.value.runtime.metadata?.state)
+            assertEquals("modular-sensing-demo", session.snapshot.value.study?.experimentId)
+            assertEquals(ExperimentState.CONFIG_VERIFIED, session.snapshot.value.runtime.state)
         } finally {
             session.clearStudyDataForTest()
         }
@@ -45,7 +46,7 @@ class AndroidConfigurationImportTest {
         val application = ApplicationProvider.getApplicationContext<CollectorApplication>()
         val session = application.session
         session.clearStudyDataForTest()
-        assertNull("test requires a clean study session", session.snapshot.value.configuration)
+        assertNull("test requires a clean study session", session.snapshot.value.study)
 
         try {
             val loadDemo = requireNotNull(DemoStudy.load)
@@ -54,8 +55,8 @@ class AndroidConfigurationImportTest {
             val failure = runCatching { session.importSignedConfiguration(envelope) }.exceptionOrNull()
 
             assertNotNull("the retired magic must not import", failure)
-            assertNull(session.snapshot.value.configuration)
-            assertNull(session.snapshot.value.runtime.metadata)
+            assertNull(session.snapshot.value.study)
+            assertNull(session.snapshot.value.runtime.state)
             assertNull(
                 "a refused import must persist no active study",
                 EncryptedActiveStudyStore(application).load(),

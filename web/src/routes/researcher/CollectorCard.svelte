@@ -16,6 +16,9 @@
    * hard answer to "a switch inside a switch". Everything else on the card is a parameter.
    */
   import Icon from '$lib/ui/Icon.svelte';
+  import Button from '$lib/ui/Button.svelte';
+  import IdField from '$lib/ui/IdField.svelte';
+  import IconButton from '$lib/ui/IconButton.svelte';
   import RangeField from '$lib/ui/RangeField.svelte';
   import DualRangeField from '$lib/ui/DualRangeField.svelte';
   import ToggleField from '$lib/ui/ToggleField.svelte';
@@ -23,7 +26,7 @@
   import ChipSet from '$lib/ui/ChipSet.svelte';
   import RateBar from './RateBar.svelte';
   import { collectorRate, volumeOf } from './estimate';
-  import { BOUNDS, type CollectorConfig, type CollectorId, type LocationPriority, type NetworkTransport } from '$lib/particeps/types';
+  import { BOUNDS, type CollectorConfig, type CollectorId, type LocationPriority, type NamedCollectorProfile, type NetworkTransport } from '$lib/particeps/types';
   import type { IconRef } from '$lib/ui/icons';
   import type { Messages } from '$lib/i18n/types';
   import type { Scale, ScaleKey } from './scales';
@@ -33,13 +36,21 @@
     config: CollectorConfig | null;
     path: string;
     m: Messages;
+    locale: 'en' | 'zh-TW';
     /** Unit, bounds and chips per field. Built once on the page and handed down. */
     scales: Record<ScaleKey, Scale>;
     onenable: (id: CollectorId) => void;
     ondisable: (id: CollectorId) => void;
+    onrequired: (id: CollectorId, required: boolean) => void;
+    onaddprofile: (id: CollectorId) => string | null;
+    onrenameprofile: (id: CollectorId, previous: string, next: string) => void;
+    onremoveprofile: (id: CollectorId, profileId: string) => void;
   }
 
-  let { id, config, path, m, scales: S, onenable, ondisable }: Props = $props();
+  let {
+    id, config, path, m, locale, scales: S, onenable, ondisable, onrequired,
+    onaddprofile, onrenameprofile, onremoveprofile
+  }: Props = $props();
 
   const uid = $props.id();
 
@@ -60,8 +71,42 @@
   };
 
   const copy = $derived(m.collector[id]);
+  const profileCopy = $derived(locale === 'zh-TW' ? {
+    group: '設定檔', add: '新增設定檔', id: '設定檔 ID', remove: '移除設定檔'
+  } : {
+    group: 'Profiles', add: 'Add profile', id: 'Profile ID', remove: 'Remove profile'
+  });
   const on = $derived(config !== null);
   const level = $derived(config ? volumeOf(collectorRate(config).events) : 0);
+  let selectedProfileId = $state('continuous');
+  const selectedProfile = $derived(
+    config?.profiles.find((profile) => profile.id === selectedProfileId) ?? config?.profiles[0] ?? null
+  );
+
+  function addProfile(): void {
+    const added = onaddprofile(id);
+    if (added) selectedProfileId = added;
+  }
+
+  type EditableProfile = {
+    sampling_period_us: number;
+    maximum_report_latency_us: number;
+    change_threshold_millilux: number;
+    minimum_event_interval_ms: number;
+    change_threshold_millimeters: number;
+    include_bandwidth_estimates: boolean;
+    transports: NetworkTransport[];
+    poll_interval_seconds: number;
+    interval_millis: number;
+    minimum_interval_millis: number;
+    maximum_batch_delay_millis: number;
+    minimum_displacement_millimeters: number;
+    priority: LocationPriority;
+    trajectory_sampling_hz: number;
+  };
+
+  const editable = (profile: NamedCollectorProfile): EditableProfile =>
+    profile.config as unknown as EditableProfile;
 
   const TRANSPORTS: readonly { value: NetworkTransport; label: string; icon: IconRef }[] = $derived([
     { value: 'wifi', label: m.option.transport.wifi, icon: 'wifi' },
@@ -116,7 +161,7 @@
         aria-pressed={collector.required}
         aria-describedby="collectors-required"
         title={m.field.hint.required}
-        onclick={() => (collector.required = !collector.required)}
+        onclick={() => onrequired(id, !collector.required)}
         data-testid={`required-${path}.required`}
       >
         <Icon name={collector.required ? 'check' : 'participant'} size={14} />
@@ -143,14 +188,55 @@
         <span>{copy.limit}</span>
       </div>
 
+      <div class="collector__profiles" role="group" aria-label={profileCopy.group}>
+        {#each collector.profiles as profile (profile)}
+          <button
+            type="button"
+            class="chip"
+            class:chip--selected={profile === selectedProfile}
+            aria-pressed={profile === selectedProfile}
+            onclick={() => (selectedProfileId = profile.id)}
+          >{profile.id}</button>
+        {/each}
+        <Button label={profileCopy.add} icon="plus" variant="ghost" onclick={addProfile} />
+      </div>
+
+      {#if selectedProfile}
+        {@const profile = selectedProfile}
+        {@const profileIndex = (collector.profiles as NamedCollectorProfile[]).indexOf(profile)}
+        {@const profilePath = `${path}.profiles.${profileIndex}`}
+        <div class="collector__profile-head">
+          <IdField
+            label={profileCopy.id}
+            path={`${profilePath}.id`}
+            value={profile.id}
+            onchange={(value) => {
+              const previous = profile.id;
+              selectedProfileId = value;
+              onrenameprofile(id, previous, value);
+            }}
+          />
+          {#if collector.profiles.length > 1}
+            <IconButton
+              icon="trash"
+              label={profileCopy.remove}
+              variant="danger"
+              onclick={() => {
+                onremoveprofile(id, profile.id);
+                selectedProfileId = collector.profiles[0]?.id ?? '';
+              }}
+            />
+          {/if}
+        </div>
+
       {#if collector.id === 'accelerometer.v1' || collector.id === 'gyroscope.v1'}
-        {@const cfg = collector.config}
+        {@const cfg = editable(profile)}
         <!-- Hertz in the control, microseconds in the file. The box says `50` and `Hz`; the period
              it stores is `scales.ts`'s business and appears nowhere on screen. -->
         <RangeField
           label={m.field.label.samplingPeriod}
           hint={m.field.hint.samplingPeriod}
-          path={`${path}.config.sampling_period_us`}
+          path={`${profilePath}.config.sampling_period_us`}
           value={cfg.sampling_period_us}
           unit={S.sampling_period_us}
           icon="motion"
@@ -158,17 +244,17 @@
         />
         <RangeField
           label={m.field.label.reportLatency}
-          path={`${path}.config.maximum_report_latency_us`}
+          path={`${profilePath}.config.maximum_report_latency_us`}
           value={cfg.maximum_report_latency_us}
           unit={S.maximum_report_latency_us}
           onchange={(value) => (cfg.maximum_report_latency_us = value)}
         />
       {:else if collector.id === 'ambient_light.v1'}
-        {@const cfg = collector.config}
+        {@const cfg = editable(profile)}
         <RangeField
           label={m.field.label.samplingPeriod}
           hint={m.field.hint.ambientLightSamplingPeriod}
-          path={`${path}.config.sampling_period_us`}
+          path={`${profilePath}.config.sampling_period_us`}
           value={cfg.sampling_period_us}
           unit={S.ambient_sampling_period_us}
           icon="clock"
@@ -176,16 +262,16 @@
         />
         <RangeField
           label={m.field.label.changeThreshold}
-          path={`${path}.config.change_threshold_millilux`}
+          path={`${profilePath}.config.change_threshold_millilux`}
           value={cfg.change_threshold_millilux}
           unit={S.change_threshold_millilux}
           onchange={(value) => (cfg.change_threshold_millilux = value)}
         />
       {:else if collector.id === 'proximity.v1'}
-        {@const cfg = collector.config}
+        {@const cfg = editable(profile)}
         <RangeField
           label={m.field.label.minimumEventInterval}
-          path={`${path}.config.minimum_event_interval_ms`}
+          path={`${profilePath}.config.minimum_event_interval_ms`}
           value={cfg.minimum_event_interval_ms}
           unit={S.minimum_event_interval_ms}
           icon="clock"
@@ -193,25 +279,25 @@
         />
         <RangeField
           label={m.field.label.changeThreshold}
-          path={`${path}.config.change_threshold_millimeters`}
+          path={`${profilePath}.config.change_threshold_millimeters`}
           value={cfg.change_threshold_millimeters}
           unit={S.change_threshold_millimeters}
           onchange={(value) => (cfg.change_threshold_millimeters = value)}
         />
       {:else if collector.id === 'network_state.v1'}
-        {@const cfg = collector.config}
+        {@const cfg = editable(profile)}
         <ToggleField
           label={m.field.label.bandwidthEstimates}
           hint={m.field.hint.bandwidthEstimates}
-          path={`${path}.config.include_bandwidth_estimates`}
+          path={`${profilePath}.config.include_bandwidth_estimates`}
           value={cfg.include_bandwidth_estimates}
           onchange={(value) => (cfg.include_bandwidth_estimates = value)}
         />
       {:else if collector.id === 'network_usage.v1'}
-        {@const cfg = collector.config}
+        {@const cfg = editable(profile)}
         <ChipSet
           label={m.field.label.transports}
-          path={`${path}.config.transports`}
+          path={`${profilePath}.config.transports`}
           value={cfg.transports}
           options={TRANSPORTS}
           min={1}
@@ -220,27 +306,27 @@
         <RangeField
           label={m.field.label.pollInterval}
           hint={m.field.hint.pollInterval}
-          path={`${path}.config.poll_interval_minutes`}
-          value={cfg.poll_interval_minutes}
-          unit={S.poll_interval_minutes}
+          path={`${profilePath}.config.poll_interval_seconds`}
+          value={cfg.poll_interval_seconds}
+          unit={S.poll_interval_seconds}
           icon="clock"
-          caution={cfg.poll_interval_minutes === 1}
-          onchange={(value) => (cfg.poll_interval_minutes = value)}
+          caution={cfg.poll_interval_seconds === 15}
+          onchange={(value) => (cfg.poll_interval_seconds = value)}
         />
       {:else if collector.id === 'usage_events.v1'}
-        {@const cfg = collector.config}
+        {@const cfg = editable(profile)}
         <RangeField
           label={m.field.label.pollInterval}
           hint={m.field.hint.pollInterval}
-          path={`${path}.config.poll_interval_minutes`}
-          value={cfg.poll_interval_minutes}
-          unit={S.poll_interval_minutes}
+          path={`${profilePath}.config.poll_interval_seconds`}
+          value={cfg.poll_interval_seconds}
+          unit={S.poll_interval_seconds}
           icon="clock"
-          caution={cfg.poll_interval_minutes === 1}
-          onchange={(value) => (cfg.poll_interval_minutes = value)}
+          caution={cfg.poll_interval_seconds === 15}
+          onchange={(value) => (cfg.poll_interval_seconds = value)}
         />
       {:else if collector.id === 'location.v1'}
-        {@const cfg = collector.config}
+        {@const cfg = editable(profile)}
         <!-- One track, two thumbs: `minimum_interval_millis in 500..interval_millis` becomes
              geometry instead of a message that arrives after the fact. -->
         <DualRangeField
@@ -248,8 +334,8 @@
           hint={m.field.hint.fastestInterval}
           lowLabel={m.field.label.fastestInterval}
           highLabel={m.field.label.interval}
-          lowPath={`${path}.config.minimum_interval_millis`}
-          highPath={`${path}.config.interval_millis`}
+          lowPath={`${profilePath}.config.minimum_interval_millis`}
+          highPath={`${profilePath}.config.interval_millis`}
           low={cfg.minimum_interval_millis}
           high={cfg.interval_millis}
           unit={S.interval_millis}
@@ -262,7 +348,7 @@
         <RangeField
           label={m.field.label.batchDelay}
           hint={m.field.hint.batchDelay}
-          path={`${path}.config.maximum_batch_delay_millis`}
+          path={`${profilePath}.config.maximum_batch_delay_millis`}
           value={cfg.maximum_batch_delay_millis}
           unit={S.maximum_batch_delay_millis}
           icon="package"
@@ -270,7 +356,7 @@
         />
         <RangeField
           label={m.field.label.displacement}
-          path={`${path}.config.minimum_displacement_millimeters`}
+          path={`${profilePath}.config.minimum_displacement_millimeters`}
           value={cfg.minimum_displacement_millimeters}
           unit={S.minimum_displacement_millimeters}
           icon="location"
@@ -279,22 +365,39 @@
         <ChoiceField
           label={m.field.label.priority}
           hint={m.field.hint.priority}
-          path={`${path}.config.priority`}
+          path={`${profilePath}.config.priority`}
           value={cfg.priority}
           options={PRIORITIES}
           onchange={(value) => (cfg.priority = value)}
         />
       {:else if collector.id === 'keyboard_touch.v1'}
-        {@const cfg = collector.config}
+        {@const cfg = editable(profile)}
         <RangeField
           label={m.field.label.trajectoryRate}
-          path={`${path}.config.trajectory_sampling_hz`}
+          path={`${profilePath}.config.trajectory_sampling_hz`}
           value={cfg.trajectory_sampling_hz}
           unit={S.trajectory_sampling_hz}
           icon="keyboard"
           onchange={(value) => (cfg.trajectory_sampling_hz = value)}
         />
       {/if}
+      {/if}
     </div>
   {/if}
 </div>
+
+<style>
+  .collector__profiles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-3);
+    align-items: center;
+  }
+
+  .collector__profile-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--sp-4);
+    align-items: end;
+  }
+</style>

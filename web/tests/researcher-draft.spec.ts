@@ -28,9 +28,9 @@ describe('draft', () => {
     draft.enableCollector('keyboard_touch.v1');
     draft.enableCollector('accelerometer.v1');
     expect(draft.configuration.collectors.map((c) => c.id)).toEqual([
-      'app_lifecycle.v1', 'accelerometer.v1', 'location.v1', 'keyboard_touch.v1'
+      'accelerometer.v1', 'app_lifecycle.v1', 'keyboard_touch.v1', 'location.v1'
     ]);
-    expect(draft.collectorPath('location.v1')).toBe('collectors.2');
+    expect(draft.collectorPath('location.v1')).toBe('collectors.3');
   });
 
   it('names the study from the title and the file from its own bytes', () => {
@@ -92,6 +92,107 @@ describe('draft', () => {
     expect(draft.signature).toBeNull();
     expect(draft.stateOf('sign')).toBe('partial');
     expect(draft.artifactCount).toBe(2);
+  });
+
+  it('does not require blinding confirmation for static continuous collection', () => {
+    const draft = ready();
+    expect(draft.addCollectorProfile('location.v1')).toBe('profile-2');
+    flushSync();
+    expect(draft.issues).toEqual([]);
+    expect(draft.requiresBlindingConfirmation).toBe(false);
+    expect(draft.sign()).toBe('signed');
+  });
+
+  it('keeps the generated continuous binding live when a collector becomes required', () => {
+    const draft = ready();
+    const binding = draft.configuration.automations.find((automation) =>
+      automation.type === 'resource_binding' && automation.resource.id === 'location.v1'
+    );
+    if (!binding || binding.type !== 'resource_binding') throw new Error('missing location binding');
+
+    expect(binding.default_profile_id).toBeNull();
+    draft.setCollectorRequired('location.v1', true);
+    flushSync();
+    expect(draft.collector('location.v1')?.required).toBe(true);
+    expect(binding.default_profile_id).toBe('continuous');
+    expect(draft.issues).toEqual([]);
+    expect(draft.requiresBlindingConfirmation).toBe(false);
+
+    draft.setCollectorRequired('location.v1', false);
+    flushSync();
+    expect(binding.default_profile_id).toBeNull();
+    expect(draft.issues).toEqual([]);
+  });
+
+  it('does not rewrite a researcher-authored binding when its collector becomes required', () => {
+    const draft = ready();
+    const binding = draft.configuration.automations.find((automation) =>
+      automation.type === 'resource_binding' && automation.resource.id === 'location.v1'
+    );
+    if (!binding || binding.type !== 'resource_binding') throw new Error('missing location binding');
+    binding.cases = [{
+      condition: { type: 'elapsed_at_least', duration_seconds: 180, clock: 'ACTIVE_RUNNING_TIME' },
+      profile_id: 'continuous'
+    }];
+
+    draft.setCollectorRequired('location.v1', true);
+    flushSync();
+    expect(binding.default_profile_id).toBeNull();
+    expect(draft.issues.map((issue) => issue.code)).toContain('trigger_source_liveness');
+  });
+
+  it('requires blinding confirmation for a single-profile conditional profile/null resource', () => {
+    const draft = ready();
+    const binding = draft.configuration.automations.find((automation) =>
+      automation.type === 'resource_binding' && automation.resource.id === 'location.v1'
+    );
+    if (!binding || binding.type !== 'resource_binding') throw new Error('missing location binding');
+    binding.cases = [{
+      condition: { type: 'elapsed_at_least', duration_seconds: 180, clock: 'ACTIVE_RUNNING_TIME' },
+      profile_id: 'continuous'
+    }];
+    binding.default_profile_id = null;
+    flushSync();
+    expect(draft.issues).toEqual([]);
+    expect(draft.requiresBlindingConfirmation).toBe(true);
+    expect(draft.sign()).toBe('failed');
+    expect(draft.envelope).toBeNull();
+    draft.confirmBlinding(true);
+    expect(draft.sign()).toBe('signed');
+  });
+
+  it('requires blinding confirmation for occurrence actions and a constant actuator profile', () => {
+    const occurrence = ready();
+    occurrence.addIntervention({
+      id: 'check-in', required: false,
+      action: { type: 'notification', notification_title: 'Check in', notification_message: 'How is it going?' }
+    });
+    occurrence.configuration.automations.push({
+      type: 'occurrence', id: 'check-in-once',
+      trigger: { type: 'schedule', schedule: { type: 'one_time', offset_minutes: 1, clock: 'ACTIVE_RUNNING_TIME' } },
+      guard: null, intervention_id: 'check-in', availability_seconds: 60,
+      cooldown: null, maximum_activations: 1
+    });
+    occurrence.configuration.automations.sort((left, right) => left.id.localeCompare(right.id));
+    flushSync();
+    expect(occurrence.issues).toEqual([]);
+    expect(occurrence.requiresBlindingConfirmation).toBe(true);
+
+    const actuator = ready();
+    actuator.configuration.traffic_shaping = {
+      target_packages: ['com.example.target'],
+      profiles: [{ id: 'constant-cap', uplink_kbps: 256, downlink_kbps: 1024 }]
+    };
+    actuator.configuration.automations.push({
+      type: 'resource_binding', id: 'bind-traffic-shaping',
+      resource: { kind: 'actuator', id: 'traffic-shaping.v1' },
+      cases: [{ condition: { type: 'study_session_active' }, profile_id: 'constant-cap' }],
+      default_profile_id: 'constant-cap'
+    });
+    actuator.configuration.automations.sort((left, right) => left.id.localeCompare(right.id));
+    flushSync();
+    expect(actuator.issues).toEqual([]);
+    expect(actuator.requiresBlindingConfirmation).toBe(true);
   });
 
   /**

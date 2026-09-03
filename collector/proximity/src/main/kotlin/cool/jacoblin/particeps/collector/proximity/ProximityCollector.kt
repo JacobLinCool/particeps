@@ -11,12 +11,12 @@ import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
 import cool.jacoblin.particeps.core.collector.CollectorPlugin
 import cool.jacoblin.particeps.core.collector.LatestValueRateGate
-import cool.jacoblin.particeps.core.collector.PrivacyClass
-import cool.jacoblin.particeps.core.collector.ProtocolEventContracts
-import cool.jacoblin.particeps.core.definition.CollectorConfiguration
-import cool.jacoblin.particeps.core.definition.ProximityConfiguration
+import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
+import cool.jacoblin.particeps.core.definition.CollectorProfileConfiguration
+import cool.jacoblin.particeps.core.definition.ProximityV1ProfileConfiguration
 import cool.jacoblin.particeps.core.model.EventDraft
-import cool.jacoblin.particeps.core.model.RecordedEvent
+import cool.jacoblin.particeps.core.model.EventSourceId
+import cool.jacoblin.particeps.core.model.EventTypeKey
 import cool.jacoblin.particeps.core.model.ResearchTime
 import kotlin.math.abs
 
@@ -24,15 +24,14 @@ class ProximityCollectorPlugin(context: Context) : CollectorPlugin {
     private val applicationContext = context.applicationContext
 
     override val descriptor = CollectorDescriptor(
-        id = ProximityConfiguration.ID,
+        id = ProximityV1ProfileConfiguration.SOURCE_ID,
         displayName = "Proximity",
-        privacyClass = PrivacyClass.SENSITIVE,
         accessKinds = setOf(AccessKind.PROXIMITY_HARDWARE),
-        eventContract = requireNotNull(ProtocolEventContracts[ProximityConfiguration.ID]),
+        sourceContract = requireNotNull(ProtocolEventSourceRegistry[ProximityV1ProfileConfiguration.SOURCE_ID]),
     )
 
-    override fun create(configuration: CollectorConfiguration, context: CollectorContext): Collector {
-        val typed = configuration as? ProximityConfiguration
+    override fun create(configuration: CollectorProfileConfiguration, context: CollectorContext): Collector {
+        val typed = configuration as? ProximityV1ProfileConfiguration
             ?: throw IllegalArgumentException("Invalid proximity configuration")
         return ProximityCollector(applicationContext, typed, context)
     }
@@ -40,32 +39,24 @@ class ProximityCollectorPlugin(context: Context) : CollectorPlugin {
 
 private class ProximityCollector(
     androidContext: Context,
-    private val configuration: ProximityConfiguration,
+    private val configuration: ProximityV1ProfileConfiguration,
     collectorContext: CollectorContext,
 ) : AndroidSensorCollector(
     androidContext = androidContext,
     collectorContext = collectorContext,
     sensorType = Sensor.TYPE_PROXIMITY,
-    samplingPeriodUs = configuration.minimumEventIntervalMs * 1_000,
+    samplingPeriodUs = (configuration.minimumEventIntervalMs * 1_000).toInt(),
     maximumReportLatencyUs = 0,
     threadName = "particeps-proximity",
     queueCapacity = 256,
 ) {
     private val rateGate = LatestValueRateGate<ProximitySample>(
-        configuration.minimumEventIntervalMs.toLong(),
+        configuration.minimumEventIntervalMs,
     ) { previous, current ->
         sameProximitySample(previous, current, configuration.changeThresholdMillimeters)
     }
     private var pendingScheduled = false
     private val pendingRunnable = Runnable { sourceCallback(::publishPending) }
-
-    override suspend fun onSourceRegistering() {
-        val latest = context.eventSink.latestEvent(ProximityConfiguration.ID) ?: return
-        rateGate.restoreLastEmission(
-            value = latest.proximitySampleOrNull(),
-            currentElapsedMillis = SystemClock.elapsedRealtime(),
-        )
-    }
 
     override fun onSensorEvent(event: SensorEvent) {
         val distance = event.values.firstOrNull() ?: return
@@ -139,7 +130,7 @@ internal fun proximitySample(
 internal fun sameProximitySample(
     previous: ProximitySample,
     current: ProximitySample,
-    changeThresholdMillimeters: Int,
+    changeThresholdMillimeters: Long,
 ): Boolean = previous.near == current.near &&
     previous.maximumRangeCentimeters == current.maximumRangeCentimeters &&
     (previous.distanceCentimeters == current.distanceCentimeters ||
@@ -147,10 +138,8 @@ internal fun sameProximitySample(
         changeThresholdMillimeters)
 
 internal fun ProximitySample.eventDraft() = EventDraft(
-    collectorId = ProximityConfiguration.ID,
-    payloadSchemaVersion = 1,
+    type = EventTypeKey(EventSourceId(ProximityV1ProfileConfiguration.SOURCE_ID), 1, "PROXIMITY_SAMPLE"),
     observedTime = observedTime,
-    payloadType = "PROXIMITY_SAMPLE",
     fields = mapOf(
         "source_elapsed_realtime_nanos" to sourceTimestampNanos.toString(),
         "distance_centimeters" to distanceCentimeters.toString(),
@@ -158,19 +147,3 @@ internal fun ProximitySample.eventDraft() = EventDraft(
         "near" to near.toString(),
     ),
 )
-
-internal fun RecordedEvent.proximitySampleOrNull(): ProximitySample? {
-    if (
-        collectorId != ProximityConfiguration.ID ||
-        payloadSchemaVersion != 1 ||
-        payloadType != "PROXIMITY_SAMPLE"
-    ) return null
-    val sample = proximitySample(
-        distanceCentimeters = fields["distance_centimeters"]?.toFloatOrNull() ?: return null,
-        maximumRangeCentimeters = fields["maximum_range_centimeters"]?.toFloatOrNull() ?: return null,
-        sourceTimestampNanos = fields["source_elapsed_realtime_nanos"]?.toLongOrNull() ?: return null,
-        observedTime = observedTime,
-    ) ?: return null
-    val recordedNear = fields["near"]?.toBooleanStrictOrNull() ?: return null
-    return sample.takeIf { it.near == recordedNear }
-}

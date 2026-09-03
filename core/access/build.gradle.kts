@@ -20,6 +20,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":collector:usage-common"))
     api(project(":core:collector-api"))
     implementation(libs.coroutines.play.services)
     implementation(libs.play.services.location)

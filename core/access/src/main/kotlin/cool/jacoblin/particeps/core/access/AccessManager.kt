@@ -1,7 +1,6 @@
 package cool.jacoblin.particeps.core.access
 
 import android.Manifest
-import android.app.AppOpsManager
 import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Context
@@ -11,9 +10,9 @@ import android.hardware.Sensor
 import android.hardware.SensorManager
 import android.location.LocationManager
 import android.net.Uri
-import android.os.Build
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
+import cool.jacoblin.particeps.collector.usagecommon.isUsageAccessGranted
 import cool.jacoblin.particeps.core.collector.AccessInspectionRequest
 import cool.jacoblin.particeps.core.collector.AccessKind
 import cool.jacoblin.particeps.core.collector.AccessRequirement
@@ -161,7 +160,7 @@ class AccessManager(
         AccessKind.LOCATION_SERVICES -> error("Location services require asynchronous inspection")
         AccessKind.BACKGROUND_LOCATION -> permissionGranted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         AccessKind.NOTIFICATIONS -> notificationsEnabled(notificationFeatures)
-        AccessKind.USAGE_ACCESS -> usageAccessGranted()
+        AccessKind.USAGE_ACCESS -> isUsageAccessGranted(applicationContext)
         AccessKind.RESEARCH_KEYBOARD_ENABLED -> keyboardId() in enabledKeyboardIds()
         AccessKind.RESEARCH_KEYBOARD_SELECTED -> keyboardId() == selectedKeyboardId()
         AccessKind.ACCELEROMETER_HARDWARE -> applicationContext
@@ -209,26 +208,6 @@ class AccessManager(
         AccessKind.GYROSCOPE_HARDWARE,
         AccessKind.AMBIENT_LIGHT_HARDWARE,
         AccessKind.PROXIMITY_HARDWARE -> null
-    }
-
-    @Suppress("DEPRECATION")
-    private fun usageAccessGranted(): Boolean {
-        val appOps = applicationContext.getSystemService(AppOpsManager::class.java)
-        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
-            appOps.checkOpNoThrow(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
-                applicationContext.applicationInfo.uid,
-                applicationContext.packageName,
-                null,
-            )
-        } else {
-            appOps.unsafeCheckOpNoThrow(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
-                applicationContext.applicationInfo.uid,
-                applicationContext.packageName,
-            )
-        }
-        return mode == AppOpsManager.MODE_ALLOWED
     }
 
     private fun enabledKeyboardIds(): Set<String> = inputMethodManager()

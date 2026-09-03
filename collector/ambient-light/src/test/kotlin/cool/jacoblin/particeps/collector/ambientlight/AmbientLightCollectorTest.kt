@@ -1,9 +1,9 @@
 package cool.jacoblin.particeps.collector.ambientlight
 
 import cool.jacoblin.particeps.core.collector.LatestValueRateGate
-import cool.jacoblin.particeps.core.collector.ProtocolEventContracts
-import cool.jacoblin.particeps.core.definition.AmbientLightConfiguration
-import cool.jacoblin.particeps.core.model.RecordedEvent
+import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
+import cool.jacoblin.particeps.core.collector.accepts
+import cool.jacoblin.particeps.core.definition.AmbientLightV1ProfileConfiguration
 import cool.jacoblin.particeps.core.model.ResearchTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -29,8 +29,8 @@ class AmbientLightCollectorTest {
         assertEquals(time(20), event.observedTime)
         assertEquals("20.0", event.fields["illuminance_lux"])
         assertEquals("1100000000", event.fields["source_elapsed_realtime_nanos"])
-        assertEquals(AmbientLightConfiguration.ID, event.collectorId)
-        assertTrue(requireNotNull(ProtocolEventContracts[AmbientLightConfiguration.ID]).accepts(event, 1))
+        assertEquals(AmbientLightV1ProfileConfiguration.SOURCE_ID, event.type.sourceId.value)
+        assertTrue(requireNotNull(ProtocolEventSourceRegistry[AmbientLightV1ProfileConfiguration.SOURCE_ID]).accepts(event, 1, null))
     }
 
     @Test
@@ -48,35 +48,6 @@ class AmbientLightCollectorTest {
         assertNull(ambientLightSample(Float.NaN, 1, 0, time(1)))
         assertNull(ambientLightSample(-1f, 1, 0, time(1)))
         assertNull(ambientLightSample(1f, -1, 0, time(1)))
-    }
-
-    @Test
-    fun processRestartRestoresAmbientValueAndSamplingDeadline() {
-        val previous = requireNotNull(
-            ambientLightSample(10f, 9_000_000_000, 3, ResearchTime(10_000, 10_000_000_000, "boot-a")),
-        )
-        val draft = previous.eventDraft()
-        val recorded = RecordedEvent(
-            1,
-            draft.collectorId,
-            draft.payloadSchemaVersion,
-            draft.observedTime,
-            draft.payloadType,
-            draft.fields,
-        )
-        val gate = LatestValueRateGate<AmbientLightSample>(200) { old, current ->
-            sameAmbientLightSample(old, current, 1_000)
-        }
-        gate.restoreLastEmission(
-            recorded.ambientLightSampleOrNull(),
-            10_100,
-        )
-
-        assertEquals(LatestValueRateGate.Decision.Suppress, gate.offer(previous, 10_100))
-        assertEquals(
-            LatestValueRateGate.Decision.Defer(200),
-            gate.offer(previous.copy(illuminanceLux = 20f), 10_100),
-        )
     }
 
     private fun time(value: Long) = ResearchTime(value, value, "boot-a")

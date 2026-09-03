@@ -9,26 +9,26 @@ import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
 import cool.jacoblin.particeps.core.collector.CollectorPlugin
-import cool.jacoblin.particeps.core.collector.PrivacyClass
-import cool.jacoblin.particeps.core.collector.ProtocolEventContracts
-import cool.jacoblin.particeps.core.definition.CollectorConfiguration
-import cool.jacoblin.particeps.core.definition.GyroscopeConfiguration
+import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
+import cool.jacoblin.particeps.core.definition.CollectorProfileConfiguration
+import cool.jacoblin.particeps.core.definition.GyroscopeV1ProfileConfiguration
 import cool.jacoblin.particeps.core.model.EventDraft
+import cool.jacoblin.particeps.core.model.EventSourceId
+import cool.jacoblin.particeps.core.model.EventTypeKey
 import cool.jacoblin.particeps.core.model.ResearchTime
 
 class GyroscopeCollectorPlugin(context: Context) : CollectorPlugin {
     private val applicationContext = context.applicationContext
 
     override val descriptor = CollectorDescriptor(
-        id = GyroscopeConfiguration.ID,
+        id = GyroscopeV1ProfileConfiguration.SOURCE_ID,
         displayName = "Gyroscope",
-        privacyClass = PrivacyClass.SENSITIVE,
         accessKinds = setOf(AccessKind.GYROSCOPE_HARDWARE),
-        eventContract = requireNotNull(ProtocolEventContracts[GyroscopeConfiguration.ID]),
+        sourceContract = requireNotNull(ProtocolEventSourceRegistry[GyroscopeV1ProfileConfiguration.SOURCE_ID]),
     )
 
-    override fun create(configuration: CollectorConfiguration, context: CollectorContext): Collector {
-        val typed = configuration as? GyroscopeConfiguration
+    override fun create(configuration: CollectorProfileConfiguration, context: CollectorContext): Collector {
+        val typed = configuration as? GyroscopeV1ProfileConfiguration
             ?: throw IllegalArgumentException("Invalid gyroscope configuration")
         return GyroscopeCollector(applicationContext, typed, context)
     }
@@ -36,14 +36,14 @@ class GyroscopeCollectorPlugin(context: Context) : CollectorPlugin {
 
 private class GyroscopeCollector(
     androidContext: Context,
-    configuration: GyroscopeConfiguration,
+    configuration: GyroscopeV1ProfileConfiguration,
     collectorContext: CollectorContext,
 ) : AndroidSensorCollector(
     androidContext = androidContext,
     collectorContext = collectorContext,
     sensorType = Sensor.TYPE_GYROSCOPE,
-    samplingPeriodUs = configuration.samplingPeriodUs,
-    maximumReportLatencyUs = configuration.maximumReportLatencyUs,
+    samplingPeriodUs = configuration.samplingPeriodUs.toInt(),
+    maximumReportLatencyUs = configuration.maximumReportLatencyUs.toInt(),
     threadName = "particeps-gyroscope",
     queueCapacity = 2_048,
 ) {
@@ -69,10 +69,12 @@ internal fun gyroscopeEvent(
         !values[2].isFinite()
     ) return null
     return EventDraft(
-        collectorId = GyroscopeConfiguration.ID,
-        payloadSchemaVersion = 1,
+        type = EventTypeKey(
+            EventSourceId(GyroscopeV1ProfileConfiguration.SOURCE_ID),
+            1,
+            "GYROSCOPE_SAMPLE",
+        ),
         observedTime = observedTime,
-        payloadType = "GYROSCOPE_SAMPLE",
         fields = mapOf(
             "source_elapsed_realtime_nanos" to timestampNanos.toString(),
             "x_radians_per_second" to values[0].toString(),

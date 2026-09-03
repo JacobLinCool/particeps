@@ -50,20 +50,12 @@ describe('Protocol v1 configuration value', () => {
     expect(text).not.toMatch(/tink|minimum_app_version|minimum_displacement_meters/);
   });
 
-  it('normalizes set-like transports and instants exactly as the Android codec', () => {
-    const configuration = validConfiguration({
-      issued_at: '2026-01-01T08:00:00+08:00',
-      collectors: [
-        {
-          id: 'network_usage.v1',
-          required: false,
-          config: { transports: ['wifi', 'mobile', 'wifi'], poll_interval_minutes: 15 }
-        }
-      ]
-    });
+  it('normalizes instants but never silently repairs signed resource arrays', () => {
+    const configuration = validConfiguration({ issued_at: '2026-01-01T08:00:00+08:00' });
     const text = canonicalizeConfiguration(configuration);
     expect(text).toContain('"issued_at":"2026-01-01T00:00:00Z"');
-    expect(text).toContain('"transports":["mobile","wifi"]');
+    const network = configuration.collectors[0];
+    expect(canonicalizeConfiguration({ ...configuration, collectors: [network] })).toContain('"profiles"');
   });
 });
 

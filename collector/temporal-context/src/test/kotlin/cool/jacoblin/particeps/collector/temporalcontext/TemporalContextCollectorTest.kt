@@ -1,9 +1,9 @@
 package cool.jacoblin.particeps.collector.temporalcontext
 
 import cool.jacoblin.particeps.core.collector.LatestValueRateGate
-import cool.jacoblin.particeps.core.collector.ProtocolEventContracts
-import cool.jacoblin.particeps.core.definition.TemporalContextConfiguration
-import cool.jacoblin.particeps.core.model.RecordedEvent
+import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
+import cool.jacoblin.particeps.core.collector.accepts
+import cool.jacoblin.particeps.core.definition.TemporalContextV1ProfileConfiguration
 import cool.jacoblin.particeps.core.model.ResearchTime
 import java.time.Instant
 import java.time.ZoneId
@@ -34,8 +34,8 @@ class TemporalContextCollectorTest {
 
         assertFalse(sameTemporalEvent(captured, later))
         assertEquals(captured.observedTime, event.observedTime)
-        assertEquals(TemporalContextConfiguration.ID, event.collectorId)
-        assertTrue(requireNotNull(ProtocolEventContracts[TemporalContextConfiguration.ID]).accepts(event, 1))
+        assertEquals(TemporalContextV1ProfileConfiguration.SOURCE_ID, event.type.sourceId.value)
+        assertTrue(requireNotNull(ProtocolEventSourceRegistry[TemporalContextV1ProfileConfiguration.SOURCE_ID]).accepts(event, 1, null))
         assertFalse(sameTemporalEvent(captured, later.copy(reason = "TIMEZONE_CHANGED")))
         assertFalse(sameTemporalEvent(captured, later.copy(snapshot = snapshot.copy(utcOffsetSeconds = 60))))
         assertTrue(
@@ -58,33 +58,6 @@ class TemporalContextCollectorTest {
         assertEquals(LatestValueRateGate.Decision.Emit(second), gate.poll(61_000))
         val third = TemporalEvent("TIME_SET", snapshot, time(30))
         assertEquals(LatestValueRateGate.Decision.Emit(third), gate.offer(third, 121_000))
-    }
-
-    @Test
-    fun processRestartRestoresClockSetRateWatermarkWithoutSuppressingItForever() {
-        val previous = TemporalEvent(
-            "TIME_SET",
-            TemporalSnapshot("UTC", 0, false),
-            ResearchTime(10_000, 10_000_000_000, "boot-a"),
-        )
-        val draft = previous.eventDraft()
-        val recorded = RecordedEvent(
-            1,
-            draft.collectorId,
-            draft.payloadSchemaVersion,
-            draft.observedTime,
-            draft.payloadType,
-            draft.fields,
-        )
-        val gate = LatestValueRateGate(60_000L, ::sameTemporalEvent)
-        gate.restoreLastEmission(
-            recorded.temporalEventOrNull(),
-            10_100,
-        )
-
-        val current = previous.copy(observedTime = ResearchTime(10_100, 10_100_000_000, "boot-a"))
-        assertEquals(LatestValueRateGate.Decision.Defer(60_000), gate.offer(current, 10_100))
-        assertEquals(LatestValueRateGate.Decision.Emit(current), gate.poll(70_100))
     }
 
     private fun time(wallMillis: Long) = ResearchTime(wallMillis, wallMillis, "boot-a")

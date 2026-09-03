@@ -19,17 +19,22 @@ What the name does not grant is authorship of the study. The collector set, the 
 ## How a study works
 
 1. **Generate your keys.** One Ed25519 pair to sign study configurations, one X25519 HPKE pair to decrypt bundles. `researcher-tools` writes raw 32-byte keys as unpadded base64url.
-2. **Write the study.** A strict Protocol v1 RFC 8785 JSON file naming collectors, reusable surveys, scheduled interventions, anonymous or assigned-code identity mode, duration, storage quota, consent text, and signing/export public keys.
+2. **Write the study.** A strict Protocol v1 RFC 8785 JSON file naming collector profiles,
+   reusable actions/surveys, declarative automations, optional traffic-shaping profiles, identity
+   mode, duration, storage quota, consent text, and signing/export public keys.
 3. **Sign it.** `researcher-tools sign` produces a `.partcfg` file that any build of the app can verify, with no change to the app.
 4. **Distribute.** Participants install the app and import your `.partcfg`, or open a `particeps://join/v1` link that names where those exact bytes are served and pins their SHA-256. Setup is five steps, one screen each: the study details, what each enabled collector records and does not record, the consent text with the signer's key fingerprint, the Android access the study and its collectors need, and the start button. Collection begins only when they press the start button.
-5. **Collect.** Events are written to encrypted on-device storage. Participants can pause, resume, or withdraw.
+5. **Run.** Collector and actuator resources follow the signed automations. Ordered observations,
+   decisions, resource receipts, condition epochs, and events are committed to encrypted on-device
+   storage. Participants can pause, resume, complete, or withdraw.
 6. **Export and analyse.** The participant exports an encrypted bundle and sends it to you. If the study declares an upload endpoint, the app also delivers immutable ciphertext bundles to an R2 receiver on a schedule. `particeps-analysis` inventories, verifies, decrypts, reassembles, and writes typed Parquet offline.
 
 The full procedure, including key handling and study design guidance, is in the [researcher guide](docs/researcher-guide.md).
 
 ## What you can collect
 
-Twelve selectable collectors ship in v1. A study enables the ones it names and configures each one's parameters within validated ranges.
+Twelve selectable collectors ship in v1. A study declares named settings for the ones it uses and
+binds them through closed-world automations within generated validation bounds.
 
 | Collector | Records |
 | --- | --- |
@@ -50,28 +55,58 @@ What each collector cannot establish is set out per collector in the [researcher
 
 Some practical notes: package names, location, fine-grained timing, acceleration, and keyboard dynamics can all be identifying, and ethics review will ask about that. Choosing the fewest collectors, the lowest usable rate, and the shortest duration that answers your question makes both the review and the analysis easier.
 
+Android studies can additionally declare local per-App traffic shaping. Signed target packages share
+aggregate uplink/downlink limits through a local `VpnService`; unselected apps bypass it. The VPN is
+not a Particeps gateway and records no payload, destination, DNS name, installed-app inventory, or
+per-App flow. See the [researcher guide](docs/researcher-guide.md#8-traffic-shaping-resource).
+
 ## Adding a collector
 
 The collector set is meant to grow. A collector is a Gradle module implementing three things: a typed configuration that appears in the signed study file, a plugin descriptor declaring what access it needs, and a runtime instance that observes its source and emits events.
 
-Collector modules depend only on `core:collector-api`, `core:study-definition`, and, for Android
-hardware listeners, the narrow `collector:sensor-common` lifecycle helper. A new data
-source does not touch storage, the runtime, or protocol/export code. The
+Collector modules depend only on `core:collector-api`, `core:study-definition`, and exactly two
+narrow shared helpers where applicable: `collector:sensor-common` owns Android hardware-sensor
+listener lifecycle, while `collector:usage-common` owns the single Usage Access AppOps probe used
+by UsageStats-backed sources. A new data source does not touch storage, the runtime, or
+protocol/export code. The
 [implementation guide](docs/data-collector-implementation-guide.md) walks through the contract and every registration step.
 
 ## Participant data protection
 
 Studies collect from people's personal phones, so the platform is built to support a defensible ethics submission and honest commitments to participants.
 
-- **Encrypted on the device.** Each study's events and metadata are encrypted with a per-study AES-256-GCM key from the Android Keystore, marked non-exportable. They are written in 4 MiB event segments under the app's no-backup storage, up to the quota the configuration set. An event is appended once and never rewritten. The only thing that removes a segment is confirmed delivery to the study's endpoint, and then only under storage pressure.
+- **Encrypted, authenticated commits on the device.** Each study uses a non-exportable Android
+  Keystore AES-256-GCM key. Complete append-only `EngineCommit` frames bind source observations,
+  events, reducer state, timers/actions/resources, condition epochs, and successor projection.
+  Encrypted snapshots are recovery caches; the authenticated commit chain is the incremental truth.
 - **Signed, tamper-evident studies.** A configuration is Ed25519-signed and strictly validated: RFC 8785 bytes, exact schema, known collectors, Android platform, validity window, and minimum client build. Verification failures are fail-closed — an unverifiable configuration collects nothing. A signature proves the configuration is unchanged since it was signed; it does not prove who wrote it unless the build pins that signer, and the consent screen states which of the two applies.
-- **Durable interventions and native surveys.** Notification actions can use one-time, recurring, daily-local, or signed random-local-window triggers. Random instants are selected with a CSPRNG and persisted before scheduling, so retries and reboot do not redraw them. Clock and time-zone changes do not rewrite already materialized occurrences. Native surveys support short text, integer scales, single choice, and multiple choice; only a confirmed, complete submission enters the encrypted event stream.
+- **Durable event-driven actions and resources.** A pure, bounded reducer consumes only committed
+  collector/system facts. One-time, interval, daily, random-window, event, sequence, window, and
+  state conditions produce durable timers, one-shot outbox actions, or desired resource profiles.
+  Random choices and action IDs become durable before Android work. Native survey answers enter the
+  log only as one validated final submission.
 - **Separated participant identities.** Every import gets a fresh random instance UUID. A configuration may additionally carry an opaque researcher-assigned code; both appear in the encrypted document. Upload URLs and headers contain no participant, assigned, experiment, or configuration ID. Their bundle UUID, configuration digest, researcher key ID, exact range/count, size, and digest are untrusted routing claims, not participant authentication.
 - **Encrypted, participant-directed export.** Getting data to the research team is an export the participant performs and directs, encrypted with a fresh key per export and wrapped to your HPKE public key. The app never holds your private key.
-- **Scheduled upload, when the study asks for it.** A configuration may name an HTTPS endpoint, interval, and metered-network policy. The endpoint host, cadence, and network condition are shown before consent. Before HTTP starts, the app durably stages one immutable ciphertext bundle in no-backup storage: about 16 MiB of plaintext and at most 32 MiB on the wire. Retries send those exact bytes with fixed length and digest. A bundle counts as delivered only when the receiver returns a receipt that matches the staged bundle exactly, so any other response leaves those events undelivered. [Protocol v1](protocol/v1/README.md) defines the receipt and which responses may advance the watermark. Duration completion or withdrawal leaves delivery running until the tail arrives. Undelivered events are never reclaimed to make room.
-- **Participant control over the lifecycle.** Collection starts only on an explicit action and can be paused or withdrawn. The runtime takes a monotonic boundary, asks sources to release their callbacks, closes admission, waits for writes already admitted before that boundary, and only then commits the participant transition. A failed or cancelled teardown leaves a typed durable cleanup witness instead of reporting a clean boundary.
-- **Storage failures stop collection.** Quota exhaustion or a write failure closes every event gate and persists a typed safety witness before the failing mutation returns. The study moves to `PAUSED` rather than silently dropping events, so a dataset is complete over the window it declares or absent.
-- **The duration is an admission ceiling.** Metadata v2 carries one durable clock checkpoint derived from the participant's only Start. Within a boot, every collector, occurrence, deadline, and intervention decision uses `elapsedRealtimeNanos`. Across a reboot, `RUNNING → PAUSED / DEVICE_REBOOT` commits before any source reopens; the calendar clock advances only from Android's network time or wall time while system automatic time is enabled, and the unconfirmed reboot gap never advances the active-collection clock. After deadline, access, WorkManager, and foreground-service checks succeed, the app commits `PAUSED → RUNNING / AUTOMATIC_RECOVERY`. Without trusted UTC it remains paused and posts a repair notification. No recovery can grant a fresh duration or admit an event at or beyond the checkpoint-derived deadline.
+- **Commit-boundary upload, when the study asks for it.** A configuration may name an HTTPS endpoint,
+  interval, and metered-network policy. Before HTTP starts, the app stages one immutable ciphertext
+  bundle containing complete commits. Retries send exact bytes. Only a canonical receipt matching
+  UUID, digest, size, configuration, commit range/count, and event count advances the contiguous
+  watermark; undelivered input is never reclaimed.
+- **Participant control over lifecycle.** Start/Resume applies and verifies every required resource
+  before opening one condition-epoch admission token. Pause/Complete/Withdraw closes admission first,
+  flushes retrospective sources at one boundary, records final resource evidence, closes the epoch,
+  and releases resources. Automation cannot override those controls.
+- **Failures stop admission.** Storage, required collector, VPN, package, permission, native, or
+  resource-verification failure closes the event gate and durably pauses rather than silently
+  accepting an unproven interval.
+- **No automatic recovery into collection.** Process death or reboot from an active internal state
+  recovers fail-closed to Paused, records the quality gap, and requires explicit participant Resume.
+  Active-running time does not advance while paused and retrospective collectors never backfill the
+  unverified interval.
+- **Participant UI is intentionally stable.** The existing five setup steps and compact running
+  controls remain. A traffic-shaping study adds one fixed high-level inline disclosure and Android's
+  mandatory permission/VPN consent, not a trigger/treatment/rate/history dashboard or second ongoing
+  notification.
 
 ### Who published the study
 
@@ -114,8 +149,13 @@ flowchart LR
     UI[":app Compose UI"] --> VM["StudyViewModel"]
     VM --> Session[":core:study-application"]
     Session --> Runtime[":core:experiment-runtime"]
+    Runtime --> Automation[":core:automation"]
+    Runtime --> Resources[":core:resource-api"]
     Runtime --> API[":core:collector-api"]
     Collectors[":collector:*"] --> API
+    Collectors --> Resources
+    VPN[":actuator:traffic-shaping"] --> Resources
+    VPN --> Native["native:traffic-shaping"]
     Session --> StorePort["StudyStore port"]
     Storage[":core:storage"] --> StorePort
     Session --> Export[":core:export"]
@@ -125,6 +165,8 @@ flowchart LR
     Receiver --> R2["private R2 ciphertext"]
     Access[":core:access"] --> Session
     Protocol[":core:protocol"] --> Definition[":core:study-definition"]
+    Registry["event-source registry + generator"] --> Definition
+    Registry --> API
     Tools[":researcher-tools"] --> Definition
     Tools --> Protocol
     Tools --> Export
@@ -133,35 +175,38 @@ flowchart LR
 | Module | Responsibility |
 | --- | --- |
 | `:app` | Compose UI, finite UI state, SAF, and Android foreground/work/recovery/upload adapters |
-| `:core:model` | Bounded study metadata, state and event models, `StudyStore` port and its retained window |
-| `:core:study-definition` | Strict canonical JSON, closed-world typed study and collector configuration |
+| `:core:model` | Event, clock, timer, outbox, condition-epoch, checkpoint, and authenticated commit DTOs |
+| `:core:study-definition` | Strict canonical JSON, signed automation AST, and generated collector-profile codecs |
 | `:core:protocol` | Signed envelope, immutable join URI, signature verification, optional signer pinning, validity and version checks |
-| `:core:collector-api` | Collector lifecycle, health, registry, access contract, shared callback dispatcher |
+| `:core:collector-api` | Generated event-source contracts, observation batches, collector lifecycle, access, and flushing |
+| `:core:resource-api` | Generation-bound contracts and receipts for stateful collectors and actuators |
+| `:core:automation` | Closed-world compiler, graph validation, pure reducer, and durable timer producers |
 | `:core:crypto` | Protocol v1 raw-key Ed25519 verification and fixed-suite RFC 9180 HPKE over raw X25519 keys; Tink is internal only, never a wire keyset |
 | `:core:access` | Runtime permission, Usage Access, input method, and hardware preflight |
-| `:core:experiment-runtime` | Command serialisation, state machine, collector supervision, event admission gate |
-| `:core:study-application` | The single active-study session, recovery, port coordination, and the upload watermark |
-| `:core:storage` | Keystore-backed encrypted metadata, appended event segments, and reclaiming delivered ones |
-| `:core:export` | Streaming JSON to AES-GCM over a sequence window under an optional size budget, HPKE key wrapping, receipts |
+| `:core:experiment-runtime` | The sole coordinator for lifecycle, deterministic reduction, barriers, epochs, timers, outbox, and admission |
+| `:core:study-application` | The single active-study session and participant-safe application projection |
+| `:core:storage` | Keystore-backed authenticated `EngineCommit` frames, snapshots, pending input, and commit-boundary reclamation |
+| `:core:export` | Commit-boundary streaming export, verification, HPKE key wrapping, and receipts |
 | `:collector:*` | One isolated module per data source |
+| `:actuator:traffic-shaping` | Android `VpnService` and the generation-verified traffic-shaping resource adapter |
+| `native:traffic-shaping` | Source-built Go/gVisor packet forwarder and aggregate bidirectional token buckets |
 | `:researcher-tools` | Ed25519 and HPKE keys, canonicalise, sign, verify, decrypt CLI |
 | `receiver/` | One bounded Protocol v1 upload POST, immutable ciphertext writes, and canonical receipts |
 
 Platform-independent modules contain no `android.*` imports, which keeps the domain logic testable on the JVM. [System design](docs/system-design.md) documents the module contracts.
 
-New contributors should treat [`protocol/v1`](protocol/v1/README.md) as the normative wire contract, the [collector catalog](protocol/v1/collector-catalog.json) as the schema source, and [`docs/system-design.md`](docs/system-design.md) for how the modules fit together. Trace one path through the [configuration codec](core/study-definition/src/main/kotlin/cool/jacoblin/particeps/core/definition/StudyConfigurationCodec.kt), [signed envelope](core/protocol/src/main/kotlin/cool/jacoblin/particeps/core/protocol/SignedConfiguration.kt), [bundle exporter](core/export/src/main/kotlin/cool/jacoblin/particeps/core/export/ResearchExport.kt), [bundle verifier](core/export/src/main/kotlin/cool/jacoblin/particeps/core/export/ResearchBundleVerifier.kt), [single-entry outbox](app/src/main/kotlin/cool/jacoblin/particeps/platform/FileUploadOutbox.kt), [HTTP adapter](app/src/main/kotlin/cool/jacoblin/particeps/platform/OkHttpStudyUploader.kt), [receiver handler](receiver/src/index.ts), and the offline [`particeps-analysis`](particeps-analysis/README.md) pipeline. The join path is similarly short: [Web authoring](web/src/lib/particeps/join.ts), [shared parser](core/protocol/src/main/kotlin/cool/jacoblin/particeps/core/protocol/JoinLink.kt), [Android staging](app/src/main/kotlin/cool/jacoblin/particeps/platform/JoinArtifactDownloader.kt), [intent entry](app/src/main/kotlin/cool/jacoblin/particeps/MainActivity.kt), then the existing [session import](core/study-application/src/main/kotlin/cool/jacoblin/particeps/core/application/StudyApplication.kt). The [outbox](app/src/test/kotlin/cool/jacoblin/particeps/platform/FileUploadOutboxTest.kt), [uploader](app/src/test/kotlin/cool/jacoblin/particeps/platform/OkHttpStudyUploaderTest.kt), and [receiver](receiver/tests/receiver.test.ts) tests make crash/replay and receipt semantics executable. Receiver deployment and R2 operations start at [`receiver/README.md`](receiver/README.md), and the Collector capability policy lives under [`assurance`](assurance/README.md).
+New contributors should treat [`protocol/v1`](protocol/v1/README.md) as the normative wire contract, the [event-source registry](protocol/v1/event-source-registry.json) as the sole typed source/profile schema, and [`docs/system-design.md`](docs/system-design.md) for how the modules fit together. Trace one path through the [configuration codec](core/study-definition/src/main/kotlin/cool/jacoblin/particeps/core/definition/StudyConfigurationCodec.kt), [signed envelope](core/protocol/src/main/kotlin/cool/jacoblin/particeps/core/protocol/SignedConfiguration.kt), [bundle exporter](core/export/src/main/kotlin/cool/jacoblin/particeps/core/export/ResearchExport.kt), [bundle verifier](core/export/src/main/kotlin/cool/jacoblin/particeps/core/export/ResearchBundleVerifier.kt), [single-entry outbox](app/src/main/kotlin/cool/jacoblin/particeps/platform/FileUploadOutbox.kt), [HTTP adapter](app/src/main/kotlin/cool/jacoblin/particeps/platform/OkHttpStudyUploader.kt), [receiver handler](receiver/src/index.ts), and the offline [`particeps-analysis`](particeps-analysis/README.md) pipeline. The join path is similarly short: [Web authoring](web/src/lib/particeps/join.ts), [shared parser](core/protocol/src/main/kotlin/cool/jacoblin/particeps/core/protocol/JoinLink.kt), [Android staging](app/src/main/kotlin/cool/jacoblin/particeps/platform/JoinArtifactDownloader.kt), [intent entry](app/src/main/kotlin/cool/jacoblin/particeps/MainActivity.kt), then the existing [session import](core/study-application/src/main/kotlin/cool/jacoblin/particeps/core/application/StudyApplication.kt). The [outbox](app/src/test/kotlin/cool/jacoblin/particeps/platform/FileUploadOutboxTest.kt), [uploader](app/src/test/kotlin/cool/jacoblin/particeps/platform/OkHttpStudyUploaderTest.kt), and [receiver](receiver/tests/receiver.test.ts) tests make crash/replay and receipt semantics executable. Receiver deployment and R2 operations start at [`receiver/README.md`](receiver/README.md), and the Collector capability policy lives under [`assurance`](assurance/README.md).
 
-For `random_window`, trace the signed model and bounds in
-[`StudyConfiguration.kt`](core/study-definition/src/main/kotlin/cool/jacoblin/particeps/core/definition/StudyConfiguration.kt),
-its codec and [Web editor](web/src/routes/researcher/InterventionEditor.svelte), then the CSPRNG
-materialization in
-[`InterventionSchedulePlanner.kt`](core/study-application/src/main/kotlin/cool/jacoblin/particeps/core/application/InterventionSchedulePlanner.kt).
-The [session](core/study-application/src/main/kotlin/cool/jacoblin/particeps/core/application/StudyApplication.kt)
-persists the occurrence before scheduling. The Android delivery and expiry workers in
-[`AndroidStudyPlatform.kt`](app/src/main/kotlin/cool/jacoblin/particeps/platform/AndroidStudyPlatform.kt)
-and [`ScheduledWorkRecoveryReceiver`](app/src/main/kotlin/cool/jacoblin/particeps/ScheduledWorkRecoveryReceiver.kt)
-reconcile the same ID after retries, reboot, clock, or time-zone changes. The adjacent planner,
-runtime, session, and app policy tests make each boundary executable.
+For `random_window`, trace the signed schedule in
+[`AutomationDefinitions.kt`](core/study-definition/src/main/kotlin/cool/jacoblin/particeps/core/definition/AutomationDefinitions.kt),
+the generic timer producer in
+[`Timers.kt`](core/automation/src/main/kotlin/cool/jacoblin/particeps/core/automation/Timers.kt), and the
+single coordinator in
+[`ExperimentRuntime.kt`](core/experiment-runtime/src/main/kotlin/cool/jacoblin/particeps/core/runtime/ExperimentRuntime.kt).
+The selected deadline becomes durable before Android receives a wakeup request; the wakeup carries
+only the timer identity and generation, and the same deterministic reducer reconciles retries,
+pause, reboot, clock, and time-zone changes. Random scheduling therefore has no parallel planner,
+event log, occurrence store, or action path.
 
 ## Documentation
 
@@ -188,11 +233,16 @@ New collectors are the main contribution path — see [CONTRIBUTING.md](CONTRIBU
 
 `v1.0.0-rc.5` established the current application ID and the production signing certificate recorded
 in the repository's [auditable identity anchor](.github/android-release-signing-certificate.sha256),
-so rc.7 updates rc.5 and rc.6 in place. Rc.4 and earlier use another application ID, signing
-certificate, or file identity and cannot update directly to the current build. Those older apps keep
-running under their own identity until removed. Uninstalling destroys their Keystore key and
-everything encrypted under it, so export whatever is still wanted first. Artifacts from before the
-rename are unsupported input to every current implementation, and there is no converter.
+so Android can install a newer APK over rc.5 and rc.6. That application-level continuity does not
+preserve study data. This event-driven Protocol v1 cut rejects every earlier signed configuration,
+store, schedule, bundle, and upload receipt; there is no legacy reader, migration, converter, or
+fallback. The app uses its existing participant-confirmed generic recovery/reset flow for an
+incompatible local store and never silently deletes or uploads it.
+
+Rc.4 and earlier use another application ID, signing certificate, or file identity and cannot be
+installed over the current app. Those older apps keep running under their own identity until
+removed. Uninstalling destroys their Keystore key and everything encrypted under it, so export
+anything still needed first.
 [CHANGELOG.md](CHANGELOG.md) says which release carries which identity, which spellings it retired,
 and what each release asks of an existing install.
 

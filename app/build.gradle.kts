@@ -80,6 +80,7 @@ tasks.withType<Test>().configureEach {
 }
 
 dependencies {
+    implementation(project(":actuator:traffic-shaping"))
     implementation(project(":collector:accelerometer"))
     implementation(project(":collector:app-lifecycle"))
     implementation(project(":collector:ambient-light"))
@@ -111,6 +112,16 @@ dependencies {
     implementation(libs.lifecycle.viewmodel.ktx)
     implementation(libs.work.runtime)
     implementation(libs.okhttp)
+
+    // Source-built by :actuator:traffic-shaping; the repository never carries a prebuilt AAR or
+    // shared object. The application dependency is what packages the four verified native ABIs.
+    implementation(
+        files(
+            rootProject.layout.buildDirectory.file(
+                "generated/traffic-shaping/particeps-traffic-shaping.aar",
+            ),
+        ).builtBy(":actuator:traffic-shaping:buildNativeTrafficShapingAar"),
+    )
 
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)

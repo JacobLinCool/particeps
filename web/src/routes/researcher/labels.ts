@@ -3,8 +3,7 @@
  *
  * The issue list is a list of buttons a researcher clicks to get to the broken field, so each row
  * has to carry the same words the field carries. Matching on the tail of the path rather than the
- * whole of it is what lets one table cover `collectors.2.config.poll_interval_minutes` and
- * `collectors.4.config.poll_interval_minutes` without knowing how many collectors are on.
+ * whole of it is what lets one table cover named profile fields at any collector/profile index.
  */
 
 import type { Messages } from '$lib/i18n/types';
@@ -75,7 +74,7 @@ export function fieldLabel(m: Messages, path: string): string {
       return label.bandwidthEstimates;
     case 'transports':
       return label.transports;
-    case 'poll_interval_minutes':
+    case 'poll_interval_seconds':
       return label.pollInterval;
     case 'interval_millis':
       return label.interval;

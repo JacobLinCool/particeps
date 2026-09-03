@@ -58,11 +58,41 @@ describe('shared Protocol v1 conformance corpus', () => {
     expect(opened.ok).toBe(true);
     if (!opened.ok) return;
     expect(new TextEncoder().encode(opened.bundle.text)).toEqual(bytes(bundle.document_jcs_utf8_hex));
-    expect(opened.bundle.document.experiment.state).toBe('PAUSED');
-    expect(opened.bundle.document.experiment.transitions.at(-1)).toMatchObject({
-      from: 'RUNNING',
-      reason: 'REQUIRED_ACCESS_MISSING',
-      to: 'PAUSED'
+    const experiment = opened.bundle.document.experiment;
+    expect(experiment).toMatchObject({
+      state: 'RUNNING',
+      commit_count: '3',
+      event_count: '5',
+      first_commit_sequence: '1',
+      last_commit_sequence: '3'
+    });
+    expect(experiment.commits).toHaveLength(3);
+    expect(experiment.commits[0]?.events[0]).toMatchObject({
+      source_id: 'study_runtime.v1',
+      schema_version: 1,
+      event_type: 'STUDY_STARTED'
+    });
+    expect(experiment.commits[0]?.events[1]).toMatchObject({
+      source_id: 'timer.v1',
+      schema_version: 1,
+      event_type: 'TIMER_SCHEDULED',
+      fields: { producer_key: 'study-deadline' }
+    });
+    expect(experiment.commits[1]?.events[0]).toMatchObject({
+      source_id: 'study_condition.v1',
+      schema_version: 1,
+      event_type: 'CONDITION_EPOCH_ACTIVATED'
+    });
+    expect(experiment.commits[2]?.events[0]).toMatchObject({
+      source_id: 'battery_state.v1',
+      schema_version: 1,
+      event_type: 'BATTERY_STATE'
+    });
+    expect(experiment.commits[2]?.source_observations[0]).toMatchObject({
+      source_id: 'battery_state.v1',
+      schema_version: 1,
+      first_event_sequence: '5',
+      last_event_sequence: '5'
     });
   });
 

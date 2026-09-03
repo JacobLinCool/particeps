@@ -4,16 +4,17 @@ import android.content.Context
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import cool.jacoblin.particeps.collector.sensorcommon.AndroidSensorCollector
-import cool.jacoblin.particeps.core.model.EventDraft
-import cool.jacoblin.particeps.core.definition.AccelerometerConfiguration
 import cool.jacoblin.particeps.core.collector.AccessKind
-import cool.jacoblin.particeps.core.definition.CollectorConfiguration
-import cool.jacoblin.particeps.core.collector.PrivacyClass
-import cool.jacoblin.particeps.core.collector.ProtocolEventContracts
 import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
 import cool.jacoblin.particeps.core.collector.CollectorPlugin
+import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
+import cool.jacoblin.particeps.core.definition.AccelerometerV1ProfileConfiguration
+import cool.jacoblin.particeps.core.definition.CollectorProfileConfiguration
+import cool.jacoblin.particeps.core.model.EventDraft
+import cool.jacoblin.particeps.core.model.EventSourceId
+import cool.jacoblin.particeps.core.model.EventTypeKey
 
 class AccelerometerCollectorPlugin(
     context: Context,
@@ -21,19 +22,18 @@ class AccelerometerCollectorPlugin(
     private val applicationContext = context.applicationContext
 
     override val descriptor = CollectorDescriptor(
-        id = AccelerometerConfiguration.ID,
+        id = AccelerometerV1ProfileConfiguration.SOURCE_ID,
         displayName = "Accelerometer",
-        privacyClass = PrivacyClass.SENSITIVE,
         accessKinds = setOf(AccessKind.ACCELEROMETER_HARDWARE),
-        eventContract = requireNotNull(ProtocolEventContracts[AccelerometerConfiguration.ID]),
+        sourceContract = requireNotNull(ProtocolEventSourceRegistry[AccelerometerV1ProfileConfiguration.SOURCE_ID]),
     )
 
     override fun create(
-        configuration: CollectorConfiguration,
+        configuration: CollectorProfileConfiguration,
         context: CollectorContext,
     ): Collector = AccelerometerCollector(
         applicationContext,
-        configuration as? AccelerometerConfiguration
+        configuration as? AccelerometerV1ProfileConfiguration
             ?: throw IllegalArgumentException("Invalid accelerometer configuration"),
         context,
     )
@@ -41,14 +41,14 @@ class AccelerometerCollectorPlugin(
 
 private class AccelerometerCollector(
     androidContext: Context,
-    configuration: AccelerometerConfiguration,
+    configuration: AccelerometerV1ProfileConfiguration,
     collectorContext: CollectorContext,
 ) : AndroidSensorCollector(
     androidContext = androidContext,
     collectorContext = collectorContext,
     sensorType = Sensor.TYPE_ACCELEROMETER,
-    samplingPeriodUs = configuration.samplingPeriodUs,
-    maximumReportLatencyUs = configuration.maximumReportLatencyUs,
+    samplingPeriodUs = configuration.samplingPeriodUs.toInt(),
+    maximumReportLatencyUs = configuration.maximumReportLatencyUs.toInt(),
     threadName = "particeps-accelerometer",
     queueCapacity = CHANNEL_CAPACITY,
 ) {
@@ -61,10 +61,12 @@ private class AccelerometerCollector(
             !event.values[2].isFinite()
         ) return null
         return EventDraft(
-            collectorId = AccelerometerConfiguration.ID,
-            payloadSchemaVersion = 1,
+            type = EventTypeKey(
+                EventSourceId(AccelerometerV1ProfileConfiguration.SOURCE_ID),
+                1,
+                "ACCELEROMETER_SAMPLE",
+            ),
             observedTime = context.clocks.now(),
-            payloadType = "ACCELEROMETER_SAMPLE",
             fields = mapOf(
                 "source_elapsed_realtime_nanos" to event.timestamp.toString(),
                 "x_meters_per_second_squared" to event.values[0].toString(),

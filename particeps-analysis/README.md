@@ -1,49 +1,64 @@
 # Particeps analysis
 
-`particeps-analysis` is the offline, one-way Protocol v1 pipeline. It inventories encrypted `.partexp`
-objects, authenticates an entire bundle, deterministically reassembles events, and atomically
-publishes typed Parquet. It never changes a study, contacts a participant, or adds a receiver-side
-decrypt path.
+`particeps-analysis` is the offline, fail-closed Protocol v1 verifier and Parquet
+materializer. It accepts only the current durable event-driven wire format. Old flat-event
+bundles, old collector configuration shapes, alternate field names, incomplete commit chains,
+and unknown event contracts are rejected.
 
-Start with the repository's normative contract:
+The normative inputs are:
 
-- `../protocol/v1/README.md` defines the wire and cryptographic protocol.
-- `../protocol/v1/collector-catalog.json` defines every accepted collector, payload, field, unit,
-  and type.
-- `../protocol/v1/conformance-vectors.json` is the shared valid and hostile corpus.
-- `src/particeps_analysis/` contains the implementation; each pipeline stage has one correspondingly
-  named module.
-- `tests/` covers the shared corpus, source inventory, conflict/gap taxonomy, configuration, and
-  Parquet round trips.
+- `../protocol/v1/README.md` for the signed configuration and encrypted bundle protocol.
+- `../protocol/v1/event-source-registry.json` for every COLLECTOR and SYSTEM source, event,
+  field, operator, clock, delivery, privacy, rate, and profile contract.
+- `src/particeps_analysis/generated/event_source_registry.py` for the generated Python registry
+  embedded in this package.
+- `../protocol/v1/conformance-vectors.json` for shared valid and hostile protocol examples.
 
-| Concern | Source | Primary tests |
-| --- | --- | --- |
-| Local/R2 reads, source-specific bounds, immutable cache | `sources.py`, `inventory.py`, `limits.py` | `test_inventory.py` |
-| JCS, keys, HPKE, configuration, complete streaming bundle verification | `jcs.py`, `streaming_json.py`, `encoding.py`, `crypto.py`, `configuration.py`, `bundle.py` | `test_conformance.py`, `test_configuration_catalog.py`, `test_streaming_filesystem.py` |
-| Duplicate/conflict/gap decisions and bounded spill storage | `reassembly.py`, `event_store.py` | `test_reassembly.py` |
-| Arrow schema, Parquet, manifest, quality summary | `sink.py`, `summary.py` | `test_pipeline.py`, `test_sink.py` |
-| One-way orchestration and CLI | `pipeline.py`, `cli.py` | `test_pipeline.py`, `test_cli.py` |
-| Owner-only staging and create-only publication | `filesystem.py` | `test_streaming_filesystem.py` |
+The generated registry digest is compiled into the analyzer. A bundle carries that digest and
+must match it exactly; there is no command-line registry override.
 
-## Pipeline and trust boundary
+## Verification model
+
+The pipeline performs these steps in order:
 
 ```text
-LocalBundleSource / S3BundleSource
-              -> content-addressed ciphertext cache + inventory.json
-              -> framing, HPKE, AEAD, JCS, signature, config, range, catalog validation
-              -> deterministic event reassembly
-              -> typed Parquet + dataset manifest + quality summary
+immutable ciphertext inventory
+  -> container framing, HPKE, AES-GCM, and canonical JSON verification
+  -> signed current configuration and generated registry contract validation
+  -> EngineCommit and SourceObservation integrity verification
+  -> complete per-participant commit-chain replay from genesis
+  -> typed event spill store
+  -> atomic, create-only Parquet publication
 ```
 
-R2 metadata and paths are untrusted routing claims. Participant/event identity exists only after
-the complete authenticated document verifies. Automatic receiver objects retain the 32 MiB wire
-bound. A local manual export may reach its signed local-storage quota, at most 8 GiB. GCM
-decryption, JCS checking, event validation, reassembly, and Parquet row groups are therefore
-streamed or spilled instead of loading the document into memory. AEAD authentication completes
-before JSON is accepted. Every plaintext staging/spill artifact is inside a tightened mode-0700
-directory with owner-only files and is removed on every handled success or failure. One invalid
-bundle is quarantined whole and emits no rows. A conflicting authenticated event identity stops
-dataset publication; there is no last-write-wins behavior or unknown-schema fallback.
+An authenticated `EngineCommit` is the atomic unit. Analysis independently verifies:
+
+- contiguous commit, event, observation, producer-ordinal, and manifest ranges;
+- commit hashes, observation hashes, reducer checkpoint hashes, and predecessor linkage;
+- exact event contracts and canonical typed field values from the generated registry;
+- source coverage continuity and condition-epoch boundaries;
+- durable timer generations, action outbox transitions, and causal automation audit events;
+- the runtime-owned study deadline identity, target, generation, signed-duration projection, due
+  lifecycle, and terminal retirement;
+- signed resource profiles, applied resource-vector digests, and condition epoch ordering;
+- runtime projection cursors, watermarks, lifecycle, and collector event totals.
+
+Every participant chain must be present from commit 1 through its authenticated durable head.
+Missing commits, partial observation batches, orphan or overlapping epochs, cross-epoch coverage,
+stale timers, action events without durable requests, resource digest divergence, or checkpoint
+divergence stop publication. If any inventoried bundle fails verification, the whole requested
+dataset is not published; the ciphertext is quarantined and a validation report is written.
+
+Clock-discontinuity replay reconstructs the exact reset of latches, keyed presence, windows, and
+sequences, verifies that retrospective source checkpoints were discarded, and requires an epoch
+rotation before later data. A deadline crossed by that gap may complete the study but cannot
+materialize a retrospective flush. Paused reboot recovery is accepted only with an explicit quality
+gap and trustworthy new-boot anchor; the analyzer never attributes or backfills the intervening
+interval.
+
+Ciphertext routing metadata and object paths are untrusted until the encrypted bundle verifies.
+Decrypted bytes are staged only in owner-private workspace files and are removed on every handled
+success or failure. The analyzer never contacts participants or changes a study.
 
 ## Install and run
 
@@ -53,10 +68,10 @@ From this directory:
 uv sync --locked
 uv run particeps-analysis inventory \
   --workspace /secure/particeps-work \
-  --local /path/to/manual-exports /path/to/downloaded-r2-objects
+  --local /path/to/manual-exports /path/to/downloaded-receiver-objects
 ```
 
-R2 uses its S3-compatible endpoint and boto3's normal credential chain:
+R2 is read through its S3-compatible API and boto3 credential chain:
 
 ```sh
 uv run particeps-analysis inventory \
@@ -67,13 +82,12 @@ uv run particeps-analysis inventory \
   --s3-prefix uploads/
 ```
 
-Both source types may be inventoried into one manifest in a single command by supplying
-`--local ...` and `--s3-bucket ...` together. Inventory is an explicit snapshot: rerunning the
-command replaces the manifest with exactly the objects supplied during that invocation while
-retaining the immutable content-addressed ciphertext cache.
+Local and S3 sources may be combined in one inventory invocation. Inventory is an explicit
+snapshot: a subsequent invocation replaces the manifest with exactly the supplied objects while
+retaining the immutable, content-addressed ciphertext cache.
 
-Materialization needs a local mode-0600 key file. Keys are unpadded base64url raw X25519 private
-keys, keyed by the signed configuration's researcher key ID:
+Materialization needs a local mode-0600 key file. Each value is an unpadded base64url raw X25519
+private key indexed by the signed researcher key ID:
 
 ```json
 {"format":"particeps-analysis-keys-v1","keys":{"researcher-key-id":"RAW_PRIVATE_KEY_BASE64URL"}}
@@ -84,45 +98,41 @@ chmod 600 /secure/researcher-keys.json
 uv run particeps-analysis materialize \
   --workspace /secure/particeps-work \
   --keys /secure/researcher-keys.json \
-  --catalog ../protocol/v1/collector-catalog.json \
   --output /secure/datasets/study-2026-08
 ```
 
-The output path must not already exist or be a symbolic link. Publication uses an OS-level atomic,
-create-only rename of a complete sibling staging directory, so a concurrently appearing empty
-directory is never replaced. Hive-style partitions are
-`experiment_id/configuration_id/collector_id/payload_schema_version/payload_type`; files contain
-explicit Arrow schemas, exact 64-bit clocks/sequences, and source ciphertext provenance.
+The output path must not exist and must not be a symbolic link. Publication uses an atomic,
+create-only rename of a complete sibling staging directory.
 
-Run all checks with:
+## Dataset contract
+
+Parquet files use Hive-style partitions:
+
+```text
+experiment_id=<id>/configuration_id=<id>/source_id=<id>/schema_version=<n>/event_type=<type>/part-00000.parquet
+```
+
+Each row contains typed registry fields plus:
+
+- participant identity and global event sequence;
+- `condition_epoch_id` from the admitted event envelope;
+- derived `source_condition_epoch_id` after source-clock and coverage attribution;
+- observed wall, monotonic, and boot-session time;
+- source bundle, ciphertext, configuration, commit, and observation provenance;
+- analyzer version.
+
+`dataset-manifest.json` binds the dataset to the generated registry digest and complete source
+commit ranges. `quality-summary.json` records verified participant heads, identical commit
+duplicates, boot sessions, source-clock sampling summaries, and survey lifecycle counts. These
+artifacts describe evidence quality; they do not infer missing participant behavior.
+
+## Verification commands
 
 ```sh
 uv run ruff check src tests
+uv run python -m compileall -q src tests
 uv run python -m unittest discover -s tests -v
 ```
 
-## Operational notes
-
-- Keep the workspace, key file, and dataset on encrypted researcher-controlled storage.
-- Inventory downloads ciphertext before any key is used. The receiver remains R2-only and has no
-  list/decrypt/admin API.
-- `reports/validation-report.json` records quarantine and conflict outcomes even when publication
-  stops. `quality-summary.json` distinguishes overlaps, identical duplicates, conflicts, interior
-  gaps, undelivered suffixes, reclaimed prefixes, and achieved mean sampling rates. Rates are
-  rounded to the nearest millihertz, and the exact interval count and duration are retained. It
-  does not infer participant behavior. Sensor rates use the catalog-declared hardware/source
-  `source_elapsed_realtime_nanos`, not callback-envelope time, so Android FIFO batching does not
-  collapse the measured duration.
-- Potentially large quality collections use the stable
-  `{"count":"…","examples":[…],"examples_truncated":true|false}` shape. Counts remain exact;
-  at most 100 deterministic examples are retained. Nested details such as gap ranges and boot
-  session IDs use the same shape, so consumers must not treat `examples` as the complete set when
-  `examples_truncated` is true.
-- An identical duplicate has the same authenticated event identity and bytes. A conflict has the
-  same identity but different bytes and stops publication. An interior gap is absent below the
-  highest arrived sequence. An undelivered suffix is absent after that sequence but at or below the
-  latest authenticated durable boundary. A reclaimed prefix is absent below the latest
-  authenticated retained boundary. These labels describe evidence availability, not why a
-  participant did or did not produce an observation.
-- Database connectors are intentionally out of scope. `DatasetSink` is the narrow extension
-  contract; Parquet is the only implementation in this release.
+Keep the workspace, researcher keys, quarantine, reports, and datasets on encrypted,
+researcher-controlled storage. Parquet is the only supported dataset sink in this release.

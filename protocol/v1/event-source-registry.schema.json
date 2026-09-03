@@ -1,0 +1,612 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://particeps.app/protocol/v1/event-source-registry.schema.json",
+  "title": "Particeps Protocol v1 event-source registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol_schema_version", "registry_format", "registry_version", "sources"],
+  "properties": {
+    "protocol_schema_version": { "const": 1 },
+    "registry_format": { "const": "particeps-event-source-registry-v1" },
+    "registry_version": { "const": 1 },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/source" }
+    }
+  },
+  "$defs": {
+    "protocolId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*\\.v[1-9][0-9]*$"
+    },
+    "fieldName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,63}$"
+    },
+    "eventType": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["android", "ios"]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "access",
+        "configuration",
+        "disclosure_key",
+        "emission_authority",
+        "events",
+        "implementation",
+        "platforms",
+        "schema_version",
+        "selectable",
+        "source_id",
+        "source_kind"
+      ],
+      "properties": {
+        "access": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/access" }
+        },
+        "configuration": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/configuration" }
+          ]
+        },
+        "disclosure_key": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$" }
+          ]
+        },
+        "emission_authority": {
+          "type": "string",
+          "enum": ["RUNTIME_ONLY", "SOURCE_PLUGIN_ONLY"]
+        },
+        "events": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/event" }
+        },
+        "implementation": { "$ref": "#/$defs/implementation" },
+        "platforms": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/platform" }
+        },
+        "schema_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "selectable": { "type": "boolean" },
+        "source_id": { "$ref": "#/$defs/protocolId" },
+        "source_kind": {
+          "type": "string",
+          "enum": ["COLLECTOR", "SYSTEM"]
+        }
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner_module", "statuses"],
+      "properties": {
+        "owner_module": {
+          "type": "string",
+          "pattern": "^:[a-z][a-z0-9-]*(?::[a-z][a-z0-9-]*)*$"
+        },
+        "statuses": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["platform", "status"],
+            "properties": {
+              "platform": { "$ref": "#/$defs/platform" },
+              "status": {
+                "type": "string",
+                "enum": ["IMPLEMENTED", "PLANNED", "UNAVAILABLE"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "access": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["absence_policy", "kind", "mode"],
+      "properties": {
+        "absence_policy": {
+          "type": "string",
+          "enum": ["BLOCK_REQUIRED_STUDY", "SOURCE_UNAVAILABLE"]
+        },
+        "kind": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "consent",
+            "hardware",
+            "install_permission",
+            "participant_setting",
+            "role",
+            "runtime_permission",
+            "special_access"
+          ]
+        }
+      }
+    },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fields"],
+      "properties": {
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{1,63}$": { "$ref": "#/$defs/configurationField" }
+          }
+        }
+      }
+    },
+    "configurationField": {
+      "oneOf": [
+        { "$ref": "#/$defs/configBoolean" },
+        { "$ref": "#/$defs/configEnum" },
+        { "$ref": "#/$defs/configEnumArray" },
+        { "$ref": "#/$defs/configInteger" },
+        { "$ref": "#/$defs/configObject" },
+        { "$ref": "#/$defs/configString" }
+      ]
+    },
+    "configBoolean": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authoring_default", "meaning", "required", "type", "unit"],
+      "properties": {
+        "authoring_default": { "type": "boolean" },
+        "meaning": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean" },
+        "type": { "const": "boolean" },
+        "unit": { "type": "string", "minLength": 1 }
+      }
+    },
+    "configInteger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authoring_default",
+        "less_than_or_equal_field",
+        "maximum",
+        "meaning",
+        "minimum",
+        "required",
+        "type",
+        "unit"
+      ],
+      "properties": {
+        "authoring_default": { "type": "integer" },
+        "less_than_or_equal_field": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/fieldName" }]
+        },
+        "maximum": { "type": "integer" },
+        "meaning": { "type": "string", "minLength": 1 },
+        "minimum": { "type": "integer" },
+        "required": { "type": "boolean" },
+        "type": { "const": "integer" },
+        "unit": { "type": "string", "minLength": 1 }
+      }
+    },
+    "configString": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authoring_default",
+        "length_unit",
+        "maximum_length",
+        "meaning",
+        "minimum_length",
+        "required",
+        "type",
+        "unit"
+      ],
+      "properties": {
+        "authoring_default": { "type": "string" },
+        "length_unit": { "type": "string", "enum": ["UTF16_CODE_UNITS", "UTF8_BYTES"] },
+        "maximum_length": { "type": "integer", "minimum": 1 },
+        "meaning": { "type": "string", "minLength": 1 },
+        "minimum_length": { "type": "integer", "minimum": 0 },
+        "required": { "type": "boolean" },
+        "type": { "const": "string" },
+        "unit": { "type": "string", "minLength": 1 }
+      }
+    },
+    "configEnum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authoring_default", "enum_values", "meaning", "required", "type", "unit"],
+      "properties": {
+        "authoring_default": { "type": "string" },
+        "enum_values": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "meaning": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean" },
+        "type": { "const": "enum" },
+        "unit": { "type": "string", "minLength": 1 }
+      }
+    },
+    "configEnumArray": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authoring_default",
+        "enum_values",
+        "maximum_items",
+        "meaning",
+        "minimum_items",
+        "required",
+        "type",
+        "unit"
+      ],
+      "properties": {
+        "authoring_default": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "enum_values": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "maximum_items": { "type": "integer", "minimum": 1 },
+        "meaning": { "type": "string", "minLength": 1 },
+        "minimum_items": { "type": "integer", "minimum": 0 },
+        "required": { "type": "boolean" },
+        "type": { "const": "enum_array" },
+        "unit": { "type": "string", "minLength": 1 }
+      }
+    },
+    "configObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authoring_default", "fields", "meaning", "required", "type", "unit"],
+      "properties": {
+        "authoring_default": { "type": "object" },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{1,63}$": { "$ref": "#/$defs/configurationField" }
+          }
+        },
+        "meaning": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean" },
+        "type": { "const": "object" },
+        "unit": { "const": "none" }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clock",
+        "completeness",
+        "delivery",
+        "event_type",
+        "fields",
+        "maximum_encoded_event_bytes",
+        "privacy",
+        "rate_bound",
+        "trigger"
+      ],
+      "properties": {
+        "clock": { "$ref": "#/$defs/clock" },
+        "completeness": { "$ref": "#/$defs/completeness" },
+        "delivery": { "$ref": "#/$defs/delivery" },
+        "event_type": { "$ref": "#/$defs/eventType" },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{1,63}$": { "$ref": "#/$defs/eventField" }
+          }
+        },
+        "maximum_encoded_event_bytes": {
+          "type": "integer",
+          "minimum": 128,
+          "maximum": 65536
+        },
+        "privacy": { "$ref": "#/$defs/privacy" },
+        "rate_bound": { "$ref": "#/$defs/rateBound" },
+        "trigger": { "$ref": "#/$defs/trigger" }
+      }
+    },
+    "eventField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clock_basis",
+        "enum_values",
+        "keyed_presence_key",
+        "length_unit",
+        "maximum",
+        "maximum_length",
+        "meaning",
+        "minimum",
+        "minimum_length",
+        "nullable",
+        "operators",
+        "required",
+        "unit",
+        "window_sum",
+        "wire_type"
+      ],
+      "properties": {
+        "clock_basis": {
+          "type": "string",
+          "enum": [
+            "BOOT_SESSION_MONOTONIC",
+            "CONTINUOUS_MONOTONIC_SINCE_BOOT",
+            "NONE",
+            "SOURCE_DEFINED",
+            "UTC_WALL"
+          ]
+        },
+        "enum_values": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "keyed_presence_key": { "type": "boolean" },
+        "length_unit": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "enum": ["UTF16_CODE_UNITS", "UTF8_BYTES"] }
+          ]
+        },
+        "maximum": { "oneOf": [{ "type": "integer" }, { "type": "null" }] },
+        "maximum_length": {
+          "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+        },
+        "meaning": { "type": "string", "minLength": 1 },
+        "minimum": { "oneOf": [{ "type": "integer" }, { "type": "null" }] },
+        "minimum_length": {
+          "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+        },
+        "nullable": { "type": "boolean" },
+        "operators": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["eq", "gt", "gte", "in", "lt", "lte", "ne"]
+          }
+        },
+        "required": { "type": "boolean" },
+        "unit": { "type": "string", "minLength": 1 },
+        "window_sum": { "type": "boolean" },
+        "wire_type": {
+          "type": "string",
+          "enum": [
+            "boolean",
+            "enum",
+            "float32",
+            "float64",
+            "int32",
+            "int64_decimal",
+            "json_string",
+            "sha256_hex",
+            "string",
+            "uint64_decimal",
+            "uuid"
+          ]
+        }
+      }
+    },
+    "clock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "automation_time_inputs",
+        "cross_boot_policy",
+        "observation_basis",
+        "primary_source_basis",
+        "primary_source_time_field",
+        "wall_clock_change_policy"
+      ],
+      "properties": {
+        "automation_time_inputs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["OBSERVED_RESEARCH_TIME", "PRIMARY_SOURCE_TIME"]
+          }
+        },
+        "cross_boot_policy": {
+          "type": "string",
+          "enum": ["COMPARABLE", "NOT_APPLICABLE", "RESET"]
+        },
+        "observation_basis": { "const": "RESEARCH_TIME" },
+        "primary_source_basis": {
+          "type": "string",
+          "enum": [
+            "BOOT_SESSION_MONOTONIC",
+            "CONTINUOUS_MONOTONIC_SINCE_BOOT",
+            "NONE",
+            "SOURCE_DEFINED",
+            "UTC_WALL"
+          ]
+        },
+        "primary_source_time_field": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/fieldName" }]
+        },
+        "wall_clock_change_policy": {
+          "type": "string",
+          "enum": ["QUALITY_GAP", "RESET", "UNAFFECTED"]
+        }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["guarantee", "kind", "latency_configuration_field", "maximum_latency_millis"],
+      "properties": {
+        "guarantee": {
+          "type": "string",
+          "enum": ["BEST_EFFORT", "BEST_OBSERVED", "DETERMINISTIC_AFTER_COMMIT"]
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["CALLBACK", "POLL", "RUNTIME_SYNCHRONOUS", "SCHEDULED_WAKEUP"]
+        },
+        "latency_configuration_field": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/fieldName" }]
+        },
+        "maximum_latency_millis": {
+          "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+        }
+      }
+    },
+    "completeness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "may_have_quality_gaps", "ordered_within_observation_batch", "quality_gap_policy"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "AGGREGATED_INTERVAL",
+            "BEST_EFFORT_CALLBACK",
+            "COALESCED",
+            "COMPLETE_FOR_RUNTIME_CAUSES",
+            "PLATFORM_HISTORY_BOUNDED",
+            "SAMPLED"
+          ]
+        },
+        "may_have_quality_gaps": { "type": "boolean" },
+        "ordered_within_observation_batch": { "type": "boolean" },
+        "quality_gap_policy": {
+          "type": "string",
+          "enum": ["EMIT_AND_CONTINUE", "FAIL_CLOSED_FOR_DEPENDENT_AUTOMATIONS", "NOT_APPLICABLE"]
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["audit_copy_policy", "class", "exported", "prohibited_inferences", "trigger_exposure"],
+      "properties": {
+        "audit_copy_policy": {
+          "type": "string",
+          "enum": ["IDENTIFIERS_ONLY", "NO_FIELD_VALUES"]
+        },
+        "class": {
+          "type": "string",
+          "enum": ["INTERNAL", "PUBLIC", "RESTRICTED", "SENSITIVE"]
+        },
+        "exported": { "type": "boolean" },
+        "prohibited_inferences": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$" }
+        },
+        "trigger_exposure": {
+          "type": "string",
+          "enum": ["DECLARED_FIELDS_ONLY", "NONE"]
+        }
+      }
+    },
+    "rateBound": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enforced_by",
+        "kind",
+        "maximum_events_per_batch",
+        "maximum_events_per_hour",
+        "maximum_events_per_period",
+        "overflow_policy",
+        "period_seconds"
+      ],
+      "properties": {
+        "enforced_by": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$" },
+        "kind": {
+          "type": "string",
+          "enum": ["CONFIGURATION_DERIVED", "HARD", "PLATFORM_ONLY", "UNBOUNDED"]
+        },
+        "maximum_events_per_batch": {
+          "oneOf": [{ "type": "integer", "minimum": 1, "maximum": 4096 }, { "type": "null" }]
+        },
+        "maximum_events_per_hour": {
+          "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+        },
+        "maximum_events_per_period": {
+          "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+        },
+        "overflow_policy": {
+          "type": "string",
+          "enum": ["COALESCE_WITH_SOURCE_TIME", "EMIT_QUALITY_GAP", "FAIL_SOURCE", "IMPOSSIBLE"]
+        },
+        "period_seconds": {
+          "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+        }
+      }
+    },
+    "trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["condition_kinds", "presence", "scope"],
+      "properties": {
+        "condition_kinds": {
+          "type": "array",
+          "description": "Researcher condition capabilities; empty for RUNTIME_ONLY and AUDIT_ONLY events.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "EVENT_MATCH",
+              "KEYED_PRESENCE_ENTER",
+              "KEYED_PRESENCE_EXIT",
+              "SEQUENCE_STEP",
+              "WINDOW_COUNT",
+              "WINDOW_SUM"
+            ]
+          }
+        },
+        "presence": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/presence" }]
+        },
+        "scope": {
+          "type": "string",
+          "description": "RESEARCHER events may be matched by signed automation; RUNTIME_ONLY and AUDIT_ONLY events cannot be condition triggers.",
+          "enum": ["AUDIT_ONLY", "RESEARCHER", "RUNTIME_ONLY"]
+        }
+      }
+    },
+    "presence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["group_id", "key_fields", "role"],
+      "properties": {
+        "group_id": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$" },
+        "key_fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/fieldName" }
+        },
+        "role": { "type": "string", "enum": ["ENTER", "EXIT"] }
+      }
+    }
+  }
+}

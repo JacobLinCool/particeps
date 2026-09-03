@@ -9,10 +9,8 @@ import {
 } from '../src/lib/particeps/canonical';
 import { decodeBase64Url, encodeBase64Url, sign, verify } from '../src/lib/particeps/crypto';
 import { decodeEnvelope, encodeEnvelope } from '../src/lib/particeps/envelope';
-import { openBundle } from '../src/lib/particeps/bundle';
 import { parseConfiguration } from '../src/routes/researcher/parse';
-import { HPKE, SIGNING, validConfiguration } from './fixture';
-import { sealBundle } from './seal';
+import { SIGNING, validConfiguration } from './fixture';
 
 const fromHex = (value: string) =>
   Uint8Array.from(value.match(/../g) ?? [], (byte) => parseInt(byte, 16));
@@ -45,14 +43,6 @@ describe('Protocol v1 deterministic compatibility boundary', () => {
     expect(canonicalizeConfiguration(parseConfiguration(envelope))).toBe(
       canonicalizeConfiguration(configuration)
     );
-  });
-
-  it('round-trips deterministic RFC 9180/AES-GCM bundle bytes', async () => {
-    const configuration = validConfiguration();
-    const first = await sealBundle(configuration, SIGNING.privateKey);
-    const second = await sealBundle(configuration, SIGNING.privateKey);
-    expect(second).toEqual(first);
-    expect(await openBundle(first, configuration, HPKE.privateKey)).toMatchObject({ ok: true });
   });
 
   it('rejects the former Protocol v1 JSON, the retired ADCCFG01 magic, and a variable-length envelope', () => {

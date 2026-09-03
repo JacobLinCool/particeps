@@ -12,20 +12,22 @@ object UploadReceiptCodec {
     private val KEYS = setOf(
         "bundle_id",
         "byte_count",
+        "commit_count",
         "configuration_sha256",
         "event_count",
-        "first_sequence_number",
-        "last_sequence_number",
+        "first_commit_sequence",
+        "last_commit_sequence",
         "sha256",
     )
 
     fun encode(receipt: ExportReceipt): ByteArray = (
         "{\"bundle_id\":\"${receipt.bundleId}\"," +
             "\"byte_count\":\"${receipt.byteCount}\"," +
+            "\"commit_count\":\"${receipt.commitCount}\"," +
             "\"configuration_sha256\":\"${receipt.configurationSha256}\"," +
             "\"event_count\":\"${receipt.eventCount}\"," +
-            "\"first_sequence_number\":\"${receipt.firstSequence}\"," +
-            "\"last_sequence_number\":\"${receipt.lastSequence}\"," +
+            "\"first_commit_sequence\":\"${receipt.firstCommitSequence}\"," +
+            "\"last_commit_sequence\":\"${receipt.lastCommitSequence}\"," +
             "\"sha256\":\"${receipt.sha256}\"}"
         ).toByteArray(Charsets.UTF_8)
 
@@ -46,8 +48,9 @@ object UploadReceiptCodec {
             bundleId = runCatching { UUID.fromString(root.string("bundle_id")) }
                 .getOrElse { throw IllegalArgumentException("Invalid bundle ID", it) },
             configurationSha256 = root.string("configuration_sha256"),
-            firstSequence = root.decimalLong("first_sequence_number"),
-            lastSequence = root.decimalLong("last_sequence_number"),
+            firstCommitSequence = root.decimalLong("first_commit_sequence"),
+            lastCommitSequence = root.decimalLong("last_commit_sequence"),
+            commitCount = root.decimalLong("commit_count"),
             eventCount = root.decimalLong("event_count"),
             sha256 = root.string("sha256"),
             byteCount = root.decimalLong("byte_count"),

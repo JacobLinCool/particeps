@@ -1,0 +1,125 @@
+{
+  "android_ndk": "30.0.14904198",
+  "android_ndk_revision": "30.0.14904198-beta1",
+  "components": [
+    {
+      "license": "Apache-2.0",
+      "license_file": "LICENSE",
+      "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "module": "github.com/google/btree",
+      "role": "runtime",
+      "sum": "h1:CVpQJjYgC4VbzxeGVHfvZrv1ctoYCAI8vbl07Fcxlyg=",
+      "go_mod_sum": "h1:qOPhT0dTNdNzV6Z/lhRX0YXUafgPLFUh+gZMl761Gm4=",
+      "version": "v1.1.3"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "license_file": "LICENSE",
+      "license_sha256": "0a8d61ed3cbfd5312326e8126c31ce9c627a283adc99131b56896d29ada04b2d",
+      "module": "github.com/google/uuid",
+      "role": "runtime",
+      "sum": "h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=",
+      "go_mod_sum": "h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=",
+      "version": "v1.6.0"
+    },
+    {
+      "license": "MIT",
+      "license_file": "LICENSE",
+      "license_sha256": "796abbf6d0258a01321f88f72c1d712417acdd75342510f0796f7c567b6f05e5",
+      "module": "github.com/xjasonlyu/tun2socks/v2",
+      "origin_commit": "8dda19e8e4613e014f0b12f3e624fdff5e5f23b3",
+      "role": "runtime",
+      "sum": "h1:fYEN0Q1sSanuoID8xvUTsMODbKLJJH/J5ywYoMRxIPw=",
+      "go_mod_sum": "h1:XHgJ3wbs63mZxGbJawt6jjNX65aPDl+Qhn2ePPEE4KI=",
+      "version": "v2.7.0"
+    },
+    {
+      "license": "MIT",
+      "license_file": "LICENSE.txt",
+      "license_sha256": "edbb5a4d165ac69376c765b551c0662ff42bea87e1f1eda85f42ac90c34b09d0",
+      "module": "go.uber.org/atomic",
+      "role": "runtime",
+      "sum": "h1:ZvwS0R+56ePWxUNi+Atn9dWONBPp/AUETXlHW0DxSjE=",
+      "go_mod_sum": "h1:LUxbIzbOniOlMKjJjyPfpl4v+PKK2cNJn91OQbhoJI0=",
+      "version": "v1.11.0"
+    },
+    {
+      "license": "MIT",
+      "license_file": "LICENSE.txt",
+      "license_sha256": "dcdabe03bef2382a130640d1c3a4cd5ec42aba1035095c38272fde694eb72405",
+      "module": "go.uber.org/multierr",
+      "role": "runtime",
+      "sum": "h1:blXXJkSxSSfBVBlC76pxqeO+LN3aDfLQo+309xJstO0=",
+      "go_mod_sum": "h1:20+QtiLqy0Nd6FdQB9TLXag12DsQkrbs3htMFfDN80Y=",
+      "version": "v1.11.0"
+    },
+    {
+      "license": "MIT",
+      "license_file": "LICENSE",
+      "license_sha256": "c2b97b3281be272711909076c8402499b4b5a3216196af47a25b1d3674d86152",
+      "module": "go.uber.org/zap",
+      "role": "runtime",
+      "sum": "h1:IZzaP1Fv73/T/pBMLk4VutPl36uNC+OSUh3JLG3FIjo=",
+      "go_mod_sum": "h1:rDLpOi171uODNm/mxFcuYWxDsqWSAVkFdX4XojSKg/Q=",
+      "version": "v1.28.0"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "license_file": "LICENSE",
+      "license_sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+      "module": "golang.org/x/exp",
+      "origin_commit": "c48552f49976",
+      "role": "runtime",
+      "sum": "h1:X8Hz2ImujgbmetVuW+w2YkyZChE3cBpZi2P158rTG9M=",
+      "go_mod_sum": "h1:vnf4pv9iKZXY58sQE1L86zmNWJ4159e1RkcWiLCkeEY=",
+      "version": "v0.0.0-20260611194520-c48552f49976"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "license_file": "LICENSE",
+      "license_sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+      "module": "golang.org/x/mobile",
+      "origin_commit": "4776eadac327",
+      "role": "build-and-runtime",
+      "sum": "h1:D/wiQ6AoTYjDtSD0HMPhU8O40NUP8EF0UmDhIYCnG4I=",
+      "go_mod_sum": "h1:D9q8rgXu13Q3uuM+Vuy6F/DG1WF/giTPLtqQ9on5B1M=",
+      "version": "v0.0.0-20260821190718-4776eadac327"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "license_file": "LICENSE",
+      "license_sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+      "module": "golang.org/x/sys",
+      "role": "runtime",
+      "sum": "h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=",
+      "go_mod_sum": "h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=",
+      "version": "v0.47.0"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "license_file": "LICENSE",
+      "license_sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+      "module": "golang.org/x/time",
+      "role": "runtime",
+      "sum": "h1:bbrp8t3bGUeFOx08pvsMYRTCVSMk89u4tKbNOZbp88U=",
+      "go_mod_sum": "h1:Y4YMaQmXwGQZoFaVFk4YpCt4FLQMYKZe9oeV/f4MSno=",
+      "version": "v0.15.0"
+    },
+    {
+      "license": "Apache-2.0",
+      "license_file": "LICENSE",
+      "license_sha256": "0fbab5c58efbdf6d31e8085214f2dd821659c03d73cff3ed2b08e98826ea1cd9",
+      "module": "gvisor.dev/gvisor",
+      "origin_commit": "69c2d17aea96",
+      "role": "runtime",
+      "sum": "h1:LZXOf4NwvAwUy/eI8P+Y3DUdYLyaCEDNPEjsL2OP2ro=",
+      "go_mod_sum": "h1:8aLQqUBHDH8fY5y60lzmwDpMMbQCcT3EBfoSwhfaGCY=",
+      "version": "v0.0.0-20260701204157-69c2d17aea96"
+    }
+  ],
+  "format": 1,
+  "go_toolchain": "go1.26.3",
+  "module": "github.com/JacobLinCool/particeps/native/trafficshaping",
+  "proxy": "https://proxy.golang.org",
+  "sum_database": "sum.golang.org"
+}

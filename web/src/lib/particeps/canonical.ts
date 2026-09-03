@@ -35,9 +35,9 @@ export function parseCanonicalJson(bytes: Uint8Array): unknown {
   return value;
 }
 
-/** The Protocol v1 configuration value before JCS. The in-memory model uses `null` for disabled
- * upload, while the one wire shape uses an exact empty object. Kotlin also normalizes instants and
- * the set-like transport list before its canonical-byte equality check. */
+/** The Protocol v1 configuration value before JCS. Disabled upload is encoded as the one exact
+ * empty object. No array is silently reordered here: sorted resource/profile/automation/package
+ * arrays are a signed validation rule, not a canonicalization convenience. */
 export function configurationValue(configuration: StudyConfiguration): unknown {
   const normalizeInstant = (value: string) => {
     const parsed = parseInstant(value);
@@ -47,17 +47,6 @@ export function configurationValue(configuration: StudyConfiguration): unknown {
     ...configuration,
     issued_at: normalizeInstant(configuration.issued_at),
     expires_at: normalizeInstant(configuration.expires_at),
-    collectors: configuration.collectors.map((collector) =>
-      collector.id === 'network_usage.v1'
-        ? {
-            ...collector,
-            config: {
-              ...collector.config,
-              transports: [...new Set(collector.config.transports)].sort()
-            }
-          }
-        : collector
-    ),
     upload: configuration.upload ?? {}
   };
 }

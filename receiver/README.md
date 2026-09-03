@@ -2,7 +2,7 @@
 
 This directory contains the complete server-side surface for automatic uploads. It is one
 Cloudflare Worker, one deployment-fixed `POST` path, and one R2 binding. The normative request,
-bundle, and receipt contract, including the phase boundaries, is
+bundle, and receipt contract, including complete commit boundaries, is
 [`../protocol/v1/README.md`](../protocol/v1/README.md).
 
 The Worker accepts a bounded `PTCEXP01` ciphertext stream and stores it under its bundle UUID. It
@@ -14,10 +14,10 @@ or metadata is refused. The exact status codes and receipt fields are in
 R2 operation has completed. The verifier feeds R2 through a `FixedLengthStream`, preserving
 backpressure while meeting R2's requirement that streamed uploads have a known length.
 
-The application-header vocabulary is closed-world. The ten Protocol v1 headers are `Content-Type`,
-`Content-Length`, `Content-Digest`, and the seven `X-Particeps-*` routing claims. `Content-Type`
+The application-header vocabulary is closed-world. The eleven Protocol v1 headers are `Content-Type`,
+`Content-Length`, `Content-Digest`, and the eight `X-Particeps-*` routing claims. `Content-Type`
 must be exactly `application/vnd.particeps.research-bundle`, and `X-Particeps-Bundle-Format`
-exactly `particeps-research-bundle-v1`. Apart from those ten, the Worker ignores only the ordinary
+exactly `particeps-research-bundle-v1`. Apart from those eleven, the Worker ignores only the ordinary
 OkHttp transport headers and headers in Cloudflare's
 [edge HTTP header reference](https://developers.cloudflare.com/fundamentals/reference/http-headers/).
 Local Wrangler/Miniflare's `MF-Original-Hostname` transport header is also ignored.
@@ -53,15 +53,16 @@ The R2 object key is exactly the lowercase bundle UUID. Custom metadata has exac
 ```text
 sha256
 byte_count
+commit_count
 configuration_sha256
-researcher_key_id
-first_sequence_number
-last_sequence_number
 event_count
+first_commit_sequence
+last_commit_sequence
+researcher_key_id
 received_at_utc
 ```
 
-All eight values are untrusted. `received_at_utc` is assigned by the Worker on the first successful
+All nine values are untrusted. `received_at_utc` is assigned by the Worker on the first successful
 write and remains unchanged on replay. The receipt returned to the client is narrower than this
 metadata; [`../protocol/v1/README.md`](../protocol/v1/README.md) defines its exact fields.
 

@@ -71,13 +71,27 @@ describe("Particeps Protocol v1 ciphertext receiver", () => {
     expect(stored?.object.customMetadata).toEqual({
       sha256: fixture.sha256,
       byte_count: String(fixture.body.length),
+      commit_count: "1",
       configuration_sha256: CONFIGURATION_SHA256,
-      researcher_key_id: RESEARCHER_KEY_ID,
-      first_sequence_number: "1",
-      last_sequence_number: "1",
       event_count: "1",
+      first_commit_sequence: "1",
+      last_commit_sequence: "1",
+      researcher_key_id: RESEARCHER_KEY_ID,
       received_at_utc: RECEIVED_AT,
     });
+  });
+
+  it("accepts a complete commit range that contains no events", async () => {
+    const bucket = new FakeR2Bucket();
+    const fixture = await requestFixture({
+      headers: { "X-Particeps-Event-Count": "0" },
+    });
+
+    const response = await handleRequest(fixture.request, environment(bucket), DEPENDENCIES);
+
+    expect(response.status).toBe(201);
+    expect(await response.text()).toBe(canonicalReceipt(fixture));
+    expect(bucket.record(BUNDLE_ID)?.object.customMetadata?.event_count).toBe("0");
   });
 
   it("returns the identical receipt for a fully verified exact replay without overwriting", async () => {
@@ -185,14 +199,14 @@ describe("Particeps Protocol v1 ciphertext receiver", () => {
     expect(bucket.putCalls).toBe(1);
   });
 
-  it("treats a replay with different claimed range metadata as a conflict", async () => {
+  it("treats a replay with different claimed commit range metadata as a conflict", async () => {
     const bucket = new FakeR2Bucket();
     const original = await requestFixture();
     expect((await handleRequest(original.request, environment(bucket), DEPENDENCIES)).status).toBe(201);
     const replay = await requestFixture({
       headers: {
-        "X-Particeps-Sequence-From": "2",
-        "X-Particeps-Sequence-To": "2",
+        "X-Particeps-Commit-From": "2",
+        "X-Particeps-Commit-To": "2",
       },
     });
 
@@ -314,9 +328,9 @@ describe("Particeps Protocol v1 ciphertext receiver", () => {
     ["non-v4 bundle UUID", { headers: { "X-Particeps-Bundle-Id": "550e8400-e29b-11d4-a716-446655440000" } }],
     ["uppercase digest", { headers: { "X-Particeps-Configuration-SHA256": CONFIGURATION_SHA256.toUpperCase() } }],
     ["invalid researcher key", { headers: { "X-Particeps-Researcher-Key-Id": "Researcher_Key" } }],
-    ["leading-zero sequence", { headers: { "X-Particeps-Sequence-From": "01" } }],
-    ["empty event range", { headers: { "X-Particeps-Event-Count": "0" } }],
-    ["range/count mismatch", { headers: { "X-Particeps-Sequence-To": "2" } }],
+    ["leading-zero commit", { headers: { "X-Particeps-Commit-From": "01" } }],
+    ["empty commit range", { headers: { "X-Particeps-Commit-Count": "0" } }],
+    ["range/count mismatch", { headers: { "X-Particeps-Commit-To": "2" } }],
     ["configuration not allowed", { headers: { "X-Particeps-Configuration-SHA256": OTHER_CONFIGURATION_SHA256 } }],
     ["key not allowed", { headers: { "X-Particeps-Researcher-Key-Id": "different-key" } }],
     ["malformed content digest", { headers: { "Content-Digest": `SHA-256=:${"A".repeat(43)}=:` } }],
@@ -394,8 +408,9 @@ interface RequestFixture {
   body: Uint8Array;
   sha256: string;
   byteCountText: string;
-  firstSequenceNumber: string;
-  lastSequenceNumber: string;
+  firstCommitSequence: string;
+  lastCommitSequence: string;
+  commitCount: string;
   eventCount: string;
 }
 
@@ -411,8 +426,9 @@ async function requestFixture(options: FixtureOptions = {}): Promise<RequestFixt
     "X-Particeps-Bundle-Id": BUNDLE_ID,
     "X-Particeps-Configuration-SHA256": CONFIGURATION_SHA256,
     "X-Particeps-Researcher-Key-Id": RESEARCHER_KEY_ID,
-    "X-Particeps-Sequence-From": "1",
-    "X-Particeps-Sequence-To": "1",
+    "X-Particeps-Commit-From": "1",
+    "X-Particeps-Commit-To": "1",
+    "X-Particeps-Commit-Count": "1",
     "X-Particeps-Event-Count": "1",
     ...options.headers,
   });
@@ -427,8 +443,9 @@ async function requestFixture(options: FixtureOptions = {}): Promise<RequestFixt
     body,
     sha256,
     byteCountText: headers.get("content-length")!,
-    firstSequenceNumber: headers.get("x-particeps-sequence-from")!,
-    lastSequenceNumber: headers.get("x-particeps-sequence-to")!,
+    firstCommitSequence: headers.get("x-particeps-commit-from")!,
+    lastCommitSequence: headers.get("x-particeps-commit-to")!,
+    commitCount: headers.get("x-particeps-commit-count")!,
     eventCount: headers.get("x-particeps-event-count")!,
   };
 }
@@ -464,9 +481,10 @@ function toBase64(bytes: Uint8Array): string {
 
 function canonicalReceipt(fixture: RequestFixture): string {
   return `{"bundle_id":"${BUNDLE_ID}","byte_count":"${fixture.byteCountText}",`
+    + `"commit_count":"${fixture.commitCount}",`
     + `"configuration_sha256":"${CONFIGURATION_SHA256}","event_count":"${fixture.eventCount}",`
-    + `"first_sequence_number":"${fixture.firstSequenceNumber}",`
-    + `"last_sequence_number":"${fixture.lastSequenceNumber}","sha256":"${fixture.sha256}"}`;
+    + `"first_commit_sequence":"${fixture.firstCommitSequence}",`
+    + `"last_commit_sequence":"${fixture.lastCommitSequence}","sha256":"${fixture.sha256}"}`;
 }
 
 function environment(bucket: FakeR2Bucket): ReceiverEnv {

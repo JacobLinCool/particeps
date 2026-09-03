@@ -2,9 +2,9 @@ package cool.jacoblin.particeps.collector.batterystate
 
 import android.os.BatteryManager
 import cool.jacoblin.particeps.core.collector.LatestValueRateGate
-import cool.jacoblin.particeps.core.collector.ProtocolEventContracts
-import cool.jacoblin.particeps.core.definition.BatteryStateConfiguration
-import cool.jacoblin.particeps.core.model.RecordedEvent
+import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
+import cool.jacoblin.particeps.core.collector.accepts
+import cool.jacoblin.particeps.core.definition.BatteryStateV1ProfileConfiguration
 import cool.jacoblin.particeps.core.model.ResearchTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,37 +36,9 @@ class BatteryStateCollectorTest {
 
         assertTrue(sameBatteryState(captured, later))
         assertEquals(captured.observedTime, event.observedTime)
-        assertEquals(BatteryStateConfiguration.ID, event.collectorId)
-        assertTrue(requireNotNull(ProtocolEventContracts[BatteryStateConfiguration.ID]).accepts(event, 1))
+        assertEquals(BatteryStateV1ProfileConfiguration.SOURCE_ID, event.type.sourceId.value)
+        assertTrue(requireNotNull(ProtocolEventSourceRegistry[BatteryStateV1ProfileConfiguration.SOURCE_ID]).accepts(event, 1, null))
         assertFalse(sameBatteryState(captured, later.copy(percentage = 49)))
-    }
-
-    @Test
-    fun processRestartRestoresTheLastBatteryValueAndRateWatermark() {
-        val previous = snapshot(ResearchTime(10_000, 10_000_000_000, "boot-a"))
-        val draft = previous.eventDraft()
-        val recorded = RecordedEvent(
-            sequenceNumber = 1,
-            collectorId = draft.collectorId,
-            payloadSchemaVersion = draft.payloadSchemaVersion,
-            observedTime = draft.observedTime,
-            payloadType = draft.payloadType,
-            fields = draft.fields,
-        )
-        val gate = LatestValueRateGate(60_000L, ::sameBatteryState)
-        gate.restoreLastEmission(
-            value = recorded.batterySnapshotOrNull(),
-            currentElapsedMillis = 10_100,
-        )
-
-        assertEquals(
-            LatestValueRateGate.Decision.Suppress,
-            gate.offer(previous.copy(observedTime = ResearchTime(10_100, 10_100_000_000, "boot-a")), 10_100),
-        )
-        assertEquals(
-            LatestValueRateGate.Decision.Defer(60_000),
-            gate.offer(previous.copy(percentage = 49), 10_100),
-        )
     }
 
     private fun snapshot(time: ResearchTime) = BatterySnapshot(

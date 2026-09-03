@@ -43,6 +43,13 @@ __pycache__/
 local.properties
 captures/
 
+# JavaScript dependency and test-runner caches
+node_modules/
+.pnpm-store/
+
+# Independent local tutorial-site checkout; it has its own Git history and release lifecycle.
+/particeps-tutorial-site/
+
 # Eclipse/Buildship copies each module's sources into bin/, so these are stale
 # duplicates of src/ that would otherwise be committed.
 bin/

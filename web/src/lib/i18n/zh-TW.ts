@@ -193,7 +193,7 @@ export const zhTW: Messages = {
       required: '沒有這項權限就無法開始。',
       samplingPeriod: '這是取樣週期要求，不是頻率上限；裝置可能更快。',
       ambientLightSamplingPeriod:
-        '這是相鄰輸出事件之間的硬性最短間隔；最新一筆達到變化門檻的讀值會保留到下一次可輸出時。',
+        '事件有最短間隔；最新變化會保留。',
       bandwidthEstimates: '平台的估計值，不是實測值。',
       pollInterval: '一分鐘是試跑用的設定，不是正式研究的設定。',
       fastestInterval: '不能比定位間隔長。',
@@ -280,10 +280,9 @@ export const zhTW: Messages = {
     integer: '只能是整數',
     instant: '無法辨識這個日期時間',
     window_order: '要比開始時間晚',
-    collectors_empty: '至少要啟用一個資料來源',
     duplicate_id: '這個研究裡已經用過',
-    transports_empty: '至少選一項',
-    location_interval_order: '不能超過定位間隔',
+    sorted_unique: '請依序排列並移除重複項目',
+    profile_invalid: '這個設定不符合事件來源 registry 的契約',
     endpoint_scheme: '必須以 https:// 開頭',
     endpoint_host: '這個位址沒有主機名稱',
     document_too_large: ({ max }) => `整份設定檔必須小於 ${number.format(max)} 個位元組`,
@@ -293,7 +292,15 @@ export const zhTW: Messages = {
     language_tag: '請使用有效的 BCP 47 語言標籤',
     unknown_reference: '請選擇這份設定檔中已定義的問卷',
     selection_bounds: '選取數量限制與這題不相容',
-    schedule_bounds: '排程超出研究期間，或產生過多次活動'
+    automation_invalid: '這個 automation 超出 Protocol v1 的封閉式限制',
+    unknown_event: '請選擇 registry 中允許研究者觸發的事件',
+    unknown_field: '這個事件沒有宣告該欄位',
+    unsupported_operator: 'registry 不允許該欄位使用這個運算子',
+    canonical_value: '請使用這個欄位的標準 wire 格式',
+    resource_owner: '每個持續性資源都必須恰好有一個 binding automation',
+    trigger_source_liveness: 'automation 使用的 collector 必須是必要項目並持續啟用',
+    dependency_cycle: '資源條件形成無法安全評估的循環依賴',
+    unbounded_state: '這個視窗或序列可能保留超過 4,096 筆項目'
   },
 
   status: {
@@ -450,7 +457,7 @@ export const zhTW: Messages = {
       events: '事件筆數',
       window: '序號範圍',
       span: '首末事件時間',
-      transitions: '狀態變更',
+      commits: '引擎提交',
       exported: '匯出時間',
       instance: '參與者安裝識別碼',
       state: '目前狀態',

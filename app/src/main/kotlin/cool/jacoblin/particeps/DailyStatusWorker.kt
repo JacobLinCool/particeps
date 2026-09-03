@@ -6,7 +6,6 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.text.format.DateUtils
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import cool.jacoblin.particeps.core.model.ExperimentState
@@ -25,8 +24,7 @@ import kotlinx.coroutines.flow.first
  * title either: this arrives every day for the study's whole duration, including while paused, and
  * a lock screen is readable by whoever is holding the phone. The title line is the app's own name,
  * which the launcher and Android's own settings already show. The ongoing collection notification
- * does carry the study title, but only while collection is actually running and only as its
- * secondary line; a daily reminder that repeated it would be a standing disclosure instead.
+ * is equally neutral and never repeats researcher-authored study text on the lock screen.
  */
 class DailyStatusWorker(
     context: Context,
@@ -35,12 +33,10 @@ class DailyStatusWorker(
     override suspend fun doWork(): Result {
         val application = applicationContext as CollectorApplication
         val snapshot = application.session.snapshot.first { it.initialized }
-        val metadata = snapshot.runtime.metadata
-        val state = metadata?.state
-        if (snapshot.configuration == null ||
-            (snapshot.safetyPauseStatus == null &&
-                state != ExperimentState.RUNNING && state != ExperimentState.PAUSED)
-        ) {
+        val activeState = snapshot.runtime.state?.takeIf {
+            it == ExperimentState.RUNNING || it == ExperimentState.PAUSED
+        }
+        if (snapshot.study == null || activeState == null) {
             // Finished, withdrawn, deleted, or never started. Nothing to remind anyone about, and
             // the periodic request outlives the study unless it retires itself here.
             return Result.success()
@@ -53,51 +49,11 @@ class DailyStatusWorker(
             return Result.success()
         }
 
-        val text = when {
-            snapshot.safetyPauseStatus != null -> {
-                applicationContext.getString(R.string.daily_paused_unknown)
-            }
-            state == ExperimentState.PAUSED -> {
-                val pausedAt = metadata.transitions
-                    .lastOrNull { it.to == ExperimentState.PAUSED }
-                    ?.time
-                    ?.wallTimeUtcMillis
-                if (pausedAt == null) {
-                    applicationContext.getString(R.string.daily_paused_unknown)
-                } else {
-                    applicationContext.getString(
-                        R.string.daily_paused_since,
-                        DateUtils.formatDateTime(
-                            applicationContext,
-                            pausedAt,
-                            DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_SHOW_DATE or
-                                DateUtils.FORMAT_ABBREV_ALL,
-                        ),
-                    )
-                }
-            }
-            else -> applicationContext.getString(R.string.daily_running)
-        }
-
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
         manager.notify(
             NOTIFICATION_TAG,
             0,
-            android.app.Notification.Builder(applicationContext, ParticepsNotificationChannels.DAILY_STATUS)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle(applicationContext.getString(R.string.app_name))
-                .setContentText(text)
-                .setStyle(android.app.Notification.BigTextStyle().bigText(text))
-                .setContentIntent(
-                    PendingIntent.getActivity(
-                        applicationContext,
-                        0,
-                        Intent(applicationContext, MainActivity::class.java),
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                    ),
-                )
-                .setAutoCancel(true)
-                .build(),
+            dailyStatusNotification(applicationContext, activeState),
         )
         return Result.success()
     }
@@ -106,4 +62,29 @@ class DailyStatusWorker(
         /** One tag, so today's reminder replaces yesterday's rather than stacking up. */
         const val NOTIFICATION_TAG = "daily-status"
     }
+}
+
+/** Fixed-copy notification projection; signed researcher text is intentionally not an input. */
+internal fun dailyStatusNotification(context: Context, state: ExperimentState): android.app.Notification {
+    require(state == ExperimentState.RUNNING || state == ExperimentState.PAUSED) {
+        "Daily status is only defined for an active study"
+    }
+    val text = context.getString(
+        if (state == ExperimentState.PAUSED) R.string.daily_paused_unknown else R.string.daily_running,
+    )
+    return android.app.Notification.Builder(context, ParticepsNotificationChannels.DAILY_STATUS)
+        .setSmallIcon(android.R.drawable.ic_dialog_info)
+        .setContentTitle(context.getString(R.string.app_name))
+        .setContentText(text)
+        .setStyle(android.app.Notification.BigTextStyle().bigText(text))
+        .setContentIntent(
+            PendingIntent.getActivity(
+                context,
+                0,
+                Intent(context, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            ),
+        )
+        .setAutoCancel(true)
+        .build()
 }

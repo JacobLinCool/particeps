@@ -1,11 +1,12 @@
 package cool.jacoblin.particeps.collector.keyboardime
 
 import cool.jacoblin.particeps.core.model.EventDraft
+import cool.jacoblin.particeps.core.model.EventSourceId
+import cool.jacoblin.particeps.core.model.EventTypeKey
 import cool.jacoblin.particeps.core.collector.AccessKind
-import cool.jacoblin.particeps.core.definition.CollectorConfiguration
-import cool.jacoblin.particeps.core.definition.KeyboardTouchConfiguration
-import cool.jacoblin.particeps.core.collector.PrivacyClass
-import cool.jacoblin.particeps.core.collector.ProtocolEventContracts
+import cool.jacoblin.particeps.core.definition.CollectorProfileConfiguration
+import cool.jacoblin.particeps.core.definition.KeyboardTouchV1ProfileConfiguration
+import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
 import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
@@ -16,32 +17,31 @@ import cool.jacoblin.particeps.core.collector.SourceTeardownResult
 
 class KeyboardTouchCollectorPlugin : CollectorPlugin {
     override val descriptor = CollectorDescriptor(
-        id = KeyboardTouchConfiguration.ID,
+        id = KeyboardTouchV1ProfileConfiguration.SOURCE_ID,
         displayName = "Research keyboard touch",
-        privacyClass = PrivacyClass.RESTRICTED,
         accessKinds = setOf(
             AccessKind.RESEARCH_KEYBOARD_ENABLED,
             AccessKind.RESEARCH_KEYBOARD_SELECTED,
         ),
-        eventContract = requireNotNull(ProtocolEventContracts[KeyboardTouchConfiguration.ID]),
+        sourceContract = requireNotNull(ProtocolEventSourceRegistry[KeyboardTouchV1ProfileConfiguration.SOURCE_ID]),
     )
 
     override fun create(
-        configuration: CollectorConfiguration,
+        configuration: CollectorProfileConfiguration,
         context: CollectorContext,
     ): Collector = KeyboardTouchCollector(
-        configuration as? KeyboardTouchConfiguration
+        configuration as? KeyboardTouchV1ProfileConfiguration
             ?: throw IllegalArgumentException("Invalid keyboard-touch configuration"),
         context,
     )
 }
 
 private class KeyboardTouchCollector(
-    private val configuration: KeyboardTouchConfiguration,
+    private val configuration: KeyboardTouchV1ProfileConfiguration,
     collectorContext: CollectorContext,
 ) : SerializedCallbackCollector(collectorContext, CHANNEL_CAPACITY) {
     override suspend fun registerSource(): SourceRegistrationResult {
-        ImeObservationBridge.install(configuration.trajectorySamplingHz, ::capture)
+        ImeObservationBridge.install(configuration.trajectorySamplingHz.toInt(), ::capture)
         return SourceRegistrationResult.Registered
     }
 
@@ -53,10 +53,12 @@ private class KeyboardTouchCollector(
     private fun capture(observation: ImeTouchObservation) {
         capture {
             EventDraft(
-                collectorId = KeyboardTouchConfiguration.ID,
-                payloadSchemaVersion = 1,
+                type = EventTypeKey(
+                    EventSourceId(KeyboardTouchV1ProfileConfiguration.SOURCE_ID),
+                    1,
+                    "KEYBOARD_TOUCH",
+                ),
                 observedTime = context.clocks.now(),
-                payloadType = "KEYBOARD_TOUCH",
                 fields = mapOf(
                     "action" to observation.action,
                     "event_uptime_millis" to observation.eventUptimeMillis.toString(),

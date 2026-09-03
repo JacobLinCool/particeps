@@ -15,7 +15,7 @@
    * and nothing else, which is the case the file targets exist for.
    *
    * The summary is the bundle's own numbers, in the bundle's own words. What it does *not* do is
-   * read the events: `payload_type` and `fields` are a collector's private vocabulary, `fields`
+   * read the events: `event_type` and `fields` are a source's private vocabulary, `fields`
    * values are strings even when they look like numbers, and a page that started interpreting them
    * would be a second, wrong analysis tool. So: how many, over what span, from which sources — and
    * then the whole document, exactly as the phone wrote it, to read and to take away.
@@ -73,6 +73,7 @@
 
   const opened = $derived(draft.bundle);
   const experiment = $derived(opened?.document.experiment ?? null);
+  const events = $derived(experiment?.commits.flatMap((commit) => commit.events) ?? []);
 
   /**
    * Guarded like its two siblings. `DropTarget` calls `onfile` without awaiting, so a rejection
@@ -180,15 +181,15 @@
 
   /**
    * How the events divide, in the codec's collector order so two bundles from one study list their
-   * sources the same way. A `collector_id` this build does not know keeps its wire name and a
+   * sources the same way. A `source_id` this build does not know keeps its wire name and a
    * neutral mark: the phone owns this vocabulary, and an unrecognised source is a fact about the
    * file rather than a reason to hide a row.
    */
   const sources = $derived.by(() => {
     if (!experiment) return [];
     const tally = new Map<string, number>();
-    for (const event of experiment.events) {
-      tally.set(event.collector_id, (tally.get(event.collector_id) ?? 0) + 1);
+    for (const event of events) {
+      tally.set(event.source_id, (tally.get(event.source_id) ?? 0) + 1);
     }
     const rank = (id: string) =>
       isCollectorId(id) ? COLLECTOR_ORDER.indexOf(id) : COLLECTOR_ORDER.length;
@@ -208,10 +209,10 @@
    * honest answer to "what period is this".
    */
   const span = $derived.by(() => {
-    if (!experiment || experiment.events.length === 0) return null;
+    if (!experiment || events.length === 0) return null;
     let low: bigint | null = null;
     let high: bigint | null = null;
-    for (const event of experiment.events) {
+    for (const event of events) {
       const at = BigInt(event.observed_time.wall_time_utc_millis);
       if (low === null || at < low) low = at;
       if (high === null || at > high) high = at;
@@ -236,10 +237,12 @@
    * `n / total` already means "part of" everywhere else on this page and a denominator equal to the
    * numerator says nothing.
    */
-  const lifetime = $derived(experiment ? BigInt(experiment.next_sequence_number) - 1n : 0n);
+  const lifetime = $derived(experiment ? BigInt(experiment.lifetime_data_event_count) : 0n);
   const partial = $derived(
-    experiment !== null && lifetime > BigInt(experiment.last_sequence_number)
+    experiment !== null && lifetime > BigInt(experiment.event_count)
   );
+  const firstEventSequence = $derived(events[0]?.sequence_number ?? null);
+  const lastEventSequence = $derived(events.at(-1)?.sequence_number ?? null);
 </script>
 
 <div class="stack stack--loose">
@@ -336,7 +339,7 @@
       <dl class="figures" data-testid="read-figures">
         <div class="figure">
           <dt>{m.researcher.read.events}</dt>
-          <dd class="figure__value">{groupDigits(experiment.events.length)}</dd>
+          <dd class="figure__value">{groupDigits(experiment.event_count)}</dd>
         </div>
         <!-- The separator before the lifetime total is a non-breaking space, not a literal one:
              Svelte strips whitespace at the start of an element's children, which rendered
@@ -345,16 +348,16 @@
         <div class="figure">
           <dt>{m.researcher.read.window}</dt>
           <dd class="figure__value">
-            {#if experiment.events.length === 0}
+            {#if firstEventSequence === null || lastEventSequence === null}
               —
-            {:else}{groupDigits(experiment.first_sequence_number)}–{groupDigits(
-                experiment.last_sequence_number
+            {:else}{groupDigits(firstEventSequence)}–{groupDigits(
+                lastEventSequence
               )}{#if partial}<span class="figure__of">&nbsp;/ {groupDigits(lifetime)}</span>{/if}{/if}
           </dd>
         </div>
         <div class="figure">
-          <dt>{m.researcher.read.transitions}</dt>
-          <dd class="figure__value">{groupDigits(experiment.transitions.length)}</dd>
+          <dt>{m.researcher.read.commits}</dt>
+          <dd class="figure__value">{groupDigits(experiment.commit_count)}</dd>
         </div>
         <div class="figure">
           <dt>{m.researcher.read.span}</dt>
