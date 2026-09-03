@@ -335,6 +335,8 @@ esac
         self.assertIn("api37-blocking-compatibility.txt", launcher)
         self.assertIn("run_api37_blocking_compatibility", launcher)
         self.assertIn("await_api37_services 180", launcher)
+        self.assertIn("cmd package path android", launcher)
+        self.assertIn("stable_observations >= 3", launcher)
         self.assertIn("maximum_attempts=3", launcher)
         self.assertIn("--result-label RETRYABLE", launcher)
         self.assertIn("classify_api37_emulator_failure.py", launcher)
