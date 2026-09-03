@@ -26,6 +26,9 @@ if [[ ! -f "$ANDROID_NDK_HOME/source.properties" ]] ||
    ! grep -Fxq "Pkg.BaseRevision = $EXPECTED_NDK" "$ANDROID_NDK_HOME/source.properties" ||
    ! grep -Fxq "Pkg.Revision = $EXPECTED_NDK_REVISION" "$ANDROID_NDK_HOME/source.properties"; then
   echo "Android NDK $EXPECTED_NDK_REVISION is required" >&2
+  if [[ -f "$ANDROID_NDK_HOME/source.properties" ]]; then
+    sed -n '/^Pkg\./p' "$ANDROID_NDK_HOME/source.properties" >&2
+  fi
   exit 1
 fi
 
