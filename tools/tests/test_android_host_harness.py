@@ -215,6 +215,8 @@ esac
             self.assertIn("system_image_api: 34", workflow)
             self.assertIn("ram-size: 4096M", workflow)
             self.assertIn("disk-size: 12G", workflow)
+            self.assertIn("-gpu swiftshader -feature -Vulkan", workflow)
+            self.assertNotIn("swiftshader_indirect", workflow)
             self.assertIn("pre-emulator-launch-script: tools/android-emulator-prebuild.sh", workflow)
         self.assertIn("API 37 ps16k emulator page size must be 16384", launcher)
         self.assertIn("API 37 ps16k image revision must be at least 5", launcher)
@@ -234,6 +236,7 @@ esac
         self.assertIn("cool.jacoblin.particeps.test/androidx.test.runner.AndroidJUnitRunner", instrumentation)
         self.assertIn("cool.jacoblin.particeps.core.storage.test/androidx.test.runner.AndroidJUnitRunner", instrumentation)
         self.assertIn("INSTRUMENTATION_(ABORTED|FAILED)", instrumentation)
+        self.assertIn("logcat -b crash -d -v brief", instrumentation)
         harness = (ROOT / "tools/android-host-harness.sh").read_text()
         self.assertIn('install --no-streaming -r -d -t', harness)
 

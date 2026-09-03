@@ -6,6 +6,8 @@ cd "$repository_root"
 
 adb_binary="${ADB:-adb}"
 temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/particeps-instrumentation.XXXXXX")"
+report_directory="build/reports/android-host-harness/instrumentation"
+mkdir -p "$report_directory"
 cleanup() {
   find "$temporary_directory" -type f -delete >/dev/null 2>&1 || true
   rmdir "$temporary_directory" >/dev/null 2>&1 || true
@@ -35,9 +37,22 @@ run_instrumentation() {
   local name="$1"
   local runner="$2"
   local output="$temporary_directory/$name.txt"
-  "$adb_binary" shell am instrument -w -r "$runner" | tr -d '\r' | tee "$output"
-  grep -Eq '^OK \([1-9][0-9]* tests?\)$' "$output"
-  ! grep -Eq 'FAILURES!!!|INSTRUMENTATION_(ABORTED|FAILED)|shortMsg=' "$output"
+  if ! "$adb_binary" shell am instrument -w -r "$runner" \
+    | tr -d '\r' \
+    | tee "$output"; then
+    cp "$output" "$report_directory/$name.txt"
+    "$adb_binary" logcat -b crash -d -v brief > "$report_directory/$name-crash-log.txt" 2>&1 || true
+    "$adb_binary" shell dumpsys activity processes > "$report_directory/$name-processes.txt" 2>&1 || true
+    return 1
+  fi
+  cp "$output" "$report_directory/$name.txt"
+  if grep -Eq '^OK \([1-9][0-9]* tests?\)$' "$output" \
+    && ! grep -Eq 'FAILURES!!!|INSTRUMENTATION_(ABORTED|FAILED)|shortMsg=' "$output"; then
+    return 0
+  fi
+  "$adb_binary" logcat -b crash -d -v brief > "$report_directory/$name-crash-log.txt" 2>&1 || true
+  "$adb_binary" shell dumpsys activity processes > "$report_directory/$name-processes.txt" 2>&1 || true
+  return 1
 }
 
 "$adb_binary" get-state | grep -qx device
