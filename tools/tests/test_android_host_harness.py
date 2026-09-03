@@ -19,12 +19,11 @@ MODULES = (
 
 
 class AndroidHostHarnessContractTest(unittest.TestCase):
-    def test_api_37_surfaceflinger_guard_sets_and_verifies_sampling_property(self) -> None:
+    def test_api_37_surfaceflinger_guard_reboots_with_persisted_overlay(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             adb = directory / "adb"
             log = directory / "adb.log"
-            stopped = directory / "stopped"
             service_seen = directory / "service-seen"
             service_ready = directory / "service-ready"
             ready = directory / "ready"
@@ -33,11 +32,9 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
 set -euo pipefail
 printf '%s\\n' "$*" >> "$FAKE_ADB_LOG"
 case "$*" in
-  *" root"|*" wait-for-device")
+  *" root"|*" wait-for-device"|*" reboot")
     ;;
-  *" shell setprop debug.sf.luma_sampling 0")
-    ;;
-  *" shell setprop sys.boot_completed 0")
+  *" shell setprop debug.sf.luma_sampling 0"|*" shell setprop sys.boot_completed 0")
     ;;
   *" shell getprop debug.sf.luma_sampling")
     printf '0\\r\\n'
@@ -57,11 +54,9 @@ case "$*" in
       printf 'Service activity: not found\\n'
     fi
     ;;
-  *" shell service check package")
-    printf 'Service package: found\\n'
-    ;;
-  *" shell service check window")
-    printf 'Service window: found\\n'
+  *" shell service check package"|*" shell service check window")
+    service="${*: -1}"
+    printf 'Service %s: found\\n' "$service"
     ;;
   *" shell pm disable-user --user 0 com.android.systemui")
     [[ -e "$FAKE_ADB_SERVICE_READY" ]]
@@ -72,14 +67,8 @@ case "$*" in
   *" shell cmd overlay lookup android android:bool/config_disableTaskSnapshots")
     printf 'true\\n'
     ;;
-  *" shell stop")
-    : > "$FAKE_ADB_STOPPED"
-    ;;
-  *" shell start")
-    [[ ! -e "$FAKE_ADB_STOPPED" ]] || unlink "$FAKE_ADB_STOPPED"
-    ;;
   *" shell pidof system_server")
-    [[ -e "$FAKE_ADB_STOPPED" ]] || printf '1723\\n'
+    printf '1723\\n'
     ;;
   *" shell pm list packages -d --user 0")
     printf 'package:com.android.systemui\\n'
@@ -100,7 +89,6 @@ esac
             environment = os.environ.copy()
             environment["ADB"] = str(adb)
             environment["FAKE_ADB_LOG"] = str(log)
-            environment["FAKE_ADB_STOPPED"] = str(stopped)
             environment["FAKE_ADB_SERVICE_SEEN"] = str(service_seen)
             environment["FAKE_ADB_SERVICE_READY"] = str(service_ready)
             environment["PARTICEPS_SURFACEFLINGER_GUARD_TIMEOUT_SECONDS"] = "5"
@@ -121,17 +109,16 @@ esac
             self.assertIn("emulator graphics stabilized", result.stdout)
             self.assertEqual("ready\n", ready.read_text())
             commands = log.read_text()
-            self.assertIn("-s emulator-5554 shell setprop debug.sf.luma_sampling 0", commands)
-            self.assertIn("-s emulator-5554 shell getprop debug.sf.luma_sampling", commands)
-            self.assertIn("shell pm disable-user --user 0 com.android.systemui", commands)
-            self.assertEqual(
-                2,
-                commands.count("shell pm disable-user --user 0 com.android.systemui"),
-            )
+            self.assertIn("shell setprop debug.sf.luma_sampling 0", commands)
             self.assertIn("shell cmd overlay fabricate --target android", commands)
             self.assertIn("android:bool/config_disableTaskSnapshots 0x12 0x1", commands)
-            self.assertIn("shell stop", commands)
-            self.assertIn("shell start", commands)
+            self.assertIn("-s emulator-5554 reboot", commands)
+            self.assertNotIn("shell stop", commands)
+            self.assertNotIn("shell start", commands)
+            self.assertGreaterEqual(
+                commands.count("shell pm disable-user --user 0 com.android.systemui"),
+                3,
+            )
 
     def run_instrumentation_launcher(
         self,

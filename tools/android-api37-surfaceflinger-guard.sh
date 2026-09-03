@@ -10,7 +10,7 @@ emulator_serial="$1"
 ready_file="$2"
 failure_file="${ready_file}.failed"
 adb_binary="${ADB:-adb}"
-guard_timeout_seconds="${PARTICEPS_SURFACEFLINGER_GUARD_TIMEOUT_SECONDS:-180}"
+guard_timeout_seconds="${PARTICEPS_SURFACEFLINGER_GUARD_TIMEOUT_SECONDS:-300}"
 stability_seconds="${PARTICEPS_SURFACEFLINGER_STABILITY_SECONDS:-10}"
 
 publish_failure() {
@@ -58,7 +58,7 @@ if [[ "${sampling_state:-}" != "0" ]]; then
 fi
 
 # The API 37 ps16k revision 5 image is userdebug. Root is required only to create the
-# in-memory resource overlay below; production App behavior remains unprivileged.
+# fabricated framework-resource overlay below; production App behavior remains unprivileged.
 "$adb_binary" -s "$emulator_serial" root >/dev/null
 "$adb_binary" -s "$emulator_serial" wait-for-device
 if [[ "$("$adb_binary" -s "$emulator_serial" shell id -u | tr -d '\r')" != "0" ]]; then
@@ -82,8 +82,9 @@ if [[ "${initial_framework_ready:-false}" != true ]]; then
 fi
 
 # SystemUI registers the nav-bar luma listener that drives RegionSamplingThread. Task snapshots
-# are a second CPU-readback caller in system_server. Both hit the same broken ranchu non-DMA path,
-# so remove only those emulator UI facilities and restart the framework before running App tests.
+# are a second CPU-readback caller in system_server. Both hit the same broken ranchu non-DMA path.
+# Persist the overlay and fully reboot so WindowManager reads it while constructing its snapshot
+# controllers; a late framework restart cannot change those construction-time resource values.
 "$adb_binary" -s "$emulator_serial" shell \
   pm disable-user --user 0 com.android.systemui >/dev/null
 "$adb_binary" -s "$emulator_serial" shell cmd overlay fabricate \
@@ -103,20 +104,35 @@ if [[ "$overlay_value" != "true" ]]; then
 fi
 
 "$adb_binary" -s "$emulator_serial" shell setprop sys.boot_completed 0
-"$adb_binary" -s "$emulator_serial" shell stop
-system_server_stopped=false
+"$adb_binary" -s "$emulator_serial" reboot
+"$adb_binary" -s "$emulator_serial" wait-for-device
+"$adb_binary" -s "$emulator_serial" root >/dev/null
+"$adb_binary" -s "$emulator_serial" wait-for-device
+if [[ "$("$adb_binary" -s "$emulator_serial" shell id -u | tr -d '\r')" != "0" ]]; then
+  echo "API 37 emulator adbd did not return as root after reboot" >&2
+  exit 1
+fi
+"$adb_binary" -s "$emulator_serial" shell setprop debug.sf.luma_sampling 0
+"$adb_binary" -s "$emulator_serial" shell setprop sys.boot_completed 0
+
 while (( $(date +%s) < guard_deadline_epoch )); do
-  if [[ -z "$("$adb_binary" -s "$emulator_serial" shell pidof system_server 2>/dev/null)" ]]; then
-    system_server_stopped=true
+  system_server_pid="$(
+    "$adb_binary" -s "$emulator_serial" shell pidof system_server 2>/dev/null |
+      tr -d '\r' || true
+  )"
+  if [[ -n "$system_server_pid" ]] && service_is_available package; then
+    "$adb_binary" -s "$emulator_serial" shell \
+      pm disable-user --user 0 com.android.systemui >/dev/null
+    post_reboot_package_ready=true
     break
   fi
   sleep 1
 done
-if [[ "$system_server_stopped" != true ]]; then
-  echo "API 37 system_server did not stop for graphics stabilization" >&2
+
+if [[ "${post_reboot_package_ready:-false}" != true ]]; then
+  echo "API 37 package service did not recover after graphics stabilization reboot" >&2
   exit 1
 fi
-"$adb_binary" -s "$emulator_serial" shell start
 
 while (( $(date +%s) < guard_deadline_epoch )); do
   boot_completed="$(
@@ -137,12 +153,11 @@ while (( $(date +%s) < guard_deadline_epoch )); do
 done
 
 if [[ "${restarted_framework_ready:-false}" != true ]]; then
-  echo "API 37 framework did not recover after graphics stabilization" >&2
+  echo "API 37 framework did not recover after graphics stabilization reboot" >&2
   exit 1
 fi
 
-# PackageManager restores the platform SystemUI package to its configured default while the
-# framework is reconstructed. Reassert the test-only disabled state before checking stability.
+# Reassert the emulator-only SystemUI state after boot before checking process stability.
 "$adb_binary" -s "$emulator_serial" shell \
   pm disable-user --user 0 com.android.systemui >/dev/null
 if ! "$adb_binary" -s "$emulator_serial" shell pm list packages -d --user 0 |
@@ -150,12 +165,20 @@ if ! "$adb_binary" -s "$emulator_serial" shell pm list packages -d --user 0 |
   echo "API 37 SystemUI did not remain disabled" >&2
   exit 1
 fi
+overlay_value="$(
+  "$adb_binary" -s "$emulator_serial" shell cmd overlay lookup \
+    android android:bool/config_disableTaskSnapshots | tr -d '\r'
+)"
+if [[ "$overlay_value" != "true" ]]; then
+  echo "API 37 task-snapshot overlay did not survive reboot" >&2
+  exit 1
+fi
 snapshot_disabled_count="$(
   "$adb_binary" -s "$emulator_serial" shell dumpsys window |
     grep -c 'mSnapshotEnabled=false' || true
 )"
 if (( snapshot_disabled_count < 2 )); then
-  echo "API 37 task and activity snapshots did not remain disabled" >&2
+  echo "API 37 task and activity snapshots did not initialize disabled" >&2
   exit 1
 fi
 
