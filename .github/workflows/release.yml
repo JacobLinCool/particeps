@@ -157,7 +157,7 @@ jobs:
             fi
           done
           test -n "$sdkmanager"
-          "$sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" "$ANDROID_NDK_PACKAGE"
+          printf 'y\n' | "$sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" "$ANDROID_NDK_PACKAGE"
 
       - name: Enable KVM
         run: |
@@ -300,7 +300,9 @@ jobs:
             echo "No sdkmanager under $ANDROID_SDK_ROOT" >&2
             exit 1
           fi
-          "$sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" "$ANDROID_PLATFORM_PACKAGE" "$ANDROID_BUILD_TOOLS_PACKAGE" "$ANDROID_NDK_PACKAGE"
+          # Accept only the licenses requested by these explicit pinned packages. Do not run the
+          # global --licenses command, which could acknowledge unrelated SDK terms on the runner.
+          printf 'y\n' | "$sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" "$ANDROID_PLATFORM_PACKAGE" "$ANDROID_BUILD_TOOLS_PACKAGE" "$ANDROID_NDK_PACKAGE"
           dirname "$sdkmanager" >> "$GITHUB_PATH"
 
       - name: Materialize release-signing files
