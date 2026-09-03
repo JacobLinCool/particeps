@@ -25,6 +25,8 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
             adb = directory / "adb"
             log = directory / "adb.log"
             stopped = directory / "stopped"
+            service_seen = directory / "service-seen"
+            service_ready = directory / "service-ready"
             ready = directory / "ready"
             adb.write_text(
                 """#!/usr/bin/env bash
@@ -46,10 +48,23 @@ case "$*" in
   *" shell getprop sys.boot_completed")
     printf '1\\n'
     ;;
-  *" shell service check "*)
-    printf 'Service test: found\\n'
+  *" shell service check activity")
+    if [[ -e "$FAKE_ADB_SERVICE_SEEN" ]]; then
+      : > "$FAKE_ADB_SERVICE_READY"
+      printf 'Service activity: found\\n'
+    else
+      : > "$FAKE_ADB_SERVICE_SEEN"
+      printf 'Service activity: not found\\n'
+    fi
+    ;;
+  *" shell service check package")
+    printf 'Service package: found\\n'
+    ;;
+  *" shell service check window")
+    printf 'Service window: found\\n'
     ;;
   *" shell pm disable-user --user 0 com.android.systemui")
+    [[ -e "$FAKE_ADB_SERVICE_READY" ]]
     printf 'Package com.android.systemui new state: disabled-user\\n'
     ;;
   *" shell cmd overlay fabricate "*|*" shell cmd overlay enable "*)
@@ -86,6 +101,8 @@ esac
             environment["ADB"] = str(adb)
             environment["FAKE_ADB_LOG"] = str(log)
             environment["FAKE_ADB_STOPPED"] = str(stopped)
+            environment["FAKE_ADB_SERVICE_SEEN"] = str(service_seen)
+            environment["FAKE_ADB_SERVICE_READY"] = str(service_ready)
             environment["PARTICEPS_SURFACEFLINGER_GUARD_TIMEOUT_SECONDS"] = "5"
             environment["PARTICEPS_SURFACEFLINGER_STABILITY_SECONDS"] = "1"
             result = subprocess.run(
