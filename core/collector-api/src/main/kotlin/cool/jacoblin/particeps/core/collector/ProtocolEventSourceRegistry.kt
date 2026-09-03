@@ -104,9 +104,9 @@ data class RegistryEventFieldContract(
             parse@ while (true) {
                 when (reader.peek()) {
                     JsonToken.BEGIN_ARRAY -> { reader.beginArray(); contexts.add(null) }
-                    JsonToken.END_ARRAY -> { reader.endArray(); contexts.removeLast(); if (contexts.isEmpty()) rootValues++ }
+                    JsonToken.END_ARRAY -> { reader.endArray(); contexts.removeAt(contexts.lastIndex); if (contexts.isEmpty()) rootValues++ }
                     JsonToken.BEGIN_OBJECT -> { reader.beginObject(); contexts.add(mutableSetOf()) }
-                    JsonToken.END_OBJECT -> { reader.endObject(); contexts.removeLast(); if (contexts.isEmpty()) rootValues++ }
+                    JsonToken.END_OBJECT -> { reader.endObject(); contexts.removeAt(contexts.lastIndex); if (contexts.isEmpty()) rootValues++ }
                     JsonToken.NAME -> {
                         val names = contexts.lastOrNull() ?: return false
                         if (!names.add(reader.nextName())) return false

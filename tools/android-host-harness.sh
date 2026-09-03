@@ -173,7 +173,7 @@ query_live_runtime() {
   current_pid="$(particeps_pid)"
   [[ "$current_pid" == "$expected_pid" ]]
   output="$harness_temporary/live-state.txt"
-  "$adb_binary" shell am broadcast --receiver-foreground \
+  "$adb_binary" shell am broadcast --include-stopped-packages --receiver-foreground \
     -a "$host_query_action" \
     -p "$particeps_package" > "$output"
   grep -q 'Broadcast completed: result=-1' "$output"
@@ -187,7 +187,7 @@ query_live_runtime() {
 query_current_runtime() {
   local output data current_pid
   output="$harness_temporary/current-state.txt"
-  "$adb_binary" shell am broadcast --receiver-foreground \
+  "$adb_binary" shell am broadcast --include-stopped-packages --receiver-foreground \
     -a "$host_query_action" \
     -p "$particeps_package" > "$output"
   grep -q 'Broadcast completed: result=-1' "$output"
@@ -293,13 +293,16 @@ provision_running_study() {
   authorize_vpn "$particeps_package"
   encoded="$(tr -d '\r\n' < "$host_envelope_asset")"
   output="$harness_temporary/provision.txt"
-  "$adb_binary" shell am broadcast --receiver-foreground \
+  "$adb_binary" shell am broadcast --include-stopped-packages --receiver-foreground \
     -a "$host_provision_action" \
     -p "$particeps_package" \
     --es signed_envelope_base64 "$encoded" > "$output"
   grep -q 'Broadcast completed: result=-1' "$output"
   data="$(sed -n 's/.*data="\([^"]*\)".*/\1/p' "$output" | tail -n 1)"
-  [[ "$data" == "RUNNING" ]]
+  if [[ "$data" != "RUNNING" ]]; then
+    printf 'Host provisioning failed: %s\n' "${data:-NO_RESULT}" >&2
+    return 1
+  fi
 }
 
 reset_study() {
@@ -309,7 +312,7 @@ reset_study() {
   # RESET is idempotent, so retry the debug-only command until the serialized
   # runtime has completed any in-flight transition instead of failing cleanup.
   for _ in $(seq 1 40); do
-    if "$adb_binary" shell am broadcast --receiver-foreground \
+    if "$adb_binary" shell am broadcast --include-stopped-packages --receiver-foreground \
       -a "$host_reset_action" \
       -p "$particeps_package" > "$output" \
       && grep -q 'Broadcast completed: result=-1' "$output"; then

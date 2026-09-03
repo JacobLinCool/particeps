@@ -22,6 +22,12 @@ class EventSourceRegistryTest(unittest.TestCase):
         event_source_registry.validate_registry(self.valid)
         event_source_registry.check_artifacts(event_source_registry.render_artifacts(self.valid))
 
+    def test_generated_kotlin_parser_uses_api_34_collection_operations(self) -> None:
+        rendered = event_source_registry.render_artifacts(self.valid)
+        kotlin = rendered[event_source_registry.GENERATED_PATHS["kotlin_events"]].decode()
+        self.assertNotIn("contexts.removeLast()", kotlin)
+        self.assertIn("contexts.removeAt(contexts.lastIndex)", kotlin)
+
     def test_registry_contains_the_required_typed_runtime_sources(self) -> None:
         by_id = {source["source_id"]: source for source in self.valid["sources"]}
         self.assertEqual(

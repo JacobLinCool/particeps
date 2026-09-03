@@ -50,9 +50,12 @@ class HostHarnessStateReceiver : BroadcastReceiver() {
                         "$state:${snapshot.runtime.lifetimeDataEventCount}"
                     }
                 }
-            } catch (_: Exception) {
+            } catch (failure: HostHarnessProvisionException) {
                 pending.resultCode = Activity.RESULT_CANCELED
-                pending.resultData = QUERY_UNAVAILABLE
+                pending.resultData = "FAILED:${failure.stage}:${failure.resultCode}"
+            } catch (failure: Exception) {
+                pending.resultCode = Activity.RESULT_CANCELED
+                pending.resultData = "$QUERY_UNAVAILABLE:${failure::class.java.simpleName}"
             } finally {
                 pending.finish()
             }
@@ -68,14 +71,23 @@ class HostHarnessStateReceiver : BroadcastReceiver() {
         }
         resetForHostHarness()
         session.importSignedConfiguration(Base64.getDecoder().decode(encoded))
-        check(session.reviewStudy() == StudyCommandResult.Success)
-        check(session.acceptConsent() == StudyCommandResult.Success)
-        check(session.completeAccessSetup() == StudyCommandResult.Success)
-        check(session.start() == StudyCommandResult.Success)
+        requireSuccess("REVIEW", session.reviewStudy())
+        requireSuccess("CONSENT", session.acceptConsent())
+        requireSuccess("ACCESS", session.completeAccessSetup())
+        val start = session.start()
+        if (start != StudyCommandResult.Success) {
+            throw HostHarnessProvisionException("START", start::class.java.simpleName)
+        }
         withTimeout(QUERY_TIMEOUT_MILLIS) {
             session.snapshot.first { it.runtime.state == ExperimentState.RUNNING }
         }
         return ExperimentState.RUNNING.name
+    }
+
+    private fun requireSuccess(stage: String, result: StudyCommandResult) {
+        if (result != StudyCommandResult.Success) {
+            throw HostHarnessProvisionException(stage, result::class.java.simpleName)
+        }
     }
 
     private suspend fun CollectorApplication.resetForHostHarness() {
@@ -102,3 +114,8 @@ class HostHarnessStateReceiver : BroadcastReceiver() {
         const val QUERY_TIMEOUT_MILLIS = 30_000L
     }
 }
+
+private class HostHarnessProvisionException(
+    val stage: String,
+    val resultCode: String,
+) : IllegalStateException("Host-harness provisioning failed")

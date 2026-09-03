@@ -181,6 +181,7 @@ esac
         )
 
     def test_live_control_seam_is_debug_only_and_shell_protected(self) -> None:
+        harness = (ROOT / "tools/android-host-harness.sh").read_text()
         debug_manifest = (ROOT / "app/src/debug/AndroidManifest.xml").read_text()
         main_manifest = (ROOT / "app/src/main/AndroidManifest.xml").read_text()
         receiver = (
@@ -197,6 +198,13 @@ esac
         self.assertIn("session.deleteLocalData()", receiver)
         self.assertIn("session.resetAfterRecoveryFailure()", receiver)
         self.assertIn("session.start()", receiver)
+        self.assertIn('"FAILED:${failure.stage}:${failure.resultCode}"', receiver)
+        self.assertIn("Host provisioning failed:", harness)
+        self.assertEqual(
+            harness.count("am broadcast --include-stopped-packages --receiver-foreground"),
+            4,
+        )
+        self.assertNotIn("am broadcast --receiver-foreground", harness)
 
     def test_both_blocking_emulator_lanes_run_harness_and_upload_only_sanitized_reports(self) -> None:
         launcher = (ROOT / "tools/android-emulator-ci.sh").read_text()
