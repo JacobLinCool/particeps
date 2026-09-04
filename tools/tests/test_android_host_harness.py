@@ -360,7 +360,9 @@ esac
             ROOT
             / "app/src/debug/kotlin/cool/jacoblin/particeps/Api37CompatibilityInstrumentation.kt"
         ).read_text()
+        self.assertIn('findLibrary("gojni")', compatibility_instrumentation)
         self.assertIn("Trafficshaping.touch()", compatibility_instrumentation)
+        self.assertNotIn("nativeLibraryDir", compatibility_instrumentation)
         self.assertIn("override fun onCreate", compatibility_instrumentation)
         self.assertIn("start()", compatibility_instrumentation)
         self.assertIn("getServiceInfo", compatibility_instrumentation)

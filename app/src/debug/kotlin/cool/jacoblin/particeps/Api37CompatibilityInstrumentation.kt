@@ -11,7 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import cool.jacoblin.particeps.actuator.trafficshaping.TrafficShapingVpnService
 import cool.jacoblin.particeps.nativebinding.trafficshaping.Trafficshaping
-import java.io.File
+import dalvik.system.BaseDexClassLoader
 
 /** Debug-only API 37 checks that do not launch UI or invoke system task snapshots. */
 class Api37CompatibilityInstrumentation : Instrumentation() {
@@ -68,10 +68,10 @@ class Api37CompatibilityInstrumentation : Instrumentation() {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED != 0,
         ) { "Traffic-shaping service is not system-exempted" }
 
-        Trafficshaping.touch()
-        val nativeLibrary = File(context.applicationInfo.nativeLibraryDir, "libgojni.so")
-        check(nativeLibrary.isFile && nativeLibrary.canRead()) {
-            "Source-built native traffic-shaping library is unavailable"
+        val nativeLibrary = (context.classLoader as? BaseDexClassLoader)?.findLibrary("gojni")
+        check(!nativeLibrary.isNullOrBlank()) {
+            "Native traffic-shaping library cannot be resolved by the app class loader"
         }
+        Trafficshaping.touch()
     }
 }
