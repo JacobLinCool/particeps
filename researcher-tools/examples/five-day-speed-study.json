@@ -1,0 +1,420 @@
+{
+  "schema_version": 1,
+  "experiment_id": "five-day-speed-study",
+  "configuration_id": "five-day-speed-study-demo",
+  "assigned_participant_id": null,
+  "issued_at": "2026-09-06T00:00:00Z",
+  "expires_at": "2027-09-06T00:00:00Z",
+  "platform": "android",
+  "minimum_client_version": "1",
+  "title": "五天網路使用研究（測試範本）",
+  "researcher": {
+    "name": "研究團隊（請替換）",
+    "contact": "research@example.invalid"
+  },
+  "purpose": "記錄日常手機使用與活動情形。此檔使用公開測試金鑰，正式研究前須替換。",
+  "duration_hours": 120,
+  "consent": {
+    "document_version": "five-day-demo-1",
+    "summary": "本研究記錄螢幕電源與鎖定狀態、陀螺儀、通知來源與時間、網路連線與 VPN 狀態、傳輸量、App 活動及時區。通知不含文字內容。研究可能調整所有 App 的傳輸速度，並邀請您填寫活動問卷。您可暫停或退出；資料加密儲存於裝置，匯出後交予研究團隊。此公開測試範本不得直接用於真實參與者。"
+  },
+  "collectors": [
+    {
+      "id": "gyroscope.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {
+            "sampling_period_us": 1000000,
+            "maximum_report_latency_us": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "network_state.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {
+            "include_bandwidth_estimates": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "network_throughput.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {
+            "poll_interval_seconds": 10
+          }
+        }
+      ]
+    },
+    {
+      "id": "notification_events.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {}
+        }
+      ]
+    },
+    {
+      "id": "screen_state.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {}
+        }
+      ]
+    },
+    {
+      "id": "temporal_context.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {}
+        }
+      ]
+    },
+    {
+      "id": "usage_events.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {
+            "poll_interval_seconds": 15
+          }
+        }
+      ]
+    }
+  ],
+  "surveys": [
+    {
+      "id": "period-activities",
+      "title": {
+        "default": "時段活動問卷",
+        "translations": {}
+      },
+      "description": {
+        "default": "請回顧今天中午 12:00 至下午 17:00 的活動情形。",
+        "translations": {}
+      },
+      "questions": [
+        {
+          "type": "multiple_choice",
+          "id": "activities",
+          "prompt": {
+            "default": "您在這段時間進行哪些活動？",
+            "translations": {}
+          },
+          "required": true,
+          "minimum_selections": 1,
+          "maximum_selections": 6,
+          "options": [
+            {
+              "id": "communication",
+              "label": {
+                "default": "聯絡或社群互動",
+                "translations": {}
+              }
+            },
+            {
+              "id": "entertainment",
+              "label": {
+                "default": "娛樂或觀看影音",
+                "translations": {}
+              }
+            },
+            {
+              "id": "navigation",
+              "label": {
+                "default": "導航或查詢資訊",
+                "translations": {}
+              }
+            },
+            {
+              "id": "offline",
+              "label": {
+                "default": "未使用手機的活動",
+                "translations": {}
+              }
+            },
+            {
+              "id": "other",
+              "label": {
+                "default": "其他",
+                "translations": {}
+              }
+            },
+            {
+              "id": "study-work",
+              "label": {
+                "default": "工作或學習",
+                "translations": {}
+              }
+            }
+          ]
+        },
+        {
+          "type": "short_text",
+          "id": "activity-details",
+          "prompt": {
+            "default": "請描述主要活動、使用哪些 App，以及遇到的使用困難。",
+            "translations": {}
+          },
+          "required": false,
+          "maximum_length": 2000
+        }
+      ]
+    }
+  ],
+  "interventions": [
+    {
+      "id": "period-survey",
+      "required": true,
+      "action": {
+        "type": "survey",
+        "notification_title": "時段活動問卷",
+        "notification_message": "請回顧今天 12:00–17:00 的活動情形。",
+        "survey_id": "period-activities"
+      }
+    }
+  ],
+  "automations": [
+    {
+      "type": "occurrence",
+      "id": "activities-day-3",
+      "trigger": {
+        "type": "condition_rising_edge",
+        "condition": {
+          "type": "study_local_window",
+          "first_day": 3,
+          "last_day": 3,
+          "start_local_time": "17:00",
+          "end_local_time": "23:59"
+        }
+      },
+      "guard": null,
+      "intervention_id": "period-survey",
+      "availability_seconds": 21600,
+      "cooldown": null,
+      "maximum_activations": 1
+    },
+    {
+      "type": "occurrence",
+      "id": "activities-day-4",
+      "trigger": {
+        "type": "condition_rising_edge",
+        "condition": {
+          "type": "study_local_window",
+          "first_day": 4,
+          "last_day": 4,
+          "start_local_time": "17:00",
+          "end_local_time": "23:59"
+        }
+      },
+      "guard": null,
+      "intervention_id": "period-survey",
+      "availability_seconds": 21600,
+      "cooldown": null,
+      "maximum_activations": 1
+    },
+    {
+      "type": "occurrence",
+      "id": "activities-day-5",
+      "trigger": {
+        "type": "condition_rising_edge",
+        "condition": {
+          "type": "study_local_window",
+          "first_day": 5,
+          "last_day": 5,
+          "start_local_time": "17:00",
+          "end_local_time": "23:59"
+        }
+      },
+      "guard": null,
+      "intervention_id": "period-survey",
+      "availability_seconds": 21600,
+      "cooldown": null,
+      "maximum_activations": 1
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-gyroscope",
+      "resource": {
+        "kind": "collector",
+        "id": "gyroscope.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_session_active"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": "continuous"
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-network-state",
+      "resource": {
+        "kind": "collector",
+        "id": "network_state.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_session_active"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": "continuous"
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-network-throughput",
+      "resource": {
+        "kind": "collector",
+        "id": "network_throughput.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_session_active"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": "continuous"
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-notification-events",
+      "resource": {
+        "kind": "collector",
+        "id": "notification_events.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_session_active"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": "continuous"
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-screen-state",
+      "resource": {
+        "kind": "collector",
+        "id": "screen_state.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_session_active"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": "continuous"
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-temporal-context",
+      "resource": {
+        "kind": "collector",
+        "id": "temporal_context.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_session_active"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": "continuous"
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-traffic-shaping",
+      "resource": {
+        "kind": "actuator",
+        "id": "traffic-shaping.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_local_window",
+            "first_day": 3,
+            "last_day": 5,
+            "start_local_time": "12:00",
+            "end_local_time": "17:00"
+          },
+          "profile_id": "limited-500"
+        }
+      ],
+      "default_profile_id": "baseline"
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-usage-events",
+      "resource": {
+        "kind": "collector",
+        "id": "usage_events.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_session_active"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": "continuous"
+    }
+  ],
+  "traffic_shaping": {
+    "target_packages": "all",
+    "profiles": [
+      {
+        "id": "baseline",
+        "uplink_kbps": null,
+        "downlink_kbps": null
+      },
+      {
+        "id": "limited-500",
+        "uplink_kbps": 500,
+        "downlink_kbps": 500
+      }
+    ]
+  },
+  "storage": {
+    "maximum_local_bytes": 8589934592
+  },
+  "signer": {
+    "key_id": "demo-signer-2026",
+    "public_key": "sRSaTpZmTSBL7eN6nS_HBsNmLM8n1hdRmIt1vtLZsC0"
+  },
+  "export": {
+    "researcher_key_id": "demo-hpke-2026",
+    "hpke_public_key": "GnJDfDh8XH1eARTHmTLNlog9curtphTpEn7L36sY0QA"
+  },
+  "upload": {}
+}

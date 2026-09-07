@@ -340,6 +340,13 @@ object StudyConfigurationCodec {
                 root.requireDurationClock("clock"),
             )
         }
+        "study_local_window" -> {
+            root.requireExactKeys(setOf("type", "first_day", "last_day", "start_local_time", "end_local_time"))
+            StateCondition.StudyLocalWindow(
+                root.requireInt("first_day"), root.requireInt("last_day"),
+                root.requireString("start_local_time"), root.requireString("end_local_time"),
+            )
+        }
         "elapsed_at_least" -> {
             root.requireExactKeys(setOf("type", "duration_seconds", "clock"))
             StateCondition.ElapsedAtLeast(root.requireInt("duration_seconds"), root.requireDurationClock("clock"))
@@ -389,6 +396,13 @@ object StudyConfigurationCodec {
             "condition" to encodeCondition(condition.condition),
             "duration_seconds" to JsonPrimitive(condition.durationSeconds),
             "clock" to JsonPrimitive(condition.clock.wire()),
+        )
+        is StateCondition.StudyLocalWindow -> objectOf(
+            "type" to JsonPrimitive("study_local_window"),
+            "first_day" to JsonPrimitive(condition.firstDay),
+            "last_day" to JsonPrimitive(condition.lastDay),
+            "start_local_time" to JsonPrimitive(condition.startLocalTime),
+            "end_local_time" to JsonPrimitive(condition.endLocalTime),
         )
         is StateCondition.ElapsedAtLeast -> objectOf(
             "type" to JsonPrimitive("elapsed_at_least"),
@@ -592,9 +606,9 @@ object StudyConfigurationCodec {
         if (root.keySet().isEmpty()) return TrafficShapingConfiguration.Disabled
         root.requireExactKeys(setOf("target_packages", "profiles"))
         return TrafficShapingConfiguration.Enabled(
-            targetPackages = root.requireArray("target_packages").mapElements {
-                it.requireStringValue("target package")
-            },
+            targetPackages = if (root.get("target_packages") == JsonPrimitive("all")) emptyList() else
+                root.requireArray("target_packages").mapElements { it.requireStringValue("target package") },
+            allApps = root.get("target_packages") == JsonPrimitive("all"),
             profiles = root.requireArray("profiles").mapElements { item ->
                 val profile = item.requireObject("traffic-shaping profile")
                 profile.requireExactKeys(setOf("id", "uplink_kbps", "downlink_kbps"))
@@ -610,7 +624,8 @@ object StudyConfigurationCodec {
     private fun encodeTrafficShaping(configuration: TrafficShapingConfiguration): JsonObject = when (configuration) {
         TrafficShapingConfiguration.Disabled -> JsonObject()
         is TrafficShapingConfiguration.Enabled -> objectOf(
-            "target_packages" to arrayOf(configuration.targetPackages.map(::JsonPrimitive)),
+            "target_packages" to if (configuration.allApps) JsonPrimitive("all") else
+                arrayOf(configuration.targetPackages.map(::JsonPrimitive)),
             "profiles" to arrayOf(configuration.profiles.map { profile ->
                 objectOf(
                     "id" to JsonPrimitive(profile.id),

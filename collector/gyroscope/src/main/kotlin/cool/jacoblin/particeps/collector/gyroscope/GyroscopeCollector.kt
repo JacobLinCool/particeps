@@ -46,6 +46,7 @@ private class GyroscopeCollector(
     maximumReportLatencyUs = configuration.maximumReportLatencyUs.toInt(),
     threadName = "particeps-gyroscope",
     queueCapacity = 2_048,
+    keepCpuAwake = true,
 ) {
     override fun eventDraft(event: SensorEvent): EventDraft? = gyroscopeEvent(
         values = event.values,

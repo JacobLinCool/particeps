@@ -611,6 +611,12 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
                 }
             }
         }
+        is StateCondition.StudyLocalWindow -> {
+            val window = studyLocalWindow(condition, studyStartUtcMillis, input.clock.now.wallTimeUtcMillis, input.clock.zoneId)
+            if (window.nextBoundaryUtcMillis == null) retireConditionTimer(path, timerIntents)
+            else ensureConditionTimerTarget(program, automationId, path, TimerTarget.CalendarUtc(window.nextBoundaryUtcMillis), timerIntents)
+            window.active
+        }
         is StateCondition.ElapsedAtLeast -> {
             val nowNanos = durationClockNanos(condition.clock, input.clock)
             val due = secondsToNanos(condition.durationSeconds)

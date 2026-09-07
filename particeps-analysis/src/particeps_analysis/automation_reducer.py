@@ -27,7 +27,7 @@ from .automation_model import (
     TimerTarget,
     WindowEntry,
 )
-from .automation_timers import require_valid_schedule_timer
+from .automation_timers import require_valid_schedule_timer, study_local_window
 from .errors import ValidationError
 from .registry import decode_event_wire_field, decode_predicate_field
 
@@ -455,6 +455,13 @@ class _State:
                 return True
             self._ensure_condition(program, automation_id, path, condition["clock"], due, intents)
             return False
+        if kind == "study_local_window":
+            active, boundary = study_local_window(condition, self.study_start, input_value.clock.now.wall_time_utc_millis, input_value.clock.zone_id)
+            if boundary is None:
+                self._retire_condition(path, intents)
+            else:
+                self._ensure_target(program, automation_id, path, TimerTarget("CALENDAR_UTC", utc_millis=boundary), intents)
+            return active
         if kind == "elapsed_at_least":
             now = _duration_nanos(condition["clock"], input_value.clock)
             due = condition["duration_seconds"] * _NANO

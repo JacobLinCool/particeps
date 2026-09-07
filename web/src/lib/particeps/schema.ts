@@ -206,13 +206,15 @@ function validateInterventions(issues: Issue[], configuration: StudyConfiguratio
 function validateTrafficShaping(issues: Issue[], configuration: StudyConfiguration): void {
   if (!trafficShapingEnabled(configuration.traffic_shaping)) return;
   const shaping = configuration.traffic_shaping;
-  if (shaping.target_packages.length < 1 || shaping.target_packages.length > 64) issues.push(range('traffic_shaping.target_packages', [1, 64]));
-  if (!sortedUnique(shaping.target_packages)) issues.push({ path: 'traffic_shaping.target_packages', code: 'sorted_unique' });
-  shaping.target_packages.forEach((name, index) => {
-    if (!ANDROID_APPLICATION_ID_PATTERN.test(name) || name === PARTICEPS_APPLICATION_ID) {
-      issues.push({ path: `traffic_shaping.target_packages.${index}`, code: 'id_format' });
-    }
-  });
+  if (shaping.target_packages !== 'all') {
+    if (shaping.target_packages.length < 1 || shaping.target_packages.length > 64) issues.push(range('traffic_shaping.target_packages', [1, 64]));
+    if (!sortedUnique(shaping.target_packages)) issues.push({ path: 'traffic_shaping.target_packages', code: 'sorted_unique' });
+    shaping.target_packages.forEach((name, index) => {
+      if (!ANDROID_APPLICATION_ID_PATTERN.test(name) || name === PARTICEPS_APPLICATION_ID) {
+        issues.push({ path: `traffic_shaping.target_packages.${index}`, code: 'id_format' });
+      }
+    });
+  }
   if (shaping.profiles.length < 1 || shaping.profiles.length > 64) issues.push(range('traffic_shaping.profiles', [1, 64]));
   if (!sortedUnique(shaping.profiles.map((profile) => profile.id))) issues.push({ path: 'traffic_shaping.profiles', code: 'sorted_unique' });
   shaping.profiles.forEach((profile, index) => {
@@ -363,6 +365,12 @@ function validateCondition(
     case 'held_for':
       integer(issues, `${path}.duration_seconds`, condition.duration_seconds, [1, configuration.duration_hours * 3_600]);
       validateCondition(issues, `${path}.condition`, condition.condition, configuration, referenced, counter, depth + 1); return;
+    case 'study_local_window':
+      integer(issues, `${path}.first_day`, condition.first_day, [1, 366]);
+      integer(issues, `${path}.last_day`, condition.last_day, [condition.first_day, 366]);
+      if (!/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(condition.start_local_time) ||
+          !/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(condition.end_local_time) ||
+          condition.start_local_time >= condition.end_local_time) issues.push({ path, code: 'automation_invalid' }); return;
     case 'elapsed_at_least':
       integer(issues, `${path}.duration_seconds`, condition.duration_seconds, [1, configuration.duration_hours * 3_600]); return;
     case 'window_threshold': validateWindow(issues, path, condition, referenced); return;
@@ -509,7 +517,7 @@ function validateQuestion(issues: Issue[], path: string, question: SurveyQuestio
 
 function conditionMatchers(condition: StateCondition): EventMatcher[] {
   switch (condition.type) {
-    case 'study_session_active': case 'elapsed_at_least': return [];
+    case 'study_session_active': case 'elapsed_at_least': case 'study_local_window': return [];
     case 'event_latch': return [...condition.set_when, ...condition.reset_when];
     case 'keyed_presence': return [...condition.enter_when, ...condition.exit_when];
     case 'held_for': case 'not': return conditionMatchers(condition.condition);
@@ -548,7 +556,7 @@ function triggerTimerCount(trigger: AutomationTrigger): number {
 function conditionTimerCount(condition: StateCondition): number {
   switch (condition.type) {
     case 'study_session_active': case 'event_latch': case 'keyed_presence': return 0;
-    case 'elapsed_at_least': case 'window_threshold': return 1;
+    case 'elapsed_at_least': case 'study_local_window': case 'window_threshold': return 1;
     case 'held_for': return 1 + conditionTimerCount(condition.condition);
     case 'all': case 'any': return condition.conditions.reduce((sum, child) => sum + conditionTimerCount(child), 0);
     case 'not': return conditionTimerCount(condition.condition);

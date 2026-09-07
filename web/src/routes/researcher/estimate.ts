@@ -36,6 +36,9 @@ const EVENT_BYTES = {
   'gyroscope.v1': 120,
   'ambient_light.v1': 120,
   'proximity.v1': 140,
+  'notification_events.v1': 250,
+  'screen_state.v1': 180,
+  'network_throughput.v1': 250,
   'network_state.v1': 180,
   'network_usage.v1': 180,
   'usage_events.v1': 180,
@@ -71,6 +74,9 @@ function profileRate(id: CollectorConfig['id'], profile: unknown): number {
       return 3.6e9 / number('sampling_period_us');
     case 'proximity.v1':
       return 3.6e6 / number('minimum_event_interval_ms');
+    case 'notification_events.v1': return 120;
+    case 'screen_state.v1': return 60;
+    case 'network_throughput.v1': return 3_600 / number('poll_interval_seconds');
     case 'network_state.v1':
       return 30;
     case 'network_usage.v1':

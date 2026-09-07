@@ -23,6 +23,8 @@ internal class TargetPackageVerifier(
     private val targets: TargetPackageSet,
 ) {
     fun capture(): TargetPackageSnapshot {
+        // All-app routing follows Android UIDs dynamically; no installed-app inventory is needed.
+        if (targets.allApps) return TargetPackageSnapshot(emptyList())
         val identities = targets.packages.map(::readIdentity)
         requireExactUidCoverage(identities, targets.packages.toSet())
         return TargetPackageSnapshot(identities)

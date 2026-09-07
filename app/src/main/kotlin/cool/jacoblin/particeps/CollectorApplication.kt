@@ -12,7 +12,10 @@ import cool.jacoblin.particeps.collector.gyroscope.GyroscopeCollectorPlugin
 import cool.jacoblin.particeps.collector.keyboardime.KeyboardTouchCollectorPlugin
 import cool.jacoblin.particeps.collector.keyboardime.ResearchInputMethodService
 import cool.jacoblin.particeps.collector.location.LocationCollectorPlugin
+import cool.jacoblin.particeps.collector.networkthroughput.NetworkThroughputCollectorPlugin
 import cool.jacoblin.particeps.collector.networkstate.NetworkStateCollectorPlugin
+import cool.jacoblin.particeps.collector.notificationevents.NotificationEventsCollectorPlugin
+import cool.jacoblin.particeps.collector.screenstate.ScreenStateCollectorPlugin
 import cool.jacoblin.particeps.collector.networkusage.NetworkUsageCollectorPlugin
 import cool.jacoblin.particeps.collector.proximity.ProximityCollectorPlugin
 import cool.jacoblin.particeps.collector.temporalcontext.TemporalContextCollectorPlugin
@@ -94,6 +97,9 @@ class CollectorApplication : Application() {
                 AmbientLightCollectorPlugin(this),
                 ProximityCollectorPlugin(this),
                 NetworkStateCollectorPlugin(this),
+                NetworkThroughputCollectorPlugin(),
+                NotificationEventsCollectorPlugin(),
+                ScreenStateCollectorPlugin(this),
                 NetworkUsageCollectorPlugin(this),
                 UsageEventsCollectorPlugin(this),
                 LocationCollectorPlugin(this),
@@ -125,6 +131,7 @@ class CollectorApplication : Application() {
                 TrafficShapingActuator.createAndroid(
                     context = this,
                     targetPackages = shaping.targetPackages,
+                    allApps = shaping.allApps,
                     notificationFactory = {
                         CollectionService.trafficShapingForegroundNotification(it, signed.title)
                     },

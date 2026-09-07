@@ -76,7 +76,7 @@ All signed human-readable text length bounds count UTF-16 code units, matching J
 registry-defined closed-world profile schema. `interventions` is a sorted array of reusable exact
 `{action, id, required}` one-shot notification or survey actions. An intervention never embeds a
 trigger. `traffic_shaping` is either `{}` (disabled) or exact `{profiles, target_packages}`;
-`target_packages` contains 1–64 sorted unique Android application IDs and `profiles` contains 1–64
+`target_packages` is either the exact string `"all"` (all apps in the current Android user, including apps installed later) or 1–64 sorted unique Android application IDs. Empty arrays and other strings are invalid. `profiles` contains 1–64
 exact `{downlink_kbps, id, uplink_kbps}` objects. A directional cap is `null` or a JSON integer in
 1–1,000,000 kbps. `1 kbps` means 1,000 aggregate Layer-3 bits per second at the TUN boundary,
 including IP/transport headers and retransmitted packets observed there. A configuration declares
@@ -659,3 +659,16 @@ For the join path, Web authoring is in `web/src/lib/particeps/join.ts` and
 `join-link-vectors.json` are the executable map. Automatic upload instead follows the outbox and
 HTTP adapter named in the repository README; receiver and offline analysis each have their own
 README code map.
+
+### Participant-relative study windows
+
+`study_local_window` is a state condition with exactly `type`, `first_day`, `last_day`,
+`start_local_time`, and `end_local_time`. Days are integers in 1–366 with first <= last;
+times are zero-padded HH:mm, start < end, with no overnight window. Day 1 is the study-start
+instant interpreted in the reducer input's observed device zone. Each eligible date resolves a
+half-open [start, end) interval; nonexistent DST boundaries skip that date and overlaps use the
+first instant. Reinterpret both dates on a zone change. Schedule the next opening/closing boundary
+through the existing condition timer and retire it when exhausted. Pauses do not extend dates or
+override participant lifecycle. This condition does not change the study's `duration_hours` deadline.
+
+For all-app shaping, the VPN builder installs no per-app allowlist or denylist; native forwarding sockets remain protected against routing loops. `target_package_list_sha256` is the SHA-256 of the canonical signed `target_packages` value, including the JSON string quotes for `"all"`. This scope does not cover other Android users, work profiles, or tethered clients. The caps are aggregate per direction across the selected scope.

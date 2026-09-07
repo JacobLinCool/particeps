@@ -19,6 +19,7 @@
   import Button from '$lib/ui/Button.svelte';
   import IdField from '$lib/ui/IdField.svelte';
   import IconButton from '$lib/ui/IconButton.svelte';
+  import NumberField from './AutomationNumberField.svelte';
   import RangeField from '$lib/ui/RangeField.svelte';
   import DualRangeField from '$lib/ui/DualRangeField.svelte';
   import ToggleField from '$lib/ui/ToggleField.svelte';
@@ -63,6 +64,9 @@
     'gyroscope.v1': 'motion',
     'ambient_light.v1': 'app',
     'proximity.v1': 'connection',
+    'notification_events.v1': 'app',
+    'screen_state.v1': 'screen',
+    'network_throughput.v1': 'dataVolume',
     'network_state.v1': 'connection',
     'network_usage.v1': 'data-volume',
     'usage_events.v1': 'screen',
@@ -313,6 +317,9 @@
           caution={cfg.poll_interval_seconds === 15}
           onchange={(value) => (cfg.poll_interval_seconds = value)}
         />
+      {:else if collector.id === 'network_throughput.v1'}
+        {@const cfg = editable(profile)}
+        <NumberField label={m.field.label.pollInterval} value={cfg.poll_interval_seconds} min={5} max={3600} onchange={(value) => (cfg.poll_interval_seconds = value)} />
       {:else if collector.id === 'usage_events.v1'}
         {@const cfg = editable(profile)}
         <RangeField

@@ -3,6 +3,7 @@ package cool.jacoblin.particeps.collector.networkstate
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkRequest
 import android.net.NetworkCapabilities
 import cool.jacoblin.particeps.core.model.EventDraft
 import cool.jacoblin.particeps.core.model.EventSourceId
@@ -70,18 +71,48 @@ private class NetworkStateCollector(
         }
     }
 
+    // Default-route callbacks alone miss per-app VPNs that exclude Particeps itself.
+    private val vpnNetworks = mutableSetOf<Network>()
+    private val vpnCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            callbackBoundary.runIfActive {
+                synchronized(vpnNetworks) {
+                    vpnNetworks.add(network)
+                    capture("VPN_STATUS", mapOf("connected" to "true"))
+                }
+            }
+        }
+        override fun onLost(network: Network) {
+            callbackBoundary.runIfActive {
+                synchronized(vpnNetworks) {
+                    vpnNetworks.remove(network)
+                    capture("VPN_STATUS", mapOf("connected" to vpnNetworks.isNotEmpty().toString()))
+                }
+            }
+        }
+    }
+
     override suspend fun registerSource(): SourceRegistrationResult {
         callbackBoundary.activate()
         var callbackRegistered = false
+        var vpnRegistered = false
         return registerSourceWithRollback(
             register = {
                 connectivityManager.registerDefaultNetworkCallback(callback)
                 callbackRegistered = true
+                connectivityManager.registerNetworkCallback(
+                    NetworkRequest.Builder().clearCapabilities()
+                        .addTransportType(NetworkCapabilities.TRANSPORT_VPN)
+                        .setIncludeOtherUidNetworks(true).build(),
+                    vpnCallback,
+                )
+                vpnRegistered = true
             },
             rollback = {
                 completeSourceTeardown(
                     { if (callbackRegistered) connectivityManager.unregisterNetworkCallback(callback) },
-                    { callbackBoundary.deactivate() },
+                    { if (vpnRegistered) connectivityManager.unregisterNetworkCallback(vpnCallback) },
+                    { callbackBoundary.deactivate { synchronized(vpnNetworks) { vpnNetworks.clear() } } },
                 )
             },
         )
@@ -89,12 +120,16 @@ private class NetworkStateCollector(
 
     override suspend fun onSourceAdmitted() {
         captureCurrentState()
+        synchronized(vpnNetworks) {
+            capture("VPN_STATUS", if (vpnNetworks.isNotEmpty()) mapOf("connected" to "true") else emptyMap())
+        }
     }
 
     override suspend fun unregisterSource(): SourceTeardownResult {
         completeSourceTeardown(
             { connectivityManager.unregisterNetworkCallback(callback) },
-            { callbackBoundary.deactivate() },
+            { connectivityManager.unregisterNetworkCallback(vpnCallback) },
+            { callbackBoundary.deactivate { synchronized(vpnNetworks) { vpnNetworks.clear() } } },
         )
         return SourceTeardownResult.Released
     }

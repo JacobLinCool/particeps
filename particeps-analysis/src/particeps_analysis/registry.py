@@ -158,6 +158,8 @@ class EventSourceRegistry:
         for name, field in fields.items():
             _validate_profile_value(source_id, name, configuration[name], field)
         for name, field in fields.items():
+            if field["type"] != "integer":
+                continue
             maximum_field = field["less_than_or_equal_field"]
             if maximum_field is not None and configuration[name] > configuration[maximum_field]:
                 raise ValidationError(f"{source_id}.{name} exceeds {maximum_field}")

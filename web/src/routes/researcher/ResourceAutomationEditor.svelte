@@ -16,12 +16,14 @@
   const copy = $derived(locale === 'zh-TW' ? {
     note: '條件會依序判斷，第一個成立的條件決定設定；沒有條件成立時使用預設設定。',
     title: '資源規則', case: '條件', profile: '套用設定', default: '預設設定', add: '新增條件',
+    window: '研究日與當地時段', firstDay: '起始研究日', lastDay: '最後研究日', startTime: '當地開始時間', endTime: '當地結束時間',
     active: '研究進行中', elapsed: '已經過一段時間', app: '持續使用目標 App',
     up: '將條件往上移', down: '將條件往下移', remove: '移除條件', seconds: '秒數',
     held: '持續秒數', inactive: '停用'
   } : {
     note: 'Cases run in order. The first true case selects a profile; otherwise use the default.',
     title: 'Resource rule', case: 'Condition', profile: 'Selected profile', default: 'Default profile', add: 'Add condition',
+    window: 'Study days and local time', firstDay: 'First study day', lastDay: 'Last study day', startTime: 'Local start time', endTime: 'Local end time',
     active: 'Study session is active', elapsed: 'Elapsed time', app: 'Target app held in use',
     up: 'Move condition up', down: 'Move condition down', remove: 'Remove condition', seconds: 'Seconds',
     held: 'Held for seconds', inactive: 'Inactive'
@@ -36,7 +38,8 @@
       : [];
   }
 
-  function conditionKind(condition: StateCondition): 'active' | 'elapsed' | 'app' {
+  function conditionKind(condition: StateCondition): 'active' | 'elapsed' | 'app' | 'window' {
+    if (condition.type === 'study_local_window') return 'window';
     if (condition.type === 'elapsed_at_least') return 'elapsed';
     if (condition.type === 'held_for' && condition.condition.type === 'keyed_presence') return 'app';
     return 'active';
@@ -48,10 +51,11 @@
     ] };
   }
 
-  function condition(type: 'active' | 'elapsed' | 'app'): StateCondition {
+  function condition(type: 'active' | 'elapsed' | 'app' | 'window'): StateCondition {
+    if (type === 'window') return { type: 'study_local_window', first_day: 3, last_day: 5, start_local_time: '12:00', end_local_time: '17:00' };
     if (type === 'active') return { type: 'study_session_active' };
     if (type === 'elapsed') return { type: 'elapsed_at_least', duration_seconds: 180, clock: 'ACTIVE_RUNNING_TIME' };
-    const packageName = trafficShapingEnabled(configuration.traffic_shaping)
+    const packageName = trafficShapingEnabled(configuration.traffic_shaping) && configuration.traffic_shaping.target_packages !== 'all'
       ? configuration.traffic_shaping.target_packages[0]
       : 'com.example.app';
     return {
@@ -99,14 +103,21 @@
           </div>
           <Field label={copy.case} path={`${path}.cases.${caseIndex}.condition`}>
             {#snippet children({ id, describedby, invalid })}
-              <select class="input" {id} aria-describedby={describedby} aria-invalid={invalid || undefined} value={conditionKind(entry.condition)} onchange={(event) => (entry.condition = condition(event.currentTarget.value as 'active' | 'elapsed' | 'app'))}>
+              <select class="input" {id} aria-describedby={describedby} aria-invalid={invalid || undefined} value={conditionKind(entry.condition)} onchange={(event) => (entry.condition = condition(event.currentTarget.value as 'active' | 'elapsed' | 'app' | 'window'))}>
                 <option value="active">{copy.active}</option>
                 <option value="elapsed">{copy.elapsed}</option>
+                <option value="window">{copy.window}</option>
                 {#if binding.resource.kind === 'actuator'}<option value="app">{copy.app}</option>{/if}
               </select>
             {/snippet}
           </Field>
-          {#if entry.condition.type === 'elapsed_at_least'}
+          {#if entry.condition.type === 'study_local_window'}
+            {@const window = entry.condition}
+            <NumberField label={copy.firstDay} value={window.first_day} min={1} max={366} onchange={(value) => (window.first_day = value)} />
+            <NumberField label={copy.lastDay} value={window.last_day} min={window.first_day} max={366} onchange={(value) => (window.last_day = value)} />
+            <label>{copy.startTime}<input class="input" type="time" bind:value={window.start_local_time} /></label>
+            <label>{copy.endTime}<input class="input" type="time" bind:value={window.end_local_time} /></label>
+          {:else if entry.condition.type === 'elapsed_at_least'}
             {@const elapsed = entry.condition}
             <NumberField label={copy.seconds} value={elapsed.duration_seconds} min={1} max={configuration.duration_hours * 3_600} onchange={(value) => (elapsed.duration_seconds = value)} />
           {:else if entry.condition.type === 'held_for'}

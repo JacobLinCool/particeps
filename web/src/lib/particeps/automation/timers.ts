@@ -224,3 +224,25 @@ function timerEquals(left: DurableTimer, right: DurableTimer): boolean {
     left.logical_deadline_utc_millis === right.logical_deadline_utc_millis &&
     left.expires_at_utc_millis === right.expires_at_utc_millis;
 }
+
+/** Same gap/overlap policy as daily schedules: skip nonexistent boundaries, choose first overlap. */
+export function studyLocalWindow(condition: Extract<import('../types').StateCondition, { type: 'study_local_window' }>,
+  studyStart: number | null, now: number, zone: string): { active: boolean; nextBoundary: number | null } {
+  if (studyStart === null) return { active: false, nextBoundary: null };
+  const anchor = localDate(studyStart, zone);
+  const addDays = (date: string, days: number): string => {
+    const [year, month, day] = date.split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+  };
+  const last = addDays(anchor, condition.last_day - 1);
+  let date = maxDate(addDays(anchor, condition.first_day - 1), localDate(now, zone));
+  while (date <= last) {
+    const start = firstInstant(date, condition.start_local_time, zone);
+    const end = firstInstant(date, condition.end_local_time, zone);
+    if (start !== null && end !== null && end > start && now < end) {
+      return { active: now >= start, nextBoundary: now < start ? start : end };
+    }
+    date = nextDate(date);
+  }
+  return { active: false, nextBoundary: null };
+}

@@ -6,10 +6,11 @@ sealed interface TrafficShapingConfiguration {
     data class Enabled(
         val targetPackages: List<String>,
         val profiles: List<TrafficShapingProfile>,
+        val allApps: Boolean = false,
     ) : TrafficShapingConfiguration {
         init {
-            require(targetPackages.size in 1..MAXIMUM_TARGET_PACKAGES) {
-                "Traffic shaping requires 1–$MAXIMUM_TARGET_PACKAGES target packages"
+            require(if (allApps) targetPackages.isEmpty() else targetPackages.size in 1..MAXIMUM_TARGET_PACKAGES) {
+                "Select all apps with no package list, or 1–$MAXIMUM_TARGET_PACKAGES target packages"
             }
             require(targetPackages == targetPackages.sorted().distinct()) {
                 "Traffic-shaping packages must be sorted and unique"

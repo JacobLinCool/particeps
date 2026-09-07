@@ -1,6 +1,6 @@
 {
   "contract_digest_format": "particeps-event-source-contract-digests-v1",
-  "registry_sha256": "53e3814c0f159a579d303f51bff94293188d4afd4f8fb82d19616c782483299c",
+  "registry_sha256": "aa86f3086a51422247c61ab2b898646f5783cbfd14139974a6fff4c7007b2b0a",
   "sources": [
     {
       "schema_version": 1,
@@ -49,8 +49,13 @@
     },
     {
       "schema_version": 1,
-      "sha256": "fc3a466e1c24af0ebd9f976929b365d1f1020a04571e6e20266cd2175e643992",
+      "sha256": "465783984cd5a33ab4e11993cdaa7433a4a26f6271fbc92c940125ae79456e6e",
       "source_id": "network_state.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "3e0368dd3ea426041cbe71d42f3bc1347258affb5217257855dcb33baa59e54c",
+      "source_id": "network_throughput.v1"
     },
     {
       "schema_version": 1,
@@ -59,8 +64,18 @@
     },
     {
       "schema_version": 1,
+      "sha256": "65dc12d4b95aaa4758b81b2cdb7716534fd43d514ea77f356ddd3b0f258357a5",
+      "source_id": "notification_events.v1"
+    },
+    {
+      "schema_version": 1,
       "sha256": "47353f02a47f32a93c3e32b0e32392fb2415922d2e94eb8ce28ae205d0529dea",
       "source_id": "proximity.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "f0c7fb59595678d017b98f6c52ca401e2cdb9160f1101693ee5c0ff3e1f2daa0",
+      "source_id": "screen_state.v1"
     },
     {
       "schema_version": 1,

@@ -557,6 +557,24 @@ class AutomationReducerTest {
         assertNotEquals(first.digest(), second.copy(evaluatedThroughSequence = 1).digest())
     }
 
+    @Test
+    fun localWindowTimersChangeResourceAtBothBoundariesAndRejectStaleWake() {
+        val program = trafficProgram(StateCondition.StudyLocalWindow(1, 1, "00:01", "00:02"))
+        val started = start(program)
+        assertEquals("baseline", started.checkpoint.desiredResources.getValue(trafficResource).profileId)
+        val open = started.checkpoint.timers.values.single { it.automationId == "bind-traffic" }
+        assertEquals(TimerTarget.CalendarUtc(60_000), open.target)
+        val inside = reducer.reduceBatch(program, started.checkpoint, listOf(ReducerInput.TimerDue(3, clock(60_000), open.id, open.automationId, open.generation, open.causalSequence, open.target, ResearchTime(60_000, 0, "calendar-time"))))
+        assertEquals("slow-network", inside.checkpoint.desiredResources.getValue(trafficResource).profileId)
+        val close = inside.checkpoint.timers.values.single { it.automationId == "bind-traffic" }
+        assertEquals(TimerTarget.CalendarUtc(120_000), close.target)
+        val ended = reducer.reduceBatch(program, inside.checkpoint, listOf(ReducerInput.TimerDue(4, clock(120_000), close.id, close.automationId, close.generation, close.causalSequence, close.target, ResearchTime(120_000, 0, "calendar-time"))))
+        assertEquals("baseline", ended.checkpoint.desiredResources.getValue(trafficResource).profileId)
+        val stale = reducer.reduceBatch(program, ended.checkpoint, listOf(ReducerInput.TimerDue(5, clock(130_000), open.id, open.automationId, open.generation, open.causalSequence, open.target, ResearchTime(60_000, 0, "calendar-time"))))
+        assertTrue(stale.resourceChanges.isEmpty())
+        assertEquals("baseline", stale.checkpoint.desiredResources.getValue(trafficResource).profileId)
+    }
+
     private fun start(program: CompiledAutomationProgram): ReductionResult = reducer.reduceBatch(
         program,
         AutomationCheckpoint(),

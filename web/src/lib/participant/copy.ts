@@ -64,6 +64,9 @@ export interface ParticipantCopy {
       gyroscope: string;
       ambientLight: string;
       proximity: string;
+      notificationEvents: string;
+      screenState: string;
+      networkThroughput: string;
       networkState: string;
       networkUsage: string;
       usageEvents: string;
@@ -78,6 +81,9 @@ export interface ParticipantCopy {
       gyroscope: string;
       ambientLight: string;
       proximity: string;
+      notificationEvents: string;
+      screenState: string;
+      networkThroughput: string;
       networkState: string;
       networkUsage: string;
       usageEvents: string;
@@ -180,6 +186,9 @@ export const en: ParticipantCopy = {
       gyroscope: 'Rotation',
       ambientLight: 'Ambient light',
       proximity: 'Proximity',
+      notificationEvents: 'Notification receipt',
+      screenState: 'Screen power and lock state',
+      networkThroughput: 'Observed throughput',
       networkState: 'Connection type',
       networkUsage: 'Data volume',
       usageEvents: 'App and screen use',
@@ -194,6 +203,9 @@ export const en: ParticipantCopy = {
       gyroscope: 'Raw rotation measured by the phone; no activity is inferred',
       ambientLight: 'Raw surrounding light level; it does not record images or environmental content',
       proximity: 'The phone’s raw near or distance sensor reading; it is not a presence claim',
+      notificationEvents: 'Posting app and timing, including updates; no notification text',
+      screenState: 'Display power, interactive state, and whether the lock screen is showing',
+      networkThroughput: 'Device-wide transfer counter changes and timing; no active speed test',
       networkState: 'Whether you are on Wi-Fi or mobile data, and whether it is metered',
       networkUsage: 'Total bytes this phone sends and receives',
       usageEvents: 'Which apps open and close, and when the screen turns on',
@@ -303,6 +315,9 @@ export const zhTW: ParticipantCopy = {
       gyroscope: '旋轉',
       ambientLight: '環境光',
       proximity: '距離感測',
+      notificationEvents: '通知接收',
+      screenState: '螢幕電源與鎖定狀態',
+      networkThroughput: '實際傳輸速率',
       networkState: '連線類型',
       networkUsage: '流量',
       usageEvents: 'App 與螢幕使用',
@@ -317,6 +332,9 @@ export const zhTW: ParticipantCopy = {
       gyroscope: '手機量到的原始旋轉資訊；不據此推論活動',
       ambientLight: '周遭的原始光線強度；不會記錄影像或環境內容',
       proximity: '手機接近感測器量到的原始遠近或距離；不代表有人在場',
+      notificationEvents: '通知來源 App 與時間（含更新），不含通知文字',
+      screenState: '螢幕電源、可互動狀態與鎖定畫面是否顯示',
+      networkThroughput: '全裝置流量計數變化與時間，不執行主動測速',
       networkState: '目前使用 Wi-Fi 或行動網路，以及連線是否按流量計費',
       networkUsage: '手機傳送與接收的總位元組數',
       usageEvents: '哪些 App 開啟或關閉，以及螢幕何時亮起',

@@ -70,7 +70,7 @@ function automationMatchers(automation: AutomationDefinition): EventMatcher[] {
 
 function conditionMatchers(condition: StateCondition): EventMatcher[] {
   switch (condition.type) {
-    case 'study_session_active': case 'elapsed_at_least': return [];
+    case 'study_session_active': case 'elapsed_at_least': case 'study_local_window': return [];
     case 'event_latch': return [...condition.set_when, ...condition.reset_when];
     case 'keyed_presence': return [...condition.enter_when, ...condition.exit_when];
     case 'held_for': case 'not': return conditionMatchers(condition.condition);

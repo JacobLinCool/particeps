@@ -29,11 +29,13 @@ What the name does not grant is authorship of the study. The collector set, the 
    storage. Participants can pause, resume, complete, or withdraw.
 6. **Export and analyse.** The participant exports an encrypted bundle and sends it to you. If the study declares an upload endpoint, the app also delivers immutable ciphertext bundles to an R2 receiver on a schedule. `particeps-analysis` inventories, verifies, decrypts, reassembles, and writes typed Parquet offline.
 
+A participant-relative five-day, 500 kbps study is documented in the [five-day study guide](docs/five-day-speed-study.md), with a complete configuration example.
+
 The full procedure, including key handling and study design guidance, is in the [researcher guide](docs/researcher-guide.md).
 
 ## What you can collect
 
-Twelve selectable collectors ship in v1. A study declares named settings for the ones it uses and
+Fifteen selectable collectors ship in v1. A study declares named settings for the ones it uses and
 binds them through closed-world automations within generated validation bounds.
 
 | Collector | Records |
@@ -45,7 +47,10 @@ binds them through closed-world automations within generated validation bounds.
 | `gyroscope.v1` | Raw x/y/z angular velocity, sensor time, accuracy |
 | `ambient_light.v1` | Raw illuminance, sensor time, accuracy |
 | `proximity.v1` | Raw distance, sensor range, near/far interpretation |
-| `network_state.v1` | Default network transport, validated/metered/roaming/VPN flags, bandwidth estimates |
+| `screen_state.v1` | Default-display power, interactive state, and keyguard state, including locked screens |
+| `notification_events.v1` | Notification posting package, post/receipt time, and study-scoped update token; no text |
+| `network_throughput.v1` | Device byte-counter deltas and actual monotonic sampling intervals for passive throughput |
+| `network_state.v1` | Default network transport, validated/metered/roaming/VPN flags, bandwidth estimates, and independent VPN callbacks |
 | `network_usage.v1` | Device-total Wi-Fi and mobile rx/tx bytes and packets per interval |
 | `usage_events.v1` | Raw app, screen, keyguard, and boot events |
 | `location.v1` | Fused Location fixes with accuracy, speed, altitude, bearing |

@@ -1,3 +1,4 @@
+import { studyLocalWindow } from './timers';
 import type {
   Aggregate,
   DurationClock,
@@ -237,6 +238,12 @@ export class MutableAutomationState {
         const due = since + BigInt(condition.duration_seconds) * NANO;
         if (now >= due) { this.retireConditionTimer(path, intents); return true; }
         this.ensureConditionTimer(program, automationId, path, condition.clock, due, intents); return false;
+      }
+      case 'study_local_window': {
+        const window = studyLocalWindow(condition, this.studyStart, input.clock.now.wall_time_utc_millis, input.clock.zone_id);
+        if (window.nextBoundary === null) this.retireConditionTimer(path, intents);
+        else this.ensureConditionTarget(program, automationId, path, { type: 'CALENDAR_UTC', utc_millis: window.nextBoundary }, intents);
+        return window.active;
       }
       case 'elapsed_at_least': {
         const now = durationNanos(condition.clock, input.clock); const due = BigInt(condition.duration_seconds) * NANO;

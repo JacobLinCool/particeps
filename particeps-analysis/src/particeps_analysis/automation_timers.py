@@ -224,3 +224,21 @@ def _required(value: int | None) -> int:
     if value is None:
         raise ValidationError("automation calendar timer target is absent")
     return value
+
+
+def study_local_window(condition: dict, study_start: int | None, now: int, zone_id: str) -> tuple[bool, int | None]:
+    if study_start is None:
+        return False, None
+    zone = _zone(zone_id)
+    anchor = _utc_datetime(study_start).astimezone(zone).date()
+    last = anchor + timedelta(days=condition["last_day"] - 1)
+    current = max(anchor + timedelta(days=condition["first_day"] - 1), _utc_datetime(now).astimezone(zone).date())
+    while current <= last:
+        start = _first_instant(current, time.fromisoformat(condition["start_local_time"]), zone)
+        end = _first_instant(current, time.fromisoformat(condition["end_local_time"]), zone)
+        if start is not None and end is not None:
+            start_ms, end_ms = _millis(start), _millis(end)
+            if end_ms > start_ms and now < end_ms:
+                return now >= start_ms, start_ms if now < start_ms else end_ms
+        current += timedelta(days=1)
+    return False, None

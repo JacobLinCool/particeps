@@ -126,7 +126,7 @@ function parseTrafficShaping(raw: unknown): TrafficShapingConfiguration {
   if (Object.keys(source).length === 0) return {};
   requireExactKeys(source, ['target_packages', 'profiles']);
   const result: TrafficShapingConfiguration = {
-    target_packages: array(source.target_packages).map(string),
+    target_packages: source.target_packages === 'all' ? 'all' : array(source.target_packages).map(string),
     profiles: array(source.profiles).map((value) => {
       const profile = exactObject(value, ['id', 'uplink_kbps', 'downlink_kbps']);
       return {
@@ -223,6 +223,10 @@ function parseCondition(raw: unknown): StateCondition {
     };
     case 'held_for': requireExactKeys(source, ['type', 'condition', 'duration_seconds', 'clock']); return {
       type: 'held_for', condition: parseCondition(source.condition), duration_seconds: integer(source.duration_seconds), clock: durationClock(source.clock)
+    };
+    case 'study_local_window': requireExactKeys(source, ['type', 'first_day', 'last_day', 'start_local_time', 'end_local_time']); return {
+      type: 'study_local_window', first_day: integer(source.first_day), last_day: integer(source.last_day),
+      start_local_time: string(source.start_local_time), end_local_time: string(source.end_local_time)
     };
     case 'elapsed_at_least': requireExactKeys(source, ['type', 'duration_seconds', 'clock']); return {
       type: 'elapsed_at_least', duration_seconds: integer(source.duration_seconds), clock: durationClock(source.clock)

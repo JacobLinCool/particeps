@@ -37,7 +37,7 @@ internal class AndroidTrafficShapingPlatform(
 
         service?.let { running ->
             running.requireUsableSession()
-            running.requireSameTargets(targets.packages)
+            running.requireSameTargets(targets)
             running.setRuntimeTerminalFailureListener(terminalFailureListener)
             running.requirePackagesCurrent()
             return
@@ -45,7 +45,7 @@ internal class AndroidTrafficShapingPlatform(
 
         val pending = TrafficShapingServiceStartBroker.register(
             requestId = requestId,
-            targetPackages = targets.packages,
+            targets = targets,
             foregroundNotification = notificationFactory.create(applicationContext),
             terminalFailureListener = terminalFailureListener,
         )
@@ -100,7 +100,7 @@ internal class AndroidTrafficShapingPlatform(
 
 internal data class TrafficShapingServiceStartRequest(
     val requestId: String,
-    val targetPackages: List<String>,
+    val targets: TargetPackageSet,
     val foregroundNotification: TrafficShapingForegroundNotification,
     val terminalFailureListener: ((String) -> Unit)?,
     val service: CompletableDeferred<TrafficShapingVpnService>,
@@ -114,13 +114,13 @@ internal object TrafficShapingServiceStartBroker {
 
     fun register(
         requestId: String,
-        targetPackages: List<String>,
+        targets: TargetPackageSet,
         foregroundNotification: TrafficShapingForegroundNotification,
         terminalFailureListener: ((String) -> Unit)?,
     ): TrafficShapingServiceStartRequest {
         val request = TrafficShapingServiceStartRequest(
             requestId,
-            targetPackages.toList(),
+            targets,
             foregroundNotification,
             terminalFailureListener,
             CompletableDeferred(),

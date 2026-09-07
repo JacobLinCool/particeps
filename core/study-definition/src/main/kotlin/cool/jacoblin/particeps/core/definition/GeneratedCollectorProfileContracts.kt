@@ -192,6 +192,18 @@ data class NetworkStateV1ProfileConfiguration(
     companion object { const val SOURCE_ID: String = "network_state.v1" }
 }
 
+data class NetworkThroughputV1ProfileConfiguration(
+    val pollIntervalSeconds: Long,
+    override val sourceId: String = SOURCE_ID,
+) : CollectorProfileConfiguration {
+    init {
+        require(sourceId == SOURCE_ID) { "Collector profile source ID is immutable" }
+        require(pollIntervalSeconds in 5L..3600L) { "Invalid network_throughput.v1.poll_interval_seconds" }
+    }
+
+    companion object { const val SOURCE_ID: String = "network_throughput.v1" }
+}
+
 data class NetworkUsageV1ProfileConfiguration(
     val pollIntervalSeconds: Long,
     val transports: List<NetworkUsageV1TransportsValue>,
@@ -206,6 +218,16 @@ data class NetworkUsageV1ProfileConfiguration(
     companion object { const val SOURCE_ID: String = "network_usage.v1" }
 }
 
+data class NotificationEventsV1ProfileConfiguration(
+    override val sourceId: String = SOURCE_ID,
+) : CollectorProfileConfiguration {
+    init {
+        require(sourceId == SOURCE_ID) { "Collector profile source ID is immutable" }
+    }
+
+    companion object { const val SOURCE_ID: String = "notification_events.v1" }
+}
+
 data class ProximityV1ProfileConfiguration(
     val changeThresholdMillimeters: Long,
     val minimumEventIntervalMs: Long,
@@ -218,6 +240,16 @@ data class ProximityV1ProfileConfiguration(
     }
 
     companion object { const val SOURCE_ID: String = "proximity.v1" }
+}
+
+data class ScreenStateV1ProfileConfiguration(
+    override val sourceId: String = SOURCE_ID,
+) : CollectorProfileConfiguration {
+    init {
+        require(sourceId == SOURCE_ID) { "Collector profile source ID is immutable" }
+    }
+
+    companion object { const val SOURCE_ID: String = "screen_state.v1" }
 }
 
 data class TemporalContextV1ProfileConfiguration(
@@ -275,13 +307,20 @@ object GeneratedCollectorProfileCodec {
             "network_state.v1" -> NetworkStateV1ProfileConfiguration(
                 includeBandwidthEstimates = config.get("include_bandwidth_estimates").asBoolean,
             )
+            "network_throughput.v1" -> NetworkThroughputV1ProfileConfiguration(
+                pollIntervalSeconds = config.get("poll_interval_seconds").asLong,
+            )
             "network_usage.v1" -> NetworkUsageV1ProfileConfiguration(
                 pollIntervalSeconds = config.get("poll_interval_seconds").asLong,
                 transports = config.get("transports").asJsonArray.map { NetworkUsageV1TransportsValue.fromWire(it.asString) },
             )
+            "notification_events.v1" -> NotificationEventsV1ProfileConfiguration(
+            )
             "proximity.v1" -> ProximityV1ProfileConfiguration(
                 changeThresholdMillimeters = config.get("change_threshold_millimeters").asLong,
                 minimumEventIntervalMs = config.get("minimum_event_interval_ms").asLong,
+            )
+            "screen_state.v1" -> ScreenStateV1ProfileConfiguration(
             )
             "temporal_context.v1" -> TemporalContextV1ProfileConfiguration(
             )
@@ -323,13 +362,20 @@ object GeneratedCollectorProfileCodec {
             is NetworkStateV1ProfileConfiguration -> {
                 add("include_bandwidth_estimates", com.google.gson.JsonPrimitive(profile.includeBandwidthEstimates))
             }
+            is NetworkThroughputV1ProfileConfiguration -> {
+                add("poll_interval_seconds", com.google.gson.JsonPrimitive(profile.pollIntervalSeconds))
+            }
             is NetworkUsageV1ProfileConfiguration -> {
                 add("poll_interval_seconds", com.google.gson.JsonPrimitive(profile.pollIntervalSeconds))
                 add("transports", com.google.gson.JsonArray().apply { profile.transports.forEach { add(it.wireValue) } })
             }
+            is NotificationEventsV1ProfileConfiguration -> {
+            }
             is ProximityV1ProfileConfiguration -> {
                 add("change_threshold_millimeters", com.google.gson.JsonPrimitive(profile.changeThresholdMillimeters))
                 add("minimum_event_interval_ms", com.google.gson.JsonPrimitive(profile.minimumEventIntervalMs))
+            }
+            is ScreenStateV1ProfileConfiguration -> {
             }
             is TemporalContextV1ProfileConfiguration -> {
             }
@@ -347,7 +393,7 @@ object GeneratedCollectorProfileCodec {
 }
 
 object GeneratedCollectorProfileContracts {
-    const val REGISTRY_SHA256: String = "53e3814c0f159a579d303f51bff94293188d4afd4f8fb82d19616c782483299c"
+    const val REGISTRY_SHA256: String = "aa86f3086a51422247c61ab2b898646f5783cbfd14139974a6fff4c7007b2b0a"
     val contracts: Map<String, GeneratedCollectorProfileContract> = listOf(
         GeneratedCollectorProfileContract(
             sourceId = "accelerometer.v1",
@@ -611,6 +657,28 @@ object GeneratedCollectorProfileContracts {
             ),
         ),
         GeneratedCollectorProfileContract(
+            sourceId = "network_throughput.v1",
+            fields = mapOf(
+                "poll_interval_seconds" to
+                GeneratedProfileFieldContract(
+                    type = GeneratedProfileFieldType.INTEGER,
+                    required = true,
+                    unit = "second",
+                    meaning = "Requested delay between device-total TrafficStats counter snapshots; actual monotonic interval endpoints are exported.",
+                    authoringDefault = com.google.gson.JsonPrimitive(BigInteger("10")),
+                    minimum = BigInteger("5"),
+                    maximum = BigInteger("3600"),
+                    minimumLength = null,
+                    maximumLength = null,
+                    lengthUnit = null,
+                    enumValues = emptyList(),
+                    minimumItems = null,
+                    maximumItems = null,
+                    lessThanOrEqualField = null,
+                ),
+            ),
+        ),
+        GeneratedCollectorProfileContract(
             sourceId = "network_usage.v1",
             fields = mapOf(
                 "poll_interval_seconds" to
@@ -650,6 +718,11 @@ object GeneratedCollectorProfileContracts {
             ),
         ),
         GeneratedCollectorProfileContract(
+            sourceId = "notification_events.v1",
+            fields = mapOf(
+            ),
+        ),
+        GeneratedCollectorProfileContract(
             sourceId = "proximity.v1",
             fields = mapOf(
                 "change_threshold_millimeters" to
@@ -686,6 +759,11 @@ object GeneratedCollectorProfileContracts {
                     maximumItems = null,
                     lessThanOrEqualField = null,
                 ),
+            ),
+        ),
+        GeneratedCollectorProfileContract(
+            sourceId = "screen_state.v1",
+            fields = mapOf(
             ),
         ),
         GeneratedCollectorProfileContract(

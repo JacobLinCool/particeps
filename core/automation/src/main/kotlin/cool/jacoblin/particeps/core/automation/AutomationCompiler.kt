@@ -266,6 +266,13 @@ private class Validator(
                 validateDuration(condition.durationSeconds, "$path.duration_seconds")
                 validateCondition(condition.condition, "$path.condition", depth + 1, nodes)
             }
+            is StateCondition.StudyLocalWindow -> {
+                if (condition.firstDay !in 1..366 || condition.lastDay !in condition.firstDay..366 ||
+                    !LOCAL_TIME.matches(condition.startLocalTime) || !LOCAL_TIME.matches(condition.endLocalTime) ||
+                    condition.startLocalTime >= condition.endLocalTime) {
+                    issue("INVALID_STUDY_LOCAL_WINDOW", path, "Expected ordered study days and same-day HH:mm boundaries")
+                }
+            }
             is StateCondition.ElapsedAtLeast -> validateDuration(condition.durationSeconds, "$path.duration_seconds")
             is StateCondition.WindowThreshold -> validateWindowThreshold(
                 condition.selector,
@@ -575,7 +582,7 @@ private class Validator(
     }
 
     private fun conditionMatchers(condition: StateCondition): List<EventMatcher> = when (condition) {
-        StateCondition.StudySessionActive, is StateCondition.ElapsedAtLeast -> emptyList()
+        StateCondition.StudySessionActive, is StateCondition.ElapsedAtLeast, is StateCondition.StudyLocalWindow -> emptyList()
         is StateCondition.EventLatch -> condition.setWhen + condition.resetWhen
         is StateCondition.KeyedPresence -> condition.enterWhen + condition.exitWhen
         is StateCondition.HeldFor -> conditionMatchers(condition.condition)
@@ -618,7 +625,7 @@ private class Validator(
     private fun conditionTimerCount(condition: StateCondition): Int = when (condition) {
         StateCondition.StudySessionActive, is StateCondition.EventLatch, is StateCondition.KeyedPresence -> 0
         is StateCondition.HeldFor -> 1 + conditionTimerCount(condition.condition)
-        is StateCondition.ElapsedAtLeast, is StateCondition.WindowThreshold -> 1
+        is StateCondition.ElapsedAtLeast, is StateCondition.StudyLocalWindow, is StateCondition.WindowThreshold -> 1
         is StateCondition.All -> condition.conditions.sumOf(::conditionTimerCount)
         is StateCondition.Any -> condition.conditions.sumOf(::conditionTimerCount)
         is StateCondition.Not -> conditionTimerCount(condition.condition)

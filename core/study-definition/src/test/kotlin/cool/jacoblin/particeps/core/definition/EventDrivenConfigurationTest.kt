@@ -14,6 +14,25 @@ import org.junit.Test
 
 class EventDrivenConfigurationTest {
     @Test
+    fun allAppScopeRoundTripsAndRejectsAmbiguousTargets() {
+        val all = configuration(trafficShaping = TrafficShapingConfiguration.Enabled(
+            targetPackages = emptyList(),
+            profiles = listOf(TrafficShapingProfile("baseline", null, null), TrafficShapingProfile("slow-network", 500, 500)),
+            allApps = true,
+        ))
+        val encoded = StudyConfigurationCodec.encode(all)
+        assertTrue(encoded.toString(Charsets.UTF_8).contains("\"target_packages\":\"all\""))
+        assertEquals(all, StudyConfigurationCodec.decode(encoded))
+        for (invalid in listOf("[]", "\"ALL\"", "null", "[\"all\"]")) {
+            val changed = encoded.toString(Charsets.UTF_8).replace("\"target_packages\":\"all\"", "\"target_packages\":$invalid")
+            assertThrows(IllegalArgumentException::class.java) { StudyConfigurationCodec.decode(changed.toByteArray()) }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            TrafficShapingConfiguration.Enabled(listOf("com.example.app"), listOf(TrafficShapingProfile("limited", 500, 500)), allApps = true)
+        }
+    }
+
+    @Test
     fun signedTextBoundsCountUtf16CodeUnits() {
         assertEquals(120, "😀".repeat(60).length)
         configuration(title = "😀".repeat(60))

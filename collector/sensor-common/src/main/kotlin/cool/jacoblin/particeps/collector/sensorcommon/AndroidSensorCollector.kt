@@ -7,6 +7,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.PowerManager
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.SerializedCallbackCollector
 import cool.jacoblin.particeps.core.collector.SourceCallbackBoundary
@@ -25,7 +26,11 @@ abstract class AndroidSensorCollector(
     private val maximumReportLatencyUs: Int,
     private val threadName: String,
     queueCapacity: Int,
+    keepCpuAwake: Boolean = false,
 ) : SerializedCallbackCollector(collectorContext, queueCapacity), SensorEventListener {
+    private val wakeLock = if (keepCpuAwake) androidContext.getSystemService(PowerManager::class.java)
+        .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Particeps:GyroscopeCollection").apply { setReferenceCounted(false) }
+        else null
     private val sensorManager = androidContext.getSystemService(SensorManager::class.java)
     private val sensor by lazy {
         sensorManager.getDefaultSensor(sensorType)
@@ -62,6 +67,7 @@ abstract class AndroidSensorCollector(
         var listenerRegistered = false
         return registerSourceWithRollback(
             register = {
+                wakeLock?.acquire()
                 check(
                     sensorManager.registerListener(
                         this,
@@ -78,6 +84,7 @@ abstract class AndroidSensorCollector(
                     { if (listenerRegistered) sensorManager.unregisterListener(this, sensor) },
                     { callbackBoundary.deactivate(::onSourceUnregistering) },
                     { releaseSource(thread, handler) },
+                    { wakeLock?.let { if (it.isHeld) it.release() } },
                 )
             },
         )
@@ -90,6 +97,7 @@ abstract class AndroidSensorCollector(
             { sensorManager.unregisterListener(this, sensor) },
             { callbackBoundary.deactivate(::onSourceUnregistering) },
             { releaseSource(thread, handler) },
+            { wakeLock?.let { if (it.isHeld) it.release() } },
         )
         return SourceTeardownResult.Released
     }

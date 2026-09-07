@@ -377,6 +377,13 @@ def _validate_condition(
         _integer(root["duration_seconds"], "held duration", 1, duration)
         _enum(root["clock"], _CLOCKS, "held clock")
         return _validate_condition(root["condition"], registry, duration, depth + 1, nodes)
+    if kind == "study_local_window":
+        root = exact_object(value, {"type", "first_day", "last_day", "start_local_time", "end_local_time"}, "study local window")
+        _integer(root["first_day"], "first day", 1, 366)
+        _integer(root["last_day"], "last day", root["first_day"], 366)
+        if _local_minute(root["start_local_time"]) >= _local_minute(root["end_local_time"]):
+            raise ValidationError("study local window must have increasing boundaries")
+        return set()
     if kind == "elapsed_at_least":
         root = exact_object(value, {"type", "duration_seconds", "clock"}, "elapsed condition")
         _integer(root["duration_seconds"], "elapsed duration", 1, duration)
@@ -600,12 +607,13 @@ def _validate_traffic(value: Any) -> dict[str, Any] | None:
     if not value:
         return None
     root = exact_object(value, {"target_packages", "profiles"}, "traffic_shaping")
-    packages = _array(root["target_packages"], "target packages", minimum=1, maximum=64)
-    if any(not isinstance(item, str) or not _PACKAGE.fullmatch(item) for item in packages):
-        raise ValidationError("invalid Android application ID")
-    _sorted_unique(packages, "target packages")
-    if "cool.jacoblin.particeps" in packages:
-        raise ValidationError("Particeps cannot be a shaping target")
+    if root["target_packages"] != "all":
+        packages = _array(root["target_packages"], "target packages", minimum=1, maximum=64)
+        if any(not isinstance(item, str) or not _PACKAGE.fullmatch(item) for item in packages):
+            raise ValidationError("invalid Android application ID")
+        _sorted_unique(packages, "target packages")
+        if "cool.jacoblin.particeps" in packages:
+            raise ValidationError("Particeps cannot be a shaping target")
     profiles = _array(root["profiles"], "traffic profiles", minimum=1, maximum=64)
     ids = []
     for item in profiles:
@@ -768,7 +776,7 @@ def _condition_timer_count(condition: dict[str, Any]) -> int:
     kind = condition["type"]
     if kind in {"study_session_active", "event_latch", "keyed_presence"}:
         return 0
-    if kind in {"elapsed_at_least", "window_threshold"}:
+    if kind in {"elapsed_at_least", "study_local_window", "window_threshold"}:
         return 1
     if kind == "held_for":
         return 1 + _condition_timer_count(condition["condition"])

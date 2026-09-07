@@ -368,3 +368,25 @@ private const val MILLIS_PER_MINUTE = 60_000L
 private const val NANOS_PER_MILLI = 1_000_000L
 private const val NANOS_PER_SECOND = 1_000_000_000L
 private const val SECONDS_PER_MINUTE = 60L
+
+internal data class StudyLocalWindowState(val active: Boolean, val nextBoundaryUtcMillis: Long?)
+
+internal fun studyLocalWindow(
+    condition: cool.jacoblin.particeps.core.definition.StateCondition.StudyLocalWindow,
+    studyStartUtcMillis: Long?, nowUtcMillis: Long, zoneId: String,
+): StudyLocalWindowState {
+    if (studyStartUtcMillis == null) return StudyLocalWindowState(false, null)
+    val zone = ZoneId.of(zoneId)
+    val startDate = Instant.ofEpochMilli(studyStartUtcMillis).atZone(zone).toLocalDate()
+    val lastDate = startDate.plusDays(condition.lastDay.toLong() - 1)
+    var date = maxOf(startDate.plusDays(condition.firstDay.toLong() - 1), Instant.ofEpochMilli(nowUtcMillis).atZone(zone).toLocalDate())
+    while (date <= lastDate) {
+        val start = firstInstant(date.atTime(LocalTime.parse(condition.startLocalTime)), zone)?.toEpochMilli()
+        val end = firstInstant(date.atTime(LocalTime.parse(condition.endLocalTime)), zone)?.toEpochMilli()
+        if (start != null && end != null && end > start && nowUtcMillis < end) {
+            return StudyLocalWindowState(nowUtcMillis >= start, if (nowUtcMillis < start) start else end)
+        }
+        date = date.plusDays(1)
+    }
+    return StudyLocalWindowState(false, null)
+}

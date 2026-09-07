@@ -13,12 +13,12 @@
   const configuration = $derived(draft.configuration);
   const enabled = $derived(trafficShapingEnabled(configuration.traffic_shaping));
   const copy = $derived(locale === 'zh-TW' ? {
-    enable: '調整指定 App 的資料傳輸速度', packages: '目標 App 套件名稱（每行一個）',
+    enable: '調整 App 的資料傳輸速度', allApps: '套用到所有 App', packages: '目標 App 套件名稱（每行一個）',
     profile: '限速設定', addProfile: '新增限速設定', appUse: '加入「持續使用 3 分鐘後降速」範例',
     upstream: '上傳上限（kbps，留空代表不限速）', downstream: '下載上限（kbps，留空代表不限速）',
     note: '這裡只定義可套用的設定；實際切換由下方的 signed automation 決定。', remove: '移除限速設定'
   } : {
-    enable: 'Adjust data-transfer speed for selected apps', packages: 'Target app package names (one per line)',
+    enable: 'Adjust app data-transfer speed', allApps: 'Apply to all apps', packages: 'Target app package names (one per line)',
     profile: 'Traffic profile', addProfile: 'Add traffic profile', appUse: 'Add “slow after 3 minutes of use” example',
     upstream: 'Uplink cap (kbps; empty is unlimited)', downstream: 'Downlink cap (kbps; empty is unlimited)',
     note: 'This defines profiles the runtime may apply. Signed automations below decide when they change.', remove: 'Remove traffic profile'
@@ -90,7 +90,9 @@
 
   function addAppUseRule(): void {
     if (!trafficShapingEnabled(configuration.traffic_shaping)) return;
+    if (configuration.traffic_shaping.target_packages === 'all') return;
     const packageName = configuration.traffic_shaping.target_packages[0];
+    if (!packageName) return;
     const slow = configuration.traffic_shaping.profiles.find((profile) => profile.uplink_kbps !== null || profile.downlink_kbps !== null)
       ?? configuration.traffic_shaping.profiles[0];
     let usage = configuration.collectors.find((collector) => collector.id === 'usage_events.v1');
@@ -130,6 +132,10 @@
   {#if enabled && trafficShapingEnabled(configuration.traffic_shaping)}
     {@const shaping = configuration.traffic_shaping}
     <Note icon="info" tone="plain" text={copy.note} />
+    <ToggleField label={copy.allApps} value={shaping.target_packages === 'all'} onchange={(all) => {
+      shaping.target_packages = all ? 'all' : ['com.example.app'];
+    }} />
+    {#if shaping.target_packages !== 'all'}
     <Field label={copy.packages} path="traffic_shaping.target_packages">
       {#snippet children({ id, describedby, invalid })}
         <textarea
@@ -138,13 +144,14 @@
           rows="4"
           aria-describedby={describedby}
           aria-invalid={invalid || undefined}
-          value={shaping.target_packages.join('\n')}
+          value={shaping.target_packages === 'all' ? '' : shaping.target_packages.join('\n')}
           onblur={(event) => {
             shaping.target_packages = [...new Set(event.currentTarget.value.split('\n').map((item) => item.trim()).filter(Boolean))].sort();
           }}
         ></textarea>
       {/snippet}
     </Field>
+    {/if}
 
     <div class="traffic-profiles">
       {#each shaping.profiles as profile (profile)}
@@ -163,7 +170,9 @@
     </div>
     <div class="row">
       <Button label={copy.addProfile} icon="plus" onclick={addProfile} />
-      <Button label={copy.appUse} icon="clock" variant="quiet" onclick={addAppUseRule} />
+      {#if shaping.target_packages !== 'all' && shaping.target_packages.length > 0}
+        <Button label={copy.appUse} icon="clock" variant="quiet" onclick={addAppUseRule} />
+      {/if}
     </div>
   {/if}
 </div>

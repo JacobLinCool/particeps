@@ -53,6 +53,10 @@ sealed interface StateCondition {
         val keyField: String,
     ) : StateCondition
     data class HeldFor(val condition: StateCondition, val durationSeconds: Int, val clock: DurationClock) : StateCondition
+    /** One-based local dates relative to the study start in the observed device zone. */
+    data class StudyLocalWindow(
+        val firstDay: Int, val lastDay: Int, val startLocalTime: String, val endLocalTime: String,
+    ) : StateCondition
     data class ElapsedAtLeast(val durationSeconds: Int, val clock: DurationClock) : StateCondition
     data class WindowThreshold(
         val selector: EventMatcher,

@@ -35,6 +35,9 @@ export type CollectorId =
   | 'gyroscope.v1'
   | 'keyboard_touch.v1'
   | 'location.v1'
+  | 'notification_events.v1'
+  | 'screen_state.v1'
+  | 'network_throughput.v1'
   | 'network_state.v1'
   | 'network_usage.v1'
   | 'proximity.v1'
@@ -79,13 +82,14 @@ type CollectorResource<I extends CollectorId, C extends CollectorProfileConfigur
 export type CollectorConfig =
   | CollectorResource<'accelerometer.v1' | 'gyroscope.v1', SensorProfile>
   | CollectorResource<'ambient_light.v1', AmbientLightProfile>
-  | CollectorResource<'app_lifecycle.v1' | 'battery_state.v1' | 'temporal_context.v1', Record<string, never>>
+  | CollectorResource<'app_lifecycle.v1' | 'battery_state.v1' | 'temporal_context.v1' | 'notification_events.v1' | 'screen_state.v1', Record<string, never>>
   | CollectorResource<'keyboard_touch.v1', { trajectory_sampling_hz: number }>
   | CollectorResource<'location.v1', LocationProfile>
   | CollectorResource<'network_state.v1', { include_bandwidth_estimates: boolean }>
   | CollectorResource<'network_usage.v1', { poll_interval_seconds: number; transports: NetworkTransport[] }>
   | CollectorResource<'proximity.v1', { minimum_event_interval_ms: number; change_threshold_millimeters: number }>
-  | CollectorResource<'usage_events.v1', { poll_interval_seconds: number }>;
+  | CollectorResource<'usage_events.v1', { poll_interval_seconds: number }>
+  | CollectorResource<'network_throughput.v1', { poll_interval_seconds: number }>;
 
 export interface LocalizedText {
   default: string;
@@ -157,6 +161,7 @@ export type StateCondition =
   | { type: 'event_latch'; set_when: EventMatcher[]; reset_when: EventMatcher[] }
   | { type: 'keyed_presence'; enter_when: EventMatcher[]; exit_when: EventMatcher[]; key_field: string }
   | { type: 'held_for'; condition: StateCondition; duration_seconds: number; clock: DurationClock }
+  | { type: 'study_local_window'; first_day: number; last_day: number; start_local_time: string; end_local_time: string }
   | { type: 'elapsed_at_least'; duration_seconds: number; clock: DurationClock }
   | {
       type: 'window_threshold'; selector: EventMatcher; window_seconds: number;
@@ -217,11 +222,11 @@ export interface TrafficShapingProfile {
 
 export type TrafficShapingConfiguration =
   | Record<string, never>
-  | { target_packages: string[]; profiles: TrafficShapingProfile[] };
+  | { target_packages: 'all' | string[]; profiles: TrafficShapingProfile[] };
 
 export function trafficShapingEnabled(
   value: TrafficShapingConfiguration
-): value is Extract<TrafficShapingConfiguration, { target_packages: string[] }> {
+): value is Extract<TrafficShapingConfiguration, { target_packages: 'all' | string[] }> {
   return Object.hasOwn(value, 'target_packages');
 }
 

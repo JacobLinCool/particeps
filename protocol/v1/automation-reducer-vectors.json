@@ -1,6 +1,6 @@
 {
   "format": "particeps-automation-reducer-v1",
-  "registry_sha256": "53e3814c0f159a579d303f51bff94293188d4afd4f8fb82d19616c782483299c",
+  "registry_sha256": "aa86f3086a51422247c61ab2b898646f5783cbfd14139974a6fff4c7007b2b0a",
   "batch_semantics": {
     "partition_rule": "Transport/replay partitions may change only between declared steps; a step is never split.",
     "step_boundary": "Each scenario step is one indivisible SourceObservation or EngineCommit reducer batch."

@@ -91,7 +91,7 @@ def _automation_matchers(automation: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _condition_matchers(condition: dict[str, Any]) -> list[dict[str, Any]]:
     kind = condition["type"]
-    if kind in {"study_session_active", "elapsed_at_least"}:
+    if kind in {"study_session_active", "elapsed_at_least", "study_local_window"}:
         return []
     if kind == "event_latch":
         return list(condition["set_when"]) + list(condition["reset_when"])

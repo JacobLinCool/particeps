@@ -25,6 +25,7 @@
 
     <!-- AccessManager resolves only these app-authored settings intents before exposing actions. -->
     <queries>
+        <intent><action android:name="android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS" /></intent>
         <intent>
             <action android:name="android.settings.APPLICATION_DETAILS_SETTINGS" />
             <data android:scheme="package" />

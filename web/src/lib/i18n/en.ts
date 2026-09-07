@@ -241,6 +241,9 @@ export const en: Messages = {
       records: 'Distance, maximum range, and near/far',
       limit: 'Near/far is common; values differ across devices'
     },
+    'notification_events.v1': { name: 'Notification receipt', records: 'Posting app, timestamp, and anonymous update token', limit: 'No text; a posting callback is not evidence of reading' },
+    'screen_state.v1': { name: 'Screen power and lock state', records: 'Display power, interactive state, and keyguard', limit: 'Includes locked screens; does not establish attention' },
+    'network_throughput.v1': { name: 'Observed throughput', records: 'Device byte-counter deltas and monotonic intervals', limit: 'Not a capacity test or per-app speed; VPN accounting may overlap' },
     'network_state.v1': {
       name: 'Connection type',
       records: 'Transport, metered, roaming, and validation',

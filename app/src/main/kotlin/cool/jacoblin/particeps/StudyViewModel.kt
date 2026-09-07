@@ -273,6 +273,9 @@ private fun String.toParticipantDataKind(): ParticipantDataKind = when (this) {
     "gyroscope.v1" -> ParticipantDataKind.GYROSCOPE
     "keyboard_touch.v1" -> ParticipantDataKind.KEYBOARD_TOUCH
     "location.v1" -> ParticipantDataKind.LOCATION
+    "notification_events.v1" -> ParticipantDataKind.NOTIFICATION_EVENTS
+    "screen_state.v1" -> ParticipantDataKind.SCREEN_STATE
+    "network_throughput.v1" -> ParticipantDataKind.NETWORK_THROUGHPUT
     "network_state.v1" -> ParticipantDataKind.NETWORK_STATE
     "network_usage.v1" -> ParticipantDataKind.NETWORK_USAGE
     "proximity.v1" -> ParticipantDataKind.PROXIMITY
@@ -290,6 +293,9 @@ private val ParticipantDataKind.sourceId: String
         ParticipantDataKind.GYROSCOPE -> "gyroscope.v1"
         ParticipantDataKind.KEYBOARD_TOUCH -> "keyboard_touch.v1"
         ParticipantDataKind.LOCATION -> "location.v1"
+        ParticipantDataKind.NOTIFICATION_EVENTS -> "notification_events.v1"
+        ParticipantDataKind.SCREEN_STATE -> "screen_state.v1"
+        ParticipantDataKind.NETWORK_THROUGHPUT -> "network_throughput.v1"
         ParticipantDataKind.NETWORK_STATE -> "network_state.v1"
         ParticipantDataKind.NETWORK_USAGE -> "network_usage.v1"
         ParticipantDataKind.PROXIMITY -> "proximity.v1"

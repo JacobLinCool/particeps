@@ -145,8 +145,10 @@ class TrafficShapingVpnService : VpnService() {
         }
     }
 
-    internal fun requireSameTargets(packages: List<String>) {
-        check(synchronized(stateLock) { targetPackages?.packages } == packages) {
+    internal fun requireSameTargets(targets: TargetPackageSet) {
+        check(synchronized(stateLock) {
+            targetPackages?.let { it.packages == targets.packages && it.allApps == targets.allApps } == true
+        }) {
             "A live VPN service cannot change its package allowlist"
         }
     }
@@ -274,7 +276,7 @@ class TrafficShapingVpnService : VpnService() {
 
     private fun initializeSession(request: TrafficShapingServiceStartRequest) {
         Trafficshaping.touch()
-        val targets = TargetPackageSet.of(request.targetPackages)
+        val targets = request.targets
         val verifier = TargetPackageVerifier(packageManager, targets)
         val snapshot = try {
             verifier.capture()
@@ -349,7 +351,9 @@ class TrafficShapingVpnService : VpnService() {
                 .setBlocking(true)
                 .setMetered(false)
                 .apply {
-                    targets.packages.forEach(::addAllowedApplication)
+                    // Android routes all apps when no allowlist is configured.
+                    // Only the explicit all-apps mode can have an empty package list.
+                    if (!targets.allApps) targets.packages.forEach(::addAllowedApplication)
                 }
                 .establish()
                 ?: throw TrafficShapingActuatorException(

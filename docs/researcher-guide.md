@@ -16,6 +16,8 @@ Normative sources:
 - [Data dictionary](data-dictionary.md) — interpretation and publication rules.
 - [Threat model](threat-model.md) — what the implementation proves and what it does not.
 
+For the five-day participant-relative 500 kbps design, collector coverage, and a complete example, see [五天限速研究設定](five-day-speed-study.md).
+
 ## 1. Study model
 
 A study is one canonical JSON object signed with Ed25519. The participant can accept, decline,
@@ -198,6 +200,7 @@ Protocol v1 supports only:
 - keyed presence with explicit enter/exit matchers and registry-approved key field;
 - `held_for` on active-running or calendar time;
 - elapsed active-running/calendar time;
+- `study_local_window` with one-based `first_day`/`last_day` (1–366) and increasing same-day `start_local_time`/`end_local_time` (`HH:mm`), evaluated in the observed device zone relative to the study start date;
 - bounded-window threshold;
 - `all`, `any`, and `not`.
 
@@ -429,3 +432,5 @@ Keep the consent and ethics materials aligned with the exact signed study, regis
 [participant guide](participant-guide.md), and [threat model](threat-model.md). If the intended claim
 is stronger than the platform completeness or verification evidence described there, change the
 claim or the design before recruitment.
+
+To shape all apps in the current Android user, set `traffic_shaping.target_packages` to the exact string `"all"`. This includes apps installed after study start; it does not require an installed-package list. An empty array remains invalid. The researcher editor provides an explicit all-apps switch.

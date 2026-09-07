@@ -48,8 +48,7 @@ class TrafficShapingActuator internal constructor(
     private val operations = Mutex()
     private val stateLock = Any()
     private val targetPackageListSha256 = Sha256Digest.of(
-        targetPackages.packages.joinToString(prefix = "[", postfix = "]", separator = ",") { "\"$it\"" }
-            .toByteArray(Charsets.UTF_8),
+        targetPackages.canonicalTargetBytes(),
     )
     private var terminalFailureListener: ResourceTerminalFailureListener? = null
     private var desiredGeneration: ResourceGeneration? = null
@@ -615,8 +614,9 @@ class TrafficShapingActuator internal constructor(
             context: Context,
             targetPackages: List<String>,
             notificationFactory: TrafficShapingNotificationFactory,
+            allApps: Boolean = false,
         ): TrafficShapingActuator {
-            val targets = TargetPackageSet.of(targetPackages)
+            val targets = TargetPackageSet.of(targetPackages, allApps)
             return TrafficShapingActuator(
                 platform = AndroidTrafficShapingPlatform(
                     context.applicationContext,

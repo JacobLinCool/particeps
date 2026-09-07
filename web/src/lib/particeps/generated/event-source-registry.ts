@@ -5050,6 +5050,81 @@ export const EVENT_SOURCE_REGISTRY = {
             "presence": null,
             "scope": "RESEARCHER"
           }
+        },
+        {
+          "clock": {
+            "automation_time_inputs": [
+              "OBSERVED_RESEARCH_TIME"
+            ],
+            "cross_boot_policy": "NOT_APPLICABLE",
+            "observation_basis": "RESEARCH_TIME",
+            "primary_source_basis": "NONE",
+            "primary_source_time_field": null,
+            "wall_clock_change_policy": "UNAFFECTED"
+          },
+          "completeness": {
+            "kind": "BEST_EFFORT_CALLBACK",
+            "may_have_quality_gaps": true,
+            "ordered_within_observation_batch": true,
+            "quality_gap_policy": "EMIT_AND_CONTINUE"
+          },
+          "delivery": {
+            "guarantee": "BEST_EFFORT",
+            "kind": "CALLBACK",
+            "latency_configuration_field": null,
+            "maximum_latency_millis": null
+          },
+          "event_type": "VPN_STATUS",
+          "fields": {
+            "connected": {
+              "clock_basis": "NONE",
+              "enum_values": [],
+              "keyed_presence_key": false,
+              "length_unit": null,
+              "maximum": null,
+              "maximum_length": null,
+              "meaning": "Whether the callback-observed VPN network set is nonempty, including other-UID VPNs. Omitted at admission until a VPN callback has established state; absence is unknown, not disconnected.",
+              "minimum": null,
+              "minimum_length": null,
+              "nullable": false,
+              "operators": [
+                "eq",
+                "in",
+                "ne"
+              ],
+              "required": false,
+              "unit": "none",
+              "window_sum": false,
+              "wire_type": "boolean"
+            }
+          },
+          "maximum_encoded_event_bytes": 4096,
+          "privacy": {
+            "audit_copy_policy": "IDENTIFIERS_ONLY",
+            "class": "SENSITIVE",
+            "exported": true,
+            "prohibited_inferences": [],
+            "trigger_exposure": "DECLARED_FIELDS_ONLY"
+          },
+          "rate_bound": {
+            "enforced_by": "none",
+            "kind": "UNBOUNDED",
+            "maximum_events_per_batch": null,
+            "maximum_events_per_hour": null,
+            "maximum_events_per_period": null,
+            "overflow_policy": "EMIT_QUALITY_GAP",
+            "period_seconds": null
+          },
+          "trigger": {
+            "condition_kinds": [
+              "EVENT_MATCH",
+              "SEQUENCE_STEP",
+              "WINDOW_COUNT",
+              "WINDOW_SUM"
+            ],
+            "presence": null,
+            "scope": "RESEARCHER"
+          }
         }
       ],
       "implementation": {
@@ -5067,6 +5142,196 @@ export const EVENT_SOURCE_REGISTRY = {
       "schema_version": 1,
       "selectable": true,
       "source_id": "network_state.v1",
+      "source_kind": "COLLECTOR"
+    },
+    {
+      "access": [],
+      "configuration": {
+        "fields": {
+          "poll_interval_seconds": {
+            "authoring_default": 10,
+            "less_than_or_equal_field": null,
+            "maximum": 3600,
+            "meaning": "Requested delay between device-total TrafficStats counter snapshots; actual monotonic interval endpoints are exported.",
+            "minimum": 5,
+            "required": true,
+            "type": "integer",
+            "unit": "second"
+          }
+        }
+      },
+      "disclosure_key": "collector.network_throughput",
+      "emission_authority": "SOURCE_PLUGIN_ONLY",
+      "events": [
+        {
+          "clock": {
+            "automation_time_inputs": [
+              "OBSERVED_RESEARCH_TIME"
+            ],
+            "cross_boot_policy": "NOT_APPLICABLE",
+            "observation_basis": "RESEARCH_TIME",
+            "primary_source_basis": "NONE",
+            "primary_source_time_field": null,
+            "wall_clock_change_policy": "UNAFFECTED"
+          },
+          "completeness": {
+            "kind": "BEST_EFFORT_CALLBACK",
+            "may_have_quality_gaps": true,
+            "ordered_within_observation_batch": true,
+            "quality_gap_policy": "EMIT_AND_CONTINUE"
+          },
+          "delivery": {
+            "guarantee": "BEST_EFFORT",
+            "kind": "CALLBACK",
+            "latency_configuration_field": null,
+            "maximum_latency_millis": null
+          },
+          "event_type": "NETWORK_THROUGHPUT",
+          "fields": {
+            "interval_end_elapsed_nanos": {
+              "clock_basis": "CONTINUOUS_MONOTONIC_SINCE_BOOT",
+              "enum_values": [],
+              "keyed_presence_key": false,
+              "length_unit": null,
+              "maximum": null,
+              "maximum_length": null,
+              "meaning": "Monotonic endpoint of this actual sampled interval; never spans a collector pause.",
+              "minimum": null,
+              "minimum_length": null,
+              "nullable": false,
+              "operators": [
+                "eq",
+                "gt",
+                "gte",
+                "in",
+                "lt",
+                "lte",
+                "ne"
+              ],
+              "required": true,
+              "unit": "nanosecond",
+              "window_sum": false,
+              "wire_type": "uint64_decimal"
+            },
+            "interval_start_elapsed_nanos": {
+              "clock_basis": "CONTINUOUS_MONOTONIC_SINCE_BOOT",
+              "enum_values": [],
+              "keyed_presence_key": false,
+              "length_unit": null,
+              "maximum": null,
+              "maximum_length": null,
+              "meaning": "Monotonic endpoint of this actual sampled interval; never spans a collector pause.",
+              "minimum": null,
+              "minimum_length": null,
+              "nullable": false,
+              "operators": [
+                "eq",
+                "gt",
+                "gte",
+                "in",
+                "lt",
+                "lte",
+                "ne"
+              ],
+              "required": true,
+              "unit": "nanosecond",
+              "window_sum": false,
+              "wire_type": "uint64_decimal"
+            },
+            "rx_bytes": {
+              "clock_basis": "NONE",
+              "enum_values": [],
+              "keyed_presence_key": false,
+              "length_unit": null,
+              "maximum": null,
+              "maximum_length": null,
+              "meaning": "Device-total received byte-counter delta; may include VPN interface accounting.",
+              "minimum": null,
+              "minimum_length": null,
+              "nullable": false,
+              "operators": [
+                "eq",
+                "gt",
+                "gte",
+                "in",
+                "lt",
+                "lte",
+                "ne"
+              ],
+              "required": true,
+              "unit": "byte",
+              "window_sum": false,
+              "wire_type": "uint64_decimal"
+            },
+            "tx_bytes": {
+              "clock_basis": "NONE",
+              "enum_values": [],
+              "keyed_presence_key": false,
+              "length_unit": null,
+              "maximum": null,
+              "maximum_length": null,
+              "meaning": "Device-total sent byte-counter delta; may include VPN interface accounting.",
+              "minimum": null,
+              "minimum_length": null,
+              "nullable": false,
+              "operators": [
+                "eq",
+                "gt",
+                "gte",
+                "in",
+                "lt",
+                "lte",
+                "ne"
+              ],
+              "required": true,
+              "unit": "byte",
+              "window_sum": false,
+              "wire_type": "uint64_decimal"
+            }
+          },
+          "maximum_encoded_event_bytes": 4096,
+          "privacy": {
+            "audit_copy_policy": "IDENTIFIERS_ONLY",
+            "class": "SENSITIVE",
+            "exported": true,
+            "prohibited_inferences": [],
+            "trigger_exposure": "DECLARED_FIELDS_ONLY"
+          },
+          "rate_bound": {
+            "enforced_by": "none",
+            "kind": "UNBOUNDED",
+            "maximum_events_per_batch": null,
+            "maximum_events_per_hour": null,
+            "maximum_events_per_period": null,
+            "overflow_policy": "EMIT_QUALITY_GAP",
+            "period_seconds": null
+          },
+          "trigger": {
+            "condition_kinds": [
+              "EVENT_MATCH",
+              "SEQUENCE_STEP",
+              "WINDOW_COUNT"
+            ],
+            "presence": null,
+            "scope": "RESEARCHER"
+          }
+        }
+      ],
+      "implementation": {
+        "owner_module": ":collector:network-throughput",
+        "statuses": [
+          {
+            "platform": "android",
+            "status": "IMPLEMENTED"
+          }
+        ]
+      },
+      "platforms": [
+        "android"
+      ],
+      "schema_version": 1,
+      "selectable": true,
+      "source_id": "network_throughput.v1",
       "source_kind": "COLLECTOR"
     },
     {
@@ -5361,6 +5626,158 @@ export const EVENT_SOURCE_REGISTRY = {
       "access": [
         {
           "absence_policy": "BLOCK_REQUIRED_STUDY",
+          "kind": "NOTIFICATION_LISTENER",
+          "mode": "special_access"
+        }
+      ],
+      "configuration": {
+        "fields": {}
+      },
+      "disclosure_key": "collector.notification_events",
+      "emission_authority": "SOURCE_PLUGIN_ONLY",
+      "events": [
+        {
+          "clock": {
+            "automation_time_inputs": [
+              "OBSERVED_RESEARCH_TIME"
+            ],
+            "cross_boot_policy": "NOT_APPLICABLE",
+            "observation_basis": "RESEARCH_TIME",
+            "primary_source_basis": "NONE",
+            "primary_source_time_field": null,
+            "wall_clock_change_policy": "UNAFFECTED"
+          },
+          "completeness": {
+            "kind": "BEST_EFFORT_CALLBACK",
+            "may_have_quality_gaps": true,
+            "ordered_within_observation_batch": true,
+            "quality_gap_policy": "EMIT_AND_CONTINUE"
+          },
+          "delivery": {
+            "guarantee": "BEST_EFFORT",
+            "kind": "CALLBACK",
+            "latency_configuration_field": null,
+            "maximum_latency_millis": null
+          },
+          "event_type": "NOTIFICATION_POSTED",
+          "fields": {
+            "notification_token": {
+              "clock_basis": "NONE",
+              "enum_values": [],
+              "keyed_presence_key": false,
+              "length_unit": null,
+              "maximum": null,
+              "maximum_length": null,
+              "meaning": "Study-scoped HMAC of the notification key; repeated tokens may be updates.",
+              "minimum": null,
+              "minimum_length": null,
+              "nullable": false,
+              "operators": [
+                "eq",
+                "in",
+                "ne"
+              ],
+              "required": true,
+              "unit": "none",
+              "window_sum": false,
+              "wire_type": "sha256_hex"
+            },
+            "package_name": {
+              "clock_basis": "NONE",
+              "enum_values": [],
+              "keyed_presence_key": false,
+              "length_unit": "UTF16_CODE_UNITS",
+              "maximum": null,
+              "maximum_length": 512,
+              "meaning": "Package posting the notification; no notification text is read.",
+              "minimum": null,
+              "minimum_length": 0,
+              "nullable": false,
+              "operators": [
+                "eq",
+                "in",
+                "ne"
+              ],
+              "required": true,
+              "unit": "none",
+              "window_sum": false,
+              "wire_type": "string"
+            },
+            "post_time_epoch_millis": {
+              "clock_basis": "UTC_WALL",
+              "enum_values": [],
+              "keyed_presence_key": false,
+              "length_unit": null,
+              "maximum": null,
+              "maximum_length": null,
+              "meaning": "Android notification post timestamp; callback receipt is observed_time.",
+              "minimum": null,
+              "minimum_length": null,
+              "nullable": false,
+              "operators": [
+                "eq",
+                "gt",
+                "gte",
+                "in",
+                "lt",
+                "lte",
+                "ne"
+              ],
+              "required": true,
+              "unit": "millisecond",
+              "window_sum": false,
+              "wire_type": "uint64_decimal"
+            }
+          },
+          "maximum_encoded_event_bytes": 4096,
+          "privacy": {
+            "audit_copy_policy": "IDENTIFIERS_ONLY",
+            "class": "SENSITIVE",
+            "exported": true,
+            "prohibited_inferences": [],
+            "trigger_exposure": "DECLARED_FIELDS_ONLY"
+          },
+          "rate_bound": {
+            "enforced_by": "none",
+            "kind": "UNBOUNDED",
+            "maximum_events_per_batch": null,
+            "maximum_events_per_hour": null,
+            "maximum_events_per_period": null,
+            "overflow_policy": "EMIT_QUALITY_GAP",
+            "period_seconds": null
+          },
+          "trigger": {
+            "condition_kinds": [
+              "EVENT_MATCH",
+              "SEQUENCE_STEP",
+              "WINDOW_COUNT"
+            ],
+            "presence": null,
+            "scope": "RESEARCHER"
+          }
+        }
+      ],
+      "implementation": {
+        "owner_module": ":collector:notification-events",
+        "statuses": [
+          {
+            "platform": "android",
+            "status": "IMPLEMENTED"
+          }
+        ]
+      },
+      "platforms": [
+        "android"
+      ],
+      "schema_version": 1,
+      "selectable": true,
+      "source_id": "notification_events.v1",
+      "source_kind": "COLLECTOR"
+    },
+    {
+      "access": [
+        {
+          "absence_policy": "BLOCK_REQUIRED_STUDY",
           "kind": "PROXIMITY_HARDWARE",
           "mode": "hardware"
         }
@@ -5558,6 +5975,156 @@ export const EVENT_SOURCE_REGISTRY = {
       "schema_version": 1,
       "selectable": true,
       "source_id": "proximity.v1",
+      "source_kind": "COLLECTOR"
+    },
+    {
+      "access": [],
+      "configuration": {
+        "fields": {}
+      },
+      "disclosure_key": "collector.screen_state",
+      "emission_authority": "SOURCE_PLUGIN_ONLY",
+      "events": [
+        {
+          "clock": {
+            "automation_time_inputs": [
+              "OBSERVED_RESEARCH_TIME"
+            ],
+            "cross_boot_policy": "NOT_APPLICABLE",
+            "observation_basis": "RESEARCH_TIME",
+            "primary_source_basis": "NONE",
+            "primary_source_time_field": null,
+            "wall_clock_change_policy": "UNAFFECTED"
+          },
+          "completeness": {
+            "kind": "BEST_EFFORT_CALLBACK",
+            "may_have_quality_gaps": true,
+            "ordered_within_observation_batch": true,
+            "quality_gap_policy": "EMIT_AND_CONTINUE"
+          },
+          "delivery": {
+            "guarantee": "BEST_EFFORT",
+            "kind": "CALLBACK",
+            "latency_configuration_field": null,
+            "maximum_latency_millis": null
+          },
+          "event_type": "SCREEN_STATE",
+          "fields": {
+            "display_state": {
+              "clock_basis": "NONE",
+              "enum_values": [
+                "DOZE",
+                "DOZE_SUSPEND",
+                "OFF",
+                "ON",
+                "ON_SUSPEND",
+                "UNKNOWN",
+                "VR"
+              ],
+              "keyed_presence_key": false,
+              "length_unit": null,
+              "maximum": null,
+              "maximum_length": null,
+              "meaning": "Android default display power state, independent of lock state.",
+              "minimum": null,
+              "minimum_length": null,
+              "nullable": false,
+              "operators": [
+                "eq",
+                "in",
+                "ne"
+              ],
+              "required": true,
+              "unit": "none",
+              "window_sum": false,
+              "wire_type": "enum"
+            },
+            "interactive": {
+              "clock_basis": "NONE",
+              "enum_values": [],
+              "keyed_presence_key": false,
+              "length_unit": null,
+              "maximum": null,
+              "maximum_length": null,
+              "meaning": "Whether the device is interactive; this does not imply unlocked.",
+              "minimum": null,
+              "minimum_length": null,
+              "nullable": false,
+              "operators": [
+                "eq",
+                "in",
+                "ne"
+              ],
+              "required": true,
+              "unit": "none",
+              "window_sum": false,
+              "wire_type": "boolean"
+            },
+            "keyguard_locked": {
+              "clock_basis": "NONE",
+              "enum_values": [],
+              "keyed_presence_key": false,
+              "length_unit": null,
+              "maximum": null,
+              "maximum_length": null,
+              "meaning": "Whether the keyguard is showing, including a non-secure lock screen.",
+              "minimum": null,
+              "minimum_length": null,
+              "nullable": false,
+              "operators": [
+                "eq",
+                "in",
+                "ne"
+              ],
+              "required": true,
+              "unit": "none",
+              "window_sum": false,
+              "wire_type": "boolean"
+            }
+          },
+          "maximum_encoded_event_bytes": 4096,
+          "privacy": {
+            "audit_copy_policy": "IDENTIFIERS_ONLY",
+            "class": "SENSITIVE",
+            "exported": true,
+            "prohibited_inferences": [],
+            "trigger_exposure": "DECLARED_FIELDS_ONLY"
+          },
+          "rate_bound": {
+            "enforced_by": "none",
+            "kind": "UNBOUNDED",
+            "maximum_events_per_batch": null,
+            "maximum_events_per_hour": null,
+            "maximum_events_per_period": null,
+            "overflow_policy": "EMIT_QUALITY_GAP",
+            "period_seconds": null
+          },
+          "trigger": {
+            "condition_kinds": [
+              "EVENT_MATCH",
+              "SEQUENCE_STEP",
+              "WINDOW_COUNT"
+            ],
+            "presence": null,
+            "scope": "RESEARCHER"
+          }
+        }
+      ],
+      "implementation": {
+        "owner_module": ":collector:screen-state",
+        "statuses": [
+          {
+            "platform": "android",
+            "status": "IMPLEMENTED"
+          }
+        ]
+      },
+      "platforms": [
+        "android"
+      ],
+      "schema_version": 1,
+      "selectable": true,
+      "source_id": "screen_state.v1",
       "source_kind": "COLLECTOR"
     },
     {
@@ -10447,7 +11014,7 @@ export const EVENT_SOURCE_REGISTRY = {
     }
   ]
 } as const satisfies EventSourceRegistry;
-export const EVENT_SOURCE_REGISTRY_SHA256 = '53e3814c0f159a579d303f51bff94293188d4afd4f8fb82d19616c782483299c' as const;
+export const EVENT_SOURCE_REGISTRY_SHA256 = 'aa86f3086a51422247c61ab2b898646f5783cbfd14139974a6fff4c7007b2b0a' as const;
 export const EVENT_SOURCE_CONTRACTS: readonly RegistrySourceContract[] = EVENT_SOURCE_REGISTRY.sources;
 export const COLLECTOR_SOURCE_IDS = EVENT_SOURCE_REGISTRY.sources.filter((source) => source.source_kind === 'COLLECTOR').map((source) => source.source_id);
 export const SYSTEM_SOURCE_IDS = EVENT_SOURCE_REGISTRY.sources.filter((source) => source.source_kind === 'SYSTEM').map((source) => source.source_id);

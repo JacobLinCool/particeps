@@ -63,6 +63,21 @@ fun ParticipantDataCategory.summarize(): CollectorSummary {
             stringResource(R.string.participant_data_proximity_detail),
         )
 
+        ParticipantDataKind.NOTIFICATION_EVENTS -> Triple(
+            Glyph.APP,
+            stringResource(R.string.collector_notification_events_name),
+            stringResource(R.string.collector_notification_events_detail),
+        )
+        ParticipantDataKind.SCREEN_STATE -> Triple(
+            Glyph.SCREEN,
+            stringResource(R.string.collector_screen_state_name),
+            stringResource(R.string.collector_screen_state_detail),
+        )
+        ParticipantDataKind.NETWORK_THROUGHPUT -> Triple(
+            Glyph.DATA_VOLUME,
+            stringResource(R.string.collector_network_throughput_name),
+            stringResource(R.string.collector_network_throughput_detail),
+        )
         ParticipantDataKind.NETWORK_STATE -> Triple(
             Glyph.CONNECTION,
             stringResource(R.string.collector_network_state_name),

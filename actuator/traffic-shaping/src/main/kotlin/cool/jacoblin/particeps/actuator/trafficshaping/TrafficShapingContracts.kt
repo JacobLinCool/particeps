@@ -155,7 +155,12 @@ internal interface TrafficShapingPlatform {
 
 internal class TargetPackageSet private constructor(
     val packages: List<String>,
+    val allApps: Boolean,
 ) {
+    fun canonicalTargetBytes(): ByteArray = (if (allApps) "\"all\"" else
+        packages.joinToString(prefix = "[", postfix = "]", separator = ",") { "\"$it\"" }
+    ).toByteArray(Charsets.UTF_8)
+
     companion object {
         private const val MAXIMUM_PACKAGES = 64
         private const val PARTICEPS_APPLICATION_ID = "cool.jacoblin.particeps"
@@ -163,8 +168,10 @@ internal class TargetPackageSet private constructor(
             "[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)+",
         )
 
-        fun of(packages: List<String>): TargetPackageSet {
-            require(packages.size in 1..MAXIMUM_PACKAGES) { "Invalid target package count" }
+        fun of(packages: List<String>, allApps: Boolean = false): TargetPackageSet {
+            require(if (allApps) packages.isEmpty() else packages.size in 1..MAXIMUM_PACKAGES) {
+                "Select all apps with no package list, or a nonempty target package list"
+            }
             require(packages == packages.sorted().distinct()) {
                 "Target packages must be sorted and unique"
             }
@@ -174,7 +181,7 @@ internal class TargetPackageSet private constructor(
             require(PARTICEPS_APPLICATION_ID !in packages) {
                 "Particeps cannot be a target package"
             }
-            return TargetPackageSet(packages.toList())
+            return TargetPackageSet(packages.toList(), allApps)
         }
     }
 }
