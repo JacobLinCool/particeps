@@ -146,6 +146,8 @@
 
     <string name="collector_network_state_name">Connection type</string>
     <string name="collector_network_state_detail">Whether you are on Wi-Fi or mobile data, and whether it is metered</string>
+    <string name="collector_vpn_state_name">VPN connection state</string>
+    <string name="collector_vpn_state_detail">Records VPN connection changes visible to Android, including VPNs used by other apps. Does not record traffic content.</string>
 
     <string name="collector_network_usage_name">Data volume</string>
     <string name="collector_network_usage_detail">Total bytes your phone sent and received, every %1$s</string>

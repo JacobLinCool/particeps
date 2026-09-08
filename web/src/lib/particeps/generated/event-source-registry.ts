@@ -5050,81 +5050,6 @@ export const EVENT_SOURCE_REGISTRY = {
             "presence": null,
             "scope": "RESEARCHER"
           }
-        },
-        {
-          "clock": {
-            "automation_time_inputs": [
-              "OBSERVED_RESEARCH_TIME"
-            ],
-            "cross_boot_policy": "NOT_APPLICABLE",
-            "observation_basis": "RESEARCH_TIME",
-            "primary_source_basis": "NONE",
-            "primary_source_time_field": null,
-            "wall_clock_change_policy": "UNAFFECTED"
-          },
-          "completeness": {
-            "kind": "BEST_EFFORT_CALLBACK",
-            "may_have_quality_gaps": true,
-            "ordered_within_observation_batch": true,
-            "quality_gap_policy": "EMIT_AND_CONTINUE"
-          },
-          "delivery": {
-            "guarantee": "BEST_EFFORT",
-            "kind": "CALLBACK",
-            "latency_configuration_field": null,
-            "maximum_latency_millis": null
-          },
-          "event_type": "VPN_STATUS",
-          "fields": {
-            "connected": {
-              "clock_basis": "NONE",
-              "enum_values": [],
-              "keyed_presence_key": false,
-              "length_unit": null,
-              "maximum": null,
-              "maximum_length": null,
-              "meaning": "Whether the callback-observed VPN network set is nonempty, including other-UID VPNs. Omitted at admission until a VPN callback has established state; absence is unknown, not disconnected.",
-              "minimum": null,
-              "minimum_length": null,
-              "nullable": false,
-              "operators": [
-                "eq",
-                "in",
-                "ne"
-              ],
-              "required": false,
-              "unit": "none",
-              "window_sum": false,
-              "wire_type": "boolean"
-            }
-          },
-          "maximum_encoded_event_bytes": 4096,
-          "privacy": {
-            "audit_copy_policy": "IDENTIFIERS_ONLY",
-            "class": "SENSITIVE",
-            "exported": true,
-            "prohibited_inferences": [],
-            "trigger_exposure": "DECLARED_FIELDS_ONLY"
-          },
-          "rate_bound": {
-            "enforced_by": "none",
-            "kind": "UNBOUNDED",
-            "maximum_events_per_batch": null,
-            "maximum_events_per_hour": null,
-            "maximum_events_per_period": null,
-            "overflow_policy": "EMIT_QUALITY_GAP",
-            "period_seconds": null
-          },
-          "trigger": {
-            "condition_kinds": [
-              "EVENT_MATCH",
-              "SEQUENCE_STEP",
-              "WINDOW_COUNT",
-              "WINDOW_SUM"
-            ],
-            "presence": null,
-            "scope": "RESEARCHER"
-          }
         }
       ],
       "implementation": {
@@ -11011,10 +10936,117 @@ export const EVENT_SOURCE_REGISTRY = {
       "selectable": true,
       "source_id": "usage_events.v1",
       "source_kind": "COLLECTOR"
+    },
+    {
+      "access": [
+        {
+          "absence_policy": "BLOCK_REQUIRED_STUDY",
+          "kind": "ACCESS_NETWORK_STATE",
+          "mode": "install_permission"
+        }
+      ],
+      "configuration": {
+        "fields": {}
+      },
+      "disclosure_key": "collector.vpn_state",
+      "emission_authority": "SOURCE_PLUGIN_ONLY",
+      "events": [
+        {
+          "clock": {
+            "automation_time_inputs": [
+              "OBSERVED_RESEARCH_TIME"
+            ],
+            "cross_boot_policy": "NOT_APPLICABLE",
+            "observation_basis": "RESEARCH_TIME",
+            "primary_source_basis": "NONE",
+            "primary_source_time_field": null,
+            "wall_clock_change_policy": "UNAFFECTED"
+          },
+          "completeness": {
+            "kind": "BEST_EFFORT_CALLBACK",
+            "may_have_quality_gaps": true,
+            "ordered_within_observation_batch": true,
+            "quality_gap_policy": "EMIT_AND_CONTINUE"
+          },
+          "delivery": {
+            "guarantee": "BEST_EFFORT",
+            "kind": "CALLBACK",
+            "latency_configuration_field": null,
+            "maximum_latency_millis": null
+          },
+          "event_type": "VPN_STATUS",
+          "fields": {
+            "connected": {
+              "clock_basis": "NONE",
+              "enum_values": [],
+              "keyed_presence_key": false,
+              "length_unit": null,
+              "maximum": null,
+              "maximum_length": null,
+              "meaning": "Whether the callback-observed VPN network set is nonempty, including other-UID VPNs. Omitted at admission until a VPN callback has established state; absence is unknown, not disconnected.",
+              "minimum": null,
+              "minimum_length": null,
+              "nullable": false,
+              "operators": [
+                "eq",
+                "in",
+                "ne"
+              ],
+              "required": false,
+              "unit": "none",
+              "window_sum": false,
+              "wire_type": "boolean"
+            }
+          },
+          "maximum_encoded_event_bytes": 4096,
+          "privacy": {
+            "audit_copy_policy": "IDENTIFIERS_ONLY",
+            "class": "SENSITIVE",
+            "exported": true,
+            "prohibited_inferences": [],
+            "trigger_exposure": "DECLARED_FIELDS_ONLY"
+          },
+          "rate_bound": {
+            "enforced_by": "none",
+            "kind": "UNBOUNDED",
+            "maximum_events_per_batch": null,
+            "maximum_events_per_hour": null,
+            "maximum_events_per_period": null,
+            "overflow_policy": "EMIT_QUALITY_GAP",
+            "period_seconds": null
+          },
+          "trigger": {
+            "condition_kinds": [
+              "EVENT_MATCH",
+              "SEQUENCE_STEP",
+              "WINDOW_COUNT",
+              "WINDOW_SUM"
+            ],
+            "presence": null,
+            "scope": "RESEARCHER"
+          }
+        }
+      ],
+      "implementation": {
+        "owner_module": ":collector:vpn-state",
+        "statuses": [
+          {
+            "platform": "android",
+            "status": "IMPLEMENTED"
+          }
+        ]
+      },
+      "platforms": [
+        "android"
+      ],
+      "schema_version": 1,
+      "selectable": true,
+      "source_id": "vpn_state.v1",
+      "source_kind": "COLLECTOR"
     }
   ]
 } as const satisfies EventSourceRegistry;
-export const EVENT_SOURCE_REGISTRY_SHA256 = 'aa86f3086a51422247c61ab2b898646f5783cbfd14139974a6fff4c7007b2b0a' as const;
+export const EVENT_SOURCE_REGISTRY_SHA256 = '7ae35bfce66b7f14d61c7164e57db662ee8458651de85ee74b8a771875db7a3c' as const;
 export const EVENT_SOURCE_CONTRACTS: readonly RegistrySourceContract[] = EVENT_SOURCE_REGISTRY.sources;
 export const COLLECTOR_SOURCE_IDS = EVENT_SOURCE_REGISTRY.sources.filter((source) => source.source_kind === 'COLLECTOR').map((source) => source.source_id);
 export const SYSTEM_SOURCE_IDS = EVENT_SOURCE_REGISTRY.sources.filter((source) => source.source_kind === 'SYSTEM').map((source) => source.source_id);

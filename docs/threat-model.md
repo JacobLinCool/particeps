@@ -211,15 +211,19 @@ Particeps gateway. Selected packages keep using their ordinary underlying networ
 destinations still see the device’s ordinary source path; ISP/network observers retain their normal
 visibility. Particeps does not add transport encryption.
 
-Only signed packages enter the VPN allowlist. Unselected control apps bypass it. Selected apps share
+With an explicit signed package list, only those packages enter the VPN allowlist and unselected
+control apps bypass it. The signed `target_packages: "all"` scope instead covers all apps in the
+current Android user, including subsequently installed apps and Particeps itself; protected
+forwarding sockets bypass the tunnel to prevent recursion. Apps in the selected scope share
 aggregate uplink/downlink token buckets; throughput is bounded but latency, jitter, and packet loss
 are not controlled claims.
 
 ### Permission and package visibility
 
 Arbitrary signed package names cannot be declared statically in `<queries>`. Reliable installed and
-shared-UID proof therefore uses `QUERY_ALL_PACKAGES`, but implementation queries only signed names
-and their UID peers. It never saves/uploads inventory. This permission and VpnService require
+shared-UID proof therefore uses `QUERY_ALL_PACKAGES`, but explicit-list validation queries only
+signed names and their UID peers. All-app scope uses the VPN's default routing scope without
+enumerating an installed-app allowlist. Particeps never saves/uploads inventory. This permission and VpnService require
 Google Play declarations if distributed there.
 
 On Android 17+, protected direct-proxy sockets that reach the LAN require local-network runtime

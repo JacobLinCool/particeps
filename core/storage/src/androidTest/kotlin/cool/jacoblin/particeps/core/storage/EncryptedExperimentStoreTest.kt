@@ -24,12 +24,15 @@ import cool.jacoblin.particeps.core.model.StudyStoreRecoveryException
 import cool.jacoblin.particeps.core.model.StudyStoreRecoveryFailure
 import cool.jacoblin.particeps.core.model.withComputedDigest
 import java.io.File
+import java.io.IOException
 import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -68,6 +71,103 @@ class EncryptedExperimentStoreTest {
         val commits = mutableListOf<EngineCommit>()
         reopened.readCommits(1, 1, commits::add)
         assertEquals(listOf(commit), commits)
+    }
+
+    @Test
+    fun sourceCommitsRecoverFromTheLogBeforeTheirSnapshotCheckpoint() = runBlocking {
+        var current = initialRuntime()
+        store.initialize(current)
+        val genesisSnapshot = snapshotFile().readBytes()
+        repeat(3) {
+            val (commit, successor) = lifecycleCommit(
+                current, current.state, inputKind = EngineInputKind.SOURCE_OBSERVATION,
+            )
+            store.appendCommit(commit, successor)
+            current = successor
+            assertArrayEquals(genesisSnapshot, snapshotFile().readBytes())
+        }
+        val segment = commitSegments().single()
+        val acknowledgedLength = segment.length()
+        RandomAccessFile(segment, "rw").use { file ->
+            file.seek(file.length())
+            file.writeLong(current.nextCommitSequence)
+            file.writeInt(1024)
+            file.fd.sync()
+        }
+
+        assertEquals(current, newStore().loadRuntime())
+        assertEquals(acknowledgedLength, segment.length())
+        assertFalse(genesisSnapshot.contentEquals(snapshotFile().readBytes()))
+    }
+
+    @Test
+    fun sourceAppendCheckpointsAtTheCommitBudget() = runBlocking {
+        store = EncryptedExperimentStore(
+            context, experimentId, QUOTA_BYTES, File::delete,
+            snapshotPolicy = SnapshotCheckpointPolicy(maximumCommits = 2),
+        )
+        var current = initialRuntime()
+        store.initialize(current)
+        val genesisSnapshot = snapshotFile().readBytes()
+        repeat(2) { index ->
+            val (commit, successor) = lifecycleCommit(
+                current, current.state, inputKind = EngineInputKind.SOURCE_OBSERVATION,
+            )
+            store.appendCommit(commit, successor)
+            current = successor
+            assertEquals(index == 0, genesisSnapshot.contentEquals(snapshotFile().readBytes()))
+        }
+        assertEquals(current, newStore().loadRuntime())
+    }
+
+    @Test
+    fun interruptedCheckpointKeepsAcknowledgedFramesAndEquivalentRecoveryCandidates() = runBlocking {
+        var failCheckpoint = false
+        val operations = object : AcknowledgedFileSystem by AndroidAcknowledgedFileSystem {
+            override fun atomicReplace(source: File, target: File) {
+                if (failCheckpoint && target.name.endsWith(".runtime3.ptc")) {
+                    throw IOException("injected checkpoint interruption")
+                }
+                AndroidAcknowledgedFileSystem.atomicReplace(source, target)
+            }
+        }
+        store = EncryptedExperimentStore(
+            context, experimentId, QUOTA_BYTES, File::delete,
+            fileSystem = operations,
+            snapshotPolicy = SnapshotCheckpointPolicy(maximumCommits = 2),
+        )
+        var current = initialRuntime()
+        store.initialize(current)
+        failCheckpoint = true
+        repeat(2) {
+            val (commit, successor) = lifecycleCommit(
+                current, current.state, inputKind = EngineInputKind.SOURCE_OBSERVATION,
+            )
+            store.appendCommit(commit, successor)
+            current = successor
+        }
+
+        val reopened = newStore()
+        assertEquals(current, reopened.loadRuntime())
+        val recoveredSequences = mutableListOf<Long>()
+        reopened.readCommits(1, 2) { recoveredSequences += it.commitSequence }
+        assertEquals(listOf(1L, 2L), recoveredSequences)
+    }
+
+    @Test
+    fun uncheckpointedSuffixStillRequiresFullAuthentication() = runBlocking {
+        val initial = initialRuntime()
+        store.initialize(initial)
+        val (commit, successor) = lifecycleCommit(
+            initial, initial.state, inputKind = EngineInputKind.SOURCE_OBSERVATION,
+        )
+        store.appendCommit(commit, successor)
+        corruptCommitCiphertext(commit.commitSequence)
+
+        val failure = assertThrows(StudyStoreRecoveryException::class.java) {
+            runBlocking { newStore().loadRuntime() }
+        }
+        assertEquals(StudyStoreRecoveryFailure.COMMIT_LOG_INVALID, failure.failure)
     }
 
     @Test
@@ -333,6 +433,9 @@ class EncryptedExperimentStoreTest {
     )
 
     private fun newStore() = EncryptedExperimentStore(context, experimentId, QUOTA_BYTES)
+
+    private fun snapshotFile(): File = context.noBackupFilesDir.resolve("experiments")
+        .resolve("${opaqueId()}.runtime3.ptc")
 
     private fun commitSegments(): List<File> {
         val commits = context.noBackupFilesDir.resolve("experiments").resolve("${opaqueId()}.commits3")

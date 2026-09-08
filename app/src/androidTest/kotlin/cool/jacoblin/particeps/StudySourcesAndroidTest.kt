@@ -14,6 +14,7 @@ import cool.jacoblin.particeps.collector.networkstate.NetworkStateCollectorPlugi
 import cool.jacoblin.particeps.collector.networkthroughput.NetworkThroughputCollectorPlugin
 import cool.jacoblin.particeps.collector.notificationevents.NotificationEventsCollectorPlugin
 import cool.jacoblin.particeps.collector.screenstate.ScreenStateCollectorPlugin
+import cool.jacoblin.particeps.collector.vpnstate.VpnStateCollectorPlugin
 import cool.jacoblin.particeps.core.collector.*
 import cool.jacoblin.particeps.core.definition.*
 import cool.jacoblin.particeps.core.model.EventDraft
@@ -36,6 +37,7 @@ class StudySourcesAndroidTest {
         val fixtures = listOf(
             GyroscopeCollectorPlugin(androidContext) to GyroscopeV1ProfileConfiguration(samplingPeriodUs = 1_000_000, maximumReportLatencyUs = 0),
             NetworkStateCollectorPlugin(androidContext) to NetworkStateV1ProfileConfiguration(true),
+            VpnStateCollectorPlugin(androidContext) to VpnStateV1ProfileConfiguration(),
             ScreenStateCollectorPlugin(androidContext) to ScreenStateV1ProfileConfiguration(),
             NetworkThroughputCollectorPlugin() to NetworkThroughputV1ProfileConfiguration(5),
             NotificationEventsCollectorPlugin() to NotificationEventsV1ProfileConfiguration(),

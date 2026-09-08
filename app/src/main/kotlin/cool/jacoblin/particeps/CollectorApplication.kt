@@ -20,6 +20,7 @@ import cool.jacoblin.particeps.collector.networkusage.NetworkUsageCollectorPlugi
 import cool.jacoblin.particeps.collector.proximity.ProximityCollectorPlugin
 import cool.jacoblin.particeps.collector.temporalcontext.TemporalContextCollectorPlugin
 import cool.jacoblin.particeps.collector.usageevents.UsageEventsCollectorPlugin
+import cool.jacoblin.particeps.collector.vpnstate.VpnStateCollectorPlugin
 import cool.jacoblin.particeps.core.access.AccessManager
 import cool.jacoblin.particeps.core.application.AcceptedStudyVerifier
 import cool.jacoblin.particeps.core.application.EventDrivenRuntimeAssemblyFactory
@@ -97,6 +98,7 @@ class CollectorApplication : Application() {
                 AmbientLightCollectorPlugin(this),
                 ProximityCollectorPlugin(this),
                 NetworkStateCollectorPlugin(this),
+                VpnStateCollectorPlugin(this),
                 NetworkThroughputCollectorPlugin(),
                 NotificationEventsCollectorPlugin(),
                 ScreenStateCollectorPlugin(this),

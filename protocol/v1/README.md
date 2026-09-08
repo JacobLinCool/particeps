@@ -115,6 +115,14 @@ Self-disabling trigger sources, multiple resource owners, dependency cycles, unb
 window sources, unsupported feedback, arbitrary code, SQL, regular expressions, generic JSON
 comparison, and remote triggers are invalid before signing.
 
+Collector requiredness is independent of its collection schedule: a required collector MAY select
+an inactive (`null`) profile when its binding requests no collection. A non-null selected profile
+MUST be successfully applied and verified; failure remains fail-closed. Required access remains a
+study-wide prerequisite. Required actuators MUST remain non-inactive during the active session.
+This does not relax the continuous liveness requirement for collector event sources referenced by
+automations. Export validation MUST compare each epoch's applied resource vector to the replayed
+desired vector, so unscheduled inactivity of a required collector remains invalid.
+
 The envelope is exactly:
 
 ```text

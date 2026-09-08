@@ -14,7 +14,7 @@
 | 陀螺儀 | 既有 `gyroscope.v1`；啟用期間持有 CPU partial wake lock，暫停／停止／註冊回滾時釋放 | 不點亮螢幕；有耗電成本，硬體回報速率與系統限制仍須實機確認 |
 | 通知接收 | 新增 `notification_events.v1` 與 Android 通知存取設定 | 記錄張貼 App、系統 post time、接收 callback time、研究範圍 HMAC token。不讀文字／標題；同 token 可為更新，不代表新訊息、閱讀或伺服器送達 |
 | 實際傳輸速度 | 新增 `network_throughput.v1`，以 `TrafficStats` 記錄裝置總收發 bytes 差與實際單調時間區間 | 不主動耗流量；包含 OS 的介面計數語義，VPN 介面可能有重疊計數；不是特定 App 或實體網路的容量測速 |
-| 網路連線，包含 VPN | 既有 `network_state.v1` 的預設路由事件，加上獨立 VPN callback，包含其他 UID 的 VPN | 預設路由上的 `vpn` 與 `VPN_STATUS` 分開分析。監聽剛啟動、尚未收到 VPN 證據時 `connected` 省略，表示未知；不以假 `false` 代替 |
+| 網路連線，包含 VPN | 既有 `network_state.v1` 記錄預設路由；獨立 `vpn_state.v1` 記錄 VPN callback，包含其他 UID 的 VPN | `network_state.v1` 預設路由上的 `vpn` 與 `vpn_state.v1` 的 `VPN_STATUS` 分開分析。監聽剛啟動、尚未收到 VPN 證據時 `connected` 省略，表示未知；不以假 `false` 代替 |
 | App 開啟／離開時間與使用時間 | 既有 `usage_events.v1` 的 `ACTIVITY_RESUMED`、`ACTIVITY_PAUSED`、`ACTIVITY_STOPPED`，含來源時間、package 與活動元件 token | 是 Activity 前景／離開事件，不是程序啟動／被殺時間；Android 可延遲或缺漏回報，不能把它稱為完整精確的 App session |
 
 「螢幕可互動」與面板亮起的差異見 [Android PowerManager](https://developer.android.com/reference/android/os/PowerManager#isInteractive())。通知 callback 的平台契約見 [NotificationListenerService](https://developer.android.com/reference/android/service/notification/NotificationListenerService)。VPN 觀測的涵蓋範圍見 [NetworkRequest.Builder](https://developer.android.com/reference/android/net/NetworkRequest.Builder#setIncludeOtherUidNetworks(boolean))。
@@ -38,7 +38,8 @@ Android 喚醒、資源切換、背景工作與通知有實際延遲。`study_lo
 | `network_throughput.v1` | `poll_interval_seconds: 10` |
 | `usage_events.v1` | `poll_interval_seconds: 15` |
 | `network_state.v1` | `include_bandwidth_estimates: true`，估值與實際流量分開保存 |
-| 七個收集器 | 全部 `required: true`，整個進行中的研究 session 綁定 `continuous` |
+| `vpn_state.v1` | 空白設定 `{}`，獨立監聽 VPN 狀態；不改變 `network_state.v1` 既有事件契約 |
+| 八個收集器 | 全部 `required: true`，整個進行中的研究 session 綁定 `continuous` |
 | 上／下載上限 | 各 `500` kbps，對目前 Android 使用者空間所有 App 的合計流量限速，並非每個 App 各有 500 kbps |
 | 問卷 | 每日規則最多一次、可填寫 6 小時；同日恢復研究不再建立第二份 |
 | `storage.maximum_local_bytes` | `8589934592`（8 GiB 上限，不是實際空間需求保證） |
@@ -48,7 +49,9 @@ Android 喚醒、資源切換、背景工作與通知有實際延遲。`study_lo
 
 1 Hz 是可調整的範本設定，不代表足以辨識活動。若研究需要更高頻率，必須先用實際研究裝置測量儲存成長與電量，調整抽樣和上傳計畫；每筆事件另有 provenance 與 encrypted commit 開銷，不能只以三個浮點數估算空間。配額不足會停止收集。
 
-問卷詢問今天 12:00–17:00 的主要活動，提供多選與文字補充。每個日規則使用 `[17:00, 23:59)` 的邀請條件；若該時段全程暫停，該日問卷不在隔日補發。若晚些時候才恢復，邀請可在該時段內建立，並記錄實際觸發時間。這不是已收到三份答卷的保證。
+問卷補足研究手機看不到的活動與裝置使用：分別詢問手機以外的活動、無螢幕時間、其他裝置種類、是否把原本在研究手機上的事轉到其他裝置、是否轉去無螢幕活動，以及改變安排的原因。兩份五天範例共用相同六題；完整題目與分析編碼見 [活動與裝置替代問卷](activity-substitution-survey.md)。
+
+每個日規則使用 `[17:00, 23:59)` 的邀請條件；若該時段全程暫停，該日問卷不在隔日補發。若晚些時候才恢復，邀請可在該時段內建立，並記錄實際觸發時間。這不是已收到三份答卷的保證。
 
 ## 簽署與匯入
 
@@ -91,3 +94,5 @@ adb -s emulator-5580 shell am instrument -w -r -e class cool.jacoblin.particeps.
 VPN 測試確認研究 App 的預設路由進入全 App VPN、收到完整測試內容、下載受 500 kbps 限制，以及解除資源後清理。未提供本機 endpoint 時該測試明確跳過；不能把跳過列為通過。資料來源測試驗證通知 metadata、亮／熄屏、熄屏陀螺儀、連線觀測、被動 bytes 計數與暫停後不再送出事件。
 
 2026-09-06 驗證：Android 單元測試、lint 與 APK 建置通過；API 34 模擬器的上述兩項整合測試通過（非跳過）；Web 227 項測試通過，Python 67 項測試中 1 項既有測試跳過、其餘通過。範本已完成 canonicalize、公開 fixture 簽署與 check-config 驗證。尚未完成 120 小時實機試跑。
+
+2026-09-08 RC9 驗證：VPN 觀測拆為獨立的 `vpn_state.v1`，RC8 已發布的來源格式保持不變。上述兩項 API 34 整合測試再次通過，包含全 App 500 kbps 限速、VPN 連線及解除事件、熄屏感測與暫停停止送出事件。Web 232 項測試與 72 項共用契約測試通過；Python 73 項測試全部通過，包含新版 Kotlin 加密匯出檔的解密與重播。

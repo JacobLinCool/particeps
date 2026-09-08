@@ -7,6 +7,7 @@ import android.system.Os
 import android.system.OsConstants
 import cool.jacoblin.particeps.core.model.EngineCommit
 import cool.jacoblin.particeps.core.model.EngineCommitIntegrity
+import cool.jacoblin.particeps.core.model.EngineInputKind
 import cool.jacoblin.particeps.core.model.PendingEngineInput
 import cool.jacoblin.particeps.core.model.RuntimeDocument
 import cool.jacoblin.particeps.core.model.StorageUsage
@@ -44,6 +45,7 @@ class EncryptedExperimentStore internal constructor(
     private val deleteSegment: (File) -> Boolean,
     private val fileSystem: AcknowledgedFileSystem = AndroidAcknowledgedFileSystem,
     private val appendFrame: (File, ByteArray) -> Unit = ::appendFrameDurably,
+    private val snapshotPolicy: SnapshotCheckpointPolicy = SnapshotCheckpointPolicy(),
 ) : StudyStore {
     constructor(
         context: Context,
@@ -101,9 +103,10 @@ class EncryptedExperimentStore internal constructor(
                 throw StudyStoreRecoveryException(StudyStoreRecoveryFailure.COMMIT_LOG_INVALID, failure)
             }
             val recoveredPending = recoverPending(key, recovered)
-            if (recovered != snapshot || snapshotFile.candidates().size != 1) {
+            if (recovered != snapshot || snapshotFile.hasUnresolvedWrite()) {
                 writeSnapshot(recovered, key)
             }
+            snapshotPolicy.checkpointAcknowledged()
             runtime = recovered
             pending = recoveredPending
             recovered
@@ -280,6 +283,7 @@ class EncryptedExperimentStore internal constructor(
             if (keyStore.containsAlias(keyAlias)) keyStore.deleteEntry(keyAlias)
             runtime = null
             pending = null
+            snapshotPolicy.checkpointAcknowledged()
         }
     }
 
@@ -330,7 +334,16 @@ class EncryptedExperimentStore internal constructor(
         // The frame is now acknowledged. A cache write or pending-slot cleanup may not turn that
         // durable fact into a reported append failure that invites a duplicate reducer input.
         runtime = successor
-        runCatching { writeSnapshot(successor, key) }
+        val forceCheckpoint = consumePending || current.state != successor.state ||
+            current.activeConditionEpoch != successor.activeConditionEpoch ||
+            when (commit.inputKind) {
+                EngineInputKind.LIFECYCLE_COMMAND, EngineInputKind.SAFETY_FAILURE,
+                EngineInputKind.RECOVERY -> true
+                else -> false
+            }
+        if (snapshotPolicy.recordAppend(frame.size, forceCheckpoint)) {
+            runCatching { writeSnapshot(successor, key) }
+        }
         if (consumePending) {
             runCatching { pendingFile.delete() }
             pending = null
@@ -411,8 +424,8 @@ class EncryptedExperimentStore internal constructor(
             throw StudyStoreRecoveryException(StudyStoreRecoveryFailure.SNAPSHOT_INVALID)
         }
         val revision = candidates.maxOf(RuntimeDocument::revision)
-        val newest = candidates.filter { it.revision == revision }
-        if (newest.distinct().size != 1) {
+        val newest = candidates.filter { it.revision == revision }.distinct()
+        if (newest.size != 1) {
             throw StudyStoreRecoveryException(StudyStoreRecoveryFailure.SNAPSHOT_INVALID)
         }
         return newest.single()
@@ -795,12 +808,12 @@ class EncryptedExperimentStore internal constructor(
         val encoded = EngineDataJsonCodec.encodeRuntime(value)
         require(encoded.size <= MAXIMUM_SNAPSHOT_BYTES) { "Runtime snapshot exceeds its bound" }
         snapshotFile.write(encryptDocument(encoded, key, RUNTIME_HEADER))
+        snapshotPolicy.checkpointAcknowledged()
     }
 
     private fun storageBytes(): Long {
-        val snapshotBytes = snapshotFile.candidates().sumOf { it.bytes.size.toLong() }
-        val pendingBytes = if (pendingFile.exists()) pendingFile.candidates().sumOf { it.bytes.size.toLong() } else 0L
-        return snapshotBytes + pendingBytes + segmentEntries().sumOf(File::length)
+        return snapshotFile.storageBytes() + pendingFile.storageBytes() +
+            segmentEntries().sumOf(fileSystem::regularFileSize)
     }
 
     private fun legacyStorageExists(): Boolean =

@@ -59,6 +59,11 @@ A collector used as an automation event source must be required and remain activ
 active study session. The compiler rejects multiple resource owners, cycles, self-disabling trigger
 sources, and configurations that cannot reactivate their own source.
 
+Other collectors can be scheduled independently with local-window conditions. `required` controls
+failure handling when the selected profile is non-null; it does not prevent intentional scheduled
+inactivity. Release must stop source callbacks and relinquish held hardware/wake-lock resources.
+See [Scheduled collectors](scheduled-collectors.md) for off-window and lower-rate profiles.
+
 ## 2. Generated registry and profile contract
 
 The registry entry is the source of truth for:

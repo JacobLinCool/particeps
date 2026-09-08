@@ -133,7 +133,7 @@ class RegistryConfigurationTest(unittest.TestCase):
                 location.maximum_encoded_event_bytes,
             )
 
-    def test_study_session_active_case_is_total_during_active_session(self) -> None:
+    def test_required_collector_allows_scheduled_inactive_cases_and_default(self) -> None:
         value = battery_configuration()
         binding = value["automations"][0]
         binding["default_profile_id"] = None
@@ -150,7 +150,47 @@ class RegistryConfigurationTest(unittest.TestCase):
                 "profile_id": None,
             },
         )
+        validate_configuration(value, self.registry)
+
+        binding["cases"] = binding["cases"][:1]
+        binding["cases"][0]["profile_id"] = "continuous"
+        validate_configuration(value, self.registry)
+
+    def test_required_actuator_must_remain_active(self) -> None:
+        value = configuration()
+        value["traffic_shaping"] = {
+            "profiles": [{"id": "limited", "downlink_kbps": 500, "uplink_kbps": 500}],
+            "target_packages": "all",
+        }
+        value["automations"] = [{
+            "id": "bind-traffic",
+            "type": "resource_binding",
+            "resource": {"kind": "actuator", "id": "traffic-shaping.v1"},
+            "cases": [{
+                "condition": {"type": "study_session_active"},
+                "profile_id": "limited",
+            }],
+            "default_profile_id": None,
+        }]
+        validate_configuration(value, self.registry)
+        value["automations"][0]["cases"][0]["profile_id"] = None
         with self.assertRaisesRegex(ValidationError, "required resource"):
+            validate_configuration(value, self.registry)
+
+    def test_trigger_collector_remains_required_and_always_active(self) -> None:
+        value = event_match_configuration(
+            source_id="battery_state.v1",
+            profile={},
+            event_type="BATTERY_STATE",
+            predicate={"field": "percentage", "operator": "eq", "value": "50"},
+        )
+        validate_configuration(value, self.registry)
+        value["automations"][0]["cases"][0]["profile_id"] = None
+        with self.assertRaisesRegex(ValidationError, "trigger source must remain required and active"):
+            validate_configuration(value, self.registry)
+        value["automations"][0]["cases"][0]["profile_id"] = "continuous"
+        value["collectors"][0]["required"] = False
+        with self.assertRaisesRegex(ValidationError, "trigger source must remain required and active"):
             validate_configuration(value, self.registry)
 
     def test_event_float_wire_and_signed_predicate_spelling_are_distinct(self) -> None:

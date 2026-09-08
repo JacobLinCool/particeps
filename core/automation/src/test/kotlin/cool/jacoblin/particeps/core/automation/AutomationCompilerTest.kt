@@ -88,9 +88,49 @@ class AutomationCompilerTest {
             },
         )
         assertTrue(
-            "REQUIRED_RESOURCE_CAN_BE_INACTIVE" in
+            "TRIGGER_SOURCE_NOT_LIVE" in
                 failureCodes(compiler(usageContract).compile(nullablePredecessor)),
         )
+    }
+
+    @Test
+    fun requiredScheduledCollectorCanStopButRequiredActuatorMustRemainActive() {
+        val collector = ResourceKey(ResourceKind.COLLECTOR, "gyroscope.v1")
+        val binding = ResourceBindingAutomation(
+            "bind-gyro", collector,
+            listOf(ResourceConditionCase(StateCondition.StudyLocalWindow(1, 5, "12:00", "17:00"), "live")),
+            defaultProfileId = null,
+        )
+        val scheduled = AutomationCompilerInput(
+            CONFIG_DIGEST, 120 * 3_600,
+            listOf(DeclaredResource(collector, true, mapOf("live" to DIGEST_A))),
+            emptyList(), listOf(binding),
+        )
+        assertTrue(compiler().compile(scheduled) is CompilationResult.Success)
+
+        val actuator = ResourceKey(ResourceKind.ACTUATOR, "traffic-shaping.v1")
+        val inactiveActuator = scheduled.copy(
+            resources = listOf(DeclaredResource(actuator, true, mapOf("live" to DIGEST_A))),
+            automations = listOf(binding.copy(resource = actuator)),
+        )
+        assertEquals(setOf("REQUIRED_RESOURCE_CAN_BE_INACTIVE"), failureCodes(compiler().compile(inactiveActuator)))
+    }
+
+    @Test
+    fun scheduledRequiredCollectorCannotSupplyAnAutomationTrigger() {
+        val base = validConfiguration()
+        val binding = base.automations.filterIsInstance<ResourceBindingAutomation>().single()
+        val scheduledTriggerSource = base.copy(
+            automations = base.automations.map { automation ->
+                if (automation != binding) automation else binding.copy(
+                    cases = listOf(
+                        ResourceConditionCase(StateCondition.StudyLocalWindow(1, 5, "12:00", "17:00"), "live"),
+                    ),
+                    defaultProfileId = null,
+                )
+            },
+        )
+        assertEquals(setOf("TRIGGER_SOURCE_NOT_LIVE"), failureCodes(compiler(usageContract).compile(scheduledTriggerSource)))
     }
 
     @Test

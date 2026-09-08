@@ -79,6 +79,7 @@ import cool.jacoblin.particeps.core.resource.SuspendReceipt
 import cool.jacoblin.particeps.core.resource.VerifyReceipt
 import java.io.IOException
 import java.math.BigInteger
+import java.time.Instant
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -97,6 +98,83 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ExperimentRuntimeTest {
+    @Test
+    fun requiredScheduledCollectorStopsOutsideItsWindowAndStartsAgainTheNextDay() = runTest {
+        val fixture = scheduledCollectorFixture(backgroundScope)
+        val runtime = fixture.runtime
+        runtime.initialize()
+        completeSetup(runtime)
+        assertEquals(RuntimeCommandResult.Success, runtime.start())
+        assertEquals(ExperimentState.RUNNING, runtime.snapshot.value.state)
+        assertEquals(ResourceHealthStatus.INACTIVE, fixture.actuator.health().status)
+        assertEquals(0, fixture.actuator.resumeCount)
+
+        val firstOpen = scheduledTimerAt(runtime, "2026-09-07T12:00:00Z")
+        fixture.clocks.advanceToWallMillis(Instant.parse("2026-09-07T12:00:00Z").toEpochMilli())
+        assertEquals(RuntimeCommandResult.Success, runtime.onTimerDue(firstOpen.id, firstOpen.generation))
+        assertEquals(ResourceHealthStatus.APPLIED, fixture.actuator.health().status)
+        assertEquals(1, fixture.actuator.resumeCount)
+        val firstGeneration = requireNotNull(fixture.actuator.lastDesired).generation
+        assertTrue(emitScheduledGyro(fixture) is EmitBatchResult.Accepted)
+
+        val firstClose = scheduledTimerAt(runtime, "2026-09-07T17:00:00Z")
+        fixture.clocks.advanceToWallMillis(Instant.parse("2026-09-07T17:00:00Z").toEpochMilli())
+        assertEquals(RuntimeCommandResult.Success, runtime.onTimerDue(firstClose.id, firstClose.generation))
+        assertEquals(ExperimentState.RUNNING, runtime.snapshot.value.state)
+        assertEquals(ResourceHealthStatus.INACTIVE, fixture.actuator.health().status)
+        assertEquals(1, fixture.actuator.releaseCount)
+        assertNull(fixture.actuator.lastDesired)
+
+        // Delayed duplicate wakeups must not reapply an inactive collector overnight.
+        fixture.clocks.advanceToWallMillis(Instant.parse("2026-09-08T11:59:00Z").toEpochMilli())
+        assertEquals(
+            RuntimeCommandResult.Rejected(RuntimeCommandRejection.STALE_GENERATION),
+            runtime.onTimerDue(firstOpen.id, firstOpen.generation),
+        )
+        assertEquals(
+            RuntimeCommandResult.Rejected(RuntimeCommandRejection.STALE_GENERATION),
+            runtime.onTimerDue(firstClose.id, firstClose.generation),
+        )
+        assertEquals(ResourceHealthStatus.INACTIVE, fixture.actuator.health().status)
+        assertEquals(1, fixture.actuator.resumeCount)
+
+        val nextOpen = scheduledTimerAt(runtime, "2026-09-08T12:00:00Z")
+        fixture.clocks.advanceToWallMillis(Instant.parse("2026-09-08T12:00:00Z").toEpochMilli())
+        assertEquals(RuntimeCommandResult.Success, runtime.onTimerDue(nextOpen.id, nextOpen.generation))
+        assertEquals(ExperimentState.RUNNING, runtime.snapshot.value.state)
+        assertEquals(ResourceHealthStatus.APPLIED, fixture.actuator.health().status)
+        assertEquals(2, fixture.actuator.resumeCount)
+        assertTrue(requireNotNull(fixture.actuator.lastDesired).generation > firstGeneration)
+        assertTrue(emitScheduledGyro(fixture) is EmitBatchResult.Accepted)
+        assertEquals(2, runtime.snapshot.value.lifetimeDataEventCount)
+
+        fixture.actuator.failTerminal("SENSOR_UNAVAILABLE")
+        runCurrent()
+        assertEquals(ExperimentState.PAUSED, runtime.snapshot.value.state)
+        assertNull(runtime.captureToken())
+        assertEquals(ResourceHealthStatus.INACTIVE, fixture.actuator.health().status)
+        runtime.close()
+    }
+
+    @Test
+    fun requiredScheduledCollectorActivationFailureStillFailsClosed() = runTest {
+        val fixture = scheduledCollectorFixture(backgroundScope)
+        val runtime = fixture.runtime
+        runtime.initialize()
+        completeSetup(runtime)
+        runtime.start()
+        fixture.actuator.failNextVerification = true
+        val opening = scheduledTimerAt(runtime, "2026-09-07T12:00:00Z")
+        fixture.clocks.advanceToWallMillis(Instant.parse("2026-09-07T12:00:00Z").toEpochMilli())
+
+        assertTrue(runtime.onTimerDue(opening.id, opening.generation) is RuntimeCommandResult.FailedClosed)
+        assertEquals(ExperimentState.PAUSED, runtime.snapshot.value.state)
+        assertNull(runtime.captureToken())
+        assertEquals(ResourceHealthStatus.INACTIVE, fixture.actuator.health().status)
+        assertEquals(0, fixture.actuator.resumeCount)
+        runtime.close()
+    }
+
     @Test
     fun startCreatesVerifiedEpochAndOnlyThenOpensAdmission() = runTest {
         val fixture = fixture(backgroundScope)
@@ -1563,6 +1641,73 @@ class ExperimentRuntimeTest {
         assertEquals(RuntimeCommandResult.Success, runtime.acceptConsent())
         assertEquals(RuntimeCommandResult.Success, runtime.markReady())
     }
+
+    private suspend fun scheduledTimerAt(runtime: ExperimentRuntime, isoInstant: String): DurableTimer {
+        val target = Instant.parse(isoInstant).toEpochMilli()
+        return runtime.pendingTimers().single { (it.target as? TimerTarget.CalendarUtc)?.utcMillis == target }
+    }
+
+    private suspend fun emitScheduledGyro(fixture: ScheduledCollectorFixture): EmitBatchResult {
+        val now = fixture.clocks.now()
+        return fixture.runtime.emitBatch(
+            requireNotNull(fixture.runtime.captureToken()),
+            SourceEventBatch(
+                sourceId = EventSourceId("gyroscope.v1"), schemaVersion = 1,
+                resourceGeneration = requireNotNull(fixture.actuator.lastDesired).generation.value.toLong(),
+                producerOrdinal = 0,
+                events = listOf(
+                    EventDraft(
+                        EventTypeKey(EventSourceId("gyroscope.v1"), 1, "GYROSCOPE_SAMPLE"), now,
+                        mapOf(
+                            "source_elapsed_realtime_nanos" to now.elapsedRealtimeNanos.toString(),
+                            "x_radians_per_second" to "0.0", "y_radians_per_second" to "0.0",
+                            "z_radians_per_second" to "0.0", "accuracy" to "3",
+                        ),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    private fun scheduledCollectorFixture(scope: kotlinx.coroutines.CoroutineScope): ScheduledCollectorFixture {
+        val key = ResourceKey(ResourceKind.COLLECTOR, "gyroscope.v1")
+        val profile = SignedResourceProfile(
+            "daytime", "{\"maximum_report_latency_us\":0,\"sampling_period_us\":1000000}".toByteArray(),
+        )
+        val compilation = AutomationCompiler(EventContractRegistry { null }).compile(
+            AutomationCompilerInput(
+                CONFIG_DIGEST, 120 * 3_600,
+                listOf(DeclaredResource(key, true, mapOf(profile.id to profile.expectedSha256.value))),
+                emptyList(),
+                listOf(
+                    ResourceBindingAutomation(
+                        "gyro-schedule", key,
+                        listOf(ResourceConditionCase(StateCondition.StudyLocalWindow(1, 5, "12:00", "17:00"), profile.id)),
+                        defaultProfileId = null,
+                    ),
+                ),
+            ),
+        )
+        val program = (compilation as? CompilationResult.Success)?.program
+            ?: error("Compilation failed: ${(compilation as CompilationResult.Failure).issues}")
+        val clocks = FakeClocks(wallBaseMillis = Instant.parse("2026-09-07T11:59:00Z").toEpochMilli() - 1_000)
+        val actuator = FakeActuator(key)
+        val runtime = ExperimentRuntime(
+            study = RuntimeStudyIdentity("experiment-one", "configuration-one", CONFIG_DIGEST, 120 * 3_600),
+            store = InMemoryStudyStore(), program = program, surveyInterventionIds = emptySet(),
+            resourceHosts = listOf(RuntimeResourceHost(key, true, mapOf(profile.id to profile), actuator)),
+            clocks = clocks, scope = scope, zoneId = { "UTC" },
+            timerProducer = RuntimeTimerProducer { TimerProductionResult.Deferred },
+            entropy = DeterministicEntropy(),
+        )
+        return ScheduledCollectorFixture(runtime, actuator, clocks)
+    }
+
+    private data class ScheduledCollectorFixture(
+        val runtime: ExperimentRuntime,
+        val actuator: FakeActuator,
+        val clocks: FakeClocks,
+    )
 
     private fun fixture(
         scope: kotlinx.coroutines.CoroutineScope,

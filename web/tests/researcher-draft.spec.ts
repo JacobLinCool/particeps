@@ -103,7 +103,7 @@ describe('draft', () => {
     expect(draft.sign()).toBe('signed');
   });
 
-  it('keeps the generated continuous binding live when a collector becomes required', () => {
+  it('preserves the continuous schedule when requiredness changes', () => {
     const draft = ready();
     const binding = draft.configuration.automations.find((automation) =>
       automation.type === 'resource_binding' && automation.resource.id === 'location.v1'
@@ -114,7 +114,7 @@ describe('draft', () => {
     draft.setCollectorRequired('location.v1', true);
     flushSync();
     expect(draft.collector('location.v1')?.required).toBe(true);
-    expect(binding.default_profile_id).toBe('continuous');
+    expect(binding.default_profile_id).toBeNull();
     expect(draft.issues).toEqual([]);
     expect(draft.requiresBlindingConfirmation).toBe(false);
 
@@ -138,7 +138,7 @@ describe('draft', () => {
     draft.setCollectorRequired('location.v1', true);
     flushSync();
     expect(binding.default_profile_id).toBeNull();
-    expect(draft.issues.map((issue) => issue.code)).toContain('trigger_source_liveness');
+    expect(draft.issues).toEqual([]);
   });
 
   it('requires blinding confirmation for a single-profile conditional profile/null resource', () => {

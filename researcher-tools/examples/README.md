@@ -6,7 +6,8 @@
 | --- | --- |
 | `INSECURE-demo-signing-private.key` | Raw Ed25519 study signing private key, unpadded base64url — public fixture |
 | `INSECURE-demo-hpke-private.key` | Raw X25519 HPKE private key, unpadded base64url — public fixture |
-| `five-day-speed-study.json` | Participant-relative days 3–5, noon–17:00, 500 kbps, native activity surveys and continuous sensing; public-key fixture, Chrome only as an example |
+| `five-day-speed-study.json` | Participant-relative days 3–5, noon–17:00, 500 kbps for all apps, native activity surveys and continuous sensing; public-key fixture |
+| `five-day-windowed-gyro-study.json` | Same 120-hour study, with required gyro collecting only noon–17:00 on each local date while the study runs; other collectors remain continuous |
 | `demo-study.json` | An example study configuration, useful as a schema reference |
 
 These exist so a debug build can exercise signing and export decryption end to end, and so the example configuration in the [researcher guide](../../docs/researcher-guide.md) is runnable. That is their only purpose. There is no separate file for the demonstration signing public key; the [threat model](../../docs/threat-model.md) describes where a configuration's signing key lives.

@@ -7,6 +7,8 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.attribute.BasicFileAttributes
 
 /**
  * Repo-owned atomic-file contract whose methods return only after the kernel-visible mutation is
@@ -60,6 +62,13 @@ class AcknowledgedAtomicFile internal constructor(
         get() = listOf(stagedFile, replacementFile)
 
     override fun exists(): Boolean = fileSystem.exists(baseFile) || unresolvedFiles.any(fileSystem::exists)
+
+    /** Account for every visible candidate without loading encrypted documents into memory. */
+    internal fun storageBytes(): Long = (listOf(baseFile) + unresolvedFiles)
+        .filter(fileSystem::exists)
+        .sumOf(fileSystem::regularFileSize)
+
+    internal fun hasUnresolvedWrite(): Boolean = unresolvedFiles.any(fileSystem::exists)
 
     override fun readFully(): ByteArray {
         if (unresolvedFiles.any(fileSystem::exists)) throw IncompleteAtomicWrite(baseFile)
@@ -182,6 +191,8 @@ internal interface AcknowledgedFileSystem {
 
     fun readFully(file: File): ByteArray
 
+    fun regularFileSize(file: File): Long
+
     fun deleteIfExists(file: File)
 
     fun syncDirectory(directory: File)
@@ -225,6 +236,15 @@ internal object AndroidAcknowledgedFileSystem : AcknowledgedFileSystem {
     }
 
     override fun readFully(file: File): ByteArray = Files.readAllBytes(file.toPath())
+
+    override fun regularFileSize(file: File): Long = Files.readAttributes(
+        file.toPath(),
+        BasicFileAttributes::class.java,
+        LinkOption.NOFOLLOW_LINKS,
+    ).let { attributes ->
+        require(attributes.isRegularFile) { "Storage entry is not a regular file" }
+        attributes.size()
+    }
 
     override fun deleteIfExists(file: File) {
         Files.deleteIfExists(file.toPath())

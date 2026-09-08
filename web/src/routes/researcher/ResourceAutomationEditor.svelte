@@ -19,14 +19,18 @@
     window: '研究日與當地時段', firstDay: '起始研究日', lastDay: '最後研究日', startTime: '當地開始時間', endTime: '當地結束時間',
     active: '研究進行中', elapsed: '已經過一段時間', app: '持續使用目標 App',
     up: '將條件往上移', down: '將條件往下移', remove: '移除條件', seconds: '秒數',
-    held: '持續秒數', inactive: '停用'
+    held: '持續秒數', inactive: '停用',
+    collectorSchedule: '每個資料來源可設定獨立時段；預設選「停用」可在時段外停止，或選另一設定降低頻率。「必要」來源在排程開啟時仍須成功收集。背景排程可能延遲。',
+    gyroSchedule: '陀螺儀停用後會釋放持續喚醒鎖；只降低頻率仍會保持 CPU 喚醒。'
   } : {
     note: 'Cases run in order. The first true case selects a profile; otherwise use the default.',
     title: 'Resource rule', case: 'Condition', profile: 'Selected profile', default: 'Default profile', add: 'Add condition',
     window: 'Study days and local time', firstDay: 'First study day', lastDay: 'Last study day', startTime: 'Local start time', endTime: 'Local end time',
     active: 'Study session is active', elapsed: 'Elapsed time', app: 'Target app held in use',
     up: 'Move condition up', down: 'Move condition down', remove: 'Remove condition', seconds: 'Seconds',
-    held: 'Held for seconds', inactive: 'Inactive'
+    held: 'Held for seconds', inactive: 'Inactive',
+    collectorSchedule: 'Each source can use its own time windows. Set the default to Inactive to stop outside them, or select another profile for a lower rate. Required sources must still collect successfully when scheduled on. Background scheduling may be delayed.',
+    gyroSchedule: 'Deactivating the gyroscope releases its continuous wake lock. Lowering its rate alone still keeps the CPU awake.'
   });
 
   function profileIds(binding: ResourceBindingAutomation): string[] {
@@ -51,8 +55,11 @@
     ] };
   }
 
-  function condition(type: 'active' | 'elapsed' | 'app' | 'window'): StateCondition {
-    if (type === 'window') return { type: 'study_local_window', first_day: 3, last_day: 5, start_local_time: '12:00', end_local_time: '17:00' };
+  function condition(type: 'active' | 'elapsed' | 'app' | 'window', binding: ResourceBindingAutomation): StateCondition {
+    if (type === 'window') return {
+      type: 'study_local_window', first_day: binding.resource.kind === 'collector' ? 1 : 3,
+      last_day: binding.resource.kind === 'collector' ? 366 : 5, start_local_time: '12:00', end_local_time: '17:00'
+    };
     if (type === 'active') return { type: 'study_session_active' };
     if (type === 'elapsed') return { type: 'elapsed_at_least', duration_seconds: 180, clock: 'ACTIVE_RUNNING_TIME' };
     const packageName = trafficShapingEnabled(configuration.traffic_shaping) && configuration.traffic_shaping.target_packages !== 'all'
@@ -93,6 +100,13 @@
         <code>{binding.resource.kind}:{binding.resource.id}</code>
       </div>
 
+      {#if binding.resource.kind === 'collector'}
+        <Note icon="info" tone="plain" text={copy.collectorSchedule} />
+        {#if binding.resource.id === 'gyroscope.v1'}
+          <Note icon="info" tone="plain" text={copy.gyroSchedule} />
+        {/if}
+      {/if}
+
       {#each binding.cases as entry, caseIndex (entry)}
         <div class="case">
           <div class="case__order">
@@ -103,7 +117,7 @@
           </div>
           <Field label={copy.case} path={`${path}.cases.${caseIndex}.condition`}>
             {#snippet children({ id, describedby, invalid })}
-              <select class="input" {id} aria-describedby={describedby} aria-invalid={invalid || undefined} value={conditionKind(entry.condition)} onchange={(event) => (entry.condition = condition(event.currentTarget.value as 'active' | 'elapsed' | 'app' | 'window'))}>
+              <select class="input" {id} aria-describedby={describedby} aria-invalid={invalid || undefined} value={conditionKind(entry.condition)} onchange={(event) => (entry.condition = condition(event.currentTarget.value as 'active' | 'elapsed' | 'app' | 'window', binding))}>
                 <option value="active">{copy.active}</option>
                 <option value="elapsed">{copy.elapsed}</option>
                 <option value="window">{copy.window}</option>

@@ -7,6 +7,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -16,6 +17,30 @@ import org.junit.rules.TemporaryFolder
 class AcknowledgedAtomicFileTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
+
+    @Test
+    fun quotaAccountingIncludesEveryCandidateWithoutReadingItsContents() {
+        val target = temporaryFolder.root.resolve("record.ptc").apply { writeText("base") }
+        temporaryFolder.root.resolve(".record.ptc.pending").writeText("pending")
+        temporaryFolder.root.resolve(".record.ptc.replacement").writeText("replacement")
+        val operations = RecordingFileSystem()
+        val file = AcknowledgedAtomicFile(target, operations)
+
+        assertEquals(22L, file.storageBytes())
+        assertTrue(file.hasUnresolvedWrite())
+        assertFalse(operations.calls.any { it.startsWith("read:") })
+    }
+
+    @Test
+    fun quotaAccountingRejectsDirectoriesAndSymbolicLinks() {
+        val target = temporaryFolder.root.resolve("record.ptc").apply { mkdir() }
+        val file = AcknowledgedAtomicFile(target, RecordingFileSystem())
+        assertThrows(IllegalArgumentException::class.java) { file.storageBytes() }
+        target.delete()
+        val actual = temporaryFolder.root.resolve("actual.ptc").apply { writeText("data") }
+        Files.createSymbolicLink(target.toPath(), actual.toPath())
+        assertThrows(IllegalArgumentException::class.java) { file.storageBytes() }
+    }
 
     @Test
     fun successfulWritePerformsTheCompleteAcknowledgementSequence() {
@@ -231,6 +256,8 @@ class AcknowledgedAtomicFileTest {
                 bytes
             }
         }
+
+        override fun regularFileSize(file: File): Long = AndroidAcknowledgedFileSystem.regularFileSize(file)
 
         override fun deleteIfExists(file: File) {
             calls += "delete:${file.name}"

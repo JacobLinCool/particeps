@@ -253,6 +253,11 @@ export const zhTW: Messages = {
       records: '連線類型、是否按流量計費，以及漫遊與驗證狀態',
       limit: '不含 SSID、位址、連線對象或內容'
     },
+    'vpn_state.v1': {
+      name: 'VPN 連線狀態',
+      records: 'Android 回報的 VPN 連線事件，包含其他 App 的 VPN',
+      limit: '起始狀態可能未知；不含提供者身分或流量內容'
+    },
     'network_usage.v1': {
       name: '流量',
       records: '整支手機的位元組與封包總數，各類連線分開算',

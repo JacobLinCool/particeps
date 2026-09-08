@@ -1,0 +1,73 @@
+{
+  "calibration_status": "uncalibrated_conditional_scenarios",
+  "device": {
+    "name": "Google Pixel 10a",
+    "capacity_mah": 5100,
+    "capacity_source": "https://store.google.com/us/product/pixel_10a_specs?hl=en-us",
+    "assumed_voltage_v": 3.85,
+    "voltage_status": "Assumption; not verified for Pixel 10a"
+  },
+  "coefficient_status": "All energy/power coefficients below are analyst-selected sensitivity inputs, not measurements, fitted parameters, probability quantiles, or actual device bounds.",
+  "workload": {
+    "hours": 120,
+    "limited_hours": 15,
+    "baseline_awake_fraction": 0.2,
+    "actual_gyro_hz": 1,
+    "throughput_interval_seconds": 10,
+    "usage_interval_seconds": 15,
+    "vpn_audit_interval_seconds": 60,
+    "callback_events_per_day": {
+      "screen_state": 200,
+      "notification_events": 300,
+      "network_state_and_vpn_state": 100,
+      "temporal_context": 1
+    },
+    "usage_events_per_day": 1000,
+    "other_control_commits_per_day": 120,
+    "checkpoint_commits": 64,
+    "maximum_modeled_frame_bytes": 8192,
+    "forced_snapshot_budget": 100,
+    "vpn_mb_per_day": 1000,
+    "mean_packet_bytes": 1000,
+    "connections_per_hour": 20,
+    "keepalive_probes_per_hour": 0,
+    "survey_count": 3,
+    "survey_minutes": 2
+  },
+  "feature_scenarios": [
+    {"id": "events", "gyro": false, "polling": false, "vpn": false, "surveys": false, "extra_awake_fraction": 0.01, "realized_poll_fraction": 0, "realized_audit_fraction": 0},
+    {"id": "events+polling", "gyro": false, "polling": true, "vpn": false, "surveys": false, "extra_awake_fraction": 0.03, "realized_poll_fraction": 0.23, "realized_audit_fraction": 0},
+    {"id": "events+polling+gyro", "gyro": true, "polling": true, "vpn": false, "surveys": false, "extra_awake_fraction": 0.8, "realized_poll_fraction": 1, "realized_audit_fraction": 0},
+    {"id": "full-study", "gyro": true, "polling": true, "vpn": true, "surveys": true, "extra_awake_fraction": 0.8, "realized_poll_fraction": 1, "realized_audit_fraction": 1},
+    {"id": "full-study-without-gyro", "gyro": false, "polling": true, "vpn": true, "surveys": true, "extra_awake_fraction": 0.08, "realized_poll_fraction": 0.28, "realized_audit_fraction": 1}
+  ],
+  "coefficient_scenarios": {
+    "lower-assumptions": {
+      "runtime_mw": 0.5, "awake_increment_mw": 50, "gyro_sensor_mw": 2,
+      "event_mj": 0.02, "throughput_query_mj": 0.1, "usage_query_mj": 1,
+      "commit_mj": 0.5, "snapshot_mj": 2,
+      "vpn_service_mw": 0.5, "vpn_audit_mj": 1,
+      "vpn_mj_per_mb": 10, "vpn_mj_per_packet": 0.001, "connection_mj": 1,
+      "keepalive_mj": 1, "limiter_extra_mw": 0.05,
+      "limited_radio_delta_mw": 0, "survey_ui_mw": 500
+    },
+    "illustrative": {
+      "runtime_mw": 2, "awake_increment_mw": 100, "gyro_sensor_mw": 5,
+      "event_mj": 0.1, "throughput_query_mj": 0.5, "usage_query_mj": 5,
+      "commit_mj": 2, "snapshot_mj": 10,
+      "vpn_service_mw": 2, "vpn_audit_mj": 5,
+      "vpn_mj_per_mb": 50, "vpn_mj_per_packet": 0.005, "connection_mj": 5,
+      "keepalive_mj": 5, "limiter_extra_mw": 0.2,
+      "limited_radio_delta_mw": 0, "survey_ui_mw": 500
+    },
+    "higher-assumptions": {
+      "runtime_mw": 5, "awake_increment_mw": 200, "gyro_sensor_mw": 10,
+      "event_mj": 0.5, "throughput_query_mj": 2, "usage_query_mj": 20,
+      "commit_mj": 8, "snapshot_mj": 40,
+      "vpn_service_mw": 8, "vpn_audit_mj": 20,
+      "vpn_mj_per_mb": 200, "vpn_mj_per_packet": 0.02, "connection_mj": 20,
+      "keepalive_mj": 20, "limiter_extra_mw": 1,
+      "limited_radio_delta_mw": 0, "survey_ui_mw": 500
+    }
+  }
+}

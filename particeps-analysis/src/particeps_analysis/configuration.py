@@ -118,11 +118,6 @@ def validate_configuration(value: Any, registry: EventSourceRegistry) -> dict[st
         resource_profiles[("actuator", "traffic-shaping.v1")] = {
             profile["id"] for profile in traffic["profiles"]
         }
-    required_resources = {
-        ("collector", source_id) for source_id in required_collectors
-    }
-    if traffic:
-        required_resources.add(("actuator", "traffic-shaping.v1"))
     if len(resource_profiles) > 64:
         raise ValidationError("configuration declares more than 64 resources")
 
@@ -160,8 +155,8 @@ def validate_configuration(value: Any, registry: EventSourceRegistry) -> dict[st
         raise ValidationError("every intervention must be referenced")
     if set(owners) != set(resource_profiles):
         raise ValidationError("every resource requires exactly one binding automation")
-    for key in sorted(required_resources):
-        if not _always_active(owners[key]):
+    for key in sorted(owners):
+        if key[0] == "actuator" and not _always_active(owners[key]):
             raise ValidationError(f"required resource can become inactive: {key[1]}")
     for source_id in referenced_sources:
         source = registry.source(source_id)

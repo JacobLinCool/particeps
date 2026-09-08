@@ -68,6 +68,7 @@
     'screen_state.v1': 'screen',
     'network_throughput.v1': 'dataVolume',
     'network_state.v1': 'connection',
+    'vpn_state.v1': 'connection',
     'network_usage.v1': 'data-volume',
     'usage_events.v1': 'screen',
     'location.v1': 'location',

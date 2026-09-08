@@ -117,6 +117,8 @@
 
     <string name="collector_network_state_name">連線類型</string>
     <string name="collector_network_state_detail">目前使用 Wi-Fi 或行動網路，以及連線是否按流量計費</string>
+    <string name="collector_vpn_state_name">VPN 連線狀態</string>
+    <string name="collector_vpn_state_detail">記錄 Android 可觀察的 VPN 連線變化，包含其他 App 使用的 VPN，不記錄傳輸內容。</string>
 
     <string name="collector_network_usage_name">流量</string>
     <string name="collector_network_usage_detail">每隔 %1$s記錄手機傳送與接收的總位元組數</string>

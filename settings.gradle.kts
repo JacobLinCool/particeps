@@ -36,6 +36,7 @@ include(
     ":collector:temporal-context",
     ":collector:usage-common",
     ":collector:usage-events",
+    ":collector:vpn-state",
     ":core:access",
     ":core:automation",
     ":core:collector-api",

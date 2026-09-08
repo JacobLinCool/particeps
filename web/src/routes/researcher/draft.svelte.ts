@@ -50,7 +50,6 @@ import {
 import { requiresBlindingConfirmation as configurationRequiresBlindingConfirmation } from '$lib/particeps/researcher-blinding';
 import {
   continuousBinding,
-  continuousBindingProfile,
   defaultCollector,
   emptyConfiguration,
   validate,
@@ -520,18 +519,6 @@ export function createDraft() {
       const collector = configuration.collectors.find((candidate) => candidate.id === id);
       if (!collector) return;
       collector.required = required;
-
-      // Keep the generated continuous-collection macro valid as the researcher changes whether
-      // this resource is mandatory. Custom bindings are never rewritten behind their author's
-      // back; their own validation issue remains visible until every inactive outcome is resolved.
-      const owner = configuration.automations.find((automation) =>
-        automation.type === 'resource_binding' &&
-        automation.resource.kind === 'collector' &&
-        automation.resource.id === id
-      );
-      if (!owner || owner.type !== 'resource_binding') return;
-      const profileId = continuousBindingProfile(owner);
-      if (profileId !== null) owner.default_profile_id = required ? profileId : null;
     },
 
     addCollectorProfile(id: CollectorId): string | null {

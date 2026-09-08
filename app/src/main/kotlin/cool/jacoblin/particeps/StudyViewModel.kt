@@ -277,6 +277,7 @@ private fun String.toParticipantDataKind(): ParticipantDataKind = when (this) {
     "screen_state.v1" -> ParticipantDataKind.SCREEN_STATE
     "network_throughput.v1" -> ParticipantDataKind.NETWORK_THROUGHPUT
     "network_state.v1" -> ParticipantDataKind.NETWORK_STATE
+    "vpn_state.v1" -> ParticipantDataKind.VPN_STATE
     "network_usage.v1" -> ParticipantDataKind.NETWORK_USAGE
     "proximity.v1" -> ParticipantDataKind.PROXIMITY
     "temporal_context.v1" -> ParticipantDataKind.TEMPORAL_CONTEXT
@@ -297,6 +298,7 @@ private val ParticipantDataKind.sourceId: String
         ParticipantDataKind.SCREEN_STATE -> "screen_state.v1"
         ParticipantDataKind.NETWORK_THROUGHPUT -> "network_throughput.v1"
         ParticipantDataKind.NETWORK_STATE -> "network_state.v1"
+        ParticipantDataKind.VPN_STATE -> "vpn_state.v1"
         ParticipantDataKind.NETWORK_USAGE -> "network_usage.v1"
         ParticipantDataKind.PROXIMITY -> "proximity.v1"
         ParticipantDataKind.TEMPORAL_CONTEXT -> "temporal_context.v1"

@@ -399,6 +399,7 @@ class EngineReplayVerifier:
         self.authoritative_checkpoint = AutomationCheckpoint()
         self.components: dict[tuple[str, str], str] = {}
         self.active_epoch: ConditionEpoch | None = None
+        self.active_epoch_resources: dict[tuple[str, str], AppliedResource] = {}
         self.closed_epochs: dict[str, tuple[ConditionEpoch, ResearchTime]] = {}
         self.known_epochs: dict[str, ConditionEpoch] = {}
         self.automation_ids = {item["id"] for item in configuration["automations"]}
@@ -584,6 +585,13 @@ class EngineReplayVerifier:
                 )
             if self.active_epoch is None or observation.condition_epoch_id != self.active_epoch.id:
                 raise ValidationError("source observation is outside its active condition epoch")
+            resource = self.active_epoch_resources.get(("collector", observation.source_id))
+            if (
+                resource is None
+                or resource.status != "APPLIED"
+                or resource.desired_generation != observation.resource_generation
+            ):
+                raise ValidationError("source observation has no matching applied resource generation")
             prior = expected_checkpoints.get(observation.source_id)
             expected_ordinal = (
                 0
@@ -742,6 +750,7 @@ class EngineReplayVerifier:
             self._verify_applied_vector(resources, prospective=True)
             epoch = ConditionEpoch(epoch_id, configuration, vector, boundary)
             self.active_epoch = epoch
+            self.active_epoch_resources = {resource.key: resource for resource in resources}
             self.known_epochs[epoch_id] = epoch
         else:
             if self.active_epoch is None or self.active_epoch.id != epoch_id:
@@ -772,6 +781,7 @@ class EngineReplayVerifier:
                 raise ValidationError("condition epoch ends before it starts")
             self.closed_epochs[epoch_id] = (self.active_epoch, boundary)
             self.active_epoch = None
+            self.active_epoch_resources = {}
 
     def _verify_applied_vector(
         self, resources: tuple[AppliedResource, ...], *, prospective: bool
@@ -793,7 +803,14 @@ class EngineReplayVerifier:
         if set(vector) != set(self.profile_digests):
             raise ValidationError("condition resource vector is incomplete")
         checkpoint = self.pending_checkpoint if prospective else self.checkpoint
+        if checkpoint is None:
+            raise ValidationError("condition resource vector has no reducer desired state")
         for key, item in vector.items():
+            desired = checkpoint["desired_resources"].get((key[0].upper(), key[1]))
+            if desired != (str(item.desired_generation), item.profile_id):
+                raise ValidationError(
+                    "applied resource vector differs from reducer desired state"
+                )
             profiles = self.profile_digests[key]
             if item.status == "APPLIED":
                 if (
@@ -804,16 +821,8 @@ class EngineReplayVerifier:
             elif item.status == "OPTIONAL_FAILED":
                 if key in self.required_resources or item.profile_id not in profiles:
                     raise ValidationError("invalid optional resource failure")
-            elif key in self.required_resources:
+            elif key[0] == "actuator" and key in self.required_resources:
                 raise ValidationError("required resource is inactive in a condition epoch")
-            if checkpoint is not None:
-                desired = checkpoint["desired_resources"].get(
-                    (key[0].upper(), key[1])
-                )
-                if desired != (str(item.desired_generation), item.profile_id):
-                    raise ValidationError(
-                        "applied resource vector differs from reducer desired state"
-                    )
 
     def _automation_event(self, event: RecordedEvent) -> None:
         fields = event.wire_fields

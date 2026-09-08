@@ -35,6 +35,7 @@ from particeps_analysis.automation import (
     encode_automation_checkpoint as encode_authoritative_checkpoint,
 )
 from particeps_analysis.engine import (
+    AppliedResource,
     DurableAction,
     EngineCommit,
     EngineCommitParser,
@@ -671,15 +672,17 @@ def traffic_boundary_commit(previous: dict, old_timer_id: str) -> dict:
     )
 
 
-def active_chain() -> tuple[list[dict], dict]:
-    profile_digest = hashlib.sha256(canonicalize({})).hexdigest()
+def active_chain(*, collector_active: bool = True) -> tuple[list[dict], dict]:
+    profile_digest = hashlib.sha256(canonicalize({})).hexdigest() if collector_active else None
+    profile_id = "continuous" if collector_active else None
+    status = "APPLIED" if collector_active else "INACTIVE"
     vector_json, vector_digest = applied_resource_vector(
         kind="COLLECTOR",
         source_id="battery_state.v1",
         generation=1,
-        profile_id="continuous",
+        profile_id=profile_id,
         profile_sha256=profile_digest,
-        status="APPLIED",
+        status=status,
     )
     epoch = {
         "activated_at": research_time(2_000, 20),
@@ -712,7 +715,7 @@ def active_chain() -> tuple[list[dict], dict]:
         checkpoint_evaluated=1,
         checkpoint_lifecycle="ACTIVATING",
         checkpoint_start=1_000,
-        desired_resources=(("COLLECTOR", "battery_state.v1", 1, "continuous"),),
+        desired_resources=(("COLLECTOR", "battery_state.v1", 1, profile_id),),
         active_epoch=None,
         input_kind="LIFECYCLE_COMMAND",
     )
@@ -758,7 +761,7 @@ def active_chain() -> tuple[list[dict], dict]:
         checkpoint_evaluated=2,
         checkpoint_lifecycle="RUNNING",
         checkpoint_start=1_000,
-        desired_resources=(("COLLECTOR", "battery_state.v1", 1, "continuous"),),
+        desired_resources=(("COLLECTOR", "battery_state.v1", 1, profile_id),),
         active_epoch=epoch,
         extra_mutations=[
             {
@@ -766,9 +769,9 @@ def active_chain() -> tuple[list[dict], dict]:
                     kind="COLLECTOR",
                     source_id="battery_state.v1",
                     generation=1,
-                    profile_id="continuous",
+                    profile_id=profile_id,
                     profile_sha256=profile_digest,
-                    status="APPLIED",
+                    status=status,
                 ),
                 "component_id": "collector:battery_state.v1",
                 "component_kind": "RESOURCE",
@@ -777,6 +780,8 @@ def active_chain() -> tuple[list[dict], dict]:
         ],
         input_kind="RESOURCE_RESULT",
     )
+    if not collector_active:
+        return [first, second], epoch
     battery = event_document(
         4,
         "battery_state.v1",
@@ -811,7 +816,7 @@ def active_chain() -> tuple[list[dict], dict]:
         checkpoint_evaluated=3,
         checkpoint_lifecycle="RUNNING",
         checkpoint_start=1000,
-        desired_resources=(("COLLECTOR", "battery_state.v1", 1, "continuous"),),
+        desired_resources=(("COLLECTOR", "battery_state.v1", 1, profile_id),),
         active_epoch=epoch,
         source_checkpoints={
             "battery_state.v1": {
@@ -1041,6 +1046,91 @@ class EngineTest(unittest.TestCase):
         self.registry = EventSourceRegistry()
         self.parser = EngineCommitParser(self.registry)
 
+    def test_required_collector_can_activate_an_epoch_when_scheduled_off(self) -> None:
+        value = battery_configuration()
+        value["automations"][0]["cases"][0]["profile_id"] = None
+        documents, epoch = active_chain(collector_active=False)
+        verifier = EngineReplayVerifier(self.registry, value, CONFIGURATION_SHA256)
+
+        events = verifier.replay(self.parser.parse(document) for document in documents)
+
+        self.assertEqual(4, len(events))
+        self.assertEqual(epoch["id"], verifier.active_epoch.id)
+        self.assertEqual("RUNNING", verifier.previous_projection["state"])
+
+    def test_required_collector_scheduled_on_rejects_inactive_or_failed_receipts(self) -> None:
+        documents, _ = active_chain()
+        for status, profile_id, failure_reason in (
+            ("INACTIVE", None, None),
+            ("OPTIONAL_FAILED", "continuous", "RESOURCE_FAILURE"),
+        ):
+            with self.subTest(status=status):
+                verifier = EngineReplayVerifier(
+                    self.registry, battery_configuration(), CONFIGURATION_SHA256,
+                )
+                verifier.accept(self.parser.parse(documents[0]))
+                forged = copy.deepcopy(documents[1])
+                vector_json, vector_digest = applied_resource_vector(
+                    kind="COLLECTOR", source_id="battery_state.v1", generation=1,
+                    profile_id=profile_id, profile_sha256=None, status=status,
+                    failure_reason=failure_reason,
+                )
+                forged["events"][0]["fields"].update({
+                    "resource_vector_json": vector_json,
+                    "applied_resource_vector_sha256": vector_digest,
+                })
+                forged["successor_projection"]["active_condition_epoch"][
+                    "applied_resource_vector_sha256"
+                ] = vector_digest
+                next(
+                    item for item in forged["mutations"]
+                    if item["component_kind"] == "RESOURCE"
+                )["canonical_value"] = resource_component(
+                    kind="COLLECTOR", source_id="battery_state.v1", generation=1,
+                    profile_id=profile_id, profile_sha256=None, status=status,
+                    failure_reason=failure_reason,
+                )
+                with self.assertRaisesRegex(
+                    ValidationError, "desired state|invalid optional resource failure",
+                ):
+                    verifier.accept(self.parser.parse(resign_commit(forged)))
+
+    def test_observations_require_an_applied_receipt_with_matching_generation(self) -> None:
+        documents, _ = active_chain()
+        verifier = EngineReplayVerifier(
+            self.registry, battery_configuration(), CONFIGURATION_SHA256,
+        )
+        for document in documents[:2]:
+            verifier.accept(self.parser.parse(document))
+        observation_commit = self.parser.parse(documents[2])
+        verifier._verify_observations(observation_commit)
+        resource_key = ("collector", "battery_state.v1")
+        for status, generation in (("INACTIVE", 1), ("APPLIED", 2)):
+            with self.subTest(status=status, generation=generation):
+                verifier.active_epoch_resources[resource_key] = AppliedResource(
+                    kind="collector", id="battery_state.v1", desired_generation=generation,
+                    profile_id="continuous" if status == "APPLIED" else None,
+                    applied_profile_sha256=hashlib.sha256(canonicalize({})).hexdigest()
+                    if status == "APPLIED" else None,
+                    status=status, failure_reason=None,
+                )
+                with self.assertRaisesRegex(ValidationError, "matching applied resource generation"):
+                    verifier._verify_observations(observation_commit)
+        del verifier.active_epoch_resources[resource_key]
+        with self.assertRaisesRegex(ValidationError, "matching applied resource generation"):
+            verifier._verify_observations(observation_commit)
+
+    def test_scheduled_off_collector_cannot_admit_a_source_observation(self) -> None:
+        value = battery_configuration()
+        value["automations"][0]["cases"][0]["profile_id"] = None
+        off_documents, _ = active_chain(collector_active=False)
+        verifier = EngineReplayVerifier(self.registry, value, CONFIGURATION_SHA256)
+        verifier.replay(self.parser.parse(document) for document in off_documents)
+        active_documents, _ = active_chain()
+
+        with self.assertRaisesRegex(ValidationError, "matching applied resource generation"):
+            verifier._verify_observations(self.parser.parse(active_documents[2]))
+
     def test_study_deadline_component_must_match_signed_duration_exactly(self) -> None:
         documents, _ = active_chain()
         forged = copy.deepcopy(documents[0])
@@ -1082,6 +1172,14 @@ class EngineTest(unittest.TestCase):
             "cursor": "100",
         }
         verifier.previous_projection = {**prior, "source_checkpoints": checkpoints}
+        # This isolated recovery test supplies the prior admitted resource receipt together
+        # with its synthetic retrospective checkpoint; full replay validates both at activation.
+        verifier.active_epoch_resources[("collector", "usage_events.v1")] = AppliedResource(
+            kind="collector", id="usage_events.v1", desired_generation=1,
+            profile_id="continuous", status="APPLIED",
+            applied_profile_sha256=hashlib.sha256(canonicalize({"poll_interval_seconds": 15})).hexdigest(),
+            failure_reason=None,
+        )
         gap = self.parser._event(event_document(
             5,
             "study_runtime.v1",

@@ -139,9 +139,15 @@ For ordinary continuous collection, use the Web macro that emits:
 }
 ```
 
-This is how the previous “start every collector” behaviour is expressed now; the runtime does not
-hard-code it. A required collector must select a non-null profile in every case and in the default;
-an optional collector that is permitted to become inactive may instead use `null`.
+The runtime does not hard-code continuous collection. Each collector can instead use independent
+`study_local_window` cases and select `null` outside them, including a required collector. Requiredness
+controls failure handling when collection is scheduled on; it does not require continuous sampling.
+Required access remains a study-wide prerequisite, including while the source is scheduled off.
+Required actuators must still remain active throughout the running session.
+
+For a complete noon–17:00 gyroscope example and profile-switching instructions, see
+[Scheduled collectors](scheduled-collectors.md) and
+[`five-day-windowed-gyro-study.json`](../researcher-tools/examples/five-day-windowed-gyro-study.json).
 
 A trigger source required by another automation must itself be `required` and remain on a
 non-inactive profile throughout the active study session. Validation rejects a resource that can
@@ -149,8 +155,10 @@ turn off its own only source of reactivation, multiple owners, dependency cycles
 resources.
 
 The registry defines exact access and data semantics. A `required` resource blocks activation or
-safely pauses the study if its access/health cannot be verified. An optional resource can remain
-inactive only when no required automation depends on it.
+safely pauses the study if required access cannot be verified or its selected profile cannot run.
+Scheduled inactivity is recorded explicitly and is not a collection failure. A collector used as an
+automation event source must remain required and continuously active, even when the consuming
+automation is optional.
 
 ## 4. One-shot actions
 

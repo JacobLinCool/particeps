@@ -7,6 +7,60 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
+## v1.0.0-rc.9 — 2026-09-08
+
+- Added participant-relative study days and local-time windows. The five-day study examples run
+  for 120 hours from each participant's Start, apply aggregate 500 kbps upload and download limits
+  on local days 3–5 from 12:00 to 17:00, and invite one activity survey after each treatment window.
+  All-App shaping includes newly installed apps in the current Android user; the baseline keeps
+  the same VPN route with no rate cap.
+- Added screen power/lock state, notification metadata, passive device-throughput counters, and
+  independent VPN-state collectors. The existing default-network event contract remains unchanged.
+  Gyroscope collection keeps a partial wake lock while enabled; notification contents are not read
+  and throughput collection does not run active speed tests.
+- Each collector can select its own collection windows and profiles. A scheduled-off collector is
+  released, including its sensor registration and wake lock; selecting it again creates a new
+  verified generation. Required collectors fail closed when a selected profile cannot run. Required
+  actuators and collector sources used to trigger automations must remain active throughout the
+  running study.
+- Reduced repeated work while collecting: UI projections use one committed runtime snapshot,
+  admission waits suspend instead of polling, storage accounting reads file metadata, and encrypted
+  recovery snapshots are checkpointed by commit/byte thresholds. Every acknowledged event still
+  has a durable authenticated commit; lifecycle boundaries and recovery retain strict checks.
+- Web authoring, Kotlin execution, and Python replay agree on scheduled inactive collectors and
+  applied generations. Added a five-day example collecting gyroscope data only from 12:00 to 17:00
+  while the other collectors continue throughout the running study.
+- Both study examples include six questions covering off-phone activities, screen-free time,
+  other devices, device substitution, and substitution with activities without screens. These are
+  separately signed study configurations: installing the APK does not change an existing study's
+  questionnaire or schedule.
+- Added a configurable feature-level energy-estimation formula and a Pixel 10a scenario report.
+  The coefficients are explicit assumptions, not measurements or a validated device power model;
+  the estimates do not establish battery savings on participants' phones.
+
+**Timing and device limits:** Android background wakeups can delay a window transition or survey
+notification. Use recorded epochs, resource receipts, and event times to assess the actual exposure.
+Process death or reboot requires participant Resume after normal fail-closed recovery. A complete
+120-hour physical-device study and battery calibration have not been performed. The existing API 37
+preview-emulator quarantine remains limited to the exact platform defect described in the
+[release process](docs/maintainers/release.md); it is not a full API 37 functional-pass claim.
+
+**Application update from `v1.0.0-rc.8`:** export any research data that must be retained first,
+then install the signed rc.9 APK over the existing app; do not uninstall first. The application ID
+and production signing certificate are unchanged. Earlier releases retain the release-specific
+Protocol/storage restrictions documented below.
+
+**Local studies and exported data:** rc.9 introduces no local-store migration or mandatory reset
+for rc.8 studies. Existing signed configurations are still checked against the current supported
+contracts and access requirements; normal recovery and explicit Resume checks apply. Keep rc.8
+analysis tooling for rc.8 export bundles: bundles bind the complete event-source registry digest,
+which changes in rc.9. Use rc.9 analysis tooling for rc.9 exports. New collectors, schedules, and
+questionnaires require a newly issued signed study configuration and participant setup.
+
+**Fresh install:** install the signed rc.9 APK, then import a study configuration issued for rc.9.
+The example configurations use public demonstration keys; researchers must supply their own study
+information, consent text, and signing/export keys before recruitment.
+
 ## v1.0.0-rc.8 — 2026-09-03
 
 - Protocol v1 is replaced in place by a durable event-driven study runtime. The event-source

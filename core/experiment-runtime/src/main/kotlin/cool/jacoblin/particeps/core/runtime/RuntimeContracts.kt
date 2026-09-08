@@ -209,6 +209,7 @@ data class DurableUploadAcknowledgement(
     }
 }
 
+/** Durable fields come from one committed revision; consumers must not reload storage to complete them. */
 data class RuntimeSnapshot(
     val initialized: Boolean = false,
     val state: ExperimentState? = null,
@@ -223,6 +224,10 @@ data class RuntimeSnapshot(
     val calendarElapsedNanos: Long = 0,
     val activeRunningElapsedNanos: Long = 0,
     val clockAnchorWallTimeUtcMillis: Long? = null,
+    val participantInstanceId: String? = null,
+    val startedAtUtcMillis: Long? = null,
+    val deadlineUtcMillis: Long? = null,
+    val deadlineUtcTrusted: Boolean = false,
 )
 
 sealed interface RuntimeCommandResult {

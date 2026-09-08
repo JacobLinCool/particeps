@@ -61,6 +61,7 @@ enum class ParticipantDataKind {
     PROXIMITY,
     TEMPORAL_CONTEXT,
     USAGE_EVENTS,
+    VPN_STATE,
 }
 
 data class ParticipantAccessItem(

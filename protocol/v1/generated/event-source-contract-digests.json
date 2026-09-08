@@ -1,6 +1,6 @@
 {
   "contract_digest_format": "particeps-event-source-contract-digests-v1",
-  "registry_sha256": "aa86f3086a51422247c61ab2b898646f5783cbfd14139974a6fff4c7007b2b0a",
+  "registry_sha256": "7ae35bfce66b7f14d61c7164e57db662ee8458651de85ee74b8a771875db7a3c",
   "sources": [
     {
       "schema_version": 1,
@@ -49,7 +49,7 @@
     },
     {
       "schema_version": 1,
-      "sha256": "465783984cd5a33ab4e11993cdaa7433a4a26f6271fbc92c940125ae79456e6e",
+      "sha256": "fc3a466e1c24af0ebd9f976929b365d1f1020a04571e6e20266cd2175e643992",
       "source_id": "network_state.v1"
     },
     {
@@ -106,6 +106,11 @@
       "schema_version": 1,
       "sha256": "9f640f7840c0ced01fe90872f55174eef7bda151ba4b1ffaff0adfb4f6049089",
       "source_id": "usage_events.v1"
+    },
+    {
+      "schema_version": 1,
+      "sha256": "f393eb8138d13c277eb4b4809a1667c14a845646e2eb2dcff21d1b84fc25d437",
+      "source_id": "vpn_state.v1"
     }
   ]
 }

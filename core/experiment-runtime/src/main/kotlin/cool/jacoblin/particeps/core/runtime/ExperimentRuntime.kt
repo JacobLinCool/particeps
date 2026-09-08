@@ -85,7 +85,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -387,12 +386,13 @@ class ExperimentRuntime(
         val reduction = reducer.reduceBatch(program, automationCheckpoint, listOf(input))
         val dueEvent = RuntimeEventFactory.timerDue(timer, now)
         if (reduction.resourceChanges.isNotEmpty()) {
-            resourceBarrierLocked(
+            val applied = resourceBarrierLocked(
                 inputKind = EngineInputKind.TIMER_WAKE,
                 causalReducerInput = { sequence -> input.copy(sequenceNumber = sequence) },
                 causalEvents = listOf(dueEvent),
                 clock = clock,
             )
+            if (!applied) return@command RuntimeCommandResult.FailedClosed(SafetyPauseReason.REQUIRED_RESOURCE_FAILURE)
         } else {
             val effects = appendReductionLocked(
                 inputKind = EngineInputKind.TIMER_WAKE,
@@ -1012,31 +1012,20 @@ class ExperimentRuntime(
                 is AdmissionDecision.BoundaryFlush,
                 -> return barrierBuffer?.offer(token, submission) ?: EmitBatchResult.RejectedByAdmissionGate
                 is AdmissionDecision.Active -> {
-                    val lockOwner = Any()
-                    var acquired = false
-                    while (!decision.drainSignal.isCompleted) {
-                        if (mutex.tryLock(lockOwner)) {
-                            acquired = true
-                            break
-                        }
-                        delay(ADMISSION_LOCK_RETRY_MILLIS)
-                    }
-                    if (!acquired) continue
-                    try {
+                    val result = mutex.withLockUntilDrain(decision.drainSignal) {
                         when (val lockedDecision = gate.classify(token, observedTimes)) {
-                            AdmissionDecision.Rejected -> return EmitBatchResult.RejectedByAdmissionGate
+                            AdmissionDecision.Rejected -> EmitBatchResult.RejectedByAdmissionGate
                             is AdmissionDecision.PreDrain,
                             is AdmissionDecision.BoundaryFlush,
-                            -> return barrierBuffer?.offer(token, submission)
+                            -> barrierBuffer?.offer(token, submission)
                                 ?: EmitBatchResult.RejectedByAdmissionGate
-                            is AdmissionDecision.Active -> return processActiveSubmissionLocked(
+                            is AdmissionDecision.Active -> processActiveSubmissionLocked(
                                 submission,
                                 lockedDecision.conditionEpochId,
                             )
                         }
-                    } finally {
-                        mutex.unlock(lockOwner)
                     }
+                    if (result != null) return result
                 }
             }
         }
@@ -3647,6 +3636,12 @@ class ExperimentRuntime(
             calendarElapsedNanos = current.clockCheckpoint?.calendarElapsedNanos ?: 0,
             activeRunningElapsedNanos = current.clockCheckpoint?.activeRunningElapsedNanos ?: 0,
             clockAnchorWallTimeUtcMillis = current.clockCheckpoint?.anchor?.wallTimeUtcMillis,
+            participantInstanceId = current.participantInstanceId,
+            startedAtUtcMillis = current.clockCheckpoint?.let {
+                Math.subtractExact(it.deadlineUtcMillis, Math.multiplyExact(study.durationSeconds, MILLIS_PER_SECOND))
+            },
+            deadlineUtcMillis = current.clockCheckpoint?.deadlineUtcMillis,
+            deadlineUtcTrusted = current.clockCheckpoint?.deadlineUtcTrusted == true,
         )
     }
 
@@ -4022,7 +4017,6 @@ class ExperimentRuntime(
         const val STUDY_DEADLINE_COMPONENT_ID = "study-duration"
         const val STUDY_DURATION_AUTOMATION_ID = "study-duration"
         const val STUDY_DEADLINE_PRODUCER_KEY = "study-deadline"
-        const val ADMISSION_LOCK_RETRY_MILLIS = 1L
     }
 }
 

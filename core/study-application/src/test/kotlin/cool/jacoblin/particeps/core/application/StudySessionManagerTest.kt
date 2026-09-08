@@ -80,6 +80,48 @@ class StudySessionManagerTest {
     }
 
     @Test
+    fun liveProjectionDoesNotRecoverStorageAndKeepsOneCommittedRevision() = runTest {
+        val fixture = fixture()
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        runCurrent()
+        val initialRecoveryReads = fixture.store.recoveryReads
+        fixture.store.rejectRecoveryReads = true
+        fixture.manager.reviewStudy()
+        fixture.manager.acceptConsent()
+        fixture.manager.completeAccessSetup()
+        fixture.manager.start()
+        repeat(100) {
+            fixture.manager.pause()
+            runCurrent()
+            assertProjectionMatchesCommit(fixture)
+            fixture.manager.resume()
+            runCurrent()
+            assertProjectionMatchesCommit(fixture)
+        }
+        fixture.manager.complete()
+        runCurrent()
+        assertProjectionMatchesCommit(fixture)
+        assertEquals(initialRecoveryReads, fixture.store.recoveryReads)
+        fixture.manager.shutdownProcess()
+    }
+
+    private fun assertProjectionMatchesCommit(fixture: Fixture) {
+        val document = requireNotNull(fixture.store.runtime)
+        val clock = requireNotNull(document.clockCheckpoint)
+        val projection = fixture.manager.snapshot.value.runtime
+        assertEquals(document.revision, projection.durableThroughCommit)
+        assertEquals(document.state, projection.state)
+        assertEquals(document.participantInstanceId, projection.participantInstanceId)
+        assertEquals(clock.deadlineUtcMillis, projection.deadlineUtcMillis)
+        assertEquals(clock.deadlineUtcTrusted, projection.deadlineUtcTrusted)
+        assertEquals(clock.deadlineUtcMillis - 24 * 3_600_000L, projection.startedAtUtcMillis)
+        assertEquals(clock.activeRunningElapsedNanos / 1_000_000L, projection.activeRunningElapsedMillis)
+        assertEquals(clock.calendarElapsedNanos / 1_000_000L, projection.calendarElapsedMillis)
+        assertEquals(clock.anchor.wallTimeUtcMillis, projection.lastObservedAtUtcMillis)
+    }
+
+    @Test
     fun sameBootProcessRecoveryFromRunningIsDurablyPausedAndNeverAutoResumes() = runTest {
         val fixture = fixture()
         fixture.manager.initialize()
@@ -322,7 +364,13 @@ class StudySessionManagerTest {
         val commits = mutableListOf<EngineCommit>()
         var cleared = false
 
-        override suspend fun loadRuntime(): RuntimeDocument? = runtime
+        var recoveryReads = 0
+        var rejectRecoveryReads = false
+        override suspend fun loadRuntime(): RuntimeDocument? {
+            check(!rejectRecoveryReads) { "Live projection must not invoke disk recovery" }
+            recoveryReads++
+            return runtime
+        }
         override suspend fun initialize(runtime: RuntimeDocument) {
             check(this.runtime == null)
             this.runtime = runtime

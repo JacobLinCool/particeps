@@ -100,6 +100,7 @@ dependencies {
     implementation(project(":collector:keyboard-ime"))
     implementation(project(":collector:location"))
     implementation(project(":collector:network-state"))
+    implementation(project(":collector:vpn-state"))
     implementation(project(":collector:network-throughput"))
     implementation(project(":collector:notification-events"))
     implementation(project(":collector:screen-state"))

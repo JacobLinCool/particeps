@@ -134,7 +134,7 @@ describe('event-driven authoring contract', () => {
     expect(validate(configuration).some((issue) => issue.code === 'resource_owner')).toBe(true);
   });
 
-  it('treats the first live study-session case as an active-session total binding', () => {
+  it('allows scheduled inactivity for a required collector without event dependants', () => {
     const configuration = validConfiguration();
     const binding = configuration.automations.find((automation) =>
       automation.type === 'resource_binding' && automation.resource.id === 'app_lifecycle.v1'
@@ -147,7 +147,7 @@ describe('event-driven authoring contract', () => {
       condition: { type: 'elapsed_at_least', duration_seconds: 1, clock: 'ACTIVE_RUNNING_TIME' },
       profile_id: null
     });
-    expect(validate(configuration).some((issue) => issue.code === 'trigger_source_liveness')).toBe(true);
+    expect(validate(configuration)).toEqual([]);
   });
 
   it('requires a 15-second usage profile when it drives a condition', () => {
@@ -179,6 +179,13 @@ describe('event-driven authoring contract', () => {
     expect(validate(configuration).some((issue) => issue.path.includes('profiles'))).toBe(true);
     usage.profiles[0].config.poll_interval_seconds = 15;
     expect(validate(configuration)).toEqual([]);
+    const binding = configuration.automations.find((automation) => automation.id === 'bind-usage-events');
+    if (!binding || binding.type !== 'resource_binding') throw new Error('missing usage binding');
+    binding.cases = [{ condition: {
+      type: 'study_local_window', first_day: 1, last_day: 366, start_local_time: '12:00', end_local_time: '17:00'
+    }, profile_id: 'continuous' }];
+    binding.default_profile_id = null;
+    expect(validate(configuration).some((issue) => issue.code === 'trigger_source_liveness')).toBe(true);
   });
 
   it('enforces the condition-node bound across an occurrence trigger and guard', () => {

@@ -274,6 +274,16 @@ data class UsageEventsV1ProfileConfiguration(
     companion object { const val SOURCE_ID: String = "usage_events.v1" }
 }
 
+data class VpnStateV1ProfileConfiguration(
+    override val sourceId: String = SOURCE_ID,
+) : CollectorProfileConfiguration {
+    init {
+        require(sourceId == SOURCE_ID) { "Collector profile source ID is immutable" }
+    }
+
+    companion object { const val SOURCE_ID: String = "vpn_state.v1" }
+}
+
 object GeneratedCollectorProfileCodec {
     fun decode(sourceId: String, config: JsonObject): CollectorProfileConfiguration {
         GeneratedCollectorProfileContracts.requireValid(sourceId, config)
@@ -326,6 +336,8 @@ object GeneratedCollectorProfileCodec {
             )
             "usage_events.v1" -> UsageEventsV1ProfileConfiguration(
                 pollIntervalSeconds = config.get("poll_interval_seconds").asLong,
+            )
+            "vpn_state.v1" -> VpnStateV1ProfileConfiguration(
             )
             else -> throw IllegalArgumentException("Unknown collector source: $sourceId")
         }
@@ -382,6 +394,8 @@ object GeneratedCollectorProfileCodec {
             is UsageEventsV1ProfileConfiguration -> {
                 add("poll_interval_seconds", com.google.gson.JsonPrimitive(profile.pollIntervalSeconds))
             }
+            is VpnStateV1ProfileConfiguration -> {
+            }
         }
     }
 
@@ -393,7 +407,7 @@ object GeneratedCollectorProfileCodec {
 }
 
 object GeneratedCollectorProfileContracts {
-    const val REGISTRY_SHA256: String = "aa86f3086a51422247c61ab2b898646f5783cbfd14139974a6fff4c7007b2b0a"
+    const val REGISTRY_SHA256: String = "7ae35bfce66b7f14d61c7164e57db662ee8458651de85ee74b8a771875db7a3c"
     val contracts: Map<String, GeneratedCollectorProfileContract> = listOf(
         GeneratedCollectorProfileContract(
             sourceId = "accelerometer.v1",
@@ -791,6 +805,11 @@ object GeneratedCollectorProfileContracts {
                     maximumItems = null,
                     lessThanOrEqualField = null,
                 ),
+            ),
+        ),
+        GeneratedCollectorProfileContract(
+            sourceId = "vpn_state.v1",
+            fields = mapOf(
             ),
         ),
     ).associateBy(GeneratedCollectorProfileContract::sourceId)

@@ -519,8 +519,11 @@ private class Validator(
         configuration.resources.forEachIndexed { index, resource ->
             val owners = groupedOwners[resource.key].orEmpty()
             if (owners.size != 1) issue("INVALID_RESOURCE_OWNER_COUNT", "resources[$index]", "Every resource needs exactly one binding owner")
-            if (resource.required && owners.singleOrNull()?.let(::alwaysActive) != true) {
-                issue("REQUIRED_RESOURCE_CAN_BE_INACTIVE", "resources[$index]", "Required resource must select a profile throughout active session")
+            if (resource.required &&
+                resource.key.kind == cool.jacoblin.particeps.core.resource.ResourceKind.ACTUATOR &&
+                owners.singleOrNull()?.let(::alwaysActive) != true
+            ) {
+                issue("REQUIRED_RESOURCE_CAN_BE_INACTIVE", "resources[$index]", "Required actuator must select a profile throughout active session")
             }
         }
 

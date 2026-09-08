@@ -148,6 +148,9 @@ class EncryptedActiveStudyStoreTest {
         override fun readFully(file: File): ByteArray =
             AndroidAcknowledgedFileSystem.readFully(file)
 
+        override fun regularFileSize(file: File): Long =
+            AndroidAcknowledgedFileSystem.regularFileSize(file)
+
         override fun deleteIfExists(file: File) {
             if (failure == Failure.DELETE && file.name == "active-study.ptc") {
                 throw IOException("injected delete failure")

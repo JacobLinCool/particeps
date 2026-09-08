@@ -68,6 +68,7 @@ export interface ParticipantCopy {
       screenState: string;
       networkThroughput: string;
       networkState: string;
+      vpnState: string;
       networkUsage: string;
       usageEvents: string;
       location: string;
@@ -85,6 +86,7 @@ export interface ParticipantCopy {
       screenState: string;
       networkThroughput: string;
       networkState: string;
+      vpnState: string;
       networkUsage: string;
       usageEvents: string;
       location: string;
@@ -190,6 +192,7 @@ export const en: ParticipantCopy = {
       screenState: 'Screen power and lock state',
       networkThroughput: 'Observed throughput',
       networkState: 'Connection type',
+      vpnState: 'VPN connection state',
       networkUsage: 'Data volume',
       usageEvents: 'App and screen use',
       location: 'Location',
@@ -207,6 +210,7 @@ export const en: ParticipantCopy = {
       screenState: 'Display power, interactive state, and whether the lock screen is showing',
       networkThroughput: 'Device-wide transfer counter changes and timing; no active speed test',
       networkState: 'Whether you are on Wi-Fi or mobile data, and whether it is metered',
+      vpnState: 'Whether Android reports a VPN connection; no provider or traffic content',
       networkUsage: 'Total bytes this phone sends and receives',
       usageEvents: 'Which apps open and close, and when the screen turns on',
       location: 'The phone’s location',
@@ -319,6 +323,7 @@ export const zhTW: ParticipantCopy = {
       screenState: '螢幕電源與鎖定狀態',
       networkThroughput: '實際傳輸速率',
       networkState: '連線類型',
+      vpnState: 'VPN 連線狀態',
       networkUsage: '流量',
       usageEvents: 'App 與螢幕使用',
       location: '位置',
@@ -336,6 +341,7 @@ export const zhTW: ParticipantCopy = {
       screenState: '螢幕電源、可互動狀態與鎖定畫面是否顯示',
       networkThroughput: '全裝置流量計數變化與時間，不執行主動測速',
       networkState: '目前使用 Wi-Fi 或行動網路，以及連線是否按流量計費',
+      vpnState: 'Android 回報的 VPN 連線狀態；不含提供者或流量內容',
       networkUsage: '手機傳送與接收的總位元組數',
       usageEvents: '哪些 App 開啟或關閉，以及螢幕何時亮起',
       location: '手機的位置',

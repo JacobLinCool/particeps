@@ -249,6 +249,11 @@ export const en: Messages = {
       records: 'Transport, metered, roaming, and validation',
       limit: 'No SSID, address, destination, or content'
     },
+    'vpn_state.v1': {
+      name: 'VPN connection state',
+      records: 'Android VPN connection callbacks, including other apps’ VPNs',
+      limit: 'Initial state may be unknown; no provider identity or traffic content'
+    },
     'network_usage.v1': {
       name: 'Data volume',
       records: 'Device-total bytes and packets, per transport',

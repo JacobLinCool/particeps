@@ -128,9 +128,8 @@ export function continuousBinding(collector: CollectorConfig): ResourceBindingAu
 }
 
 /**
- * The authoring macro's exact shape. A required collector uses the same profile as its default so
- * the closed-world compiler can prove that no automation state makes the resource inactive;
- * lifecycle pause and terminal transitions still revoke every resource outside the active study.
+ * Recognize the authoring macro's continuous-collection shape. Requiredness controls failure
+ * handling independently of scheduling; lifecycle pause and terminal transitions revoke resources.
  */
 export function continuousBindingProfile(
   binding: ResourceBindingAutomation
@@ -289,7 +288,7 @@ function validateAutomations(issues: Issue[], configuration: StudyConfiguration,
     const resourceOwners = owners.get(key) ?? [];
     if (resourceOwners.length !== 1) issues.push({ path: 'automations', code: 'resource_owner' });
     const owner = resourceOwners[0];
-    if (resource.required && owner && !bindingAlwaysActive(owner)) {
+    if (key.startsWith('actuator:') && resource.required && owner && !bindingAlwaysActive(owner)) {
       issues.push({ path: 'automations', code: 'trigger_source_liveness' });
     }
   }

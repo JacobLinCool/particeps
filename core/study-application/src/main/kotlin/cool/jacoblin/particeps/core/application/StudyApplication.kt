@@ -919,7 +919,7 @@ class StudySessionManager(
                 mutableSnapshot.value = StudySessionSnapshot(
                     initialized = true,
                     study = participantSummary(configuration),
-                    runtime = participantRuntime(nextAssembly.runtime.snapshot.value, document, signed.durationHours),
+                    runtime = participantRuntime(nextAssembly.runtime.snapshot.value),
                     access = access,
                     recoveryStatus = if (result.recoveredFailClosed) {
                         StudyRecoveryStatus.RECOVERED_PAUSED
@@ -974,11 +974,11 @@ class StudySessionManager(
         runtimeObservation?.cancel()
         runtimeObservation = scope.launch {
             current.snapshot.collect { next ->
-                if (assembly?.runtime === current) {
-                    val document = store?.loadRuntime()
-                    val durationHours = verified?.configuration?.durationHours
-                    mutableSnapshot.update {
-                        it.copy(runtime = participantRuntime(next, document, durationHours))
+                sessionMutex.withLock {
+                    if (assembly?.runtime === current) {
+                        mutableSnapshot.update {
+                            it.copy(runtime = participantRuntime(next))
+                        }
                     }
                 }
             }
@@ -1062,34 +1062,20 @@ class StudySessionManager(
         }.takeIf { it.length <= MAXIMUM_SURVEY_ANSWERS_JSON }
     }
 
-    private fun participantRuntime(
-        runtime: RuntimeSnapshot,
-        document: RuntimeDocument?,
-        durationHours: Int?,
-    ): ParticipantRuntimeStatus {
-        val clock = document?.clockCheckpoint
-        val durationMillis = durationHours?.let {
-            Math.multiplyExact(Math.multiplyExact(it.toLong(), 3_600L), 1_000L)
-        }
-        return ParticipantRuntimeStatus(
-            state = runtime.state,
-            participantInstanceId = document?.participantInstanceId,
-            lifetimeDataEventCount = runtime.lifetimeDataEventCount,
-            durableThroughCommit = runtime.revision,
-            uploadedThroughCommit = runtime.uploadedThroughCommit,
-            retainedFromCommit = runtime.retainedFromCommit,
-            startedAtUtcMillis = if (clock != null && durationMillis != null) {
-                Math.subtractExact(clock.deadlineUtcMillis, durationMillis)
-            } else {
-                null
-            },
-            deadlineUtcMillis = clock?.deadlineUtcMillis,
-            deadlineUtcTrusted = clock?.deadlineUtcTrusted == true,
-            activeRunningElapsedMillis = clock?.activeRunningElapsedNanos?.div(NANOS_PER_MILLISECOND) ?: 0,
-            calendarElapsedMillis = clock?.calendarElapsedNanos?.div(NANOS_PER_MILLISECOND) ?: 0,
-            lastObservedAtUtcMillis = clock?.anchor?.wallTimeUtcMillis,
-        )
-    }
+    private fun participantRuntime(runtime: RuntimeSnapshot): ParticipantRuntimeStatus = ParticipantRuntimeStatus(
+        state = runtime.state,
+        participantInstanceId = runtime.participantInstanceId,
+        lifetimeDataEventCount = runtime.lifetimeDataEventCount,
+        durableThroughCommit = runtime.revision,
+        uploadedThroughCommit = runtime.uploadedThroughCommit,
+        retainedFromCommit = runtime.retainedFromCommit,
+        startedAtUtcMillis = runtime.startedAtUtcMillis,
+        deadlineUtcMillis = runtime.deadlineUtcMillis,
+        deadlineUtcTrusted = runtime.deadlineUtcTrusted,
+        activeRunningElapsedMillis = runtime.activeRunningElapsedNanos / NANOS_PER_MILLISECOND,
+        calendarElapsedMillis = runtime.calendarElapsedNanos / NANOS_PER_MILLISECOND,
+        lastObservedAtUtcMillis = runtime.clockAnchorWallTimeUtcMillis,
+    )
 
     private fun mapCommand(result: RuntimeCommandResult): StudyCommandResult = when (result) {
         RuntimeCommandResult.Success -> StudyCommandResult.Success

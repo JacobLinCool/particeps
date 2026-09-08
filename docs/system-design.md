@@ -165,6 +165,17 @@ resource state.
 
 ### Snapshots and cold start
 
+Runtime observers consume one immutable committed-revision projection, including study clock and
+participant identity fields; ordinary UI updates never reopen storage or replay the historical log.
+The application serializes projection updates against session replacement. Admission contenders
+suspend on mutex acquisition or the gate's drain signal, rather than polling a lock every millisecond.
+
+Commit frames retain synchronous durable acknowledgement. Snapshot checkpoints follow a budget of
+64 acknowledged commits or 1 MiB of appended frames, with additional lifecycle, safety, recovery,
+epoch and pending-input boundaries. A failed required checkpoint remains due until acknowledged.
+Quota accounting reads validated file sizes, not encrypted candidate contents. These policies add
+no timer wakeups and do not alter observation frequency or commit durability.
+
 Periodic encrypted snapshots contain the scalar projection and typed component map at one verified
 commit digest. They are caches, never provenance. Opening authenticates the newest usable snapshot,
 authenticates the complete retained chain from `retained_from_commit` through the named snapshot

@@ -213,6 +213,10 @@ the source is and is not:
 | `battery_state.v1` | Battery percentage, charging source/state, and power-save state; no battery identity. |
 | `temporal_context.v1` | Time-zone/offset/context snapshots; do not infer location from them. |
 | `network_state.v1` | Default-network transport/capability flags and optional Android bandwidth estimates; no SSID, addresses, carrier, DNS, destination, or achieved-throughput measurement. |
+| `vpn_state.v1` | Independent Android VPN callbacks, including other-UID networks. An omitted initial `connected` value means unknown; callbacks do not identify a VPN provider or expose traffic content. |
+| `network_throughput.v1` | Device-wide transfer-counter deltas over actual monotonic intervals. Passive accounting, not a capacity test or per-app throughput; VPN interface accounting can overlap. |
+| `notification_events.v1` | Posting package, platform post time, callback time, and a study-scoped opaque update token. No notification text; updates are not proof of a new message or reading. |
+| `screen_state.v1` | Default-display power, interactive state, and keyguard state, including locked screens. Always-on display and DOZE differ from normal screen use; no attention inference. |
 | `network_usage.v1` | Device-wide Android accounting by configured Wi-Fi/mobile transport over a split coverage window. It is contextual, coarse, and can lag; it is not the shaped apps’ total. |
 | `usage_events.v1` | Android usage-history lifecycle/screen/keyguard/boot events. Delivery is retrospective and can be delayed or incomplete. Package is present when Android supplies it. Activity lifecycle records add a study-scoped opaque component token; Particeps never persists the class name. |
 | `location.v1` | Fused Android location fixes with platform accuracy/mock/source-time metadata; indoor/urban errors and platform batching remain real. |

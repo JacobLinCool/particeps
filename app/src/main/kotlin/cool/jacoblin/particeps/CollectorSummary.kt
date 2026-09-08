@@ -84,6 +84,12 @@ fun ParticipantDataCategory.summarize(): CollectorSummary {
             stringResource(R.string.collector_network_state_detail),
         )
 
+        ParticipantDataKind.VPN_STATE -> Triple(
+            Glyph.CONNECTION,
+            stringResource(R.string.collector_vpn_state_name),
+            stringResource(R.string.collector_vpn_state_detail),
+        )
+
         ParticipantDataKind.NETWORK_USAGE -> Triple(
             Glyph.DATA_VOLUME,
             stringResource(R.string.collector_network_usage_name),

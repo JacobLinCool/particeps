@@ -1,0 +1,679 @@
+{
+  "schema_version": 1,
+  "experiment_id": "five-day-speed-study",
+  "configuration_id": "five-day-windowed-gyro-activities-v2",
+  "assigned_participant_id": null,
+  "issued_at": "2026-09-06T00:00:00Z",
+  "expires_at": "2027-09-06T00:00:00Z",
+  "platform": "android",
+  "minimum_client_version": "1",
+  "title": "五天研究：陀螺儀每日時段收集（測試範本）",
+  "researcher": {
+    "name": "研究團隊（請替換）",
+    "contact": "research@example.invalid"
+  },
+  "purpose": "記錄日常手機使用與活動情形。此檔使用公開測試金鑰，正式研究前須替換。",
+  "duration_hours": 120,
+  "consent": {
+    "document_version": "five-day-demo-2",
+    "summary": "本研究記錄螢幕電源與鎖定狀態、陀螺儀、通知來源與時間、網路連線與 VPN 狀態、傳輸量、App 活動及時區。通知不含文字內容。研究可能調整所有 App 的傳輸速度，並邀請您填寫問卷，回顧手機以外的活動、其他裝置使用及活動安排變化。您可暫停或退出；資料加密儲存於裝置，匯出後交予研究團隊。此公開測試範本不得直接用於真實參與者。"
+  },
+  "collectors": [
+    {
+      "id": "gyroscope.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {
+            "sampling_period_us": 1000000,
+            "maximum_report_latency_us": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "network_state.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {
+            "include_bandwidth_estimates": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "network_throughput.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {
+            "poll_interval_seconds": 10
+          }
+        }
+      ]
+    },
+    {
+      "id": "notification_events.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {}
+        }
+      ]
+    },
+    {
+      "id": "screen_state.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {}
+        }
+      ]
+    },
+    {
+      "id": "temporal_context.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {}
+        }
+      ]
+    },
+    {
+      "id": "usage_events.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {
+            "poll_interval_seconds": 15
+          }
+        }
+      ]
+    },
+    {
+      "id": "vpn_state.v1",
+      "required": true,
+      "profiles": [
+        {
+          "id": "continuous",
+          "config": {}
+        }
+      ]
+    }
+  ],
+  "surveys": [
+    {
+      "id": "period-activities",
+      "title": {
+        "default": "時段活動與裝置使用問卷",
+        "translations": {}
+      },
+      "description": {
+        "default": "請回顧最近一次已結束的 12:00–17:00 時段；若在午夜後填答，請回顧前一天的這個時段。「這支手機」指安裝本研究 App 的手機。請依實際情況回答；維持原本安排或改變安排都沒有對錯，不確定時請選相應選項。",
+        "translations": {}
+      },
+      "questions": [
+        {
+          "type": "multiple_choice",
+          "id": "off-phone-activities",
+          "prompt": {
+            "default": "在上述 12:00–17:00 時段，除了操作這支手機，您還做過哪些活動？可複選；同時使用其他裝置也可勾選。若無符合或不記得，可略過。",
+            "translations": {}
+          },
+          "required": false,
+          "minimum_selections": 0,
+          "maximum_selections": 10,
+          "options": [
+            {
+              "id": "exercise",
+              "label": {
+                "default": "運動或健身",
+                "translations": {}
+              }
+            },
+            {
+              "id": "in-person-social",
+              "label": {
+                "default": "與他人面對面聊天或相處",
+                "translations": {}
+              }
+            },
+            {
+              "id": "outdoor",
+              "label": {
+                "default": "散步、出遊或其他戶外活動",
+                "translations": {}
+              }
+            },
+            {
+              "id": "work-study",
+              "label": {
+                "default": "工作或學習",
+                "translations": {}
+              }
+            },
+            {
+              "id": "paper-reading",
+              "label": {
+                "default": "閱讀紙本書籍、報紙或雜誌",
+                "translations": {}
+              }
+            },
+            {
+              "id": "chores-errands",
+              "label": {
+                "default": "家務、照顧他人、購物或辦事",
+                "translations": {}
+              }
+            },
+            {
+              "id": "travel",
+              "label": {
+                "default": "通勤或交通移動",
+                "translations": {}
+              }
+            },
+            {
+              "id": "meals",
+              "label": {
+                "default": "用餐",
+                "translations": {}
+              }
+            },
+            {
+              "id": "rest-sleep",
+              "label": {
+                "default": "休息或睡覺",
+                "translations": {}
+              }
+            },
+            {
+              "id": "other",
+              "label": {
+                "default": "其他活動",
+                "translations": {}
+              }
+            }
+          ]
+        },
+        {
+          "type": "single_choice",
+          "id": "screen-free-time",
+          "prompt": {
+            "default": "在上述 12:00–17:00 時段，沒有使用螢幕裝置的時間合計大約多久？螢幕裝置包括手機、平板、電腦、電視、遊戲機等。",
+            "translations": {}
+          },
+          "required": true,
+          "options": [
+            {
+              "id": "none",
+              "label": {
+                "default": "沒有",
+                "translations": {}
+              }
+            },
+            {
+              "id": "under-30-min",
+              "label": {
+                "default": "有，但合計未滿 30 分鐘",
+                "translations": {}
+              }
+            },
+            {
+              "id": "30-to-60-min",
+              "label": {
+                "default": "30 分鐘至未滿 1 小時",
+                "translations": {}
+              }
+            },
+            {
+              "id": "1-to-2-hours",
+              "label": {
+                "default": "1 小時至未滿 2 小時",
+                "translations": {}
+              }
+            },
+            {
+              "id": "2-to-4-hours",
+              "label": {
+                "default": "2 小時至未滿 4 小時",
+                "translations": {}
+              }
+            },
+            {
+              "id": "4-to-5-hours",
+              "label": {
+                "default": "4–5 小時",
+                "translations": {}
+              }
+            },
+            {
+              "id": "unsure",
+              "label": {
+                "default": "不記得或無法估計",
+                "translations": {}
+              }
+            }
+          ]
+        },
+        {
+          "type": "multiple_choice",
+          "id": "other-devices",
+          "prompt": {
+            "default": "在上述 12:00–17:00 時段，您使用過哪些「這支手機以外」的裝置？可複選；請勾選能回想起來的裝置，未使用或不記得可略過。",
+            "translations": {}
+          },
+          "required": false,
+          "minimum_selections": 0,
+          "maximum_selections": 7,
+          "options": [
+            {
+              "id": "computer",
+              "label": {
+                "default": "筆記型或桌上型電腦",
+                "translations": {}
+              }
+            },
+            {
+              "id": "tablet",
+              "label": {
+                "default": "平板",
+                "translations": {}
+              }
+            },
+            {
+              "id": "another-phone",
+              "label": {
+                "default": "其他手機",
+                "translations": {}
+              }
+            },
+            {
+              "id": "television",
+              "label": {
+                "default": "電視",
+                "translations": {}
+              }
+            },
+            {
+              "id": "game-console",
+              "label": {
+                "default": "遊戲機或掌上型遊戲機",
+                "translations": {}
+              }
+            },
+            {
+              "id": "wearable",
+              "label": {
+                "default": "智慧手錶或其他穿戴裝置",
+                "translations": {}
+              }
+            },
+            {
+              "id": "other",
+              "label": {
+                "default": "其他裝置",
+                "translations": {}
+              }
+            }
+          ]
+        },
+        {
+          "type": "single_choice",
+          "id": "device-substitution",
+          "prompt": {
+            "default": "在上述 12:00–17:00 時段，您使用其他裝置的情形最接近哪一項？「轉移」指把原本正在或打算在這支手機上做的事，改到其他裝置上做。",
+            "translations": {}
+          },
+          "required": true,
+          "options": [
+            {
+              "id": "no-other-device",
+              "label": {
+                "default": "沒有使用其他裝置",
+                "translations": {}
+              }
+            },
+            {
+              "id": "used-no-substitution",
+              "label": {
+                "default": "有使用其他裝置，但沒有上述轉移",
+                "translations": {}
+              }
+            },
+            {
+              "id": "used-with-substitution",
+              "label": {
+                "default": "有使用其他裝置，且至少發生過一次上述轉移",
+                "translations": {}
+              }
+            },
+            {
+              "id": "used-substitution-uncertain",
+              "label": {
+                "default": "有使用其他裝置，但不確定是否有上述轉移",
+                "translations": {}
+              }
+            },
+            {
+              "id": "device-use-uncertain",
+              "label": {
+                "default": "不記得是否使用過其他裝置",
+                "translations": {}
+              }
+            }
+          ]
+        },
+        {
+          "type": "single_choice",
+          "id": "non-screen-substitution",
+          "prompt": {
+            "default": "在上述 12:00–17:00 時段，您是否曾把原本正在或打算在這支手機上做的事，改成不使用螢幕裝置的活動？",
+            "translations": {}
+          },
+          "required": true,
+          "options": [
+            {
+              "id": "yes",
+              "label": {
+                "default": "有，至少一次",
+                "translations": {}
+              }
+            },
+            {
+              "id": "none",
+              "label": {
+                "default": "沒有",
+                "translations": {}
+              }
+            },
+            {
+              "id": "unsure",
+              "label": {
+                "default": "不記得或不確定",
+                "translations": {}
+              }
+            }
+          ]
+        },
+        {
+          "type": "short_text",
+          "id": "activity-context",
+          "prompt": {
+            "default": "若曾改變原本安排，請簡述原本要做什麼、後來改用什麼裝置或改做什麼活動，以及原因。也可補充其他活動情形；沒有補充可略過。",
+            "translations": {}
+          },
+          "required": false,
+          "maximum_length": 1000
+        }
+      ]
+    }
+  ],
+  "interventions": [
+    {
+      "id": "period-survey",
+      "required": true,
+      "action": {
+        "type": "survey",
+        "notification_title": "時段活動與裝置使用問卷",
+        "notification_message": "請回顧最近一次已結束的 12:00–17:00 時段內，您的活動與裝置使用情形。",
+        "survey_id": "period-activities"
+      }
+    }
+  ],
+  "automations": [
+    {
+      "type": "occurrence",
+      "id": "activities-day-3",
+      "trigger": {
+        "type": "condition_rising_edge",
+        "condition": {
+          "type": "study_local_window",
+          "first_day": 3,
+          "last_day": 3,
+          "start_local_time": "17:00",
+          "end_local_time": "23:59"
+        }
+      },
+      "guard": null,
+      "intervention_id": "period-survey",
+      "availability_seconds": 21600,
+      "cooldown": null,
+      "maximum_activations": 1
+    },
+    {
+      "type": "occurrence",
+      "id": "activities-day-4",
+      "trigger": {
+        "type": "condition_rising_edge",
+        "condition": {
+          "type": "study_local_window",
+          "first_day": 4,
+          "last_day": 4,
+          "start_local_time": "17:00",
+          "end_local_time": "23:59"
+        }
+      },
+      "guard": null,
+      "intervention_id": "period-survey",
+      "availability_seconds": 21600,
+      "cooldown": null,
+      "maximum_activations": 1
+    },
+    {
+      "type": "occurrence",
+      "id": "activities-day-5",
+      "trigger": {
+        "type": "condition_rising_edge",
+        "condition": {
+          "type": "study_local_window",
+          "first_day": 5,
+          "last_day": 5,
+          "start_local_time": "17:00",
+          "end_local_time": "23:59"
+        }
+      },
+      "guard": null,
+      "intervention_id": "period-survey",
+      "availability_seconds": 21600,
+      "cooldown": null,
+      "maximum_activations": 1
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-gyroscope",
+      "resource": {
+        "kind": "collector",
+        "id": "gyroscope.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_local_window",
+            "first_day": 1,
+            "last_day": 366,
+            "start_local_time": "12:00",
+            "end_local_time": "17:00"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": null
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-network-state",
+      "resource": {
+        "kind": "collector",
+        "id": "network_state.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_session_active"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": "continuous"
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-network-throughput",
+      "resource": {
+        "kind": "collector",
+        "id": "network_throughput.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_session_active"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": "continuous"
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-notification-events",
+      "resource": {
+        "kind": "collector",
+        "id": "notification_events.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_session_active"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": "continuous"
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-screen-state",
+      "resource": {
+        "kind": "collector",
+        "id": "screen_state.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_session_active"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": "continuous"
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-temporal-context",
+      "resource": {
+        "kind": "collector",
+        "id": "temporal_context.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_session_active"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": "continuous"
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-traffic-shaping",
+      "resource": {
+        "kind": "actuator",
+        "id": "traffic-shaping.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_local_window",
+            "first_day": 3,
+            "last_day": 5,
+            "start_local_time": "12:00",
+            "end_local_time": "17:00"
+          },
+          "profile_id": "limited-500"
+        }
+      ],
+      "default_profile_id": "baseline"
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-usage-events",
+      "resource": {
+        "kind": "collector",
+        "id": "usage_events.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_session_active"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": "continuous"
+    },
+    {
+      "type": "resource_binding",
+      "id": "bind-vpn-state",
+      "resource": {
+        "kind": "collector",
+        "id": "vpn_state.v1"
+      },
+      "cases": [
+        {
+          "condition": {
+            "type": "study_session_active"
+          },
+          "profile_id": "continuous"
+        }
+      ],
+      "default_profile_id": "continuous"
+    }
+  ],
+  "traffic_shaping": {
+    "target_packages": "all",
+    "profiles": [
+      {
+        "id": "baseline",
+        "uplink_kbps": null,
+        "downlink_kbps": null
+      },
+      {
+        "id": "limited-500",
+        "uplink_kbps": 500,
+        "downlink_kbps": 500
+      }
+    ]
+  },
+  "storage": {
+    "maximum_local_bytes": 8589934592
+  },
+  "signer": {
+    "key_id": "demo-signer-2026",
+    "public_key": "sRSaTpZmTSBL7eN6nS_HBsNmLM8n1hdRmIt1vtLZsC0"
+  },
+  "export": {
+    "researcher_key_id": "demo-hpke-2026",
+    "hpke_public_key": "GnJDfDh8XH1eARTHmTLNlog9curtphTpEn7L36sY0QA"
+  },
+  "upload": {}
+}
