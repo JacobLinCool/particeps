@@ -179,6 +179,23 @@ Add exactly one non-empty `## <tag> — YYYY-MM-DD` section to
 workflow extracts that exact section as the GitHub Release notes and fails before publishing if the
 section is missing, duplicated, malformed, or empty; it does not substitute generated notes.
 
+After the Android release workflow publishes the APK:
+
+1. Download the published APK and checksum, verify their SHA-256 match, and run the release APK
+   verifier against the downloaded file to confirm its anchored signing identity and packaging.
+   Inspect `aapt dump badging` separately: `versionName` must match the tag without its `v` prefix,
+   and `versionCode` must exceed the previous published APK's value.
+2. Update `ANDROID_RELEASE_VERSION` in
+   [`web/src/lib/participant/content.ts`](../../web/src/lib/participant/content.ts) to the verified
+   tag, and update the expected release URL in
+   [`web/tests/participant-copy.spec.ts`](../../web/tests/participant-copy.spec.ts). Run that focused
+   test, then commit and push the site update to `main`. Publish this change only after the new APK
+   is downloadable so the participant download button always targets an available release.
+3. Wait for the new `Pages` deployment to succeed. Check the public homepage and its linked assets
+   return HTTP 200, then confirm the deployed participant download button targets the new APK URL
+   and that URL downloads successfully. A successful Android release does not update the site's
+   version constant automatically.
+
 ### One-off: the Particeps cutover
 
 The rename is not a recurring step, and it is not finished when the code lands either. What has been done, in order:
