@@ -23,7 +23,10 @@ the evidence must identify `mapper.ranchu.so`, the `SurfaceFlinger` process, and
 Particeps App, VPN, `libgojni`, or instrumentation/test assertion failure. Every other failure is
 blocking, and the exact signature must also terminate the emulator transport rather than merely
 coincide with a scenario failure. CI runs the stock image without root, remount, framework overlay,
-SystemUI disablement, or system-server mutation. The API 37 runner waits until the stock package and
+SystemUI disablement, or system-server mutation. The API 37 runner explicitly selects the supported
+[`swiftshader` software renderer](https://developer.android.com/studio/run/emulator-acceleration).
+The image does not support the in-guest renderer selected by `-gpu off`; the emulator otherwise
+automatically substitutes a different graphics backend. The API 37 runner waits until the stock package and
 activity services required by its non-UI checks are actually registered and the Android user is
 unlocked before starting; it does not treat the preview image's early `sys.boot_completed` property
 as sufficient readiness. Compatibility checks also require the target `Application.onCreate()` to

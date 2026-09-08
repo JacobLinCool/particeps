@@ -83,7 +83,7 @@ trap cleanup EXIT
   -memory 4096 \
   -partition-size 12288 \
   -no-window \
-  -gpu off \
+  -gpu swiftshader \
   -no-snapshot \
   -noaudio \
   -camera-back none \

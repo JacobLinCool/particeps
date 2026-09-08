@@ -356,6 +356,8 @@ esac
         self.assertIn('"emulator"', api37_runner)
         self.assertIn('"platform-tools"', api37_runner)
         self.assertIn("-logcat-output", api37_runner)
+        self.assertIn("-gpu swiftshader", api37_runner)
+        self.assertNotIn("-gpu off", api37_runner)
         self.assertIn("tools/android-emulator-ci.sh --require-16k=true", api37_runner)
         self.assertNotIn("settings put", api37_runner)
         self.assertNotIn("input keyevent", api37_runner)
