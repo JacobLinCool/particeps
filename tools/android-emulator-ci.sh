@@ -203,7 +203,7 @@ if [[ "$require_16k" == true ]]; then
     echo "API 37 ps16k emulator page size must be 16384, got: $page_size" >&2
     exit 1
   fi
-  python3 -c 'import os, pathlib, xml.etree.ElementTree as ET; p=pathlib.Path(os.environ["ANDROID_SDK_ROOT"]) / "system-images/android-37.0/google_apis_ps16k/x86_64/package.xml"; r=ET.parse(p).getroot().find(".//revision/major"); assert r is not None and int(r.text) >= 5, "API 37 ps16k image revision must be at least 5"'
+  python3 -c 'import os, pathlib, xml.etree.ElementTree as ET; p=pathlib.Path(os.environ["ANDROID_SDK_ROOT"]) / "system-images/android-37.0/google_apis_ps16k/x86_64/package.xml"; r=ET.parse(p).getroot().find(".//revision/major"); assert r is not None and int(r.text) >= 6, "API 37 ps16k image revision must be at least 6"'
 
   # This blocking suite never launches participant UI or asks the system to capture task snapshots.
   # It verifies installability, manifest contracts, native loading, and non-snapshot instrumentation on

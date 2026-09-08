@@ -49,7 +49,7 @@ class Api37GateTest(unittest.TestCase):
             sdk = root / "sdk"
             image = sdk / "system-images/android-37.0/google_apis_ps16k/x86_64"
             image.mkdir(parents=True)
-            (image / "package.xml").write_text("<package><revision><major>5</major></revision></package>")
+            (image / "package.xml").write_text("<package><revision><major>6</major></revision></package>")
             emulator_log = root / "emulator.log"
             emulator_log.write_text(boot_log)
             events = root / "events.log"

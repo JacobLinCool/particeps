@@ -11,7 +11,7 @@ event-source-registry generation/digests, Kotlin/TypeScript/Python conformance, 
 Go vet/race/source checks, unit/lint/build/release verification, and connected/host-orchestrated
 Android scenarios. API 34 x86_64 is the complete blocking functional lane, including VPN,
 TCP/UDP/DNS, shaping throughput, lifecycle, process death/reboot, package replacement, permission
-revocation, and competing-VPN scenarios. API 37 `google_apis_ps16k` x86_64 revision 5 or newer is a
+revocation, and competing-VPN scenarios. API 37 `google_apis_ps16k` x86_64 revision 6 or newer is a
 blocking compatibility lane: compilation, installation, 16 KiB runtime page size, manifest and
 permission contracts, source-built native loading, and instrumentation that does not invoke system
 task snapshots must pass. Four-ABI packaging and 16 KiB ELF alignment remain blocking in the release
@@ -26,11 +26,14 @@ coincide with a scenario failure. CI runs the stock image without root, remount,
 SystemUI disablement, or system-server mutation. The API 37 runner explicitly selects the supported
 [`swiftshader` software renderer](https://developer.android.com/studio/run/emulator-acceleration).
 The image does not support the in-guest renderer selected by `-gpu off`; the emulator otherwise
-automatically substitutes a different graphics backend. The runner also disables the emulator's
-`GLDirectMem` acceleration capability: the [upstream renderer](https://android.googlesource.com/platform/hardware/google/gfxstream/+/d047a57228332d995d36600792fa9ccc26cf8ae6/host/RenderControl.cpp#471)
-uses it to advertise `ANDROID_EMU_read_color_buffer_dma`, which triggers the revision 5 guest
-mapper assertion. This changes a host graphics capability, while the stock Android image, 16 KiB
-page-size check, permission checks, and all product gates remain intact. API 37 graphics options
+automatically substitutes a different graphics backend. The runner enables the emulator's
+`GLDirectMem` acceleration capability, which the [upstream renderer](https://android.googlesource.com/platform/hardware/google/gfxstream/+/d047a57228332d995d36600792fa9ccc26cf8ae6/host/RenderControl.cpp#471)
+requires to advertise `ANDROID_EMU_read_color_buffer_dma`. The [Android 17 guest mapper](https://android.googlesource.com/device/generic/goldfish/+/296e55aa0244e8929e393e00e34471fef2a5d662/hals/gralloc/mapper.cpp#619)
+calls `LOG_ALWAYS_FATAL_IF(!hasReadColorBufferDma)`: this macro aborts when the condition is true,
+so the capability must be present. Disabling it was an incorrect interpretation of the log's
+assertion wording. The runner requires the current stable revision 6 image and retains its SDK
+metadata with the test evidence. The stock Android image, 16 KiB page-size check, permission checks,
+and all product gates remain intact. API 37 graphics options
 live only in `tools/android-api37-emulator-runner.sh`; its workflow matrix has no unused copy.
 The API 37 runner waits until the stock package and activity services required by its non-UI checks
 are actually registered and the Android user is

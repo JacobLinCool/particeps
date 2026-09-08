@@ -51,7 +51,9 @@ for executable in "$adb_binary" "$emulator_binary"; do
   fi
 done
 
-python3 -c 'import os, pathlib, xml.etree.ElementTree as ET; p=pathlib.Path(os.environ["ANDROID_SDK_ROOT"]) / "system-images/android-37.0/google_apis_ps16k/x86_64/package.xml"; r=ET.parse(p).getroot().find(".//revision/major"); assert r is not None and int(r.text) >= 5, "API 37 ps16k image revision must be at least 5"'
+python3 -c 'import os, pathlib, xml.etree.ElementTree as ET; p=pathlib.Path(os.environ["ANDROID_SDK_ROOT"]) / "system-images/android-37.0/google_apis_ps16k/x86_64/package.xml"; r=ET.parse(p).getroot().find(".//revision/major"); assert r is not None and int(r.text) >= 6, "API 37 ps16k image revision must be at least 6"'
+cp "$ANDROID_SDK_ROOT/system-images/android-37.0/google_apis_ps16k/x86_64/source.properties" \
+  "$report_directory/api37-system-image-source.properties"
 
 tools/android-emulator-prebuild.sh --require-16k=true
 
@@ -84,7 +86,7 @@ trap cleanup EXIT
   -partition-size 12288 \
   -no-window \
   -gpu swiftshader \
-  -feature -GLDirectMem \
+  -feature GLDirectMem \
   -no-snapshot \
   -noaudio \
   -camera-back none \
