@@ -40,6 +40,7 @@
     type ArtifactId,
     type ArtifactNames
   } from './artifacts';
+  import { UnavailableCollectorError } from './parse';
   import { createDraft } from './draft.svelte';
   import { STEPS, stepForPath, type StepId } from './steps';
   import { units } from './units';
@@ -249,9 +250,9 @@
       loaded = file.name;
       failure = '';
       go('study');
-    } catch {
+    } catch (error) {
       loaded = '';
-      failure = m.error.draft;
+      failure = error instanceof UnavailableCollectorError ? m.error.collectorUnavailable : m.error.draft;
       go('sign');
     }
   }

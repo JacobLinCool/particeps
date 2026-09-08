@@ -12,12 +12,12 @@
 | 限速結束後問卷 | 既有原生 survey 與通知 outbox，分別以第 3、4、5 天的 17:00 條件觸發，每個規則 `maximum_activations: 1` | 保證持久化觸發與重試識別，不保證通知恰於整點顯示或參與者已看見 |
 | 螢幕開啟，包含未解鎖 | 新增 `screen_state.v1`，記錄預設顯示器的 `display_state`、`interactive`、`keyguard_locked` | 面板電源、可互動與解鎖是不同變數；DOZE／常亮顯示須獨立處理，不能歸為正常亮屏使用 |
 | 陀螺儀 | 既有 `gyroscope.v1`；啟用期間持有 CPU partial wake lock，暫停／停止／註冊回滾時釋放 | 不點亮螢幕；有耗電成本，硬體回報速率與系統限制仍須實機確認 |
-| 通知接收 | 新增 `notification_events.v1` 與 Android 通知存取設定 | 記錄張貼 App、系統 post time、接收 callback time、研究範圍 HMAC token。不讀文字／標題；同 token 可為更新，不代表新訊息、閱讀或伺服器送達 |
+| 通知接收 | 已移除跨 App 通知收集；不再設定 `notification_events.v1` | 問卷提醒與研究進行通知保留；螢幕亮起的原因不能由現有資料直接判定 |
 | 實際傳輸速度 | 新增 `network_throughput.v1`，以 `TrafficStats` 記錄裝置總收發 bytes 差與實際單調時間區間 | 不主動耗流量；包含 OS 的介面計數語義，VPN 介面可能有重疊計數；不是特定 App 或實體網路的容量測速 |
 | 網路連線，包含 VPN | 既有 `network_state.v1` 記錄預設路由；獨立 `vpn_state.v1` 記錄 VPN callback，包含其他 UID 的 VPN | `network_state.v1` 預設路由上的 `vpn` 與 `vpn_state.v1` 的 `VPN_STATUS` 分開分析。監聽剛啟動、尚未收到 VPN 證據時 `connected` 省略，表示未知；不以假 `false` 代替 |
 | App 開啟／離開時間與使用時間 | 既有 `usage_events.v1` 的 `ACTIVITY_RESUMED`、`ACTIVITY_PAUSED`、`ACTIVITY_STOPPED`，含來源時間、package 與活動元件 token | 是 Activity 前景／離開事件，不是程序啟動／被殺時間；Android 可延遲或缺漏回報，不能把它稱為完整精確的 App session |
 
-「螢幕可互動」與面板亮起的差異見 [Android PowerManager](https://developer.android.com/reference/android/os/PowerManager#isInteractive())。通知 callback 的平台契約見 [NotificationListenerService](https://developer.android.com/reference/android/service/notification/NotificationListenerService)。VPN 觀測的涵蓋範圍見 [NetworkRequest.Builder](https://developer.android.com/reference/android/net/NetworkRequest.Builder#setIncludeOtherUidNetworks(boolean))。
+「螢幕可互動」與面板亮起的差異見 [Android PowerManager](https://developer.android.com/reference/android/os/PowerManager#isInteractive())。VPN 觀測的涵蓋範圍見 [NetworkRequest.Builder](https://developer.android.com/reference/android/net/NetworkRequest.Builder#setIncludeOtherUidNetworks(boolean))。
 
 ## 五天與時區的定義
 
@@ -39,7 +39,7 @@ Android 喚醒、資源切換、背景工作與通知有實際延遲。`study_lo
 | `usage_events.v1` | `poll_interval_seconds: 15` |
 | `network_state.v1` | `include_bandwidth_estimates: true`，估值與實際流量分開保存 |
 | `vpn_state.v1` | 空白設定 `{}`，獨立監聽 VPN 狀態；不改變 `network_state.v1` 既有事件契約 |
-| 八個收集器 | 全部 `required: true`，整個進行中的研究 session 綁定 `continuous` |
+| 七個收集器 | 全部 `required: true`，整個進行中的研究 session 綁定 `continuous` |
 | 上／下載上限 | 各 `500` kbps，對目前 Android 使用者空間所有 App 的合計流量限速，並非每個 App 各有 500 kbps |
 | 問卷 | 每日規則最多一次、可填寫 6 小時；同日恢復研究不再建立第二份 |
 | `storage.maximum_local_bytes` | `8589934592`（8 GiB 上限，不是實際空間需求保證） |
@@ -65,9 +65,11 @@ Android 喚醒、資源切換、背景工作與通知有實際延遲。`study_lo
 ./gradlew :researcher-tools:run --args='check-config --envelope /tmp/five-day-study.partcfg --app-version 1'
 ```
 
-CLI 拒絕覆寫既有輸出；重跑時選擇新的輸出路徑。參與者匯入新版 App 的 `.partcfg` 後，在既有設定流程授予通知顯示、通知存取與 Usage Access，接受 VPN consent，確認陀螺儀可用，再按開始。通知顯示權限與讀取通知事件的特殊存取是兩個不同權限。其他 VPN 與研究 VPN 無法在同一使用者空間同時作為作用中的 VPN。
+CLI 拒絕覆寫既有輸出；重跑時選擇新的輸出路徑。參與者匯入新版 App 的 `.partcfg` 後，在既有設定流程授予通知顯示與 Usage Access，接受 VPN consent，確認陀螺儀可用，再按開始。通知顯示權限供問卷與研究狀態提醒使用，不授予讀取其他 App 通知的能力。其他 VPN 與研究 VPN 無法在同一使用者空間同時作為作用中的 VPN。
 
 ## 分析方式
+
+螢幕狀態與 App 前景事件提供使用線索，但不能證明亮屏是由通知或使用者觸發。`interactive: true` 表示裝置可接受操作，不代表當下有人操作；未解鎖的亮屏也可能是使用者主動看時間。分析應保留「亮屏但原因未知」，不要直接換算成主動操作時間。Android 的 `USER_INTERACTION` 使用事件目前尚未由 `usage_events.v1` 收集；不能將它當成現有資料欄位。
 
 實際傳輸量以 `network_throughput.v1 / NETWORK_THROUGHPUT` 為準：
 
@@ -81,7 +83,7 @@ upload_kbps   = tx_bytes * 8 / interval_seconds / 1000
 
 App 使用時間從 `source_time_utc_millis` 計算，依參與者、boot／condition epoch、package 和 `activity_component_token` 配對 resumed 與首次 paused／stopped。再對同 package 的重疊前景區間取聯集，避免多 Activity 或多視窗重複計時。缺少起點／終點、重啟、暫停和來源缺口皆標成截尾／未知，不能以輪詢時間或下一個無關事件補成精確關閉時間。原始資料包含事件與分析所需時間，沒有聲稱 Android 已提供完整 App session。
 
-正式招募前至少在目標 OEM 裝置完成完整五天試跑，包含鎖屏感測、通知更新、VPN 切換、沒有流量時的計數器、暫停／恢復、斷網與截止時間；模擬器與單元測試不能替代五天的實機完整度評估。
+正式招募前至少在目標 OEM 裝置完成完整五天試跑，包含鎖屏感測、問卷提醒、VPN 切換、沒有流量時的計數器、暫停／恢復、斷網與截止時間；模擬器與單元測試不能替代五天的實機完整度評估。
 
 ## 開發驗證
 
@@ -91,7 +93,7 @@ Android 主機整合測試使用本機 TCP fixture，不是正式研究 App 的�
 adb -s emulator-5580 shell am instrument -w -r -e class cool.jacoblin.particeps.AllAppsTrafficShapingAndroidTest,cool.jacoblin.particeps.StudySourcesAndroidTest -e traffic_test_endpoint 10.0.2.2:18766 cool.jacoblin.particeps.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-VPN 測試確認研究 App 的預設路由進入全 App VPN、收到完整測試內容、下載受 500 kbps 限制，以及解除資源後清理。未提供本機 endpoint 時該測試明確跳過；不能把跳過列為通過。資料來源測試驗證通知 metadata、亮／熄屏、熄屏陀螺儀、連線觀測、被動 bytes 計數與暫停後不再送出事件。
+VPN 測試確認研究 App 的預設路由進入全 App VPN、收到完整測試內容、下載受 500 kbps 限制，以及解除資源後清理。未提供本機 endpoint 時該測試明確跳過；不能把跳過列為通過。資料來源測試驗證亮／熄屏、熄屏陀螺儀、連線觀測、被動 bytes 計數與暫停後不再送出事件。
 
 2026-09-06 驗證：Android 單元測試、lint 與 APK 建置通過；API 34 模擬器的上述兩項整合測試通過（非跳過）；Web 227 項測試通過，Python 67 項測試中 1 項既有測試跳過、其餘通過。範本已完成 canonicalize、公開 fixture 簽署與 check-config 驗證。尚未完成 120 小時實機試跑。
 

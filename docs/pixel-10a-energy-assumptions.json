@@ -18,7 +18,6 @@
     "vpn_audit_interval_seconds": 60,
     "callback_events_per_day": {
       "screen_state": 200,
-      "notification_events": 300,
       "network_state_and_vpn_state": 100,
       "temporal_context": 1
     },

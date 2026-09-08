@@ -4,6 +4,7 @@ import { canonicalConfigurationBytes, parseCanonicalJson } from '$lib/particeps/
 import { verify } from '$lib/particeps/crypto';
 import { decodeEnvelope, isEnvelope } from '$lib/particeps/envelope';
 import { collectorContract } from '$lib/particeps/registry';
+import { EVENT_SOURCE_REGISTRY } from '$lib/particeps/generated/event-source-registry';
 import { validate } from '$lib/particeps/schema';
 import {
   PLATFORM,
@@ -34,6 +35,13 @@ const ROOT_KEYS = [
   'duration_hours', 'consent', 'collectors', 'surveys', 'interventions', 'automations',
   'traffic_shaping', 'storage', 'signer', 'export', 'upload'
 ] as const;
+
+export class UnavailableCollectorError extends Error {
+  constructor(readonly sourceId: string) {
+    super(`Collector ${sourceId} is unavailable in the current Android app`);
+    this.name = 'UnavailableCollectorError';
+  }
+}
 
 export function parseConfiguration(bytes: Uint8Array): StudyConfiguration {
   const envelope = isEnvelope(bytes) ? decodeEnvelope(bytes) : null;
@@ -82,7 +90,12 @@ export function parseConfiguration(bytes: Uint8Array): StudyConfiguration {
 
 function parseCollector(raw: unknown): CollectorConfig {
   const source = exactObject(raw, ['id', 'required', 'profiles']);
-  if (!isCollectorId(source.id)) fail('parse_collector');
+  if (!isCollectorId(source.id)) {
+    const contract = EVENT_SOURCE_REGISTRY.sources.find((candidate) =>
+      candidate.source_id === source.id && candidate.source_kind === 'COLLECTOR');
+    if (contract) throw new UnavailableCollectorError(contract.source_id);
+    fail('parse_collector');
+  }
   const id = source.id;
   return {
     id, required: boolean(source.required),

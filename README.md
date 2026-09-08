@@ -48,9 +48,9 @@ binds them through closed-world automations within generated validation bounds.
 | `ambient_light.v1` | Raw illuminance, sensor time, accuracy |
 | `proximity.v1` | Raw distance, sensor range, near/far interpretation |
 | `screen_state.v1` | Default-display power, interactive state, and keyguard state, including locked screens |
-| `notification_events.v1` | Notification posting package, post/receipt time, and study-scoped update token; no text |
 | `network_throughput.v1` | Device byte-counter deltas and actual monotonic sampling intervals for passive throughput |
-| `network_state.v1` | Default network transport, validated/metered/roaming/VPN flags, bandwidth estimates, and independent VPN callbacks |
+| `network_state.v1` | Default network transport, validated/metered/roaming/VPN flags and bandwidth estimates |
+| `vpn_state.v1` | Independent VPN connection callbacks, including other-UID networks |
 | `network_usage.v1` | Device-total Wi-Fi and mobile rx/tx bytes and packets per interval |
 | `usage_events.v1` | Raw app, screen, keyguard, and boot events |
 | `location.v1` | Fused Location fixes with accuracy, speed, altitude, bearing |

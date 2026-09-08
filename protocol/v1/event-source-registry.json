@@ -5574,7 +5574,7 @@
         "statuses": [
           {
             "platform": "android",
-            "status": "IMPLEMENTED"
+            "status": "UNAVAILABLE"
           }
         ]
       },
@@ -5582,7 +5582,7 @@
         "android"
       ],
       "schema_version": 1,
-      "selectable": true,
+      "selectable": false,
       "source_id": "notification_events.v1",
       "source_kind": "COLLECTOR"
     },

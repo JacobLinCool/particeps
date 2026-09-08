@@ -65,7 +65,7 @@ def _freeze(value: object) -> object:
         return tuple(_freeze(item) for item in value)
     return value
 
-EVENT_SOURCE_REGISTRY_SHA256: Final = "7ae35bfce66b7f14d61c7164e57db662ee8458651de85ee74b8a771875db7a3c"
+EVENT_SOURCE_REGISTRY_SHA256: Final = "885ffebf4203ef9277ec840960bbf2f99e42e289521226b7dec95f97c48dd480"
 EVENT_SOURCE_REGISTRY: Final[Mapping[str, object]] = _freeze({'protocol_schema_version': 1,
  'registry_format': 'particeps-event-source-registry-v1',
  'registry_version': 1,
@@ -4418,10 +4418,10 @@ EVENT_SOURCE_REGISTRY: Final[Mapping[str, object]] = _freeze({'protocol_schema_v
                                       'presence': None,
                                       'scope': 'RESEARCHER'}}],
               'implementation': {'owner_module': ':collector:notification-events',
-                                 'statuses': [{'platform': 'android', 'status': 'IMPLEMENTED'}]},
+                                 'statuses': [{'platform': 'android', 'status': 'UNAVAILABLE'}]},
               'platforms': ['android'],
               'schema_version': 1,
-              'selectable': True,
+              'selectable': False,
               'source_id': 'notification_events.v1',
               'source_kind': 'COLLECTOR'},
              {'access': [{'absence_policy': 'BLOCK_REQUIRED_STUDY',

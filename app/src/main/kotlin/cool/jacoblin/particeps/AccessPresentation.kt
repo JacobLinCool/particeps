@@ -20,7 +20,6 @@ internal fun AccessKind.labelRes(): Int = when (this) {
     AccessKind.LOCATION_SERVICES -> R.string.access_location_services
     AccessKind.BACKGROUND_LOCATION -> R.string.access_background_location
     AccessKind.NOTIFICATIONS -> R.string.access_notifications
-    AccessKind.NOTIFICATION_LISTENER -> R.string.access_notification_listener
     AccessKind.USAGE_ACCESS -> R.string.access_usage_access
     AccessKind.RESEARCH_KEYBOARD_ENABLED -> R.string.access_research_keyboard_enabled
     AccessKind.RESEARCH_KEYBOARD_SELECTED -> R.string.access_research_keyboard_selected
@@ -67,10 +66,6 @@ internal fun SetupGuidance.presentation(): SetupGuidancePresentation = when (thi
             R.string.access_notifications_settings_step_channels,
             R.string.access_notifications_settings_step_return,
         ),
-    )
-    SetupGuidance.NOTIFICATION_LISTENER -> SetupGuidancePresentation(
-        descriptionRes = R.string.access_notification_listener_description,
-        stepResources = listOf(R.string.access_notification_listener_step_enable, R.string.access_usage_access_step_return),
     )
     SetupGuidance.USAGE_ACCESS -> SetupGuidancePresentation(
         descriptionRes = R.string.access_usage_access_description,

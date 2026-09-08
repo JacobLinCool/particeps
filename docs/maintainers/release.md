@@ -66,6 +66,35 @@ Particeps is distributed directly as that signed APK. A Play listing, Play relea
 are not prerequisites for this release process; do not replace the verified APK artifact with an
 unsigned APK or an unrelated bundle build.
 
+Passing these gates establishes the build, packaging, and signing results, not Google Play
+Protect approval. RC9 has a reported Play Protect installation block whose wording matches
+Google's sensitive-permission protection for Internet-sideloaded apps. Its notification receipt
+collector declares a notification listener service, one of the capabilities covered by that
+protection. Turning the collector off in a signed study does not remove that APK declaration.
+Before participant distribution, test browser download and installation with Play Protect enabled
+on representative study devices; an emulator or ADB installation does not cover that install path.
+Handle a block through [Google's developer guidance and review process](https://developers.google.com/android/play-protect/warning-dev-guidance).
+The [RC9 review evidence](play-protect-rc9-review.md) records the affected artifact and the current
+diagnosis. Developer identity or package registration is also separate from a Play Protect decision.
+
+RC10 removes the cross-app notification collector and its listener service. Release
+verification must inspect the final merged APK manifest for both
+`BIND_NOTIFICATION_LISTENER_SERVICE` and the `NotificationListenerService` intent action; neither
+should be present. Retain `POST_NOTIFICATIONS` for study reminders and the research notification.
+Use newly signed study configurations without `notification_events.v1`; both five-day examples
+now select seven collectors. Keep the immutable RC9 artifact and its evidence intact. Verify the
+published RC10 APK before updating the site's download link, and separately validate browser
+installation on representative physical devices with Play Protect enabled.
+Existing RC9 studies that select the removed collector cannot resume in the new app. Participants
+must complete or stop the study and export their data in RC9 before upgrading. After the upgrade,
+the old configuration enters recovery-required state; the recovery reset clears local study data.
+Only reset after the export is safely retained, then import a newly signed configuration.
+The source's published event contract remains available for historical interpretation, but its
+implementation is `UNAVAILABLE` and it is no longer selectable. This changes the complete registry
+digest. Preserve the RC9 researcher and analysis tools for all RC9 exports and use RC10 tools for
+RC10 exports, even for studies that did not collect notifications. The presence of a historical
+event dictionary does not make a reader accept a different bundle digest.
+
 ## The published site
 
 **`Pages`** (`pages.yml`) deploys the web authoring surface on pushes to `main` that touch it, not on a tag. It builds a project site, and `BASE_PATH` comes from the repository name at build time, so the published path follows whatever the repository is called. No path is pinned in the source, which is why renaming the repository is enough on its own — and why it was not optional. The repository has been renamed from `android-data-collector` to `particeps`, and the site publishes at `https://jacoblincool.github.io/particeps/`; the old path serves nothing.
@@ -102,10 +131,12 @@ application-distribution plan.
 ### Application identity and destructive data compatibility
 
 `v1.0.0-rc.5` established the current `cool.jacoblin.particeps` application ID and certificate.
-Keeping both allows Android to install a newer APK over that application. It does **not** imply
-Protocol/storage compatibility. The current event-driven Protocol v1 cut rejects every former signed
-configuration, store, schedule, bundle, and receipt shape; there is no reader or migration. The app
-uses participant-confirmed generic recovery/reset for incompatible local state.
+Keeping both preserves the Android application identity needed to install a newer APK over that
+application. It does **not** imply acceptance by device security checks or Protocol/storage
+compatibility. RC8's event-driven Protocol v1 cut rejects the signed configurations, stores,
+schedules, bundles, and receipts from releases before RC8; there is no reader or migration for those
+shapes. RC10 additionally rejects study configurations selecting the removed notification collector.
+The app uses participant-confirmed generic recovery/reset for incompatible local state.
 
 The key was rotated to correct the certificate's subject, which named the pre-rename product. A
 certificate is signed over its own subject, so changing it means issuing a new one. That was

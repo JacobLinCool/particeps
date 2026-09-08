@@ -16,11 +16,14 @@ export const COLLECTOR_SOURCES = EVENT_SOURCE_REGISTRY.sources
   .slice()
   .sort((left, right) => left.source_id.localeCompare(right.source_id)) as readonly RegistrySourceContract[];
 
-export const RESEARCHER_EVENTS = EVENT_SOURCE_REGISTRY.sources.flatMap((source) =>
-  source.events
-    .filter((event) => event.trigger.scope === 'RESEARCHER')
-    .map((event) => ({ source, event }))
-);
+export const RESEARCHER_EVENTS = EVENT_SOURCE_REGISTRY.sources
+  .filter((source) => source.implementation.statuses.some((implementation) =>
+    implementation.platform === 'android' && implementation.status === 'IMPLEMENTED'))
+  .flatMap((source) =>
+    source.events
+      .filter((event) => event.trigger.scope === 'RESEARCHER')
+      .map((event) => ({ source, event }))
+  );
 
 export function collectorContract(id: CollectorId): RegistrySourceContract {
   const source = COLLECTOR_SOURCES.find((candidate) => candidate.source_id === id);

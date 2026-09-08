@@ -277,11 +277,6 @@
     <string name="message_export_complete">加密的研究匯出檔已準備完成。</string>
     <string name="message_local_data_deleted">本機研究資料已刪除。</string>
     <string name="message_study_paused_for_safety">Particeps 無法驗證安全收集，因此研究已暫停。請先處理下方顯示的 Android 存取權，再恢復研究。</string>
-    <string name="access_notification_listener">通知存取權</string>
-    <string name="access_notification_listener_description">允許 Particeps 觀測通知接收事件。</string>
-    <string name="access_notification_listener_step_enable">選擇 Particeps 並允許通知存取權。</string>
-    <string name="collector_notification_events_name">通知接收事件</string>
-    <string name="collector_notification_events_detail">記錄發送通知的 App 與時間（包含更新），不記錄文字，也無法證明您已閱讀通知。</string>
     <string name="collector_screen_state_name">螢幕電源與鎖定狀態</string>
     <string name="collector_screen_state_detail">記錄螢幕電源、可互動狀態與鎖定畫面是否顯示，無法判定注意力或活動。</string>
     <string name="collector_network_throughput_name">實際網路傳輸速率</string>

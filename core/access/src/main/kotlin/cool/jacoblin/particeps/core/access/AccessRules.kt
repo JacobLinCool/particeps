@@ -33,11 +33,6 @@ internal object AccessRules {
             order = 0,
             action = SetupAction.RuntimePermission.NOTIFICATIONS,
         ),
-        AccessKind.NOTIFICATION_LISTENER to AccessRule(
-            order = 21,
-            action = SetupAction.SystemSettings.NOTIFICATION_LISTENER,
-            guidance = SetupGuidance.NOTIFICATION_LISTENER,
-        ),
         AccessKind.FINE_LOCATION to AccessRule(
             order = 10,
             action = SetupAction.RuntimePermission.FOREGROUND_LOCATION,

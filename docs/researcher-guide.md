@@ -18,6 +18,17 @@ Normative sources:
 
 For the five-day participant-relative 500 kbps design, collector coverage, and a complete example, see [五天限速研究設定](five-day-speed-study.md).
 
+The current Android app does not collect other apps' notifications. `notification_events.v1`
+remains in the published event dictionary for historical interpretation, but is unavailable for
+new study configurations. Remove that collector and its resource binding from an older study,
+review its consent and analysis plan, and sign a new configuration. Survey reminders and the
+ongoing research notification remain supported.
+For an existing RC9 study that includes this collector, finish or stop the study and export its
+data before upgrading. The new app cannot resume that configuration, and its recovery reset
+deletes local study data; retain the export before resetting and importing the revised study.
+Retain the RC9 researcher and analysis tools for all RC9 export bundles, including those without
+notification data: bundle readers require the exact registry digest. Use RC10 tools for RC10 exports.
+
 ## 1. Study model
 
 A study is one canonical JSON object signed with Ed25519. The participant can accept, decline,

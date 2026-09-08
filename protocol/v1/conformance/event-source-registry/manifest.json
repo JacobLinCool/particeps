@@ -77,7 +77,7 @@
       "canonical_jcs": "current-registry.jcs",
       "id": "current-registry",
       "registry": "../../event-source-registry.json",
-      "registry_sha256": "7ae35bfce66b7f14d61c7164e57db662ee8458651de85ee74b8a771875db7a3c",
+      "registry_sha256": "885ffebf4203ef9277ec840960bbf2f99e42e289521226b7dec95f97c48dd480",
       "semantic_projection_digests": "../../generated/event-source-contract-digests.json",
       "source_count": 22
     }

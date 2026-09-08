@@ -163,25 +163,7 @@ class VerifyReleaseApkTest(unittest.TestCase):
                 verify_release_apk.verify_apk_contents(apk, evidence)
 
     def test_manifest_contract_and_zip_alignment_are_fail_closed(self) -> None:
-        manifest = "\n".join(
-            [
-                *verify_release_apk.REQUIRED_PERMISSIONS,
-                "E: manifest",
-                "  E: application",
-                "    E: service (line=1)",
-                f'      A: android:name(0x1)="{verify_release_apk.VPN_SERVICE}" '
-                f'(Raw: "{verify_release_apk.VPN_SERVICE}")',
-                '      A: android:permission(0x2)="android.permission.BIND_VPN_SERVICE"',
-                "      A: android:exported(0x3)=false",
-                "      A: android:foregroundServiceType(0x4)=0x00000400",
-                "      E: intent-filter (line=2)",
-                "        E: action (line=3)",
-                '          A: android:name(0x1)="android.net.VpnService"',
-                "      E: meta-data (line=4)",
-                '        A: android:name(0x1)="android.net.VpnService.SUPPORTS_ALWAYS_ON"',
-                "        A: android:value(0x5)=false",
-            ],
-        )
+        manifest = fixture_manifest()
         with mock.patch.object(
             verify_release_apk.subprocess,
             "run",
@@ -212,6 +194,66 @@ class VerifyReleaseApkTest(unittest.TestCase):
         ), self.assertRaises(verify_release_apk.ReleaseApkVerificationError):
             verify_release_apk.verify_zip_alignment(Path("zipalign"), Path("release.apk"))
 
+    def test_manifest_rejects_notification_listener_capability_on_any_service(self) -> None:
+        cases = {
+            "service bind permission": (
+                "    E: service\n"
+                '      A: android:name(0x1)="example.RenamedListener"\n'
+                '      A: android:permission(0x2)="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"\n'
+                "      A: android:exported(0x3)=true\n"
+            ),
+            "listener intent action without bind permission": (
+                "    E: service\n"
+                '      A: android:name(0x1)="example.RenamedListener"\n'
+                "      E: intent-filter\n"
+                "        E: action\n"
+                '          A: android:name(0x1)="android.service.notification.NotificationListenerService"\n'
+            ),
+        }
+        for name, declaration in cases.items():
+            with self.subTest(name=name), mock.patch.object(
+                verify_release_apk.subprocess,
+                "run",
+                return_value=mock.Mock(
+                    returncode=0,
+                    stdout=f"{fixture_manifest()}\n{declaration}",
+                    stderr="",
+                ),
+            ), self.assertRaisesRegex(
+                verify_release_apk.ReleaseApkVerificationError,
+                "must not declare notification-listener capability",
+            ):
+                verify_release_apk.verify_manifest(Path("aapt2"), Path("release.apk"))
+
+    def test_manifest_rejects_requested_notification_listener_bind_permission(self) -> None:
+        for element in ("uses-permission", "uses-permission-sdk-23"):
+            declaration = (
+                f"  E: {element}\n"
+                '    A: android:name(0x1)="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"\n'
+            )
+            manifest = fixture_manifest().replace("  E: application", declaration + "  E: application")
+            with self.subTest(element=element), mock.patch.object(
+                verify_release_apk.subprocess,
+                "run",
+                return_value=mock.Mock(returncode=0, stdout=manifest, stderr=""),
+            ), self.assertRaisesRegex(
+                verify_release_apk.ReleaseApkVerificationError,
+                "must not declare notification-listener capability",
+            ):
+                verify_release_apk.verify_manifest(Path("aapt2"), Path("release.apk"))
+
+    def test_manifest_keeps_permission_to_post_questionnaire_notifications_required(self) -> None:
+        manifest = fixture_manifest().replace("android.permission.POST_NOTIFICATIONS", "example.OTHER")
+        with mock.patch.object(
+            verify_release_apk.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0, stdout=manifest, stderr=""),
+        ), self.assertRaisesRegex(
+            verify_release_apk.ReleaseApkVerificationError,
+            "missing android.permission.POST_NOTIFICATIONS",
+        ):
+            verify_release_apk.verify_manifest(Path("aapt2"), Path("release.apk"))
+
     def test_release_source_rejects_tracked_native_binaries_and_sensitive_logging(self) -> None:
         verify_release_apk.verify_repository_release_contracts()
         with self.assertRaisesRegex(
@@ -239,6 +281,33 @@ class VerifyReleaseApkTest(unittest.TestCase):
                 "production logging",
             ):
                 verify_release_apk.verify_repository_release_contracts(root, (Path("README.md"),))
+
+
+def fixture_manifest() -> str:
+    permissions = [
+        line
+        for permission in verify_release_apk.REQUIRED_PERMISSIONS
+        for line in ("  E: uses-permission", f'    A: android:name(0x1)="{permission}"')
+    ]
+    return "\n".join(
+        [
+            "E: manifest",
+            *permissions,
+            "  E: application",
+            "    E: service (line=1)",
+            f'      A: android:name(0x1)="{verify_release_apk.VPN_SERVICE}" '
+            f'(Raw: "{verify_release_apk.VPN_SERVICE}")',
+            '      A: android:permission(0x2)="android.permission.BIND_VPN_SERVICE"',
+            "      A: android:exported(0x3)=false",
+            "      A: android:foregroundServiceType(0x4)=0x00000400",
+            "      E: intent-filter (line=2)",
+            "        E: action (line=3)",
+            '          A: android:name(0x1)="android.net.VpnService"',
+            "      E: meta-data (line=4)",
+            '        A: android:name(0x1)="android.net.VpnService.SUPPORTS_ALWAYS_ON"',
+            "        A: android:value(0x5)=false",
+        ],
+    )
 
 
 def elf64(alignment: int) -> bytes:

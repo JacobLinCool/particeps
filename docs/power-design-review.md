@@ -118,7 +118,7 @@ runtime 等候 mutex 時另有 1 ms 重試（`ExperimentRuntime.kt:1022,4025`）
 
 ## 6. 已合理的部分
 
-- screen、notification、network state、VPN state 採 Android callback，無須再增加高頻輪詢。
+- screen、network state、VPN state 採 Android callback，無須再增加高頻輪詢。
 - throughput 讀取被動計數，沒有額外測速網路請求。
 - 上傳已有網路限制、低電量限制與退避；五天範本關閉自動上傳，不是本配置首要耗電來源。
 - 純 reducer 與持久化副作用有助於離線重播驗證；不需要為省電移除加密、稽核或安全停止。

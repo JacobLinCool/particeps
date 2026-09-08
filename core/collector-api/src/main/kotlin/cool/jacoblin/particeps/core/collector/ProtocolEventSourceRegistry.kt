@@ -25,7 +25,7 @@ enum class RegistryRateKind { CONFIGURATION_DERIVED, HARD, PLATFORM_ONLY, UNBOUN
 enum class RegistryOverflowPolicy { COALESCE_WITH_SOURCE_TIME, EMIT_QUALITY_GAP, FAIL_SOURCE }
 enum class RegistryCrossBootPolicy { NOT_APPLICABLE, RESET }
 enum class RegistryWallClockChangePolicy { QUALITY_GAP, UNAFFECTED }
-enum class RegistryImplementationStatus { IMPLEMENTED, PLANNED }
+enum class RegistryImplementationStatus { IMPLEMENTED, PLANNED, UNAVAILABLE }
 
 sealed interface RegistryTypedValue {
     data object NullValue : RegistryTypedValue
@@ -195,7 +195,7 @@ data class RegistrySourceContract(
 }
 
 object ProtocolEventSourceRegistry {
-    const val REGISTRY_SHA256: String = "7ae35bfce66b7f14d61c7164e57db662ee8458651de85ee74b8a771875db7a3c"
+    const val REGISTRY_SHA256: String = "885ffebf4203ef9277ec840960bbf2f99e42e289521226b7dec95f97c48dd480"
     val sources: Map<String, RegistrySourceContract> = listOf(
         RegistrySourceContract(
             sourceId = "accelerometer.v1",
@@ -4190,7 +4190,7 @@ object ProtocolEventSourceRegistry {
             schemaVersion = 1,
             sourceKind = RegistrySourceKind.COLLECTOR,
             emissionAuthority = RegistryEmissionAuthority.SOURCE_PLUGIN_ONLY,
-            selectable = true,
+            selectable = false,
             ownerModule = ":collector:notification-events",
             platforms = setOf("android"),
             disclosureKey = "collector.notification_events",
@@ -4198,7 +4198,7 @@ object ProtocolEventSourceRegistry {
                 RegistryAccessContract(kind = "NOTIFICATION_LISTENER", mode = "special_access", absencePolicy = "BLOCK_REQUIRED_STUDY"),
             ),
             implementationStatuses = listOf(
-                RegistryImplementationContract(platform = "android", status = RegistryImplementationStatus.IMPLEMENTED),
+                RegistryImplementationContract(platform = "android", status = RegistryImplementationStatus.UNAVAILABLE),
             ),
             events = listOf(
                 RegistryEventContract(

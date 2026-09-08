@@ -10,6 +10,10 @@
 | `five-day-windowed-gyro-study.json` | Same 120-hour study, with required gyro collecting only noon–17:00 on each local date while the study runs; other collectors remain continuous |
 | `demo-study.json` | An example study configuration, useful as a schema reference |
 
+Both five-day examples use seven collectors and omit cross-app notification receipt. Their survey
+reminders still use Particeps notifications. Older RC9 configurations that select
+`notification_events.v1` must be revised and signed again before use with the current app.
+
 These exist so a debug build can exercise signing and export decryption end to end, and so the example configuration in the [researcher guide](../../docs/researcher-guide.md) is runnable. That is their only purpose. There is no separate file for the demonstration signing public key; the [threat model](../../docs/threat-model.md) describes where a configuration's signing key lives.
 
 `demo-study.json` is intentionally formatted for people to read. Run `canonicalize` before `sign`; only the resulting RFC 8785 bytes are valid Protocol v1 signing input.

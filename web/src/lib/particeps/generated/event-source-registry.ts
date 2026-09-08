@@ -5687,7 +5687,7 @@ export const EVENT_SOURCE_REGISTRY = {
         "statuses": [
           {
             "platform": "android",
-            "status": "IMPLEMENTED"
+            "status": "UNAVAILABLE"
           }
         ]
       },
@@ -5695,7 +5695,7 @@ export const EVENT_SOURCE_REGISTRY = {
         "android"
       ],
       "schema_version": 1,
-      "selectable": true,
+      "selectable": false,
       "source_id": "notification_events.v1",
       "source_kind": "COLLECTOR"
     },
@@ -11046,7 +11046,7 @@ export const EVENT_SOURCE_REGISTRY = {
     }
   ]
 } as const satisfies EventSourceRegistry;
-export const EVENT_SOURCE_REGISTRY_SHA256 = '7ae35bfce66b7f14d61c7164e57db662ee8458651de85ee74b8a771875db7a3c' as const;
+export const EVENT_SOURCE_REGISTRY_SHA256 = '885ffebf4203ef9277ec840960bbf2f99e42e289521226b7dec95f97c48dd480' as const;
 export const EVENT_SOURCE_CONTRACTS: readonly RegistrySourceContract[] = EVENT_SOURCE_REGISTRY.sources;
 export const COLLECTOR_SOURCE_IDS = EVENT_SOURCE_REGISTRY.sources.filter((source) => source.source_kind === 'COLLECTOR').map((source) => source.source_id);
 export const SYSTEM_SOURCE_IDS = EVENT_SOURCE_REGISTRY.sources.filter((source) => source.source_kind === 'SYSTEM').map((source) => source.source_id);

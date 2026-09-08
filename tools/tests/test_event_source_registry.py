@@ -93,6 +93,28 @@ class EventSourceRegistryTest(unittest.TestCase):
         with self.assertRaisesRegex(event_source_registry.RegistryError, "changed in place"):
             event_source_registry.check_immutability(self.valid, hostile)
 
+    def test_collector_retirement_preserves_the_published_event_contract(self) -> None:
+        retired = copy.deepcopy(self.valid)
+        source = next(item for item in retired["sources"] if item["source_id"] == "battery_state.v1")
+        source["selectable"] = False
+        source["implementation"]["statuses"] = [{"platform": "android", "status": "UNAVAILABLE"}]
+        event_source_registry.validate_registry(retired)
+        event_source_registry.check_immutability(self.valid, retired)
+
+        rendered = event_source_registry.render_artifacts(retired)
+        profiles = rendered[event_source_registry.GENERATED_PATHS["kotlin_profiles"]].decode()
+        events = rendered[event_source_registry.GENERATED_PATHS["kotlin_events"]].decode()
+        self.assertNotIn("BatteryStateV1ProfileConfiguration", profiles)
+        self.assertIn('sourceId = "battery_state.v1"', events)
+        self.assertIn("RegistryImplementationStatus.UNAVAILABLE", events)
+
+    def test_unavailable_collector_cannot_remain_selectable(self) -> None:
+        invalid = copy.deepcopy(self.valid)
+        source = next(item for item in invalid["sources"] if item["source_id"] == "battery_state.v1")
+        source["implementation"]["statuses"] = [{"platform": "android", "status": "UNAVAILABLE"}]
+        with self.assertRaisesRegex(event_source_registry.RegistryError, "selectability"):
+            event_source_registry.validate_registry(invalid)
+
     def test_integral_jcs_uses_utf16_member_order(self) -> None:
         value = {"\ufffd": 1, "\U00010000": 2}
         self.assertEqual(

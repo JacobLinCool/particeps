@@ -324,6 +324,7 @@ export interface Messages {
     unsupportedBrowser: string;
     signing: string;
     draft: string;
+    collectorUnavailable: string;
     keyFile: string;
     clipboard: string;
     /** The static build ships a 404 fallback, so the one route nobody designed still needs words. */

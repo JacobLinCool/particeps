@@ -14,7 +14,6 @@ import cool.jacoblin.particeps.collector.keyboardime.ResearchInputMethodService
 import cool.jacoblin.particeps.collector.location.LocationCollectorPlugin
 import cool.jacoblin.particeps.collector.networkthroughput.NetworkThroughputCollectorPlugin
 import cool.jacoblin.particeps.collector.networkstate.NetworkStateCollectorPlugin
-import cool.jacoblin.particeps.collector.notificationevents.NotificationEventsCollectorPlugin
 import cool.jacoblin.particeps.collector.screenstate.ScreenStateCollectorPlugin
 import cool.jacoblin.particeps.collector.networkusage.NetworkUsageCollectorPlugin
 import cool.jacoblin.particeps.collector.proximity.ProximityCollectorPlugin
@@ -100,7 +99,6 @@ class CollectorApplication : Application() {
                 NetworkStateCollectorPlugin(this),
                 VpnStateCollectorPlugin(this),
                 NetworkThroughputCollectorPlugin(),
-                NotificationEventsCollectorPlugin(),
                 ScreenStateCollectorPlugin(this),
                 NetworkUsageCollectorPlugin(this),
                 UsageEventsCollectorPlugin(this),

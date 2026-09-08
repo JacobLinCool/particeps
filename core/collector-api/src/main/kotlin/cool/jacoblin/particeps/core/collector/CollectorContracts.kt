@@ -18,7 +18,6 @@ enum class AccessKind {
     BACKGROUND_LOCATION,
     NOTIFICATIONS,
     USAGE_ACCESS,
-    NOTIFICATION_LISTENER,
     RESEARCH_KEYBOARD_ENABLED,
     RESEARCH_KEYBOARD_SELECTED,
     ACCELEROMETER_HARDWARE,
@@ -115,7 +114,6 @@ sealed interface SetupAction {
         APPLICATION_NOTIFICATIONS,
         LOCATION_SERVICES,
         USAGE_ACCESS,
-    NOTIFICATION_LISTENER,
         INPUT_METHODS,
     }
 
@@ -128,7 +126,6 @@ enum class SetupGuidance {
     BACKGROUND_LOCATION,
     NOTIFICATIONS_SETTINGS,
     USAGE_ACCESS,
-    NOTIFICATION_LISTENER,
     RESEARCH_KEYBOARD_ENABLE,
     RESEARCH_KEYBOARD_SELECT,
 }
@@ -207,6 +204,9 @@ data class CollectorDescriptor(
         require(sourceContract.sourceKind == RegistrySourceKind.COLLECTOR) {
             "Collector descriptor must reference a COLLECTOR source"
         }
+        require(sourceContract.selectable && sourceContract.implementationStatuses.any {
+            it.platform == "android" && it.status == RegistryImplementationStatus.IMPLEMENTED
+        }) { "Collector descriptor must reference an available Android implementation" }
         require(sourceContract.sourceId == id) { "Collector ID must equal its generated source contract ID" }
         require(sourceContract.emissionAuthority == RegistryEmissionAuthority.SOURCE_PLUGIN_ONLY) {
             "Collector source must be emitted only by its source plugin"

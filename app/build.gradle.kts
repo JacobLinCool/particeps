@@ -102,7 +102,6 @@ dependencies {
     implementation(project(":collector:network-state"))
     implementation(project(":collector:vpn-state"))
     implementation(project(":collector:network-throughput"))
-    implementation(project(":collector:notification-events"))
     implementation(project(":collector:screen-state"))
     implementation(project(":collector:network-usage"))
     implementation(project(":collector:proximity"))

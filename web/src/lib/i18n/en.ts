@@ -241,7 +241,6 @@ export const en: Messages = {
       records: 'Distance, maximum range, and near/far',
       limit: 'Near/far is common; values differ across devices'
     },
-    'notification_events.v1': { name: 'Notification receipt', records: 'Posting app, timestamp, and anonymous update token', limit: 'No text; a posting callback is not evidence of reading' },
     'screen_state.v1': { name: 'Screen power and lock state', records: 'Display power, interactive state, and keyguard', limit: 'Includes locked screens; does not establish attention' },
     'network_throughput.v1': { name: 'Observed throughput', records: 'Device byte-counter deltas and monotonic intervals', limit: 'Not a capacity test or per-app speed; VPN accounting may overlap' },
     'network_state.v1': {
@@ -324,6 +323,7 @@ export const en: Messages = {
     unsupportedBrowser: 'This browser cannot generate keys.',
     signing: 'Signing failed. Nothing was written.',
     draft: 'That file is not a study configuration this page can read.',
+    collectorUnavailable: 'This study selects a collector unavailable in the current Android app. Remove that collector and its resource binding, review the consent and analysis plan, and sign a new configuration.',
     keyFile: 'That file is not a private key this page can read.',
     clipboard: 'Copy failed. Select the text and copy it yourself.',
     notFound: 'No page at this address.',

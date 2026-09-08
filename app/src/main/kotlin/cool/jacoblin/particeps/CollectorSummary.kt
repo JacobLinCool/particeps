@@ -63,11 +63,6 @@ fun ParticipantDataCategory.summarize(): CollectorSummary {
             stringResource(R.string.participant_data_proximity_detail),
         )
 
-        ParticipantDataKind.NOTIFICATION_EVENTS -> Triple(
-            Glyph.APP,
-            stringResource(R.string.collector_notification_events_name),
-            stringResource(R.string.collector_notification_events_detail),
-        )
         ParticipantDataKind.SCREEN_STATE -> Triple(
             Glyph.SCREEN,
             stringResource(R.string.collector_screen_state_name),

@@ -32,7 +32,12 @@ MINIMUM_ELF_PAGE_ALIGNMENT_BY_ABI = {
 REQUIRED_PERMISSIONS = (
     "android.permission.ACCESS_LOCAL_NETWORK",
     "android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED",
+    "android.permission.POST_NOTIFICATIONS",
     "android.permission.QUERY_ALL_PACKAGES",
+)
+FORBIDDEN_NOTIFICATION_LISTENER_CAPABILITIES = (
+    "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE",
+    "android.service.notification.NotificationListenerService",
 )
 VPN_SERVICE = "cool.jacoblin.particeps.actuator.trafficshaping.TrafficShapingVpnService"
 REGISTRY_DIGEST_ASSET = "assets/particeps/event-source-registry.sha256"
@@ -312,6 +317,13 @@ def verify_manifest(aapt2: Path, apk: Path) -> None:
     for permission in REQUIRED_PERMISSIONS:
         if permission not in manifest:
             raise ReleaseApkVerificationError(f"release manifest is missing {permission}")
+    # Inspect the complete merged manifest: a listener's bind permission belongs on the service,
+    # so checking only uses-permission elements would miss the capability in the released APK.
+    for capability in FORBIDDEN_NOTIFICATION_LISTENER_CAPABILITIES:
+        if capability in manifest:
+            raise ReleaseApkVerificationError(
+                f"release manifest must not declare notification-listener capability: {capability}",
+            )
 
     service_blocks = [
         block

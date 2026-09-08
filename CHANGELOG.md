@@ -7,6 +7,43 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
+## v1.0.0-rc.10 — 2026-09-09
+
+- Removed direct collection of other apps' notifications from the Android app, including the
+  notification listener service, its access setup, and the collector module. Particeps' own survey
+  reminders and ongoing research notification remain supported.
+- Removed the notification collector from web study authoring and both five-day study examples.
+  Each example now selects seven collectors; the 120-hour duration, collection schedules,
+  all-App speed-limit windows, and activity questionnaires retain their existing design.
+- Retained the published `notification_events.v1` event contract for historical interpretation,
+  while marking the implementation unavailable and the source unselectable. Newly authored or
+  imported studies cannot select it; the complete event-source registry digest changes in RC10.
+
+**Installation:** RC10 removes the notification-listener capability associated with the reported
+RC9 Play Protect block and continues direct signed APK distribution. This does not establish that
+Google Play Protect will accept it on every device. Browser download and installation with Play
+Protect enabled on the affected physical phone remain to be verified; signing and emulator
+installation do not establish that result.
+
+**Application update from `v1.0.0-rc.9`:** export any research data that must be retained **before
+updating**, then install the signed RC10 APK over the existing app; do not uninstall first. The
+application ID and production signing certificate are unchanged. Android application identity and
+local-study compatibility are separate checks.
+
+**Local studies and exported data:** an RC9 study selecting `notification_events.v1` cannot resume
+in RC10. Complete or stop that study and retain its export while RC9 can still open it. After the
+update, the incompatible study enters recovery; a participant-confirmed recovery reset **deletes
+local study data**. Only reset after retaining the export, then import a newly issued and signed
+configuration without the removed collector and repeat consent/access setup. Other studies remain
+subject to the app's normal recovery and supported-contract checks. Keep the RC9 researcher and
+analysis tools for all RC9 export bundles and use RC10 tools for RC10 bundles, because each bundle
+binds its release's complete registry digest, even when it contains no notification data. Installing
+an APK does not revise a signed study configuration.
+
+**Fresh install:** install the signed RC10 APK and import a configuration issued for RC10. The
+updated examples use public demonstration keys; researchers must supply their study information,
+consent text, and signing/export keys before recruitment.
+
 ## v1.0.0-rc.9 — 2026-09-08
 
 - Added participant-relative study days and local-time windows. The five-day study examples run

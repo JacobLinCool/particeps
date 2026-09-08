@@ -64,7 +64,6 @@
     'gyroscope.v1': 'motion',
     'ambient_light.v1': 'app',
     'proximity.v1': 'connection',
-    'notification_events.v1': 'app',
     'screen_state.v1': 'screen',
     'network_throughput.v1': 'dataVolume',
     'network_state.v1': 'connection',

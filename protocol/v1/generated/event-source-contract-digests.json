@@ -1,6 +1,6 @@
 {
   "contract_digest_format": "particeps-event-source-contract-digests-v1",
-  "registry_sha256": "7ae35bfce66b7f14d61c7164e57db662ee8458651de85ee74b8a771875db7a3c",
+  "registry_sha256": "885ffebf4203ef9277ec840960bbf2f99e42e289521226b7dec95f97c48dd480",
   "sources": [
     {
       "schema_version": 1,

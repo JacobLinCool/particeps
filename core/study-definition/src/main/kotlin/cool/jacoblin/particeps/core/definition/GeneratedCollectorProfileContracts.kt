@@ -218,16 +218,6 @@ data class NetworkUsageV1ProfileConfiguration(
     companion object { const val SOURCE_ID: String = "network_usage.v1" }
 }
 
-data class NotificationEventsV1ProfileConfiguration(
-    override val sourceId: String = SOURCE_ID,
-) : CollectorProfileConfiguration {
-    init {
-        require(sourceId == SOURCE_ID) { "Collector profile source ID is immutable" }
-    }
-
-    companion object { const val SOURCE_ID: String = "notification_events.v1" }
-}
-
 data class ProximityV1ProfileConfiguration(
     val changeThresholdMillimeters: Long,
     val minimumEventIntervalMs: Long,
@@ -324,8 +314,6 @@ object GeneratedCollectorProfileCodec {
                 pollIntervalSeconds = config.get("poll_interval_seconds").asLong,
                 transports = config.get("transports").asJsonArray.map { NetworkUsageV1TransportsValue.fromWire(it.asString) },
             )
-            "notification_events.v1" -> NotificationEventsV1ProfileConfiguration(
-            )
             "proximity.v1" -> ProximityV1ProfileConfiguration(
                 changeThresholdMillimeters = config.get("change_threshold_millimeters").asLong,
                 minimumEventIntervalMs = config.get("minimum_event_interval_ms").asLong,
@@ -381,8 +369,6 @@ object GeneratedCollectorProfileCodec {
                 add("poll_interval_seconds", com.google.gson.JsonPrimitive(profile.pollIntervalSeconds))
                 add("transports", com.google.gson.JsonArray().apply { profile.transports.forEach { add(it.wireValue) } })
             }
-            is NotificationEventsV1ProfileConfiguration -> {
-            }
             is ProximityV1ProfileConfiguration -> {
                 add("change_threshold_millimeters", com.google.gson.JsonPrimitive(profile.changeThresholdMillimeters))
                 add("minimum_event_interval_ms", com.google.gson.JsonPrimitive(profile.minimumEventIntervalMs))
@@ -407,7 +393,7 @@ object GeneratedCollectorProfileCodec {
 }
 
 object GeneratedCollectorProfileContracts {
-    const val REGISTRY_SHA256: String = "7ae35bfce66b7f14d61c7164e57db662ee8458651de85ee74b8a771875db7a3c"
+    const val REGISTRY_SHA256: String = "885ffebf4203ef9277ec840960bbf2f99e42e289521226b7dec95f97c48dd480"
     val contracts: Map<String, GeneratedCollectorProfileContract> = listOf(
         GeneratedCollectorProfileContract(
             sourceId = "accelerometer.v1",
@@ -729,11 +715,6 @@ object GeneratedCollectorProfileContracts {
                     maximumItems = 2,
                     lessThanOrEqualField = null,
                 ),
-            ),
-        ),
-        GeneratedCollectorProfileContract(
-            sourceId = "notification_events.v1",
-            fields = mapOf(
             ),
         ),
         GeneratedCollectorProfileContract(

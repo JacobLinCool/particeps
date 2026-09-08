@@ -9,6 +9,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import cool.jacoblin.particeps.platform.SerializedSharedForegroundNotificationLease
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -76,6 +77,28 @@ class ForegroundNotificationSentinelTest {
             services.single().name,
         )
         assertEquals(false, services.single().exported)
+    }
+
+    @Test
+    fun installedManifestRetainsOwnNotificationsWithoutCrossAppNotificationAccess() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val packageInfo = context.packageManager.getPackageInfo(
+            context.packageName,
+            PackageManager.PackageInfoFlags.of(
+                (PackageManager.GET_SERVICES or PackageManager.GET_PERMISSIONS).toLong(),
+            ),
+        )
+
+        assertTrue(Manifest.permission.POST_NOTIFICATIONS in packageInfo.requestedPermissions.orEmpty())
+        assertFalse(
+            "The installed APK must not expose a notification listener service",
+            packageInfo.services.orEmpty().any {
+                it.permission == Manifest.permission.BIND_NOTIFICATION_LISTENER_SERVICE
+            },
+        )
+        assertFalse(
+            Manifest.permission.BIND_NOTIFICATION_LISTENER_SERVICE in packageInfo.requestedPermissions.orEmpty(),
+        )
     }
 
     @Test

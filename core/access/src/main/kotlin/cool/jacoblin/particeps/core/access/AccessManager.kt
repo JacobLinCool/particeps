@@ -123,7 +123,6 @@ class AccessManager(
                 Settings.ACTION_APP_NOTIFICATION_SETTINGS,
             ).putExtra(Settings.EXTRA_APP_PACKAGE, applicationContext.packageName)
             SetupAction.SystemSettings.LOCATION_SERVICES -> Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
-            SetupAction.SystemSettings.NOTIFICATION_LISTENER -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
             SetupAction.SystemSettings.USAGE_ACCESS -> Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
             SetupAction.SystemSettings.INPUT_METHODS -> Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
         }
@@ -161,11 +160,6 @@ class AccessManager(
         AccessKind.LOCATION_SERVICES -> error("Location services require asynchronous inspection")
         AccessKind.BACKGROUND_LOCATION -> permissionGranted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         AccessKind.NOTIFICATIONS -> notificationsEnabled(notificationFeatures)
-        AccessKind.NOTIFICATION_LISTENER -> applicationContext.getSystemService(NotificationManager::class.java)
-            .isNotificationListenerAccessGranted(ComponentName(
-                applicationContext.packageName,
-                "cool.jacoblin.particeps.collector.notificationevents.ResearchNotificationListenerService",
-            ))
         AccessKind.USAGE_ACCESS -> isUsageAccessGranted(applicationContext)
         AccessKind.RESEARCH_KEYBOARD_ENABLED -> keyboardId() in enabledKeyboardIds()
         AccessKind.RESEARCH_KEYBOARD_SELECTED -> keyboardId() == selectedKeyboardId()
@@ -207,7 +201,6 @@ class AccessManager(
         AccessKind.NOTIFICATIONS -> Manifest.permission.POST_NOTIFICATIONS
         AccessKind.LOCATION_SERVICES,
         AccessKind.BACKGROUND_LOCATION,
-        AccessKind.NOTIFICATION_LISTENER,
         AccessKind.USAGE_ACCESS,
         AccessKind.RESEARCH_KEYBOARD_ENABLED,
         AccessKind.RESEARCH_KEYBOARD_SELECTED,

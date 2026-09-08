@@ -73,7 +73,7 @@ of the study continues.
 
 Possible access includes:
 
-- notifications, so Android can show the neutral ongoing research notification and study prompts;
+- permission to show notifications, so Android can display the ongoing research notification and study prompts;
 - Usage access for device network accounting or Android app/screen usage history;
 - fine and background location plus location-services readiness, only for a location study;
 - selecting the optional Particeps research keyboard, only for a keyboard-touch study;
@@ -81,6 +81,9 @@ Possible access includes:
 
 Android owns permission dialogs and Settings screens. Particeps checks the result again after you
 return. Denying required access leaves the study stopped.
+
+Permission to show Particeps notifications is used for study reminders and the ongoing research
+notification. It does not let Particeps observe other apps' notifications.
 
 ### Studies that may adjust App transfer speed
 
@@ -185,6 +188,7 @@ your confirmation before destructive reset.
 
 | What you see | What to do |
 | --- | --- |
+| Google Play Protect blocks installation | Keep the warning and contact the research team with the app version and a screenshot. Wait for the team to resolve distribution or review with Google before installing. |
 | Setup cannot finish | Open the existing Access step and satisfy every required item, or decline/withdraw if you do not want to grant it. |
 | Start or Resume returns to Paused | Recheck required Android access. A study that may adjust App transfer speed may also need local-network permission and Android VPN consent. |
 | Another VPN stops working or the study pauses | Android permits only one active VPN for the same phone user. Choose which VPN to use; Particeps will not resume the study automatically. |

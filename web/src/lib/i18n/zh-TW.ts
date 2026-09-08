@@ -245,7 +245,6 @@ export const zhTW: Messages = {
       records: '原始距離、最大範圍與遠近判定',
       limit: '許多手機只能回報遠近；不同裝置的數值不可直接比較'
     },
-    'notification_events.v1': { name: '通知接收', records: '來源 App、時間與匿名化更新識別碼', limit: '不收文字；接收事件無法證明已閱讀' },
     'screen_state.v1': { name: '螢幕電源與鎖定狀態', records: '螢幕電源、可互動狀態與鎖定畫面', limit: '包含未解鎖時的狀態，無法判定注意力' },
     'network_throughput.v1': { name: '實際傳輸速率', records: '裝置流量計數差與單調時間區間', limit: '不是容量測速或個別 App 速率；VPN 計數可能重疊' },
     'network_state.v1': {
@@ -327,6 +326,7 @@ export const zhTW: Messages = {
     unsupportedBrowser: '這個瀏覽器無法產生金鑰。',
     signing: '簽署失敗，沒有寫出任何檔案。',
     draft: '這不是有效的研究設定檔，無法匯入。',
+    collectorUnavailable: '此研究選用了目前 Android App 不提供的收集器。請移除該收集器與資源規則、檢查同意內容及分析計畫，再簽署新的設定檔。',
     keyFile: '這不是有效的私鑰檔案，無法匯入。',
     clipboard: '複製失敗，請自己選取文字複製。',
     notFound: '找不到這個頁面。',

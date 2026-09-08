@@ -34,7 +34,7 @@
   import type { CollectorId, StudyConfiguration } from '$lib/particeps/types';
   import { download } from './artifacts';
   import { hpkeKeyPairFromPrivate } from './keys';
-  import { parseConfiguration } from './parse';
+  import { parseConfiguration, UnavailableCollectorError } from './parse';
   import type { Draft } from './draft.svelte';
   import type { Messages } from '$lib/i18n/types';
 
@@ -98,10 +98,10 @@
       configuration = parseConfiguration(new Uint8Array(await file.arrayBuffer()));
       configurationName = file.name;
       failure = '';
-    } catch {
+    } catch (error) {
       configuration = null;
       configurationName = '';
-      failure = m.error.draft;
+      failure = error instanceof UnavailableCollectorError ? m.error.collectorUnavailable : m.error.draft;
     }
   }
 
@@ -172,7 +172,6 @@
     'gyroscope.v1': 'motion',
     'ambient_light.v1': 'app',
     'proximity.v1': 'connection',
-    'notification_events.v1': 'app',
     'screen_state.v1': 'screen',
     'network_throughput.v1': 'dataVolume',
     'network_state.v1': 'connection',

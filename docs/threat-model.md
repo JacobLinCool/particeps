@@ -202,6 +202,31 @@ The opaque activity-component token prevents class-name persistence but is stabl
 study to balance observed activity resume/exit. It does not make Android usage history complete and
 can still be linkable within that one dataset.
 
+## Notifications and distribution
+
+The current Android app excludes the cross-app notification collector and its
+`NotificationListenerService` declaration. New study configurations cannot select
+`notification_events.v1`. The published event contract remains in the registry for interpretation
+of historical data; it does not grant runtime collection authority. The app retains
+`POST_NOTIFICATIONS` to show its own study reminders and ongoing research notification. That
+permission does not grant access to other apps' notifications.
+
+Published RC9 included a listener protected by Android's
+`android.permission.BIND_NOTIFICATION_LISTENER_SERVICE` and a separate participant Notification
+access grant. Although Android could deliver the full notification object, the reviewed callback
+read only the posting package, raw key, and post time. Persistence replaced the raw key with a
+study-scoped HMAC-SHA256 token using the `notification-events.key.v1` domain. Active ownership
+controlled event admission, and pause/stop removed that ownership. These metadata and runtime
+restrictions did not remove the APK's declared capability or revoke the Android access grant.
+Release-pinned implementation and test evidence remains in the [RC9 investigation](maintainers/play-protect-rc9-review.md).
+
+The reported RC9 Play Protect block matches Google's documented sensitive-capability protection
+for Internet-sideloaded APKs. Removing the listener eliminates this declared capability from a
+new build; it does not establish Google's decision for that build. Keep the production signing
+identity and test the exact release APK through the participant's browser installation path with
+Play Protect enabled before distribution. A successful emulator/ADB installation is not evidence
+that this path is accepted. This source change does not replace or unblock the published RC9 APK.
+
 ## Traffic-shaping security and privacy
 
 ### Scope

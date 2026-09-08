@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment_id": "five-day-speed-study",
-  "configuration_id": "five-day-speed-study-activities-v2",
+  "configuration_id": "five-day-speed-study-activities-v3",
   "assigned_participant_id": null,
   "issued_at": "2026-09-06T00:00:00Z",
   "expires_at": "2027-09-06T00:00:00Z",
@@ -15,8 +15,8 @@
   "purpose": "記錄日常手機使用與活動情形。此檔使用公開測試金鑰，正式研究前須替換。",
   "duration_hours": 120,
   "consent": {
-    "document_version": "five-day-demo-2",
-    "summary": "本研究記錄螢幕電源與鎖定狀態、陀螺儀、通知來源與時間、網路連線與 VPN 狀態、傳輸量、App 活動及時區。通知不含文字內容。研究可能調整所有 App 的傳輸速度，並邀請您填寫問卷，回顧手機以外的活動、其他裝置使用及活動安排變化。您可暫停或退出；資料加密儲存於裝置，匯出後交予研究團隊。此公開測試範本不得直接用於真實參與者。"
+    "document_version": "five-day-demo-3",
+    "summary": "本研究記錄螢幕電源與鎖定狀態、陀螺儀、網路連線與 VPN 狀態、傳輸量、App 活動及時區。研究可能調整所有 App 的傳輸速度，並邀請您填寫問卷，回顧手機以外的活動、其他裝置使用及活動安排變化。您可暫停或退出；資料加密儲存於裝置，匯出後交予研究團隊。此公開測試範本不得直接用於真實參與者。"
   },
   "collectors": [
     {
@@ -53,16 +53,6 @@
           "config": {
             "poll_interval_seconds": 10
           }
-        }
-      ]
-    },
-    {
-      "id": "notification_events.v1",
-      "required": true,
-      "profiles": [
-        {
-          "id": "continuous",
-          "config": {}
         }
       ]
     },
@@ -527,23 +517,6 @@
       "resource": {
         "kind": "collector",
         "id": "network_throughput.v1"
-      },
-      "cases": [
-        {
-          "condition": {
-            "type": "study_session_active"
-          },
-          "profile_id": "continuous"
-        }
-      ],
-      "default_profile_id": "continuous"
-    },
-    {
-      "type": "resource_binding",
-      "id": "bind-notification-events",
-      "resource": {
-        "kind": "collector",
-        "id": "notification_events.v1"
       },
       "cases": [
         {

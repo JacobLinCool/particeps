@@ -28,7 +28,6 @@ include(
     ":collector:location",
     ":collector:network-state",
     ":collector:network-throughput",
-    ":collector:notification-events",
     ":collector:screen-state",
     ":collector:network-usage",
     ":collector:proximity",

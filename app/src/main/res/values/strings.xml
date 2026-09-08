@@ -318,11 +318,6 @@
     <string name="message_export_complete">The encrypted study export is ready.</string>
     <string name="message_local_data_deleted">The local study data was deleted.</string>
     <string name="message_study_paused_for_safety">The study paused because Particeps could not verify safe collection. Review any Android access shown below, then resume.</string>
-    <string name="access_notification_listener">Notification access</string>
-    <string name="access_notification_listener_description">Allow Particeps to observe notification receipt events.</string>
-    <string name="access_notification_listener_step_enable">Choose Particeps and allow notification access.</string>
-    <string name="collector_notification_events_name">Notification receipt events</string>
-    <string name="collector_notification_events_detail">Records the posting app and timing of notifications, including updates. Does not record text or prove that you read a notification.</string>
     <string name="collector_screen_state_name">Screen power and lock state</string>
     <string name="collector_screen_state_detail">Records screen power, interactive state, and whether the lock screen is showing. Does not establish attention or activity.</string>
     <string name="collector_network_throughput_name">Observed network throughput</string>

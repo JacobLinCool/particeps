@@ -55,7 +55,6 @@ enum class ParticipantDataKind {
     LOCATION,
     NETWORK_STATE,
     NETWORK_THROUGHPUT,
-    NOTIFICATION_EVENTS,
     SCREEN_STATE,
     NETWORK_USAGE,
     PROXIMITY,

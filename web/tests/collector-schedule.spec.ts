@@ -19,7 +19,7 @@ describe('independent scheduled collector profiles', () => {
     expect(validate(configuration)).toEqual([]);
     expect(parseConfiguration(canonicalConfigurationBytes(configuration))).toEqual(configuration);
     expect(configuration.collectors.find((collector) => collector.id === 'gyroscope.v1')?.required).toBe(true);
-    expect(configuration.collectors).toHaveLength(8);
+    expect(configuration.collectors).toHaveLength(7);
     expect(configuration.collectors.find((collector) => collector.id === 'vpn_state.v1')).toEqual({
       id: 'vpn_state.v1', required: true, profiles: [{ id: 'continuous', config: {} }]
     });

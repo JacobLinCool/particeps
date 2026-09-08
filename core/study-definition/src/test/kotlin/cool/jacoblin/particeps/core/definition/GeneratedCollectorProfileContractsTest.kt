@@ -9,6 +9,15 @@ import org.junit.Test
 
 class GeneratedCollectorProfileContractsTest {
     @Test
+    fun removedNotificationCollectorCannotBeConfigured() {
+        val config = JsonParser.parseString("{}").asJsonObject
+        assertFalse(GeneratedCollectorProfileContracts.contracts.containsKey("notification_events.v1"))
+        assertThrows(IllegalArgumentException::class.java) {
+            GeneratedCollectorProfileCodec.decode("notification_events.v1", config)
+        }
+    }
+
+    @Test
     fun everyGeneratedAuthoringDefaultRoundTripsThroughItsTypedProfile() {
         GeneratedCollectorProfileContracts.contracts.forEach { (sourceId, contract) ->
             val profile = GeneratedCollectorProfileCodec.authoringDefault(sourceId)

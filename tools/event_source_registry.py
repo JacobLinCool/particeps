@@ -412,7 +412,7 @@ def validate_registry(registry: Mapping[str, Any], *, project_root: Path = ROOT)
             if source["access"] or source["disclosure_key"] is not None:
                 raise RegistryError(f"{path}: system source cannot disclose or request access")
         else:
-            if source["emission_authority"] != "SOURCE_PLUGIN_ONLY" or not source["selectable"] or source["configuration"] is None:
+            if source["emission_authority"] != "SOURCE_PLUGIN_ONLY" or source["configuration"] is None:
                 raise RegistryError(f"{path}: invalid collector-source authority/configuration")
             if source["disclosure_key"] is None:
                 raise RegistryError(f"{path}: collector needs a data-category disclosure")
@@ -427,6 +427,8 @@ def validate_registry(registry: Mapping[str, Any], *, project_root: Path = ROOT)
         _sorted_unique(statuses, f"{path}.implementation.statuses", key=lambda item: item["platform"])
         if [item["platform"] for item in statuses] != source["platforms"]:
             raise RegistryError(f"{path}: implementation statuses do not cover producer platforms")
+        if not system and source["selectable"] != any(item["status"] != "UNAVAILABLE" for item in statuses):
+            raise RegistryError(f"{path}: collector selectability must match implementation availability")
         if any(item["status"] == "IMPLEMENTED" for item in statuses):
             module_path = project_root.joinpath(*module.removeprefix(":").split(":"))
             if not module_path.is_dir():
@@ -773,7 +775,7 @@ def _render_kotlin_event_registry(registry: Mapping[str, Any], digest: str) -> s
         "enum class RegistryOverflowPolicy { COALESCE_WITH_SOURCE_TIME, EMIT_QUALITY_GAP, FAIL_SOURCE }",
         "enum class RegistryCrossBootPolicy { NOT_APPLICABLE, RESET }",
         "enum class RegistryWallClockChangePolicy { QUALITY_GAP, UNAFFECTED }",
-        "enum class RegistryImplementationStatus { IMPLEMENTED, PLANNED }",
+        "enum class RegistryImplementationStatus { IMPLEMENTED, PLANNED, UNAVAILABLE }",
         "",
         "sealed interface RegistryTypedValue {",
         "    data object NullValue : RegistryTypedValue",
@@ -1194,7 +1196,7 @@ def _profile_encode_expression(name: str, descriptor: Mapping[str, Any], propert
 
 
 def _render_typed_profile_declarations(registry: Mapping[str, Any]) -> list[str]:
-    collectors = [source for source in registry["sources"] if source["source_kind"] == "COLLECTOR"]
+    collectors = [source for source in registry["sources"] if source["source_kind"] == "COLLECTOR" and source["selectable"]]
     lines = ["sealed interface CollectorProfileConfiguration {", "    val sourceId: String", "}", ""]
     for source in collectors:
         source_id = source["source_id"]
@@ -1406,7 +1408,7 @@ def _render_kotlin_profiles(registry: Mapping[str, Any], digest: str) -> str:
         ]
     )
     for source in registry["sources"]:
-        if source["source_kind"] != "COLLECTOR":
+        if source["source_kind"] != "COLLECTOR" or not source["selectable"]:
             continue
         lines.extend(
             [

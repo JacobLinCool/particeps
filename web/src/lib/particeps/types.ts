@@ -35,7 +35,6 @@ export type CollectorId =
   | 'gyroscope.v1'
   | 'keyboard_touch.v1'
   | 'location.v1'
-  | 'notification_events.v1'
   | 'screen_state.v1'
   | 'network_throughput.v1'
   | 'network_state.v1'
@@ -83,7 +82,7 @@ type CollectorResource<I extends CollectorId, C extends CollectorProfileConfigur
 export type CollectorConfig =
   | CollectorResource<'accelerometer.v1' | 'gyroscope.v1', SensorProfile>
   | CollectorResource<'ambient_light.v1', AmbientLightProfile>
-  | CollectorResource<'app_lifecycle.v1' | 'battery_state.v1' | 'temporal_context.v1' | 'notification_events.v1' | 'screen_state.v1' | 'vpn_state.v1', Record<string, never>>
+  | CollectorResource<'app_lifecycle.v1' | 'battery_state.v1' | 'temporal_context.v1' | 'screen_state.v1' | 'vpn_state.v1', Record<string, never>>
   | CollectorResource<'keyboard_touch.v1', { trajectory_sampling_hz: number }>
   | CollectorResource<'location.v1', LocationProfile>
   | CollectorResource<'network_state.v1', { include_bandwidth_estimates: boolean }>
