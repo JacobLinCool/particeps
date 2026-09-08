@@ -28,7 +28,7 @@ mkdir -p "$report_directory"
 
 await_api37_services() {
   local timeout_seconds="$1"
-  local deadline state boot_completed package_service activity_service package_probe
+  local deadline state boot_completed package_service activity_service package_probe user_unlocked
   local stable_observations=0
   deadline=$((SECONDS + timeout_seconds))
   while (( SECONDS <= deadline )); do
@@ -38,9 +38,11 @@ await_api37_services() {
       package_service="$($adb_binary shell service check package 2>/dev/null | tr -d '\r' || true)"
       activity_service="$($adb_binary shell service check activity 2>/dev/null | tr -d '\r' || true)"
       package_probe="$($adb_binary shell cmd package path android 2>/dev/null | tr -d '\r' || true)"
+      user_unlocked="$($adb_binary shell am get-started-user-state 0 2>/dev/null | tr -d '\r' || true)"
       if [[ "$package_service" == *found* \
           && "$activity_service" == *found* \
-          && "$package_probe" == package:* ]]; then
+          && "$package_probe" == package:* \
+          && "$user_unlocked" == RUNNING_UNLOCKED ]]; then
         stable_observations=$((stable_observations + 1))
         if (( stable_observations >= 3 )); then
           return 0
@@ -53,13 +55,14 @@ await_api37_services() {
     fi
     sleep 2
   done
-  echo "API 37 emulator services did not recover within $timeout_seconds seconds" >&2
+  echo "API 37 emulator services and unlocked user 0 did not recover within $timeout_seconds seconds" >&2
   return 1
 }
 
 run_api37_blocking_compatibility() {
   local maximum_attempts=3
   local attempt attempt_output attempt_report_directory crash_log classification instrumentation_file compatibility_status
+  local phase_log phase_start
   local -a evidence_files
 
   for attempt in $(seq 1 "$maximum_attempts"); do
@@ -68,7 +71,8 @@ run_api37_blocking_compatibility() {
     attempt_report_directory="$report_directory/instrumentation/api37-attempt-$attempt"
     crash_log="$report_directory/api37-compatibility-attempt-$attempt-crash.txt"
     classification="$report_directory/api37-compatibility-attempt-$attempt-classification.txt"
-    "$adb_binary" logcat -b crash -c >/dev/null 2>&1 || true
+    phase_log="$report_directory/api37-compatibility-attempt-$attempt-emulator.txt"
+    phase_start="$(wc -c < "$emulator_log")"
 
     set +e
     PARTICEPS_INSTRUMENTATION_REPORT_DIR="$attempt_report_directory" \
@@ -76,19 +80,28 @@ run_api37_blocking_compatibility() {
       >"$attempt_output" 2>&1
     compatibility_status=$?
     set -e
+    "$adb_binary" logcat -b crash -d -v threadtime >"$crash_log" 2>&1 || true
+    tail -c "+$((phase_start + 1))" "$emulator_log" >"$phase_log"
+    # A successful instrumentation result cannot erase a concurrently crashing Application.
+    # The emulator log covers the whole boot, including crashes outside the current logcat buffer.
+    if ! python3 tools/classify_api37_emulator_failure.py --check-product-failures \
+        "$emulator_log" "$crash_log" "$attempt_output"; then
+      return 1
+    fi
     if (( compatibility_status == 0 )); then
       cat "$attempt_output"
       return 0
     fi
 
-    "$adb_binary" logcat -b crash -d -v threadtime >"$crash_log" 2>&1 || true
-    evidence_files=("$attempt_output" "$crash_log")
+    evidence_files=("$attempt_output" "$phase_log")
     while IFS= read -r instrumentation_file; do
       evidence_files+=("$instrumentation_file")
     done < <(find "$attempt_report_directory" -maxdepth 1 -type f -print 2>/dev/null | sort)
 
     if ! python3 tools/classify_api37_emulator_failure.py \
         --result-label RETRYABLE \
+        --platform-evidence "$phase_log" \
+        --transport-evidence "$attempt_output" \
         "${evidence_files[@]}" | tee "$classification"; then
       cat "$attempt_output" >&2
       return "$compatibility_status"
@@ -110,11 +123,14 @@ run_api37_quarantined_host_harness() {
   local harness_pid
   local harness_status
   local package_probe
+  local phase_start
+  local phase_log="$quarantine_directory/emulator-phase.txt"
   local platform_abort=false
 
   mkdir -p "$quarantine_directory"
-  "$adb_binary" logcat -b crash -c >/dev/null 2>&1 || true
-  "$adb_binary" logcat -b crash -v threadtime >"$crash_log" 2>&1 &
+  await_api37_services 180
+  phase_start="$(wc -c < "$emulator_log")"
+  "$adb_binary" logcat -b crash -T 1 -v threadtime >"$crash_log" 2>&1 &
   crash_log_pid=$!
 
   set +e
@@ -148,6 +164,12 @@ run_api37_quarantined_host_harness() {
   kill "$crash_log_pid" >/dev/null 2>&1 || true
   wait "$crash_log_pid" >/dev/null 2>&1 || true
   "$adb_binary" logcat -b crash -d -v threadtime >>"$crash_log" 2>&1 || true
+  tail -c "+$((phase_start + 1))" "$emulator_log" >"$phase_log"
+  if ! python3 tools/classify_api37_emulator_failure.py --check-product-failures \
+      "$emulator_log" "$crash_log" "$harness_output" \
+      "$quarantine_directory/harness/android-host-harness.xml"; then
+    return 1
+  fi
 
   if (( harness_status == 0 )); then
     printf '%s\n' "API 37 full host harness passed; quarantine was not used." | tee "$classification"
@@ -155,8 +177,10 @@ run_api37_quarantined_host_harness() {
   fi
 
   if python3 tools/classify_api37_emulator_failure.py \
+      --platform-evidence "$phase_log" \
+      --transport-evidence "$harness_output" \
       "$harness_output" \
-      "$crash_log" \
+      "$phase_log" \
       "$quarantine_directory/harness/android-host-harness.xml" | tee "$classification"; then
     echo "::warning::API 37 full host harness quarantined for the known revision 5 SurfaceFlinger defect."
     return 0
@@ -169,6 +193,11 @@ run_api37_quarantined_host_harness() {
 }
 
 if [[ "$require_16k" == true ]]; then
+  emulator_log="${PARTICEPS_API37_EMULATOR_LOG:?API 37 gate requires the complete emulator log from boot}"
+  if [[ ! -s "$emulator_log" ]]; then
+    echo "API 37 emulator log from boot is missing or empty: $emulator_log" >&2
+    exit 1
+  fi
   page_size="$($adb_binary shell getconf PAGE_SIZE | tr -d '\r')"
   if [[ "$page_size" != "16384" ]]; then
     echo "API 37 ps16k emulator page size must be 16384, got: $page_size" >&2

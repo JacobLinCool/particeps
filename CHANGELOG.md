@@ -18,6 +18,8 @@ must do.
 - Retained the published `notification_events.v1` event contract for historical interpretation,
   while marking the implementation unavailable and the source unselectable. Newly authored or
   imported studies cannot select it; the complete event-source registry digest changes in RC10.
+- Hardened API 37 release checks to require an unlocked Android user and a successful
+  `Application.onCreate()` return, and to reject App crashes even when instrumentation reports success.
 
 **Installation:** RC10 removes the notification-listener capability associated with the reported
 RC9 Play Protect block and continues direct signed APK distribution. This does not establish that

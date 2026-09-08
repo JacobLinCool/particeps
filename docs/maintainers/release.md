@@ -24,11 +24,15 @@ Particeps App, VPN, `libgojni`, or instrumentation/test assertion failure. Every
 blocking, and the exact signature must also terminate the emulator transport rather than merely
 coincide with a scenario failure. CI runs the stock image without root, remount, framework overlay,
 SystemUI disablement, or system-server mutation. The API 37 runner waits until the stock package and
-activity services required by its non-UI checks are actually registered before starting; it does not
-treat the preview image's early `sys.boot_completed` property as sufficient readiness. If the exact
+activity services required by its non-UI checks are actually registered and the Android user is
+unlocked before starting; it does not treat the preview image's early `sys.boot_completed` property
+as sufficient readiness. Compatibility checks also require the target `Application.onCreate()` to
+return successfully before reporting success. The uninterrupted emulator log is retained
+and checked for App failures even when instrumentation reports success; a later crash-buffer
+boundary cannot hide an earlier startup crash. If the exact
 tracked assertion restarts those services during the blocking compatibility checks, CI waits for
-consecutive successful package-manager probes after service recovery and reruns the entire
-install/native-loading instrumentation up to three times. A retry is never a pass: publication still
+consecutive successful package-manager and user-unlock probes after service recovery and reruns
+the entire install/native-loading instrumentation up to three times. A retry is never a pass: publication still
 requires one complete successful compatibility run.
 During the quarantined full harness, the same exact assertion plus a failed live package-manager
 probe stops the remaining scenarios immediately. A scenario failure is written as a blocking marker

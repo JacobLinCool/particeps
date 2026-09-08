@@ -27,7 +27,14 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             evidence_file = Path(temporary) / "evidence.txt"
             evidence_file.write_text(evidence)
-            command = ["python3", str(ROOT / "tools/classify_api37_emulator_failure.py")]
+            command = [
+                "python3",
+                str(ROOT / "tools/classify_api37_emulator_failure.py"),
+                "--platform-evidence",
+                str(evidence_file),
+                "--transport-evidence",
+                str(evidence_file),
+            ]
             if result_label is not None:
                 command.extend(("--result-label", result_label))
             command.append(str(evidence_file))
@@ -47,6 +54,22 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertIn("QUARANTINED", result.stdout)
+
+    def test_api_37_classifier_requires_explicit_current_phase_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "evidence.txt"
+            evidence.write_text(
+                "surfaceflinger /vendor/lib64/hw/mapper.ranchu.so\n"
+                "Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma\n"
+                "transport error: device offline\n",
+            )
+            result = subprocess.run(
+                ["python3", str(ROOT / "tools/classify_api37_emulator_failure.py"), str(evidence)],
+                capture_output=True,
+                text=True,
+            )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("requires --platform-evidence", result.stderr)
 
     def test_api_37_classifier_keeps_product_and_test_failures_blocking(self) -> None:
         result = self.run_api37_classifier(
@@ -327,6 +350,8 @@ esac
         self.assertNotIn("android-api37-surfaceflinger-guard.sh", prebuild)
         self.assertIn("service check package", api37_runner)
         self.assertIn("service check activity", api37_runner)
+        self.assertIn("am get-started-user-state 0", api37_runner)
+        self.assertIn('"$user_unlocked" == RUNNING_UNLOCKED', api37_runner)
         self.assertNotIn("service check input", api37_runner)
         self.assertIn('"emulator"', api37_runner)
         self.assertIn('"platform-tools"', api37_runner)
@@ -339,6 +364,12 @@ esac
         self.assertIn("run_api37_blocking_compatibility", launcher)
         self.assertIn("await_api37_services 180", launcher)
         self.assertIn("cmd package path android", launcher)
+        self.assertIn("am get-started-user-state 0", launcher)
+        self.assertIn('"$user_unlocked" == RUNNING_UNLOCKED', launcher)
+        self.assertIn("--check-product-failures", launcher)
+        self.assertIn('--platform-evidence "$phase_log"', launcher)
+        self.assertIn("PARTICEPS_API37_EMULATOR_LOG", api37_runner)
+        self.assertNotIn("logcat -b crash -c", launcher)
         self.assertIn("stable_observations >= 3", launcher)
         self.assertIn("maximum_attempts=3", launcher)
         self.assertIn("--result-label RETRYABLE", launcher)

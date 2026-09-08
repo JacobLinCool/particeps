@@ -93,11 +93,13 @@ trap cleanup EXIT
 emulator_pid=$!
 
 # sys.boot_completed is not a sufficient readiness signal on the revision 5 preview image: it can
-# become 1 before package or activity has registered. Wait only for services required by the
+# become 1 before package or activity has registered, or before user 0's credential storage unlocks.
+# Wait only for services and storage required by the
 # blocking compatibility gate. This observes the stock image and does not patch Android framework or
 # SystemUI state.
 deadline=$((SECONDS + 600))
 ready=false
+stable_observations=0
 while (( SECONDS <= deadline )); do
   if ! kill -0 "$emulator_pid" >/dev/null 2>&1; then
     echo "API 37 emulator exited before required Android services became ready" >&2
@@ -110,19 +112,28 @@ while (( SECONDS <= deadline )); do
   if [[ "$state" == device && "$boot_completed" == 1 ]]; then
     package_service="$($adb_binary -s emulator-5554 shell service check package 2>/dev/null | tr -d '\r' || true)"
     activity_service="$($adb_binary -s emulator-5554 shell service check activity 2>/dev/null | tr -d '\r' || true)"
-    if [[ "$package_service" == *found* && "$activity_service" == *found* ]]; then
-      ready=true
-      break
+    user_unlocked="$($adb_binary -s emulator-5554 shell am get-started-user-state 0 2>/dev/null | tr -d '\r' || true)"
+    if [[ "$package_service" == *found* && "$activity_service" == *found* && "$user_unlocked" == RUNNING_UNLOCKED ]]; then
+      stable_observations=$((stable_observations + 1))
+      if (( stable_observations >= 3 )); then
+        ready=true
+        break
+      fi
+    else
+      stable_observations=0
     fi
+  else
+    stable_observations=0
   fi
   sleep 2
 done
 
 if [[ "$ready" != true ]]; then
-  echo "API 37 emulator did not expose required Android services within 600 seconds" >&2
+  echo "API 37 emulator did not expose required Android services and unlocked user 0 within 600 seconds" >&2
   exit 1
 fi
 
 export ADB="$adb_binary"
 export ANDROID_SERIAL="emulator-5554"
+export PARTICEPS_API37_EMULATOR_LOG="$emulator_log"
 tools/android-emulator-ci.sh --require-16k=true

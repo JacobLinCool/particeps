@@ -2,6 +2,7 @@ package cool.jacoblin.particeps
 
 import android.Manifest
 import android.app.Activity
+import android.app.Application
 import android.app.Instrumentation
 import android.content.ComponentName
 import android.content.Context
@@ -9,21 +10,43 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Bundle
+import android.os.UserManager
 import cool.jacoblin.particeps.actuator.trafficshaping.TrafficShapingVpnService
 import cool.jacoblin.particeps.nativebinding.trafficshaping.Trafficshaping
 import dalvik.system.BaseDexClassLoader
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
 
 /** Debug-only API 37 checks that do not launch UI or invoke system task snapshots. */
 class Api37CompatibilityInstrumentation : Instrumentation() {
+    private val applicationCreation = CompletableFuture<Application>()
+
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
         start()
     }
 
+    override fun callApplicationOnCreate(app: Application) {
+        super.callApplicationOnCreate(app)
+        applicationCreation.complete(app)
+    }
+
+    internal fun awaitApplicationCreation(timeoutSeconds: Long = 30): Application =
+        applicationCreation.get(timeoutSeconds, TimeUnit.SECONDS)
+
     override fun onStart() {
         val results = Bundle()
         try {
-            verify(targetContext)
+            // onStart runs on a separate thread before Android calls Application.onCreate.
+            // Only its successful lifecycle return may release this gate; an App crash cannot pass.
+            val application = awaitApplicationCreation()
+            check(application is CollectorApplication && application === targetContext.applicationContext) {
+                "The target CollectorApplication did not finish initialization"
+            }
+            check(application.getSystemService(UserManager::class.java).isUserUnlocked) {
+                "The target user must be unlocked before compatibility verification"
+            }
+            verify(application)
             results.putString("stream", "API 37 compatibility checks passed.\n")
             finish(Activity.RESULT_OK, results)
         } catch (failure: Throwable) {
