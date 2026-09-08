@@ -315,7 +315,9 @@ esac
                 "-gpu swiftshader -feature -Vulkan -feature -GLDirectMem",
                 workflow,
             )
-            self.assertIn("-gpu off -no-snapshot", workflow)
+            self.assertNotIn("-gpu off", workflow)
+            api37_matrix_entry = workflow.split("- name: API 37 16 KiB", 1)[1].split("    env:", 1)[0]
+            self.assertNotIn("emulator_options:", api37_matrix_entry)
             self.assertNotIn("-writable-system", workflow)
             self.assertNotIn("swiftshader_indirect", workflow)
             self.assertIn(
@@ -358,6 +360,7 @@ esac
         self.assertIn("-logcat-output", api37_runner)
         self.assertIn("-gpu swiftshader", api37_runner)
         self.assertNotIn("-gpu off", api37_runner)
+        self.assertIn("-feature -GLDirectMem", api37_runner)
         self.assertIn("tools/android-emulator-ci.sh --require-16k=true", api37_runner)
         self.assertNotIn("settings put", api37_runner)
         self.assertNotIn("input keyevent", api37_runner)

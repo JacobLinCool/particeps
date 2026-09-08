@@ -26,8 +26,14 @@ coincide with a scenario failure. CI runs the stock image without root, remount,
 SystemUI disablement, or system-server mutation. The API 37 runner explicitly selects the supported
 [`swiftshader` software renderer](https://developer.android.com/studio/run/emulator-acceleration).
 The image does not support the in-guest renderer selected by `-gpu off`; the emulator otherwise
-automatically substitutes a different graphics backend. The API 37 runner waits until the stock package and
-activity services required by its non-UI checks are actually registered and the Android user is
+automatically substitutes a different graphics backend. The runner also disables the emulator's
+`GLDirectMem` acceleration capability: the [upstream renderer](https://android.googlesource.com/platform/hardware/google/gfxstream/+/d047a57228332d995d36600792fa9ccc26cf8ae6/host/RenderControl.cpp#471)
+uses it to advertise `ANDROID_EMU_read_color_buffer_dma`, which triggers the revision 5 guest
+mapper assertion. This changes a host graphics capability, while the stock Android image, 16 KiB
+page-size check, permission checks, and all product gates remain intact. API 37 graphics options
+live only in `tools/android-api37-emulator-runner.sh`; its workflow matrix has no unused copy.
+The API 37 runner waits until the stock package and activity services required by its non-UI checks
+are actually registered and the Android user is
 unlocked before starting; it does not treat the preview image's early `sys.boot_completed` property
 as sufficient readiness. Compatibility checks also require the target `Application.onCreate()` to
 return successfully before reporting success. The uninterrupted emulator log is retained

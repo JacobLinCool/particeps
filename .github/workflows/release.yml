@@ -112,7 +112,6 @@ jobs:
             require_16k: true
             # Keep the stock image unmodified. Product compatibility is blocking; the full host
             # harness has an exact-signature quarantine for the revision 5 renderer defect.
-            emulator_options: "-no-window -gpu off -no-snapshot -noaudio -no-boot-anim -camera-back none"
     env:
       ANDROID_NDK_PACKAGE: ndk;30.0.14904198
       GOTOOLCHAIN: local
