@@ -220,6 +220,7 @@ class AccessCardTest {
     }
 
     private fun actions(requestAccess: (SetupAction) -> Unit = {}) = StudyUiActions(
+        scan = {},
         import = {},
         demo = null,
         review = {},

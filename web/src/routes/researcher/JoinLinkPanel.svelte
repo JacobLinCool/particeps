@@ -5,10 +5,12 @@
    * locally. Consequently the hosting URL remains the researcher's explicit deployment decision.
    */
   import { createJoinLink } from '$lib/particeps/join';
+  import Button from '$lib/ui/Button.svelte';
   import CopyButton from '$lib/ui/CopyButton.svelte';
   import Note from '$lib/ui/Note.svelte';
   import TextField from '$lib/ui/TextField.svelte';
   import type { Messages } from '$lib/i18n/types';
+  import { download } from './artifacts';
 
   interface Props {
     envelope: Uint8Array;
@@ -20,16 +22,17 @@
   let { envelope, fingerprint, assignedParticipantId, m }: Props = $props();
   let artifactUrl = $state('');
   let joinLink = $state('');
-  let qrSource = $state('');
-  let invalid = $state(false);
+  let qrSvg = $state('');
+  let failure = $state<'link' | 'qr' | null>(null);
+  const qrSource = $derived(qrSvg ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(qrSvg)}` : '');
   let generation = 0;
 
   $effect(() => {
     const current = ++generation;
     const candidate = artifactUrl.trim();
     joinLink = '';
-    qrSource = '';
-    invalid = false;
+    qrSvg = '';
+    failure = null;
     if (!candidate) return;
 
     try {
@@ -39,21 +42,31 @@
         .then((qrcode) => qrcode.toString(link, {
           type: 'svg',
           errorCorrectionLevel: 'M',
-          margin: 2,
+          margin: 4,
           color: { dark: '#111827', light: '#ffffff' }
         }))
         .then((svg) => {
           if (current === generation) {
-            qrSource = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+            qrSvg = svg;
           }
         })
         .catch(() => {
-          if (current === generation) invalid = true;
+          if (current === generation) {
+            qrSvg = '';
+            failure = 'qr';
+          }
         });
     } catch {
-      invalid = true;
+      failure = 'link';
     }
+
+    return () => { generation++; };
   });
+
+  function downloadQr() {
+    if (!qrSvg || !joinLink || failure !== null) return;
+    download(new TextEncoder().encode(qrSvg), 'particeps-study-qr.svg', 'image/svg+xml');
+  }
 </script>
 
 <section class="join panel panel--sunk" aria-labelledby="join-title">
@@ -76,7 +89,7 @@
           : m.researcher.files.join.artifactHint}
         onchange={(value) => (artifactUrl = value)}
       />
-      {#if invalid}
+      {#if failure === 'link'}
         <Note icon="alert" tone="danger" text={m.researcher.files.join.invalid} />
       {:else if joinLink}
         <code class="join__link">{joinLink}</code>
@@ -91,11 +104,23 @@
           />
         </div>
       {/if}
+      {#if failure === 'qr'}
+        <Note icon="alert" tone="danger" text={m.researcher.files.join.qrFailed} />
+      {/if}
+      <Note icon="info" tone="plain" text={m.researcher.files.join.scanHint} />
       <Note icon="lock" tone="plain" text={m.researcher.files.join.immutable} />
     </div>
 
-    {#if qrSource && joinLink}
-      <img class="join__qr" src={qrSource} alt={m.researcher.files.join.qrAlt} />
+    {#if qrSource && joinLink && failure === null}
+      <div class="join__handoff">
+        <img class="join__qr" src={qrSource} alt={m.researcher.files.join.qrAlt} />
+        <Button
+          icon="download"
+          label={m.researcher.files.join.download}
+          onclick={downloadQr}
+          testid="download-join-qr"
+        />
+      </div>
     {/if}
   </div>
 </section>
@@ -126,6 +151,12 @@
     border: 1px solid var(--line);
     border-radius: var(--radius-sm);
     background: #fff;
+  }
+
+  .join__handoff {
+    display: grid;
+    gap: var(--sp-3);
+    justify-items: start;
   }
 
   @media (min-width: 720px) {

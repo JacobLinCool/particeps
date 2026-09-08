@@ -131,8 +131,13 @@ class StudyViewModel(
         localMessage.value = ParticipantMessage.LOCAL_DATA_DELETED
     }
 
-    fun refreshAccess() = operation(ParticipantMessage.ACCESS_INSPECTION_FAILED) {
-        session.reconcileAccess()
+    fun refreshAccess() {
+        // Returning from the camera or document picker must not occupy the import operation slot.
+        // Before a study is loaded there are no study permissions to reconcile.
+        if (session.snapshot.value.study == null) return
+        operation(ParticipantMessage.ACCESS_INSPECTION_FAILED) {
+            session.reconcileAccess()
+        }
     }
 
     fun reportMessage(message: ParticipantMessage) {

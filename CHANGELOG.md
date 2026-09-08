@@ -7,6 +7,45 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
+## v1.0.0-rc.11 — 2026-09-09
+
+- Added an in-app camera scanner as the primary way to join a study. Scanning uses the same
+  configuration verification, study/data review, consent, access setup, and explicit Start steps
+  as file import. File import remains available, including on devices without a camera.
+- Research QR codes contain an immutable HTTPS join link, the configuration's exact SHA-256,
+  and its signing fingerprint. The app downloads the signed configuration, so scanning requires
+  internet access. The code does not contain the complete configuration. Invalid codes, changed
+  artifacts, and mismatched signatures are rejected; scanning cannot replace an existing study.
+- The camera is requested only when opening the scanner and is released on backgrounding or
+  leaving it. Frames are decoded locally and are not stored. Added permission recovery, retry,
+  flashlight controls, and English/Traditional Chinese scanner screens.
+- Added downloadable SVG QR images to web study authoring for sharing or printing. Generation
+  stays in the researcher's browser, and changing or invalidating the link clears the old image.
+- Moved study-download body reads and temporary-file writes off the main thread, added an overall
+  download timeout, and prevented access refresh from competing with the initial import.
+
+**Application update from `v1.0.0-rc.10`:** retain any required research exports, then install the
+signed RC11 APK over the existing app without uninstalling. The application ID and production
+signing certificate are unchanged, and the Android version code increases. Camera access is optional
+and is not required to continue an existing study or import a file.
+
+**Local studies and exported data:** RC11 introduces no local-store migration, mandatory reset,
+or event-source-registry change from RC10. Existing studies retain their signed configuration and
+remain subject to normal access, recovery, and explicit Resume checks. The RC10 restrictions for
+older configurations selecting the removed notification collector still apply. Installing this
+APK does not change a study's collectors, schedule, consent, or questionnaire.
+
+**Fresh install:** install the signed RC11 APK, then scan a QR code issued by the research team
+or choose its signed study file. Review the study and data collection, provide consent, complete
+required access setup, and explicitly Start. Researchers must host the exact signed configuration
+at the HTTPS address encoded in the QR; redirects and replacement bytes are rejected.
+
+**Verification scope:** this prerelease uses a locally built production-signed APK. App unit tests,
+targeted API 34 QR import/consent/camera-lifecycle instrumentation, web QR checks, debug/release lint,
+and APK signing/native-packaging verification passed before release. This is not a claim that the
+complete remote Android release gates or API 37 compatibility lane passed. Optical scanning on
+physical devices and browser installation with Play Protect enabled remain to be verified.
+
 ## v1.0.0-rc.10 — 2026-09-09
 
 - Removed direct collection of other apps' notifications from the Android app, including the

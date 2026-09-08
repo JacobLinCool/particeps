@@ -452,6 +452,9 @@ export const en: Messages = {
         artifactHint: 'Host the exact signed file first, then enter its final address. Redirects are refused.',
         personalizedHint: 'Use a long opaque final path segment. Do not put the assigned participant ID in the address.',
         copy: 'Copy join link',
+        download: 'Download QR code',
+        scanHint: 'Participants choose Scan study QR code in the app. Internet access is needed to download the study. Save this image to share or print it.',
+        qrFailed: 'This link could not be made into a QR code. Try a shorter HTTPS address, or share the join link.',
         invalid: 'Enter a valid final HTTPS address. Personalized files require a long opaque path that does not reveal the assigned participant ID.',
         immutable: 'The QR is made locally and binds this file’s complete SHA-256 and signing fingerprint. The app downloads it once; it does not poll for changes.',
         qrAlt: 'QR code for the immutable study join link'

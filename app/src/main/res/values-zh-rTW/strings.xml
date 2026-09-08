@@ -52,6 +52,10 @@
     <string name="state_completed">已完成</string>
     <string name="state_withdrawn">已退出</string>
 
+    <string name="join_study_title">加入研究</string>
+    <string name="join_study_description">連上網路後，掃描研究人員提供的 QR code。先閱讀研究內容，再決定是否參加。</string>
+    <string name="join_study_loading">正在載入研究…</string>
+    <string name="action_scan_study_qr">掃描研究 QR code</string>
     <string name="action_choose_configuration">選擇研究設定檔</string>
     <string name="action_load_demo">載入展示研究</string>
     <string name="action_continue">繼續</string>
@@ -268,7 +272,7 @@
     <string name="confirm_reset_title">刪除舊研究資料並重新開始？</string>
     <string name="confirm_reset_body">這會永久刪除目前的研究 instance 與所有尚未匯出的資料。若設定檔仍在有效期限內，你需要重新閱讀研究內容、同意並設定權限，系統會建立新的安裝代碼與完整研究期限。此操作無法復原。</string>
     <string name="message_configuration_import_failed">Particeps 無法開啟這份研究設定檔。</string>
-    <string name="message_join_import_failed">Particeps 無法加入這項研究。</string>
+    <string name="message_join_import_failed">無法載入研究。請確認網路連線後重新掃描，或聯絡研究人員。</string>
     <string name="message_export_failed">Particeps 無法匯出研究資料。</string>
     <string name="message_access_inspection_failed">Particeps 無法檢查所需的 Android 存取權。</string>
     <string name="message_operation_failed">Particeps 無法完成這項操作。</string>

@@ -452,6 +452,9 @@ export const zhTW: Messages = {
         artifactHint: '請先託管完全相同的已簽署檔案，再輸入最終位址；App 不接受重新導向。',
         personalizedHint: '最後一段路徑必須是夠長的隨機字串，且位址不得包含指定參與者 ID。',
         copy: '複製加入連結',
+        download: '下載 QR Code',
+        scanHint: '參與者在 App 選擇「掃描研究 QR code」，並需連上網路以下載研究。您可以儲存此圖片，供分享或列印。',
+        qrFailed: '此連結無法產生 QR Code。請改用較短的 HTTPS 位址，或分享加入連結。',
         invalid: '請輸入有效的最終 HTTPS 位址。個人化檔案須使用不洩露指定參與者 ID 的長隨機路徑。',
         immutable: 'QR Code 完全在本機產生，並綁定此檔案的完整 SHA-256 與簽章指紋。App 只下載一次，不會輪詢更新。',
         qrAlt: '不可變研究加入連結的 QR Code'

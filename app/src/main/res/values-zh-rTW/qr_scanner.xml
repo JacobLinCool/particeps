@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="qr_scan_title">掃描研究 QR code</string>
+    <string name="qr_scan_cancel">取消</string>
+    <string name="qr_scan_hint">將相機對準研究團隊提供的 QR code。</string>
+    <string name="qr_scan_privacy">相機影像僅在手機上處理，不會儲存。</string>
+    <string name="qr_scan_invalid">這個 QR code 無法用來加入研究。請掃描研究團隊提供的 QR code。</string>
+    <string name="qr_scan_permission">請允許使用相機來掃描研究 QR code。你也可以返回並選擇研究檔案。</string>
+    <string name="qr_scan_unavailable">目前無法使用相機。請關閉其他正在使用相機的 App 後重試，或返回並選擇研究檔案。</string>
+    <string name="qr_scan_retry">重新掃描</string>
+    <string name="qr_scan_allow_camera">允許使用相機</string>
+    <string name="qr_scan_open_settings">開啟 App 設定</string>
+    <string name="qr_scan_torch_on">開啟手電筒</string>
+    <string name="qr_scan_torch_off">關閉手電筒</string>
+</resources>

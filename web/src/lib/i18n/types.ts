@@ -433,6 +433,9 @@ export interface Messages {
         artifactHint: string;
         personalizedHint: string;
         copy: string;
+        download: string;
+        scanHint: string;
+        qrFailed: string;
         invalid: string;
         immutable: string;
         qrAlt: string;

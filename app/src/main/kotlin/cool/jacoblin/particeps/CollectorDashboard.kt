@@ -64,6 +64,9 @@ import kotlinx.coroutines.delay
 
 object UiTags {
     const val STATE = "state"
+    const val SCAN_STUDY_QR = "scan_study_qr"
+    const val IMPORT_CONFIGURATION = "import_configuration"
+    const val IMPORT_PROGRESS = "import_progress"
     const val IMPORT_DEMO = "import_demo"
     const val REVIEW = "review"
     const val CONTINUE = "continue"
@@ -91,6 +94,7 @@ object UiTags {
 }
 
 data class StudyUiActions(
+    val scan: () -> Unit,
     val import: () -> Unit,
     /** Null when the build ships no demonstration study, which is the case for a release. */
     val demo: (() -> Unit)?,
@@ -223,7 +227,7 @@ private fun Dashboard(
             return@Column
         }
         if (study == null || model == null) {
-            NoStudyPanel(actions)
+            NoStudyPanel(actions, state.busy)
             return@Column
         }
 
@@ -479,14 +483,44 @@ private fun elapsedLabel(millis: Long): String {
 }
 
 @Composable
-private fun NoStudyPanel(actions: StudyUiActions) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Button(onClick = actions.import, modifier = Modifier.fillMaxWidth()) {
+private fun NoStudyPanel(actions: StudyUiActions, busy: Boolean) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(
+            text = stringResource(R.string.join_study_title),
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = stringResource(R.string.join_study_description),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (busy) {
+            Column(
+                modifier = Modifier.testTag(UiTags.IMPORT_PROGRESS),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(stringResource(R.string.join_study_loading))
+            }
+        }
+        Button(
+            onClick = actions.scan,
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth().testTag(UiTags.SCAN_STUDY_QR),
+        ) {
+            Text(stringResource(R.string.action_scan_study_qr))
+        }
+        OutlinedButton(
+            onClick = actions.import,
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth().testTag(UiTags.IMPORT_CONFIGURATION),
+        ) {
             Text(stringResource(R.string.action_choose_configuration))
         }
         actions.demo?.let { demo ->
             OutlinedButton(
                 onClick = demo,
+                enabled = !busy,
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.IMPORT_DEMO),
             ) { Text(stringResource(R.string.action_load_demo)) }
         }

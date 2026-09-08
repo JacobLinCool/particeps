@@ -36,6 +36,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val qrScanLauncher = registerForActivityResult(QrScanContract()) { encoded ->
+        encoded?.let(::importJoin)
+    }
+
     private val exportLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream"),
     ) { uri ->
@@ -102,6 +106,7 @@ class MainActivity : ComponentActivity() {
             CollectorApp(
                 state = state,
                 actions = StudyUiActions(
+                    scan = { qrScanLauncher.launch(Unit) },
                     import = { importLauncher.launch(arrayOf("application/octet-stream", "*/*")) },
                     demo = demoAction,
                     review = viewModel::reviewStudy,
@@ -168,21 +173,25 @@ class MainActivity : ComponentActivity() {
                 val encoded = intent.dataString ?: return
                 // Prevent an Activity recreation from starting a second download for the same URI.
                 intent.data = null
-                val link = try {
-                    JoinLink.parse(encoded)
-                } catch (_: IllegalArgumentException) {
-                    viewModel.reportMessage(ParticipantMessage.JOIN_IMPORT_FAILED)
-                    return
-                }
-                lifecycleScope.launch {
-                    val ready = collectorApplication.session.snapshot.first { it.initialized }
-                    if (ready.study != null || ready.deletionPending) {
-                        viewModel.reportMessage(ParticipantMessage.JOIN_IMPORT_FAILED)
-                    } else {
-                        viewModel.importJoin(link) {
-                            collectorApplication.joinArtifactDownloader.download(link)
-                        }
-                    }
+                importJoin(encoded)
+            }
+        }
+    }
+
+    private fun importJoin(encoded: String) {
+        val link = try {
+            JoinLink.parse(encoded)
+        } catch (_: IllegalArgumentException) {
+            viewModel.reportMessage(ParticipantMessage.JOIN_IMPORT_FAILED)
+            return
+        }
+        lifecycleScope.launch {
+            val ready = collectorApplication.session.snapshot.first { it.initialized }
+            if (ready.study != null || ready.deletionPending) {
+                viewModel.reportMessage(ParticipantMessage.JOIN_IMPORT_FAILED)
+            } else {
+                viewModel.importJoin(link) {
+                    collectorApplication.joinArtifactDownloader.download(link)
                 }
             }
         }

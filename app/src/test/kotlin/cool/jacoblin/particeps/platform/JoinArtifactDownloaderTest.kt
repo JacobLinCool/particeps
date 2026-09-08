@@ -5,13 +5,23 @@ import cool.jacoblin.particeps.core.protocol.SignedConfigurationCodec
 import java.net.URI
 import java.nio.file.Files
 import java.security.MessageDigest
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Response
+import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
+import okio.ForwardingSource
+import okio.buffer
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -32,6 +42,43 @@ class JoinArtifactDownloaderTest {
         assertArrayEquals(bytes, loaded)
         assertTrue(temporaryFolder.root.walkTopDown().none { it.isFile })
         assertTrue(calls == 1)
+    }
+
+    @Test
+    fun responseBodyReadsRunOutsideTheCallingDispatcher() = runBlocking {
+        val bytes = "signed configuration".toByteArray()
+        val reader = AtomicReference<Thread>()
+        val source = object : ForwardingSource(Buffer().write(bytes)) {
+            override fun read(sink: Buffer, byteCount: Long): Long {
+                reader.set(Thread.currentThread())
+                return super.read(sink, byteCount)
+            }
+        }.buffer()
+        val body = object : ResponseBody() {
+            override fun contentType() = null
+            override fun contentLength() = bytes.size.toLong()
+            override fun source() = source
+        }
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("test")
+                .body(body)
+                .build()
+        }.build()
+        val downloader = JoinArtifactDownloader(temporaryFolder.root.resolve("join"), client)
+
+        Executors.newSingleThreadExecutor().asCoroutineDispatcher().use { caller ->
+            withContext(caller) {
+                val callingThread = Thread.currentThread()
+                assertArrayEquals(bytes, downloader.download(link(bytes)))
+                assertNotNull(reader.get())
+                assertNotSame(callingThread, reader.get())
+            }
+        }
+        assertTrue(temporaryFolder.root.walkTopDown().none { it.isFile })
     }
 
     @Test

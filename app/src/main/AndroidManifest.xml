@@ -6,10 +6,14 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <!--
-      Used only to deliver encrypted bundles to the endpoint a signed study configuration names.
-      A study without an upload block opens no connection. Cleartext stays disabled below, and the
-      schema refuses any endpoint that is not https.
+      Used for participant-requested HTTPS study downloads, encrypted bundle uploads to the endpoint
+      named by a signed study configuration, and forwarding traffic through the study VPN.
+      Study downloads and uploads require HTTPS; cleartext stays disabled below.
     -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -71,6 +75,9 @@
                     android:path="/v1" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".QrScanActivity"
+            android:exported="false" />
         <activity
             android:name=".SurveyActivity"
             android:exported="false" />

@@ -10,7 +10,16 @@ these choices.
 
 ## Before you start
 
-A Particeps study arrives as a signed configuration file or an immutable join link. The app checks
+A Particeps study can arrive as a QR code, a join link, or a signed configuration file. To use a
+QR code, open Particeps and choose **Scan study QR code**. Allow camera access when Android asks, then
+point the camera at the research team's code. The app downloads and checks the study, so keep your
+phone connected to the internet. The camera is used only while the scanner is open, and camera
+images are not saved. You can close the scanner at any time.
+
+If you prefer to use a file or cannot scan the code, choose **Choose a study file** and select the signed
+configuration file supplied by the research team. A join link can also open the study in the app.
+
+For every entry method, the app checks
 the file’s signature, exact contents, expiry, Android version requirement, and study structure
 before showing it. A valid signature proves that the file has not changed since it was signed; it
 does not by itself prove the real-world identity of the person who holds the signing key. Compare

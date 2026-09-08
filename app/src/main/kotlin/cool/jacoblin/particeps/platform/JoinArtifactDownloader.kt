@@ -8,8 +8,12 @@ import java.io.IOException
 import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -25,10 +29,14 @@ class JoinArtifactDownloader internal constructor(
         deleteStaging(directory.resolve(STAGING_FILE))
     }
 
-    suspend fun download(link: JoinLink): ByteArray = mutex.withLock {
+    suspend fun download(link: JoinLink): ByteArray = withContext(Dispatchers.IO) {
+        mutex.withLock { downloadLocked(link) }
+    }
+
+    private suspend fun downloadLocked(link: JoinLink): ByteArray {
         val staging = directory.resolve(STAGING_FILE)
         deleteStaging(staging)
-        try {
+        return try {
             val request = Request.Builder()
                 .url(link.artifactUrl.toASCIIString())
                 .get()
@@ -50,6 +58,7 @@ class JoinArtifactDownloader internal constructor(
                     body.byteStream().use { input ->
                         val buffer = ByteArray(BUFFER_BYTES)
                         while (true) {
+                            currentCoroutineContext().ensureActive()
                             val read = input.read(buffer)
                             if (read < 0) break
                             count += read
@@ -88,6 +97,7 @@ class JoinArtifactDownloader internal constructor(
         private const val BUFFER_BYTES = 64 * 1024
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
+            .callTimeout(90, TimeUnit.SECONDS)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .followRedirects(false)

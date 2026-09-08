@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="qr_scan_title">Scan a study QR code</string>
+    <string name="qr_scan_cancel">Cancel</string>
+    <string name="qr_scan_hint">Point your camera at the QR code from your research team.</string>
+    <string name="qr_scan_privacy">Camera images stay on your phone and are not saved.</string>
+    <string name="qr_scan_invalid">This QR code cannot be used to join a study. Try the code provided by your research team.</string>
+    <string name="qr_scan_permission">Allow camera access to scan a study QR code. You can also go back and choose a study file.</string>
+    <string name="qr_scan_unavailable">The camera is unavailable. Close other apps using the camera and try again, or go back and choose a study file.</string>
+    <string name="qr_scan_retry">Scan again</string>
+    <string name="qr_scan_allow_camera">Allow camera access</string>
+    <string name="qr_scan_open_settings">Open app settings</string>
+    <string name="qr_scan_torch_on">Turn on flashlight</string>
+    <string name="qr_scan_torch_off">Turn off flashlight</string>
+</resources>

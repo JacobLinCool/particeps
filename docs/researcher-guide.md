@@ -126,6 +126,28 @@ key. A join link points to one immutable signed artifact and binds its SHA-256 p
 fingerprint. It is not an update channel. To change a study, sign and distribute a new
 configuration; an active participant does not silently switch.
 
+### Distribute a study QR code
+
+After signing the configuration in the Web authoring tool, host the exact `.partcfg` bytes at a
+stable HTTPS address. In **For participants**, enter that final address under **Optional join link
+and QR**. The address must serve the file directly with HTTP 200; redirects are refused. For a
+personalized configuration, use a long random final path segment and keep the assigned participant
+ID out of the address.
+
+Choose **Download QR code** to save the generated SVG for sharing, displaying, or printing. The
+browser generates the image locally; it does not upload the configuration or contact a QR service.
+The code contains a join link binding the hosted file's complete SHA-256 and signing fingerprint,
+not the configuration itself. Participants need internet access when scanning it. Keep the hosted
+bytes unchanged and available throughout recruitment; a replacement configuration needs a new
+signature and QR code. A code for a personalized configuration should reach only its intended
+participant.
+
+Participants open Particeps, choose **Scan study QR code**, allow camera access, and scan the code. The
+app downloads and verifies the file, then opens the same **Study → Data → Consent → Access → Start**
+setup used by file import. Scanning does not grant consent or start collection. The scanner uses
+the camera only while open and does not save images. **Choose a study file** remains available for handing
+over a signed file directly.
+
 ## 3. Collector resources and profiles
 
 Each `collectors[]` element has `id`, `required`, and 1–64 sorted unique named profiles. A profile

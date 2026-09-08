@@ -119,6 +119,11 @@ dependencies {
 
     implementation(platform(libs.compose.bom))
     implementation(libs.activity.compose)
+    implementation(libs.camera.camera2)
+    implementation(libs.camera.core)
+    implementation(libs.camera.lifecycle)
+    implementation(libs.camera.view)
+    implementation(libs.zxing.core)
     implementation(libs.compose.material3)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.coroutines.android)
