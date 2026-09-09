@@ -88,7 +88,7 @@ export const SETUP_STEPS: readonly { nameKey: MessageKey; captionKey: MessageKey
 
 export const REPOSITORY = 'https://github.com/JacobLinCool/particeps';
 
-export const ANDROID_RELEASE_VERSION = 'v1.0.0-rc.10';
+export const ANDROID_RELEASE_VERSION = 'v1.0.0-rc.11';
 
 export const ANDROID_APK_URL = `${REPOSITORY}/releases/download/${ANDROID_RELEASE_VERSION}/particeps-${ANDROID_RELEASE_VERSION}.apk`;
 

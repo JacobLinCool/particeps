@@ -12,9 +12,9 @@ describe('participant page structure', () => {
   });
 
   it('offers the verified Android release from the hero in both locales', () => {
-    expect(ANDROID_RELEASE_VERSION).toBe('v1.0.0-rc.10');
+    expect(ANDROID_RELEASE_VERSION).toBe('v1.0.0-rc.11');
     expect(ANDROID_APK_URL).toBe(
-      'https://github.com/JacobLinCool/particeps/releases/download/v1.0.0-rc.10/particeps-v1.0.0-rc.10.apk'
+      'https://github.com/JacobLinCool/particeps/releases/download/v1.0.0-rc.11/particeps-v1.0.0-rc.11.apk'
     );
     expect(en.hero.download).toBe('Download App');
     expect(zhTW.hero.download).toBe('下載 App');
