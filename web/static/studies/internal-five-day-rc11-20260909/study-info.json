@@ -1,0 +1,9 @@
+{
+  "configurationId": "internal-five-day-rc11-20260909",
+  "title": "五天手機使用研究（內部試跑）",
+  "artifactUrl": "https://jacoblincool.github.io/particeps/studies/internal-five-day-rc11-20260909/d39aa5126032bdce7f560550170f89f41ba543d1f9c2d27f16de207fb78f4130.partcfg",
+  "artifactSha256": "d39aa5126032bdce7f560550170f89f41ba543d1f9c2d27f16de207fb78f4130",
+  "signerFingerprint": "3E17CD8A4AD2198D87B781EA9EBD3201",
+  "minimumClientVersion": 38,
+  "expiresAt": "2027-09-06T00:00:00Z"
+}
