@@ -1,18 +1,5 @@
 <script lang="ts">
-  /**
-   * Prepare a study: two key pairs, a configuration, a signature, and four files — in this tab,
-   * with nothing installed and nothing sent anywhere. Then, weeks later, open what comes back.
-   *
-   * The rail is the app's, redrawn. On the phone a dot means *where you are in a sequence*, because
-   * the participant's five steps are a disclosure gate and are forward-only. Here a dot means
-   * *whether that step's output exists and is valid*: authoring is iterative, every step is
-   * reachable at any time, and nothing on this page is a disclosure anyone must be made to read.
-   *
-   * The fifth step is the exception that proves the rule, and `stateLabel` is where it says so: it
-   * owns no part of the document and produces no file, so its dot cannot mean what the other four
-   * mean. What it means is that a participant's export is decrypted and on screen, in this tab.
-   */
-  import { tick, untrack } from 'svelte';
+  import { tick, untrack, onMount } from 'svelte';
   import { base } from '$app/paths';
   import { beforeNavigate, goto } from '$app/navigation';
   import Button from '$lib/ui/Button.svelte';
@@ -28,6 +15,14 @@
   import type { StepDef } from '$lib/ui/types';
   import { i18n } from '$lib/ui/i18n.svelte';
 
+  import Section from '$lib/ui/Section.svelte';
+  import StudyOverview from './StudyOverview.svelte';
+  import ParticipantStudyPreview from './ParticipantStudyPreview.svelte';
+  import SyntheticTraceSimulator from './SyntheticTraceSimulator.svelte';
+  import WebMcpStatus from './WebMcpStatus.svelte';
+  import { registerResearcherWebMcp, type WebMcpStatus as ToolStatus, type NativeModelContext } from '$lib/particeps/webmcp';
+  import { decodeAuthoringFile } from './authoring-file';
+  import { MAXIMUM_CONFIGURATION_BYTES } from '$lib/particeps/types';
   import StepKeys from './StepKeys.svelte';
   import StepStudy from './StepStudy.svelte';
   import StepSign from './StepSign.svelte';
@@ -40,9 +35,9 @@
     type ArtifactId,
     type ArtifactNames
   } from './artifacts';
-  import { UnavailableCollectorError } from './parse';
-  import { createDraft } from './draft.svelte';
-  import { STEPS, stepForPath, type StepId } from './steps';
+  import { UnavailableCollectorError, parseConfiguration } from './parse';
+  import { createDraft, KeyMismatchError } from './draft.svelte';
+  import { STEPS, stepForPath, sectionForPath, type StudySection, type StepId } from './steps';
   import { units } from './units';
 
   const REPOSITORY = 'https://github.com/JacobLinCool/particeps';
@@ -58,6 +53,17 @@
   const u = $derived(units(i18n.m, i18n.locale));
 
   let step = $state<StepId>('study');
+  let studySection = $state<StudySection>('details');
+  let webMcpStatus = $state<ToolStatus>('unsupported');
+  let pendingImport = $state<{ bytes: Uint8Array; name: string; authoring: boolean } | null>(null);
+  onMount(() => {
+    const registration = registerResearcherWebMcp({
+      getConfiguration: () => $state.snapshot(draft.document),
+      commitConfiguration: next => draft.replaceConfiguration(next),
+      afterCommit: () => tick()
+    }, document as unknown as { modelContext?: NativeModelContext }, status => webMcpStatus = status);
+    return registration.stop;
+  });
   let direction = $state<1 | -1>(1);
   let failure = $state('');
   let keyFailure = $state('');
@@ -88,7 +94,7 @@
    * with anything but the browser's native prompt, which is what `beforeunload` asks for.
    */
   $effect(() => {
-    if (!draft.keysAtRisk) return;
+    if (!draft.keysAtRisk && !draft.unsavedChanges) return;
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
@@ -96,7 +102,7 @@
 
   let leaving = false;
   beforeNavigate((navigation) => {
-    if (leaving || !draft.keysAtRisk || navigation.willUnload) return;
+    if (leaving || (!draft.keysAtRisk && !draft.unsavedChanges) || navigation.willUnload) return;
     const to = navigation.to?.url.href;
     if (!to) return;
     navigation.cancel();
@@ -180,13 +186,23 @@
   async function jump(path: string) {
     go(stepForPath(path));
     await tick();
-    // Four of the paths `validate` emits belong to no single control — `collectors`,
-    // `signer.public_key`, `export.hpke_public_key`, and the low thumb of the location
-    // dual range. `data-issue-host` is what a section or a card puts up in a field's place, so an
-    // issue row never changes the step and then scrolls to nothing.
-    const host = document.querySelector<HTMLElement>(
-      `[data-testid="field-${path}"], [data-issue-host~="${path}"]`
-    );
+    studySection = sectionForPath(path);
+    const automationMatch = /^automations(?:\.(\d+)|\[(\d+)\])/.exec(path);
+    const automationIndex = automationMatch?.[1] ?? automationMatch?.[2];
+    if (automationIndex !== undefined && draft.configuration.automations[Number(automationIndex)]?.type === 'occurrence') studySection = 'activities';
+    await tick();
+    const hosts = [...document.querySelectorAll<HTMLElement>('[data-testid], [data-issue-host]')];
+    let current = path;
+    let host: HTMLElement | undefined;
+    while (current && !host) {
+      host = hosts.find(element => element.dataset.testid === `field-${current}` || element.dataset.issueHost?.split(' ').includes(current));
+      const parentPath = current.replace(/(?:\.[^.\[]+|\[\d+\])$/, '');
+      if (parentPath === current) break;
+      current = parentPath;
+    }
+    for (let parent: HTMLElement | null | undefined = host; parent; parent = parent.parentElement) {
+      if (parent instanceof HTMLDetailsElement) parent.open = true;
+    }
     host?.scrollIntoView({ block: 'center', behavior: 'smooth' });
     host?.querySelector<HTMLElement>('input, textarea, select, button')?.focus();
   }
@@ -234,7 +250,11 @@
     try {
       act();
       keyFailure = '';
-    } catch {
+    } catch (error) {
+      if (error instanceof KeyMismatchError) {
+        keyFailure = i18n.locale === 'zh-TW' ? '這把私鑰與研究檔案內的公鑰不相符。原來的金鑰與設定已保留；請匯入相符的私鑰，或明確選擇更換金鑰。' : 'This private key does not match the study public key. The current keys and study are preserved. Import the matching key or explicitly replace the key.';
+        return;
+      }
       keyFailure = onFile
         ? m.error.keyFile
         : typeof window !== 'undefined' && !window.isSecureContext
@@ -243,19 +263,43 @@
     }
   }
 
-  /** A dropped file that cannot be read says so; it never silently does nothing. */
+  function applyImport(item: { bytes: Uint8Array; name: string; authoring: boolean }) {
+    if (item.authoring) draft.loadAuthoring(item.bytes);
+    else draft.load(item.bytes);
+    loaded = item.name;
+    pendingImport = null;
+    failure = '';
+    studySection = 'details';
+    go('study');
+  }
+
   async function open(file: File) {
     try {
-      draft.load(new Uint8Array(await file.arrayBuffer()));
-      loaded = file.name;
-      failure = '';
-      go('study');
+      if (file.size > MAXIMUM_CONFIGURATION_BYTES + 1024) throw new Error('too_large');
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const authoring = file.name.endsWith('.partdraft');
+      if (authoring) decodeAuthoringFile(bytes); else parseConfiguration(bytes);
+      const item = { bytes, name: file.name, authoring };
+      if (draft.unsavedChanges || draft.keysAtRisk) pendingImport = item;
+      else applyImport(item);
     } catch (error) {
-      loaded = '';
       failure = error instanceof UnavailableCollectorError ? m.error.collectorUnavailable : m.error.draft;
-      go('sign');
     }
   }
+
+  function saveDraft() {
+    try {
+      const bytes = draft.authoringBytes;
+      decodeAuthoringFile(bytes);
+      download(bytes, `${draft.experimentId || 'study'}.partdraft`, 'application/json');
+      draft.markDraftSaved();
+      loaded = i18n.locale === 'zh-TW' ? '已下載工作草稿（不含私鑰）' : 'Working draft downloaded (no private keys)';
+      failure = '';
+    } catch {
+      failure = i18n.locale === 'zh-TW' ? '無法保存草稿：內容過大或包含無法儲存的值。請修正後重試；目前變更仍未保存。' : 'Could not save the draft: it is too large or contains a value that cannot be stored. Correct it and retry; current changes remain unsaved.';
+    }
+  }
+
 </script>
 
 <svelte:head>
@@ -276,10 +320,11 @@
          makes the cross-language workflow possible: open the first signed configuration, change the
          prose, issue a new configuration ID under the same signer. -->
     {#snippet trailing()}
+      <Button variant="quiet" icon="download" label={i18n.locale === 'zh-TW' ? '保存草稿' : 'Save draft'} onclick={saveDraft} testid="save-draft" />
       <span class="load">
         <DropTarget
           label={m.action.importDraft}
-          accept=".json,.partcfg,application/json"
+          accept=".json,.partcfg,.partdraft,application/json"
           onfile={open}
           testid="load-configuration"
         />
@@ -299,6 +344,8 @@
     />
 
     <div class="workspace__panel">
+      <WebMcpStatus status={webMcpStatus} locale={i18n.locale} />
+      {#if failure && step !== 'sign'}<Note icon="alert" tone="danger" text={failure} />{/if}
       {#if step === 'keys'}
         <StepPanel id="keys" title={m.step.keys} icon="key" {direction}>
           <p class="lede">{m.researcher.lede}</p>
@@ -309,7 +356,17 @@
           {#if loaded}
             <Note icon="import" tone="plain" text={loaded} />
           {/if}
-          <StepStudy {draft} {m} units={u} />
+          <StepStudy {draft} {m} units={u} activeSection={studySection} onnavigate={value => studySection = value} />
+        </StepPanel>
+      {:else if step === 'overview'}
+        <StepPanel id="overview" title={m.step.overview} icon="clock" {direction}>
+          <StudyOverview configuration={draft.document} locale={i18n.locale} onedit={jump} />
+          <Section id="participant-preview" title={i18n.locale === 'zh-TW' ? '參與者內容預覽' : 'Participant content preview'} icon="participant">
+            <ParticipantStudyPreview {draft} />
+          </Section>
+          <Section id="simulator" title={i18n.locale === 'zh-TW' ? '合成事件模擬' : 'Synthetic event simulation'} icon="motion">
+            <SyntheticTraceSimulator {draft} locale={i18n.locale} />
+          </Section>
         </StepPanel>
       {:else if step === 'sign'}
         <StepPanel id="sign" title={m.step.sign} icon="seal" {direction}>
@@ -381,6 +438,7 @@
   cancelLabel={m.action.cancel}
   onconfirm={() => {
     draft.reset();
+    attempt(() => draft.ensureKeys(), false);
     confirming = false;
     loaded = '';
     failure = '';
@@ -403,6 +461,15 @@
     if (to) goto(to);
   }}
   oncancel={() => (departure = null)}
+/>
+
+<ConfirmDialog
+  open={pendingImport !== null}
+  title={i18n.locale === 'zh-TW' ? '以匯入檔案取代目前研究？' : 'Replace the current study with this file?'}
+  body={`${pendingImport?.name ?? ''} — ${m.confirm.startOver.body}`}
+  confirmLabel={m.action.confirm} cancelLabel={m.action.cancel}
+  onconfirm={() => { if (pendingImport) applyImport(pendingImport); }}
+  oncancel={() => pendingImport = null}
 />
 
 <style>
@@ -433,9 +500,16 @@
 
   .workspace {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--sp-7);
     align-items: start;
     padding-block: var(--sp-7) var(--sp-10);
+  }
+
+  .workspace :global(.rail) { min-inline-size: 0; }
+
+  @media (max-width: 899px) {
+    .workspace :global(.rail) { overflow-x: auto; padding-block-end: var(--sp-2); }
   }
 
   .workspace__panel {

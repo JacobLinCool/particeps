@@ -1,5 +1,6 @@
 <script lang="ts">
   import Field from '$lib/ui/Field.svelte';
+  import { fieldSource } from '$lib/ui/field-context';
 
   let {
     label, value, min, max, path, onchange
@@ -11,6 +12,7 @@
     path?: string;
     onchange: (value: number) => void;
   } = $props();
+  const source = fieldSource();
 </script>
 
 <Field {label} {path}>
@@ -23,11 +25,12 @@
       {max}
       step="1"
       {value}
+      onblur={(event) => { if (!Number.isFinite(event.currentTarget.valueAsNumber)) event.currentTarget.value = String(value); if (path) source.touch?.(path); }}
       aria-describedby={describedby}
       aria-invalid={invalid || undefined}
       oninput={(event) => {
         const next = event.currentTarget.valueAsNumber;
-        if (Number.isSafeInteger(next)) onchange(next);
+        if (Number.isFinite(next)) onchange(next);
       }}
     />
   {/snippet}

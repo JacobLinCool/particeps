@@ -41,7 +41,7 @@ export type IssueCode =
   | 'key_invalid' | 'language_tag' | 'unknown_reference' | 'selection_bounds'
   | 'automation_invalid' | 'unknown_event' | 'unknown_field' | 'unsupported_operator'
   | 'canonical_value' | 'resource_owner' | 'trigger_source_liveness' | 'dependency_cycle'
-  | 'unbounded_state';
+  | 'unbounded_state' | 'private_key_missing' | 'review_required';
 
 export interface Issue {
   path: string;

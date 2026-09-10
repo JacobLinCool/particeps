@@ -1,41 +1,10 @@
 <script lang="ts">
-  /**
-   * The step that arrives done.
-   *
-   * Both key pairs are generated on mount, by `+page.svelte`, so nothing on this step is a decision
-   * a researcher has any basis for making. Both names derive from the key material, so nothing is
-   * typed either. What is left is the one thing that genuinely cannot be automated — the part where
-   * the files land on the researcher's disk — and one sentence saying which key does what.
-   *
-   * Two arguments put it first in the rail, and neither of them is "download the irreplaceable
-   * thing in the first thirty seconds". That was false: an export key is worthless until its public
-   * half is inside a signed file that reached a phone, and losing it before that costs one
-   * regenerate.
-   *
-   *   1. Sequence. Importing a key rewrites `signer.public_key`, which moves `configuration_id` and
-   *      retires any signature. Put that on the files step and the cross-language workflow sits
-   *      after the signature it invalidates.
-   *   2. Attention. Folded into the hand-off screen, the one irreversible fact on the site would be
-   *      the sixth element of a page that already carries three columns, four tiles, a fingerprint
-   *      plaque, a print control and a pilot caution — read by someone in "let me download things"
-   *      mode. A step whose whole surface is two files and one sentence gets read.
-   *
-   * The asymmetry between the two keys is drawn rather than written. They are the same object — a
-   * `DownloadTile` in one hold `ArtifactGroup`, the pair the researcher meets again on the files
-   * step — and they differ in one line, in the same slot, opening with the same word:
-   *
-   *     ⟳  Lost: make a new one.     soft mark, no wash
-   *     ⃠  Lost: data unreadable.    danger mark, danger wash, hatched group edge
-   *
-   * The eye compares the second half only. Nothing else on this step competes for red, which is
-   * what makes that comparison legible: the "nothing is backed up" banner is said by the page lede
-   * one line above, by the site footer, by the unload guard and by the leave dialog, and the
-   * handling advice moved to the files step where files are being filed.
-   */
   import ArtifactGroup from '$lib/ui/ArtifactGroup.svelte';
   import Button from '$lib/ui/Button.svelte';
   import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
-  import Disclosure from '$lib/ui/Disclosure.svelte';
+  import { i18n } from '$lib/ui/i18n.svelte';
+  import { generateSigningKeyPair, generateHpkeKeyPair, type SigningKeyPair, type HpkeKeyPair } from '$lib/particeps/crypto';
+  import { deriveSignerKeyId, deriveExportKeyId } from '$lib/particeps/ids';
   import DownloadTile from '$lib/ui/DownloadTile.svelte';
   import DropTarget from '$lib/ui/DropTarget.svelte';
   import Fingerprint from '$lib/ui/Fingerprint.svelte';
@@ -81,23 +50,24 @@
    * Generating over a held key destroys it. The question is only worth asking when this tab holds
    * the only copy — which on the common path it does not, because the researcher downloaded first.
    */
-  let replacing = $state<'signing' | 'hpke' | null>(null);
+  const zh = $derived(i18n.locale === 'zh-TW');
+  let replacing = $state<{ kind: 'signing' | 'hpke'; pair: SigningKeyPair | HpkeKeyPair; previous: string } | null>(null);
+  const replacementBody = $derived(replacing ? `${zh ? '目前' : 'Current'}: ${replacing.previous} → ${zh ? '更換為' : 'Replace with'}: ${replacing.kind === 'signing' ? deriveSignerKeyId(replacing.pair.publicKey) : deriveExportKeyId(replacing.pair.publicKey)}. ${zh ? '設定識別碼與簽章將更新。既有檔案仍使用舊金鑰；請先保留舊私鑰，否則既有匯出資料無法解密。' : 'The configuration ID and signature will change. Existing files still use the old key. Retain its private key to decrypt existing exports.'}` : '');
 
   function regenerate(kind: 'signing' | 'hpke') {
-    const held = kind === 'signing' ? signing.kind === 'held' : hpke.kind === 'held';
-    const kept = draft.saved[kind === 'signing' ? 'signing-private' : 'hpke-private'];
-    if (held && !kept) replacing = kind;
-    else generate(kind);
-  }
-
-  function generate(kind: 'signing' | 'hpke') {
-    attempt(() => (kind === 'signing' ? draft.generateSigning() : draft.generateHpke()), false);
+    attempt(() => {
+      replacing = { kind, pair: kind === 'signing' ? generateSigningKeyPair() : generateHpkeKeyPair(), previous: kind === 'signing' ? draft.signerKeyId : draft.exportKeyId };
+    }, false);
   }
 
   async function take(kind: 'signing' | 'hpke', file: File) {
-    const text = await file.text();
-    attempt(() => (kind === 'signing' ? draft.importSigning(text) : draft.importHpke(text)), true);
+    try {
+      if (file.size > 128) throw new Error('key_size');
+      const text = await file.text();
+      attempt(() => kind === 'signing' ? draft.importSigning(text) : draft.importHpke(text), true);
+    } catch { attempt(() => { throw new Error('key_read'); }, true); }
   }
+
 </script>
 
 <div class="stack stack--loose">
@@ -115,7 +85,7 @@
 
   <!-- Both paths are produced by the generator rather than typed into a control, so this block is
        what an issue row scrolls to when either key is missing. -->
-  <div class="keyfiles" data-issue-host="signer.public_key export.hpke_public_key">
+  <div class="keyfiles" data-issue-host="signer.public_key export.hpke_public_key signing_private_key">
     <ArtifactGroup
       destination="hold"
       icon="lock"
@@ -171,9 +141,10 @@
        a key, which is not the same as nobody being allowed to. A second configuration under the
        same signer is what a study recruiting in two languages needs, and the fingerprint lives here
        because on this path it is the check that the imported key is the right one. -->
-  <Disclosure label={m.researcher.keys.reuse} icon="import" testid="key-reuse">
+  <section aria-label={m.researcher.keys.reuse} data-testid="key-reuse">
+    {#if draft.imported}<Note icon="import" tone="plain" text={zh ? '已保留匯入研究的公鑰。請匯入相符的簽署私鑰；解密私鑰只在讀取資料時需要。更換金鑰會建立不同的研究設定。' : 'The imported public keys are preserved. Import the matching signing private key; the export private key is only needed to read data. Replacing a key creates a different configuration.'} />{/if}
     <div class="keyreuse">
-      <p class="fine faint">{m.researcher.keys.reuseNote}</p>
+      <p class="fine faint">{m.researcher.keys.signing.title}: <code>{draft.signerKeyId}</code><br />{m.researcher.keys.export.title}: <code>{draft.exportKeyId}</code></p>
 
       <div class="row row--tight">
         <DropTarget
@@ -186,7 +157,7 @@
         <Button
           variant="ghost"
           icon="key"
-          label={m.action.generate}
+          label={zh ? '更換金鑰…' : 'Replace key…'}
           onclick={() => regenerate('signing')}
           testid="key-generate-signing"
         />
@@ -210,25 +181,25 @@
         <Button
           variant="ghost"
           icon="key"
-          label={m.action.generate}
+          label={zh ? '更換金鑰…' : 'Replace key…'}
           onclick={() => regenerate('hpke')}
           testid="key-generate-hpke"
         />
       </div>
     </div>
-  </Disclosure>
+  </section>
 </div>
 
 <ConfirmDialog
   open={replacing !== null}
   title={m.confirm.replaceKey.title}
-  body={replacing === 'hpke' ? m.researcher.keys.export.risk : m.confirm.replaceKey.body}
+  body={replacementBody}
   confirmLabel={m.action.confirm}
   cancelLabel={m.action.cancel}
   onconfirm={() => {
-    const kind = replacing;
+    const next = replacing;
+    if (next) attempt(() => next.kind === 'signing' ? draft.replaceSigning(next.pair) : draft.replaceHpke(next.pair), false);
     replacing = null;
-    if (kind) generate(kind);
   }}
   oncancel={() => (replacing = null)}
 />

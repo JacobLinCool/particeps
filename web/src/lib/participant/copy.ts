@@ -175,7 +175,7 @@ export const en: ParticipantCopy = {
   },
 
   sources: {
-    title: 'Twelve sources exist. Your study uses some of them.',
+    title: 'Your study lists the data it may collect.',
     lead: 'Before you agree, the app lists the ones your study switched on — in the app’s own words, not the research team’s.',
     moreLink: 'Read the participant guide for the full category descriptions and your controls.',
     name: {
@@ -232,7 +232,7 @@ export const en: ParticipantCopy = {
       sampleCadence: 'About every 6 hours',
       sampleNetwork: 'Wi-Fi only',
       code: 'The encrypted content includes a randomly generated installation code so the research team can tell participants apart after decrypting it. It contains no name and no account.',
-      mandatory: 'Automatic sending is part of the study and cannot be switched off on its own.',
+      mandatory: 'Automatic sending is part of the study and cannot be switched off on its own. Pausing or withdrawing stops new collection, but data already collected and not yet sent still goes to the research team.',
       caption: 'The same phone. Your export, and a second arrow that repeats on a schedule.',
       metadata:
         'The receiving server sees when a delivery arrived and how large it was, plus bundle, configuration, digest, and claimed range metadata. It cannot see your installation code or collected content.'
@@ -304,7 +304,7 @@ export const zhTW: ParticipantCopy = {
   },
 
   sources: {
-    title: 'App 支援十二種資料來源，每項研究只會啟用其中幾種。',
+    title: '每項研究都會列出可能收集的資料。',
     lead: '取得你的同意前，App 會列出這項研究啟用的資料來源。這些說明由 App 提供，研究團隊無法修改。',
     moreLink: '參與者指南會進一步說明這些資料類別與你可使用的控制。',
     name: {

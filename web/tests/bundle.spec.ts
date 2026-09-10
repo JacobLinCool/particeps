@@ -104,7 +104,7 @@ describe('PTCEXP01 Protocol v1 EngineCommit reader', () => {
         bytes(vector.input_hex),
         configuration,
         bundle.researcher_private_key_base64url
-      ), vector.id).resolves.toEqual({ ok: false, failure: 'unreadable' });
+      ), vector.id).resolves.toEqual({ ok: false, failure: vector.id === 'bundle-registry-digest-mismatch' ? 'registry_mismatch' : 'unreadable' });
     }
   });
 

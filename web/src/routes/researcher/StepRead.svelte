@@ -20,6 +20,9 @@
    * would be a second, wrong analysis tool. So: how many, over what span, from which sources — and
    * then the whole document, exactly as the phone wrote it, to read and to take away.
    */
+  import { bundleSummary } from './bundle-summary';
+  import { EVENT_SOURCE_REGISTRY_SHA256 } from '$lib/particeps/generated/event-source-registry';
+  import { i18n } from '$lib/ui/i18n.svelte';
   import Button from '$lib/ui/Button.svelte';
   import BytePane from '$lib/ui/BytePane.svelte';
   import Disclosure from '$lib/ui/Disclosure.svelte';
@@ -29,7 +32,7 @@
   import Note from '$lib/ui/Note.svelte';
   import { groupDigits } from '$lib/ui/format';
   import type { IconRef } from '$lib/ui/icons';
-  import { openBundle } from '$lib/particeps/bundle';
+  import { openBundle, MAXIMUM_BROWSER_PREVIEW_BYTES } from '$lib/particeps/bundle';
   import { MAXIMUM_CONFIGURATION_BYTES, isCollectorId, COLLECTOR_ORDER } from '$lib/particeps/types';
   import type { CollectorId, StudyConfiguration } from '$lib/particeps/types';
   import { download } from './artifacts';
@@ -82,6 +85,7 @@
    */
   async function takeBundle(file: File) {
     try {
+      if (file.size > MAXIMUM_BROWSER_PREVIEW_BYTES) throw new Error('too_large');
       bundleBytes = new Uint8Array(await file.arrayBuffer());
       bundleName = file.name;
       failure = '';
@@ -95,6 +99,7 @@
   /** `.partcfg`, canonical JSON, or a draft — `parseConfiguration` unwraps the envelope itself. */
   async function takeConfiguration(file: File) {
     try {
+      if (file.size > MAXIMUM_CONFIGURATION_BYTES + 256) throw new Error('too_large');
       configuration = parseConfiguration(new Uint8Array(await file.arrayBuffer()));
       configurationName = file.name;
       failure = '';
@@ -111,6 +116,7 @@
    */
   async function takePrivateKey(file: File) {
     try {
+      if (file.size > 128) throw new Error('key_size');
       privateKey = hpkeKeyPairFromPrivate(await file.text()).privateKey;
       privateKeyName = file.name;
       failure = '';
@@ -234,22 +240,14 @@
     return Number.isNaN(at.getTime()) ? String(millis) : `${at.toISOString().slice(0, 19)}Z`;
   }
 
-  /**
-   * What the device has counted in its lifetime, which is not always what this file carries: a
-   * scheduled upload sends a slice. Shown as a denominator only when the two differ, because
-   * `n / total` already means "part of" everywhere else on this page and a denominator equal to the
-   * numerator says nothing.
-   */
-  const lifetime = $derived(experiment ? BigInt(experiment.lifetime_data_event_count) : 0n);
-  const partial = $derived(
-    experiment !== null && lifetime > BigInt(experiment.event_count)
-  );
-  const firstEventSequence = $derived(events[0]?.sequence_number ?? null);
-  const lastEventSequence = $derived(events.at(-1)?.sequence_number ?? null);
+  const summary = $derived(experiment ? bundleSummary(experiment) : null);
+  const zh = $derived(i18n.locale === 'zh-TW');
 </script>
 
 <div class="stack stack--loose">
   <Note icon="info" tone="plain" text={m.researcher.read.lede} />
+  <p class="fine faint">{zh ? '瀏覽器預覽上限 32 MiB；大型檔案、不同登錄版本或完整研究請使用' : 'Browser preview limit: 32 MiB. For large files, a different registry version or full-study analysis, use'} <a href="https://github.com/JacobLinCool/particeps/blob/main/particeps-analysis/README.md" target="_blank" rel="noreferrer">particeps-analysis</a>.</p>
+  <details><summary>{zh ? '目前讀取器的事件登錄版本' : 'Current reader event registry'}</summary><code style="overflow-wrap:anywhere">{EVENT_SOURCE_REGISTRY_SHA256}</code></details>
 
   <div class="inputs">
     <div class="inputs__row">
@@ -344,19 +342,13 @@
           <dt>{m.researcher.read.events}</dt>
           <dd class="figure__value">{groupDigits(experiment.event_count)}</dd>
         </div>
-        <!-- The separator before the lifetime total is a non-breaking space, not a literal one:
-             Svelte strips whitespace at the start of an element's children, which rendered
-             `501–505/ 900`. An export carrying no events has no range to state — the device writes
-             first 1 and last 0 for that, and drawing it gave a backwards `1–0`. -->
         <div class="figure">
-          <dt>{m.researcher.read.window}</dt>
-          <dd class="figure__value">
-            {#if firstEventSequence === null || lastEventSequence === null}
-              —
-            {:else}{groupDigits(firstEventSequence)}–{groupDigits(
-                lastEventSequence
-              )}{#if partial}<span class="figure__of">&nbsp;/ {groupDigits(lifetime)}</span>{/if}{/if}
-          </dd>
+          <dt>{zh ? '本檔收集器事件 / 累計收集器事件' : 'Collector events in file / lifetime'}</dt>
+          <dd class="figure__value">{summary?.collectorEvents} / {experiment.lifetime_data_event_count}</dd>
+        </div>
+        <div class="figure">
+          <dt>{zh ? 'Commit 範圍 / 裝置持久化末端' : 'Commit range / durable head'}</dt>
+          <dd class="figure__value">{summary?.commitRange} / {experiment.durable_through_commit}</dd>
         </div>
         <div class="figure">
           <dt>{m.researcher.read.commits}</dt>
@@ -374,6 +366,9 @@
           </dd>
         </div>
       </dl>
+      <Note icon="info" tone="plain" text={summary?.completeThroughHead
+        ? (zh ? '此檔包含從 commit 1 到所宣告持久化末端的範圍。完整因果鏈與資料品質仍須由離線分析工具驗證。' : 'This file spans commit 1 through the declared durable head. Use offline analysis to verify the complete causal chain and data quality.')
+        : (zh ? '這是 commit 切片。請收齊其他匯出檔，再由離線分析工具驗證完整資料鏈。' : 'This is a commit slice. Collect the other exports and verify the complete chain with offline analysis.')} />
 
       <dl class="identity" data-testid="read-identity">
         <dt>{m.field.label.experimentId}</dt>
@@ -485,10 +480,7 @@
 
   /* The window's denominator, when the device counted more than this file carries. Fine and faint
      because it is the same `n / total` the byte pane and the hand-off columns already draw. */
-  .figure__of {
-    font-size: var(--type-fine);
-    color: var(--ink-faint);
-  }
+
 
   .figure__stack {
     display: flex;

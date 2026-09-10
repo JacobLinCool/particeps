@@ -150,6 +150,7 @@ if (wall.length !== 2) throw new Error(`expected two instants, found ${wall.leng
 // How long one participant runs, from the preset row rather than a typed number.
 await page.locator(`[data-testid="preset-duration_hours-${DURATION_HOURS}"]`).click();
 
+await page.getByRole('navigation', { name: 'Study sections' }).getByRole('button', { name: 'Data collection', exact: true }).click();
 await page.getByRole('switch', { name: /App activity/ }).first().click();
 await page.getByRole('switch', { name: /^Motion/ }).first().click();
 await page.waitForTimeout(300);
@@ -171,6 +172,16 @@ await page.waitForTimeout(200);
 if ((await motionRequired.getAttribute('aria-pressed')) !== 'true') {
   fail('pressing Required left the control unpressed');
 }
+
+// Cloning a reactive profile must create a usable independent profile, with no DataCloneError.
+await motionCard.getByRole('button', { name: 'Add profile', exact: true }).click();
+if ((await motionCard.getByRole('button', { name: 'profile-2', exact: true }).count()) !== 1) {
+  fail('adding a profile did not create profile-2');
+}
+await motionCard.getByRole('button', { name: 'Remove profile', exact: true }).click();
+
+await page.locator('[data-testid="rail-overview"]').click();
+await page.waitForSelector('[data-testid="study-overview"]');
 
 // Enabling ordinary continuous collectors creates signed resource-binding automations, but those
 // bindings merely express the collection lifecycle the App already had: active selects the

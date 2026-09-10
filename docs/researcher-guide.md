@@ -29,6 +29,52 @@ deletes local study data; retain the export before resetting and importing the r
 Retain the RC9 researcher and analysis tools for all RC9 export bundles, including those without
 notification data: bundle readers require the exact registry digest. Use RC10 tools for RC10 exports.
 
+## Researcher workspace
+
+The web workspace follows six steps: **Study → Keys → Overview → Sign → Files → Read**.
+Study settings are grouped into Details, Data collection, Surveys & activities, Rules, and Delivery.
+Each profile, question, occurrence and nested condition remains editable. Resource cases are evaluated
+in order; the first matching case selects the profile. Random-window controls expose all windows,
+per-window/per-day/total limits and minimum separation, separately from occurrence activation limits.
+
+**Save draft** downloads a `.partdraft` working file, including incomplete study fields and identifier
+overrides. Reimport it to continue editing. This format is not a participant configuration and contains
+no private keys or decrypted research data. Save private keys separately. Unsaved study changes and
+unsaved held keys both activate the leave-page warning. No draft or key is written to browser storage.
+
+Importing a canonical configuration or `.partcfg` preserves its signing and export public keys and key
+IDs. Import the matching signing private key to sign revisions. A mismatched key is rejected without
+changing the study. **Replace key** shows the proposed identity change before applying it; retain old
+private keys for any files already issued. An export private key held elsewhere does not need to be
+loaded just to sign a revision.
+
+**Overview** shows a reference participant's local day. Select a study day and adjust the reference
+start date, time and IANA time zone. Collection and network profile bands share the axis with survey
+and notification markers. Select any mark to inspect its rule or jump back to its editor. The agenda
+also provides a text rendering of all periods and events. First and last days may be partial; daylight
+saving changes can make a local day shorter or longer than 24 elapsed hours.
+
+The overview distinguishes deterministic schedules, possible random windows and history-dependent
+conditions. It assumes uninterrupted running, a constant time zone and immediate evaluation. It never
+samples a participant's random notification time. The adjacent synthetic-event simulator has separate,
+explicit UTC reference coordinates and uses the shared automation compiler/reducer. Changing the study
+or trace hides any stale simulation result.
+
+Participant content preview includes the authored consent, source categories and complete questionnaires.
+It keeps internal treatment rules out of generated participant content. Studies requiring the blinding
+review cannot be signed until the preview is acknowledged; any configuration edit invalidates that
+acknowledgment. All signing prerequisites appear in the issue list, with links to their controls.
+
+Native [WebMCP authoring](researcher-webmcp.md) lets a compatible browser assistant configure this same
+live draft, inspect validation and preview the timeline. The page displays registration status. Agent
+changes use bounded, validated atomic batches and preserve key/participant identity.
+
+The Files and Delivery sections provide deployment digest/key-ID handoff, roster personalization and
+offline analysis instructions. Read is a bounded 32 MiB bundle preview: all-event and collector-event
+counts are separate, and file coverage is shown by commit range and durable head. Different registry
+versions receive an explicit version diagnostic. Use [offline analysis](../particeps-analysis/README.md)
+for complete commit-chain verification and typed Parquet datasets.
+
 ## 1. Study model
 
 A study is one canonical JSON object signed with Ed25519. The participant can accept, decline,

@@ -8,7 +8,11 @@
 
 import type { Messages } from '$lib/i18n/types';
 
-export function fieldLabel(m: Messages, path: string): string {
+export function fieldLabel(m: Messages, path: string, locale: 'en' | 'zh-TW' = 'en'): string {
+  const zh = locale === 'zh-TW';
+  if (path === 'review.blinding') return zh ? '參與者內容確認' : 'Participant content confirmation';
+  if (path === 'signing_private_key') return zh ? '相符的簽署私鑰' : 'Matching signing private key';
+  if (path === 'minimum_client_version') return zh ? '最低 App 版本' : 'Minimum app version';
   const label = m.field.label;
   const segments = path.split('.');
   const tail = segments[segments.length - 1];
@@ -92,8 +96,10 @@ export function fieldLabel(m: Messages, path: string): string {
       return m.researcher.study.section.collectors.title;
   }
 
-  if (segments[0] === 'interventions') return m.researcher.study.section.interventions.title;
-  if (segments[0] === 'surveys') return m.intervention.survey;
+  if (path.startsWith('automations')) return `${zh ? '條件／活動規則' : 'Condition / activity rule'} · ${path}`;
+  if (path.startsWith('traffic_shaping')) return `${zh ? 'App 資料傳輸調整' : 'App data-transfer adjustment'} · ${path}`;
+  if (path.startsWith('interventions')) return m.researcher.study.section.interventions.title;
+  if (path.startsWith('surveys')) return m.intervention.survey;
   // The whole document, and anything a future rule invents: the path itself, never nothing.
   return path || m.researcher.sign.canonical;
 }

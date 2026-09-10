@@ -8,6 +8,7 @@ import { EVENT_SOURCE_REGISTRY } from '$lib/particeps/generated/event-source-reg
 import { validate } from '$lib/particeps/schema';
 import {
   PLATFORM,
+  MAXIMUM_CONFIGURATION_BYTES,
   isCollectorId,
   trafficShapingEnabled,
   type Aggregate,
@@ -44,9 +45,23 @@ export class UnavailableCollectorError extends Error {
 }
 
 export function parseConfiguration(bytes: Uint8Array): StudyConfiguration {
+  if (bytes.length > MAXIMUM_CONFIGURATION_BYTES + 256) fail('parse_size');
   const envelope = isEnvelope(bytes) ? decodeEnvelope(bytes) : null;
   const source = envelope?.configurationBytes ?? bytes;
-  const raw = object(parseCanonicalJson(source));
+  const configuration = decodeConfigurationValue(parseCanonicalJson(source));
+  if (!sameBytes(canonicalConfigurationBytes(configuration), source)) fail('parse_canonical');
+  if (validate(configuration).length > 0) fail('parse_invalid');
+  if (envelope) {
+    if (envelope.signerKeyId !== configuration.signer.key_id) fail('envelope_signer');
+    if (!verify(source, envelope.signature, configuration.signer.public_key)) fail('envelope_signature');
+  }
+  return configuration;
+}
+
+/** Closed structural decoder. Finite numbers preserve unfinished edits; validate() enforces
+ * integer bounds before any protocol file is accepted or signed. */
+export function decodeConfigurationValue(value: unknown): StudyConfiguration {
+  const raw = object(value);
   requireExactKeys(raw, ROOT_KEYS);
   const researcher = exactObject(raw.researcher, ['name', 'contact']);
   const consent = exactObject(raw.consent, ['document_version', 'summary']);
@@ -58,33 +73,27 @@ export function parseConfiguration(bytes: Uint8Array): StudyConfiguration {
   if (raw.platform !== PLATFORM) fail('parse_platform');
 
   const configuration: StudyConfiguration = {
-    schema_version: integer(raw.schema_version), platform: PLATFORM,
+    schema_version: numberValue(raw.schema_version), platform: PLATFORM,
     experiment_id: string(raw.experiment_id), configuration_id: string(raw.configuration_id),
     assigned_participant_id: nullableString(raw.assigned_participant_id),
     issued_at: string(raw.issued_at), expires_at: string(raw.expires_at),
     minimum_client_version: string(raw.minimum_client_version), title: string(raw.title),
     researcher: { name: string(researcher.name), contact: string(researcher.contact) },
-    purpose: string(raw.purpose), duration_hours: integer(raw.duration_hours),
+    purpose: string(raw.purpose), duration_hours: numberValue(raw.duration_hours),
     consent: { document_version: string(consent.document_version), summary: string(consent.summary) },
     collectors: array(raw.collectors).map(parseCollector),
     surveys: array(raw.surveys).map(parseSurvey),
     interventions: array(raw.interventions).map(parseIntervention),
     automations: array(raw.automations).map(parseAutomation),
     traffic_shaping: parseTrafficShaping(raw.traffic_shaping),
-    storage: { maximum_local_bytes: integer(storage.maximum_local_bytes) },
+    storage: { maximum_local_bytes: numberValue(storage.maximum_local_bytes) },
     signer: { key_id: string(signer.key_id), public_key: string(signer.public_key) },
     export: { researcher_key_id: string(exported.researcher_key_id), hpke_public_key: string(exported.hpke_public_key) },
     upload: Object.keys(upload).length === 0 ? null : {
-      endpoint: string(upload.endpoint), interval_minutes: integer(upload.interval_minutes),
+      endpoint: string(upload.endpoint), interval_minutes: numberValue(upload.interval_minutes),
       allow_metered: boolean(upload.allow_metered)
     }
   };
-  if (!sameBytes(canonicalConfigurationBytes(configuration), source)) fail('parse_canonical');
-  if (validate(configuration).length > 0) fail('parse_invalid');
-  if (envelope) {
-    if (envelope.signerKeyId !== configuration.signer.key_id) fail('envelope_signer');
-    if (!verify(source, envelope.signature, configuration.signer.public_key)) fail('envelope_signature');
-  }
   return configuration;
 }
 
@@ -114,7 +123,7 @@ function parseProfile(id: CollectorConfig['id'], raw: unknown): CollectorProfile
     const value = input[name];
     switch (contract.type) {
       case 'boolean': return [name, boolean(value)];
-      case 'integer': return [name, integer(value)];
+      case 'integer': return [name, numberValue(value)];
       case 'string': case 'enum': return [name, string(value)];
       case 'enum_array': return [name, array(value).map(string)];
       case 'object': return [name, parseProfileObject(value, contract.fields ?? {})];
@@ -127,7 +136,7 @@ function parseProfileObject(raw: unknown, contracts: Readonly<Record<string, { t
   return Object.fromEntries(Object.entries(contracts).map(([name, contract]) => {
     const value = input[name];
     if (contract.type === 'boolean') return [name, boolean(value)];
-    if (contract.type === 'integer') return [name, integer(value)];
+    if (contract.type === 'integer') return [name, numberValue(value)];
     if (contract.type === 'enum_array') return [name, array(value).map(string)];
     if (contract.type === 'object') return [name, parseProfileObject(value, contract.fields as never)];
     return [name, string(value)];
@@ -143,8 +152,8 @@ function parseTrafficShaping(raw: unknown): TrafficShapingConfiguration {
     profiles: array(source.profiles).map((value) => {
       const profile = exactObject(value, ['id', 'uplink_kbps', 'downlink_kbps']);
       return {
-        id: string(profile.id), uplink_kbps: nullableInteger(profile.uplink_kbps),
-        downlink_kbps: nullableInteger(profile.downlink_kbps)
+        id: string(profile.id), uplink_kbps: nullableNumberValue(profile.uplink_kbps),
+        downlink_kbps: nullableNumberValue(profile.downlink_kbps)
       };
     })
   };
@@ -180,9 +189,9 @@ function parseAutomation(raw: unknown): AutomationDefinition {
     return {
       type: 'occurrence', id: string(source.id), trigger: parseTrigger(source.trigger),
       guard: source.guard === null ? null : parseCondition(source.guard),
-      intervention_id: string(source.intervention_id), availability_seconds: integer(source.availability_seconds),
-      cooldown: cooldown ? { duration_seconds: integer(cooldown.duration_seconds), clock: durationClock(cooldown.clock) } : null,
-      maximum_activations: integer(source.maximum_activations)
+      intervention_id: string(source.intervention_id), availability_seconds: numberValue(source.availability_seconds),
+      cooldown: cooldown ? { duration_seconds: numberValue(cooldown.duration_seconds), clock: durationClock(cooldown.clock) } : null,
+      maximum_activations: numberValue(source.maximum_activations)
     };
   }
   if (source.type === 'resource_binding') {
@@ -210,10 +219,10 @@ function parseTrigger(raw: unknown): AutomationTrigger {
       return { type: 'event_match', selector: parseMatcher(source.selector), evaluation_clock: evaluationClock(source.evaluation_clock) };
     case 'sequence':
       requireExactKeys(source, ['type', 'steps', 'within_seconds', 'evaluation_clock']);
-      return { type: 'sequence', steps: array(source.steps).map(parseMatcher), within_seconds: integer(source.within_seconds), evaluation_clock: evaluationClock(source.evaluation_clock) };
+      return { type: 'sequence', steps: array(source.steps).map(parseMatcher), within_seconds: numberValue(source.within_seconds), evaluation_clock: evaluationClock(source.evaluation_clock) };
     case 'window_threshold':
       requireExactKeys(source, ['type', 'selector', 'window_seconds', 'evaluation_clock', 'aggregate', 'comparison']);
-      return { type: 'window_threshold', selector: parseMatcher(source.selector), window_seconds: integer(source.window_seconds),
+      return { type: 'window_threshold', selector: parseMatcher(source.selector), window_seconds: numberValue(source.window_seconds),
         evaluation_clock: evaluationClock(source.evaluation_clock), aggregate: parseAggregate(source.aggregate), comparison: parseComparison(source.comparison) };
     case 'condition_rising_edge':
       requireExactKeys(source, ['type', 'condition']); return { type: 'condition_rising_edge', condition: parseCondition(source.condition) };
@@ -235,17 +244,17 @@ function parseCondition(raw: unknown): StateCondition {
       exit_when: array(source.exit_when).map(parseMatcher), key_field: string(source.key_field)
     };
     case 'held_for': requireExactKeys(source, ['type', 'condition', 'duration_seconds', 'clock']); return {
-      type: 'held_for', condition: parseCondition(source.condition), duration_seconds: integer(source.duration_seconds), clock: durationClock(source.clock)
+      type: 'held_for', condition: parseCondition(source.condition), duration_seconds: numberValue(source.duration_seconds), clock: durationClock(source.clock)
     };
     case 'study_local_window': requireExactKeys(source, ['type', 'first_day', 'last_day', 'start_local_time', 'end_local_time']); return {
-      type: 'study_local_window', first_day: integer(source.first_day), last_day: integer(source.last_day),
+      type: 'study_local_window', first_day: numberValue(source.first_day), last_day: numberValue(source.last_day),
       start_local_time: string(source.start_local_time), end_local_time: string(source.end_local_time)
     };
     case 'elapsed_at_least': requireExactKeys(source, ['type', 'duration_seconds', 'clock']); return {
-      type: 'elapsed_at_least', duration_seconds: integer(source.duration_seconds), clock: durationClock(source.clock)
+      type: 'elapsed_at_least', duration_seconds: numberValue(source.duration_seconds), clock: durationClock(source.clock)
     };
     case 'window_threshold': requireExactKeys(source, ['type', 'selector', 'window_seconds', 'evaluation_clock', 'aggregate', 'comparison']); return {
-      type: 'window_threshold', selector: parseMatcher(source.selector), window_seconds: integer(source.window_seconds),
+      type: 'window_threshold', selector: parseMatcher(source.selector), window_seconds: numberValue(source.window_seconds),
       evaluation_clock: evaluationClock(source.evaluation_clock), aggregate: parseAggregate(source.aggregate), comparison: parseComparison(source.comparison)
     };
     case 'all': case 'any': requireExactKeys(source, ['type', 'conditions']); return {
@@ -259,7 +268,7 @@ function parseCondition(raw: unknown): StateCondition {
 function parseMatcher(raw: unknown): EventMatcher {
   const source = exactObject(raw, ['event', 'predicates']);
   const event = exactObject(source.event, ['source_id', 'schema_version', 'event_type']);
-  return { event: { source_id: string(event.source_id), schema_version: integer(event.schema_version), event_type: string(event.event_type) },
+  return { event: { source_id: string(event.source_id), schema_version: numberValue(event.schema_version), event_type: string(event.event_type) },
     predicates: array(source.predicates).map(parsePredicate) };
 }
 
@@ -291,20 +300,20 @@ function parseSchedule(raw: unknown): AutomationSchedule {
   const source = object(raw);
   switch (source.type) {
     case 'one_time': requireExactKeys(source, ['type', 'offset_minutes', 'clock']); return {
-      type: 'one_time', offset_minutes: integer(source.offset_minutes), clock: durationClock(source.clock)
+      type: 'one_time', offset_minutes: numberValue(source.offset_minutes), clock: durationClock(source.clock)
     };
     case 'interval': requireExactKeys(source, ['type', 'start_offset_minutes', 'interval_minutes', 'clock']); return {
-      type: 'interval', start_offset_minutes: integer(source.start_offset_minutes), interval_minutes: integer(source.interval_minutes), clock: durationClock(source.clock)
+      type: 'interval', start_offset_minutes: numberValue(source.start_offset_minutes), interval_minutes: numberValue(source.interval_minutes), clock: durationClock(source.clock)
     };
     case 'daily_local': requireExactKeys(source, ['type', 'local_time']); return { type: 'daily_local', local_time: string(source.local_time) };
     case 'random_window': requireExactKeys(source, ['type', 'local_windows', 'occurrences_per_window', 'maximum_occurrences_per_day', 'maximum_occurrences_total', 'minimum_separation_minutes']); return {
       type: 'random_window', local_windows: array(source.local_windows).map((value) => {
         const window = exactObject(value, ['start_local_time', 'end_local_time']);
         return { start_local_time: string(window.start_local_time), end_local_time: string(window.end_local_time) };
-      }), occurrences_per_window: integer(source.occurrences_per_window),
-      maximum_occurrences_per_day: integer(source.maximum_occurrences_per_day),
-      maximum_occurrences_total: integer(source.maximum_occurrences_total),
-      minimum_separation_minutes: integer(source.minimum_separation_minutes)
+      }), occurrences_per_window: numberValue(source.occurrences_per_window),
+      maximum_occurrences_per_day: numberValue(source.maximum_occurrences_per_day),
+      maximum_occurrences_total: numberValue(source.maximum_occurrences_total),
+      minimum_separation_minutes: numberValue(source.minimum_separation_minutes)
     };
     default: return fail('parse_schedule');
   }
@@ -318,15 +327,15 @@ function parseSurvey(raw: unknown): SurveyDefinition {
 function parseQuestion(raw: unknown): SurveyQuestion {
   const source = object(raw); const common = { id: string(source.id), prompt: localized(source.prompt), required: boolean(source.required) };
   switch (source.type) {
-    case 'short_text': requireExactKeys(source, ['type', 'id', 'prompt', 'required', 'maximum_length']); return { type: 'short_text', ...common, maximum_length: integer(source.maximum_length) };
+    case 'short_text': requireExactKeys(source, ['type', 'id', 'prompt', 'required', 'maximum_length']); return { type: 'short_text', ...common, maximum_length: numberValue(source.maximum_length) };
     case 'scale': requireExactKeys(source, ['type', 'id', 'prompt', 'required', 'minimum', 'maximum', 'minimum_label', 'maximum_label']); return {
-      type: 'scale', ...common, minimum: integer(source.minimum), maximum: integer(source.maximum),
+      type: 'scale', ...common, minimum: numberValue(source.minimum), maximum: numberValue(source.maximum),
       minimum_label: localized(source.minimum_label), maximum_label: localized(source.maximum_label)
     };
     case 'single_choice': requireExactKeys(source, ['type', 'id', 'prompt', 'required', 'options']); return { type: 'single_choice', ...common, options: choices(source.options) };
     case 'multiple_choice': requireExactKeys(source, ['type', 'id', 'prompt', 'required', 'options', 'minimum_selections', 'maximum_selections']); return {
       type: 'multiple_choice', ...common, options: choices(source.options),
-      minimum_selections: integer(source.minimum_selections), maximum_selections: integer(source.maximum_selections)
+      minimum_selections: numberValue(source.minimum_selections), maximum_selections: numberValue(source.maximum_selections)
     };
     default: return fail('parse_question');
   }
@@ -353,7 +362,7 @@ function string(value: unknown): string { return typeof value === 'string' ? val
 function nullableString(value: unknown): string | null { return value === null || typeof value === 'string' ? value : fail('parse_string'); }
 function boolean(value: unknown): boolean { return typeof value === 'boolean' ? value : fail('parse_boolean'); }
 function array(value: unknown): unknown[] { return Array.isArray(value) ? value : fail('parse_array'); }
-function integer(value: unknown): number { return typeof value === 'number' && Number.isSafeInteger(value) ? value : fail('parse_number'); }
-function nullableInteger(value: unknown): number | null { return value === null ? null : integer(value); }
+function numberValue(value: unknown): number { return typeof value === 'number' && Number.isFinite(value) ? value : fail('parse_number'); }
+function nullableNumberValue(value: unknown): number | null { return value === null ? null : numberValue(value); }
 function fail(message: string): never { throw new Error(message); }
 function sameBytes(left: Uint8Array, right: Uint8Array): boolean { return left.length === right.length && left.every((byte, index) => byte === right[index]); }

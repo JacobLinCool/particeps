@@ -103,6 +103,7 @@ export const en: Messages = {
   },
 
   step: {
+    overview: 'Overview',
     keys: 'Keys',
     study: 'Study',
     sign: 'Sign',
@@ -304,7 +305,9 @@ export const en: Messages = {
     resource_owner: 'Every stateful resource needs exactly one binding automation',
     trigger_source_liveness: 'A collector used by automation must be required and continuously active',
     dependency_cycle: 'Resource conditions form a cycle that cannot be evaluated safely',
-    unbounded_state: 'This window or sequence could retain more than 4,096 entries'
+    unbounded_state: 'This window or sequence could retain more than 4,096 entries',
+    private_key_missing: 'Import the matching signing private key before signing',
+    review_required: 'Review and confirm the participant preview before signing'
   },
 
   status: {
@@ -328,6 +331,7 @@ export const en: Messages = {
     clipboard: 'Copy failed. Select the text and copy it yourself.',
     notFound: 'No page at this address.',
     bundle: {
+      registry_mismatch: 'This export uses a different event registry. Open it with the matching Particeps analysis release.',
       not_a_bundle: 'That file is not an export bundle this page can read.',
       too_large: 'That file is larger than this tab can open.',
       wrong_study: 'This bundle is from another study. Use that study\u2019s configuration.',
@@ -341,9 +345,9 @@ export const en: Messages = {
   confirm: {
     startOver: {
       title: 'Discard everything in this tab?',
-      body: 'The keys and the configuration are held here and nowhere else. Anything you have not downloaded is gone.'
+      body: 'Unsaved study changes and keys without saved copies will be lost.'
     },
-    leave: { title: 'Leave with a key you have not saved?' },
+    leave: { title: 'Leave with unsaved work or keys?' },
     replaceKey: {
       title: 'Replace the key held here?',
       body: 'The pair in this tab is discarded and a new one takes its place. Anything already signed stays signed under the old key ID.'

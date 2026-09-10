@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { flushSync } from 'svelte';
-import { createDraft } from '../src/routes/researcher/draft.svelte';
+import { createDraft, KeyMismatchError } from '../src/routes/researcher/draft.svelte';
 import { canonicalizeConfiguration } from '$lib/particeps/canonical';
 import { decodeEnvelope } from '../src/routes/researcher/parse';
-import { verify } from '$lib/particeps/crypto';
+import { generateHpkeKeyPair, generateSigningKeyPair, verify } from '$lib/particeps/crypto';
+import { HPKE, SIGNING } from './fixture';
 
 function ready() {
   const draft = createDraft();
@@ -138,7 +139,7 @@ describe('draft', () => {
     draft.setCollectorRequired('location.v1', true);
     flushSync();
     expect(binding.default_profile_id).toBeNull();
-    expect(draft.issues).toEqual([]);
+    expect(draft.issues).toEqual([{ path: 'review.blinding', code: 'review_required' }]);
   });
 
   it('requires blinding confirmation for a single-profile conditional profile/null resource', () => {
@@ -153,7 +154,8 @@ describe('draft', () => {
     }];
     binding.default_profile_id = null;
     flushSync();
-    expect(draft.issues).toEqual([]);
+    expect(draft.issues).toEqual([{ path: 'review.blinding', code: 'review_required' }]);
+    expect(draft.canSign).toBe(false);
     expect(draft.requiresBlindingConfirmation).toBe(true);
     expect(draft.sign()).toBe('failed');
     expect(draft.envelope).toBeNull();
@@ -175,7 +177,7 @@ describe('draft', () => {
     });
     occurrence.configuration.automations.sort((left, right) => left.id.localeCompare(right.id));
     flushSync();
-    expect(occurrence.issues).toEqual([]);
+    expect(occurrence.issues).toEqual([{ path: 'review.blinding', code: 'review_required' }]);
     expect(occurrence.requiresBlindingConfirmation).toBe(true);
 
     const actuator = ready();
@@ -191,7 +193,7 @@ describe('draft', () => {
     });
     actuator.configuration.automations.sort((left, right) => left.id.localeCompare(right.id));
     flushSync();
-    expect(actuator.issues).toEqual([]);
+    expect(actuator.issues).toEqual([{ path: 'review.blinding', code: 'review_required' }]);
     expect(actuator.requiresBlindingConfirmation).toBe(true);
   });
 
@@ -271,9 +273,12 @@ describe('draft', () => {
     flushSync();
     expect(reader.signerKeyIdPin).toBe('');
     expect(reader.exportKeyIdPin).toBe('');
-    // The loaded document carries the reader's own key, and is named after it.
-    expect(reader.document.signer.key_id).toBe(reader.signerKeyId);
-    expect(reader.signerKeyId).not.toBe(mine.signerKeyId);
+    // A loaded study preserves its public keys and drops unrelated held private halves.
+    expect(reader.document.signer.key_id).toBe(mine.signerKeyId);
+    expect(reader.signerKeyId).toBe(mine.signerKeyId);
+    expect(reader.document.export.hpke_public_key).toBe(mine.document.export.hpke_public_key);
+    expect(reader.signing.kind).toBe('empty');
+    expect(reader.hpke.kind).toBe('empty');
 
     const cli = ready();
     cli.pinSignerKeyId('lab-signer-2026');
@@ -370,16 +375,17 @@ describe('draft', () => {
     expect(draft.visibleIssues('purpose')).toHaveLength(1);
   });
 
-  it('refuses to produce anything when the declared public key is not the held one', () => {
+  it('refuses an invalid declared public key before signing', () => {
     const draft = ready();
     draft.configuration.signer.public_key =
       'MCowBQYDK2VwAyEA' + 'A'.repeat(43) + '=';
     flushSync();
-    expect(draft.sign()).toBe('mismatch');
+    expect(draft.issues).toContainEqual({ path: 'signer.public_key', code: 'key_invalid' });
+    expect(draft.sign()).toBe('failed');
     expect(draft.envelope).toBeNull();
   });
 
-  it('loads a document and keeps the keys that are held here', () => {
+  it('loads a document and preserves its original public keys', () => {
     const draft = ready();
     const before = draft.configuration.signer.public_key;
     draft.sign();
@@ -395,8 +401,108 @@ describe('draft', () => {
     other.configuration.title = 'A second-language arm of the same study';
     flushSync();
     expect(other.experimentId).toBe(draft.experimentId);
-    expect(other.configuration.signer.public_key).toBe(mine);
-    expect(other.configuration.signer.public_key).not.toBe(before);
+    expect(other.configuration.signer.public_key).toBe(before);
+    expect(other.configuration.signer.public_key).not.toBe(mine);
+    expect(other.signing.kind).toBe('empty');
+    expect(other.hpke.kind).toBe('empty');
+    expect(other.issues).toContainEqual({ path: 'signing_private_key', code: 'private_key_missing' });
     expect(other.envelope).toBeNull();
+  });
+});
+
+
+describe('study continuity and authoring safeguards', () => {
+  function exported() {
+    const draft = ready();
+    draft.importSigning(SIGNING.privateKey);
+    draft.importHpke(HPKE.privateKey);
+    draft.pinSignerKeyId('lab-signer-2026');
+    draft.pinExportKeyId('lab-export-2026');
+    expect(draft.sign()).toBe('signed');
+    return draft;
+  }
+
+  it('rejects a mismatched imported private key atomically for either key role', () => {
+    const saved = exported(); const draft = createDraft(); draft.load(saved.envelope!);
+    const before = draft.canonical;
+    expect(() => draft.importSigning(generateSigningKeyPair().privateKey)).toThrow(KeyMismatchError);
+    expect(() => draft.importHpke(generateHpkeKeyPair().privateKey)).toThrow(KeyMismatchError);
+    expect(draft.canonical).toBe(before);
+    expect(draft.signing.kind).toBe('empty'); expect(draft.hpke.kind).toBe('empty');
+    expect(draft.signerKeyId).toBe('lab-signer-2026'); expect(draft.exportKeyId).toBe('lab-export-2026');
+  });
+
+  it('retains matching imported private keys and preserves existing custom public key IDs', () => {
+    const saved = exported(); const draft = createDraft();
+    draft.importSigning(SIGNING.privateKey); draft.importHpke(HPKE.privateKey);
+    draft.load(saved.envelope!);
+    expect(draft.signing.kind).toBe('held'); expect(draft.hpke.kind).toBe('held');
+    const before = draft.canonical;
+    draft.importSigning(SIGNING.privateKey); draft.importHpke(HPKE.privateKey); draft.ensureKeys();
+    expect(draft.canonical).toBe(before);
+    expect(draft.signerKeyId).toBe('lab-signer-2026'); expect(draft.exportKeyId).toBe('lab-export-2026');
+    expect(draft.saved['signing-private']).toBe(true); expect(draft.saved['hpke-private']).toBe(true);
+    expect(draft.sign()).toBe('signed');
+  });
+
+  it('does not automatically generate replacement keys for an imported study', () => {
+    const saved = exported(); const draft = createDraft(); draft.load(saved.envelope!);
+    const before = draft.canonical; draft.ensureKeys();
+    expect(draft.canonical).toBe(before);
+    expect(draft.signing.kind).toBe('empty'); expect(draft.hpke.kind).toBe('empty');
+    expect(draft.sign()).toBe('failed'); expect(draft.envelope).toBeNull();
+  });
+
+  it('resets custom key IDs only during explicit rotation and preserves the study identity', () => {
+    const saved = exported(); const draft = createDraft(); draft.load(saved.envelope!);
+    const experiment = draft.experimentId; const beforeConfiguration = draft.configurationId;
+    const signer = generateSigningKeyPair(); const hpke = generateHpkeKeyPair();
+    draft.replaceSigning(signer); draft.replaceHpke(hpke);
+    expect(draft.signerKeyIdPin).toBe(''); expect(draft.exportKeyIdPin).toBe('');
+    expect(draft.signerKeyId).not.toBe('lab-signer-2026'); expect(draft.exportKeyId).not.toBe('lab-export-2026');
+    expect(draft.document.signer.public_key).toBe(signer.publicKey); expect(draft.document.export.hpke_public_key).toBe(hpke.publicKey);
+    expect(draft.experimentId).toBe(experiment); expect(draft.configurationId).not.toBe(beforeConfiguration);
+    expect(draft.saved['signing-private']).toBe(false); expect(draft.saved['hpke-private']).toBe(false);
+  });
+
+  it('protects unsaved study changes after both key files have been saved', () => {
+    const draft = ready(); draft.markKept('signing-private'); draft.markKept('hpke-private');
+    expect(draft.keysAtRisk).toBe(false); expect(draft.unsavedChanges).toBe(true);
+    draft.markDraftSaved(); expect(draft.unsavedChanges).toBe(false);
+    draft.configuration.purpose = 'New unsaved purpose';
+    expect(draft.unsavedChanges).toBe(true); expect(draft.keysAtRisk).toBe(false);
+    draft.markSent('canonical'); expect(draft.unsavedChanges).toBe(false);
+  });
+
+  it('marks identifier pin edits dirty even when the signed configuration bytes stay the same', () => {
+    const draft = ready();
+    for (const [current, pin] of [
+      [() => draft.experimentId, (value: string) => draft.pinExperimentId(value)],
+      [() => draft.signerKeyId, (value: string) => draft.pinSignerKeyId(value)],
+      [() => draft.exportKeyId, (value: string) => draft.pinExportKeyId(value)]
+    ] as const) {
+      draft.markDraftSaved(); const before = draft.canonical;
+      pin(current());
+      expect(draft.canonical).toBe(before); expect(draft.unsavedChanges).toBe(true);
+      draft.markDraftSaved(); expect(draft.unsavedChanges).toBe(false);
+    }
+  });
+
+  it('invalidates blinding confirmation and a previous signature when the study changes', () => {
+    const draft = ready(); const binding = draft.configuration.automations.find((item) => item.type === 'resource_binding' && item.resource.id === 'location.v1');
+    if (!binding || binding.type !== 'resource_binding') throw new Error('missing location rule');
+    binding.cases[0].condition = { type: 'elapsed_at_least', duration_seconds: 300, clock: 'ACTIVE_RUNNING_TIME' };
+    expect(draft.canSign).toBe(false);
+    draft.confirmBlinding(true); expect(draft.blindingConfirmed).toBe(true); expect(draft.canSign).toBe(true);
+    expect(draft.sign()).toBe('signed');
+    draft.configuration.purpose = 'Changed participant wording';
+    expect(draft.blindingConfirmed).toBe(false); expect(draft.canSign).toBe(false);
+    expect(draft.issues).toContainEqual({ path: 'review.blinding', code: 'review_required' });
+    expect(draft.envelope).toBeNull(); expect(draft.sign()).toBe('failed');
+  });
+
+  it('refuses a valid but mismatched declared public key without producing an envelope', () => {
+    const draft = ready(); draft.configuration.signer.public_key = generateSigningKeyPair().publicKey;
+    expect(draft.sign()).toBe('mismatch'); expect(draft.envelope).toBeNull();
   });
 });

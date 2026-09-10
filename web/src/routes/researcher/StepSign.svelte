@@ -24,6 +24,7 @@
   import Note from '$lib/ui/Note.svelte';
   import Section from '$lib/ui/Section.svelte';
   import SignatureReceipt from './SignatureReceipt.svelte';
+  import { i18n } from '$lib/ui/i18n.svelte';
   import { fieldLabel } from './labels';
   import { STEPS, stepForPath } from './steps';
   import { parseInstant } from '$lib/particeps/canonical';
@@ -203,7 +204,7 @@
   <IssueList
     {issues}
     {groupOf}
-    fieldLabel={(path) => fieldLabel(m, path)}
+    fieldLabel={(path) => fieldLabel(m, path, i18n.locale)}
     emptyLabel={m.status.clean}
     onjump={(issue) => onjump(issue.path)}
   />

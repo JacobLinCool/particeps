@@ -167,7 +167,7 @@ function hasKey(request: TimerProductionRequest, producer: string): boolean {
   return request.materialized.some((item) => item.producer_key === producer);
 }
 
-function firstInstant(date: string, localTime: string, zone: string): number | null {
+export function firstInstant(date: string, localTime: string, zone: string): number | null {
   const [year, month, day] = date.split('-').map(Number);
   const [hour, minute] = localTime.split(':').map(Number);
   const localAsUtc = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
@@ -201,12 +201,12 @@ function zonedParts(instant: number, zone: string): Record<'year' | 'month' | 'd
   return result;
 }
 
-function localDate(instant: number, zone: string): string {
+export function localDate(instant: number, zone: string): string {
   const parts = zonedParts(instant, zone);
   return `${parts.year.toString().padStart(4, '0')}-${parts.month.toString().padStart(2, '0')}-${parts.day.toString().padStart(2, '0')}`;
 }
 
-function nextDate(value: string): string {
+export function nextDate(value: string): string {
   const [year, month, day] = value.split('-').map(Number);
   const date = new Date(Date.UTC(year, month - 1, day + 1));
   return `${date.getUTCFullYear().toString().padStart(4, '0')}-${(date.getUTCMonth() + 1).toString().padStart(2, '0')}-${date.getUTCDate().toString().padStart(2, '0')}`;

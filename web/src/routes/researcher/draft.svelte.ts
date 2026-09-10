@@ -1,31 +1,4 @@
-/**
- * Everything the researcher is holding, and the one rule that keeps it honest.
- *
- * Nothing here is persisted. A plaintext Ed25519 key in `localStorage` is a worse outcome than a
- * lost tab, and half a draft restored without the key that signs it is a trap rather than a
- * convenience — so the tab is the storage, and the page says so before anyone gets far enough to
- * be hurt by it.
- *
- * Staleness is the rule: `canonicalize(configuration)` is compared against the string that was
- * signed, and any difference retires the signature and the envelope. Comparing the canonical
- * *string* rather than diffing fields is not laziness — those bytes are the only thing that
- * decides whether the signature is still over the right document.
- *
- * Four fields are held apart from the rest. `configuration` is the editable object, and nothing in
- * it names it or names its keys: `experiment_id`, `configuration_id`, `signer.key_id` and
- * `export.researcher_key_id` are derived here (`lib/particeps/ids.ts`) and written into `document`, which
- * is what gets validated, canonicalised, signed, and downloaded. Nobody types an identifier, and
- * the property the old section note asked a researcher to maintain by hand — change anything,
- * change the configuration ID — is now true by construction.
- *
- * The two key names derive from the *document's* public halves rather than from the held
- * `KeyState`, which makes the invariant recomputable by anyone holding only the file: `key_id` is
- * the name of `public_key`, in every document this page emits. It also keeps a loaded configuration
- * whose private key is not held correctly named, which the old code did not — it replaced a loaded
- * file's `signer.public_key` with the held key and left the file's `key_id` naming a signer whose
- * public half had just been swapped out.
- */
-
+/** Shared in-memory study state; portable working files exclude private keys. */
 import type { ResearchBundle } from '$lib/particeps/bundle';
 import {
   canonicalConfigurationBytes,
@@ -70,12 +43,20 @@ import type { ArtifactId } from './artifacts';
 import { estimate } from './estimate';
 import { hpkeKeyPairFromPrivate, signingKeyPairFromPrivate } from './keys';
 import { parseConfiguration } from './parse';
+import { decodeAuthoringFile, encodeAuthoringFile, type AuthoringState } from './authoring-file';
 import { stepForPath, type StepId } from './steps';
 
 export type KeyState<T> = { kind: 'empty' } | { kind: 'held'; material: T };
 
 /** What a sign attempt did. `mismatch` is the one failure that must interrupt. */
 export type SignOutcome = 'signed' | 'mismatch' | 'failed';
+
+export class KeyMismatchError extends Error {
+  constructor(readonly kind: 'signing' | 'hpke') {
+    super('The private key does not match this study.');
+    this.name = 'KeyMismatchError';
+  }
+}
 
 export { COLLECTOR_ORDER };
 
@@ -132,7 +113,9 @@ export function createDraft() {
   let bundle = $state.raw<ResearchBundle | null>(null);
 
   let attempted = $state(false);
-  let blindingConfirmed = $state(false);
+  let confirmedCanonical = $state<string | null>(null);
+  let imported = $state(false);
+  let savedRevision = $state<string | null>(null);
   /**
    * Two states, because a browser cannot tell you a file reached the disk. Clicking a download
    * anchor starts a save the reader can still cancel, and a save sheet dismissed leaves nothing
@@ -209,8 +192,17 @@ export function createDraft() {
   const document = $derived({ ...unnamed, configuration_id: configurationId });
 
   const canonical = $derived(canonicalizeConfiguration(document));
+  const authoringRevision = $derived(JSON.stringify([canonical, experimentIdPin, signerKeyIdPin, exportKeyIdPin]));
   const bytes = $derived(canonicalConfigurationBytes(document));
-  const issues = $derived(validate(document));
+  const blindingConfirmed = $derived(confirmedCanonical === canonical);
+  const issues = $derived.by(() => {
+    const result = validate(document);
+    if (signing.kind !== 'held') result.push({ path: 'signing_private_key', code: 'private_key_missing' });
+    if (configurationRequiresBlindingConfirmation(configuration) && !blindingConfirmed) {
+      result.push({ path: 'review.blinding', code: 'review_required' });
+    }
+    return result;
+  });
   const cost = $derived(estimate(document));
   const stale = $derived(signedCanonical !== null && signedCanonical !== canonical);
   const requiresBlindingConfirmation = $derived(
@@ -218,7 +210,7 @@ export function createDraft() {
   );
 
   const issuesByStep = $derived.by(() => {
-    const byStep: Record<StepId, Issue[]> = { keys: [], study: [], sign: [], files: [], read: [] };
+    const byStep: Record<StepId, Issue[]> = { keys: [], study: [], overview: [], sign: [], files: [], read: [] };
     for (const issue of issues) byStep[stepForPath(issue.path)].push(issue);
     return byStep;
   });
@@ -241,8 +233,11 @@ export function createDraft() {
     configuration.signer.public_key ? fingerprintOf(configuration.signer.public_key) : null
   );
 
-  const bothHeld = $derived(signing.kind === 'held' && hpke.kind === 'held');
-  const keysSaved = $derived(kept['signing-private'] && kept['hpke-private']);
+  const keysSaved = $derived(
+    (signing.kind !== 'held' || kept['signing-private']) &&
+    (hpke.kind !== 'held' || kept['hpke-private'])
+  );
+  const unsavedChanges = $derived(savedRevision === null ? studyStarted(configuration) : authoringRevision !== savedRevision);
 
   /**
    * Nothing has happened yet: no key exists, no study text, no attempt to sign. Every issue on the
@@ -290,9 +285,12 @@ export function createDraft() {
         // second, `blocked` would paint the rail on arrival — the exact thing the `pristine` guard
         // exists to prevent. Signing is still allowed, and before a signature exists an unsaved key
         // costs one regenerate.
-        if (!bothHeld || !keysSaved) return 'partial';
+        if (!keysSaved) return 'partial';
         return 'complete';
       case 'study':
+        if (!studyStarted(configuration)) return 'empty';
+        return count > 0 ? 'blocked' : 'complete';
+      case 'overview':
         if (!studyStarted(configuration)) return 'empty';
         return count > 0 ? 'blocked' : 'complete';
       case 'sign':
@@ -326,6 +324,7 @@ export function createDraft() {
     const pair = generateSigningKeyPair();
     signing = { kind: 'held', material: pair };
     configuration.signer.public_key = pair.publicKey;
+    signerKeyIdPin = '';
     sent['signing-private'] = false;
     kept['signing-private'] = false;
   }
@@ -334,6 +333,7 @@ export function createDraft() {
     const pair = generateHpkeKeyPair();
     hpke = { kind: 'held', material: pair };
     configuration.export.hpke_public_key = pair.publicKey;
+    exportKeyIdPin = '';
     sent['hpke-private'] = false;
     kept['hpke-private'] = false;
   }
@@ -347,6 +347,29 @@ export function createDraft() {
    */
   function adoptedName(value: string, derived: string): string {
     return ID_PATTERN.test(value) && value !== derived ? value : '';
+  }
+
+  function adoptConfiguration(loaded: StudyConfiguration, identifiers?: AuthoringState['identifiers']) {
+    if (signing.kind === 'held' && signing.material.publicKey !== loaded.signer.public_key) {
+      signing = { kind: 'empty' };
+      sent['signing-private'] = kept['signing-private'] = false;
+    }
+    if (hpke.kind === 'held' && hpke.material.publicKey !== loaded.export.hpke_public_key) {
+      hpke = { kind: 'empty' };
+      sent['hpke-private'] = kept['hpke-private'] = false;
+    }
+    configuration = loaded;
+    signerKeyIdPin = identifiers?.signer ?? adoptedName(loaded.signer.key_id, deriveSignerKeyId(loaded.signer.public_key));
+    exportKeyIdPin = identifiers?.export ?? adoptedName(loaded.export.researcher_key_id, deriveExportKeyId(loaded.export.hpke_public_key));
+    experimentIdPin = identifiers?.experiment ?? loaded.experiment_id;
+    imported = true;
+    signature = envelope = null;
+    signedCanonical = confirmedCanonical = null;
+    attempted = false;
+    touched.clear();
+    sent = { ...sent, canonical: false, partcfg: false };
+    kept = { ...kept, canonical: false, partcfg: false };
+    savedRevision = authoringRevision;
   }
 
   return {
@@ -427,6 +450,26 @@ export function createDraft() {
     get requiresBlindingConfirmation() {
       return requiresBlindingConfirmation;
     },
+    get imported() { return imported; },
+    get unsavedChanges() { return unsavedChanges; },
+    get canSign() { return issues.length === 0; },
+    markDraftSaved() { savedRevision = authoringRevision; },
+    get authoringBytes() {
+      return encodeAuthoringFile({ configuration: $state.snapshot(configuration),
+        identifiers: { experiment: experimentIdPin, signer: signerKeyIdPin, export: exportKeyIdPin } });
+    },
+    loadAuthoring(source: Uint8Array) {
+      const saved = decodeAuthoringFile(source);
+      adoptConfiguration(saved.configuration, saved.identifiers);
+    },
+    /** Atomic commit for validated authoring operations. Key changes use the dedicated key flow. */
+    replaceConfiguration(next: StudyConfiguration) {
+      if (next.signer.public_key !== document.signer.public_key || next.signer.key_id !== document.signer.key_id ||
+        next.export.hpke_public_key !== document.export.hpke_public_key || next.export.researcher_key_id !== document.export.researcher_key_id) {
+        throw new Error('Authoring edits cannot replace study keys.');
+      }
+      configuration = $state.snapshot(next);
+    },
     /** On disk as far as anyone here can know: the researcher said so, or nothing needed saying. */
     get saved() {
       return kept;
@@ -480,7 +523,7 @@ export function createDraft() {
     },
 
     confirmBlinding(value: boolean) {
-      blindingConfirmed = value;
+      confirmedCanonical = value ? canonical : null;
     },
 
     /** Empty restores the derived name. Anything else is taken as typed, and `validate` judges it. */
@@ -530,7 +573,7 @@ export function createDraft() {
       const profileId = `profile-${ordinal}`;
       collector.profiles.push({
         id: profileId,
-        config: structuredClone(collector.profiles[0].config)
+        config: $state.snapshot(collector.profiles[0].config)
       } as never);
       collector.profiles.sort((left, right) => left.id.localeCompare(right.id));
       return profileId;
@@ -569,9 +612,16 @@ export function createDraft() {
 
     removeSurvey(index: number) {
       const removed = configuration.surveys[index]?.id;
+      if (!removed) return;
+      const removedActions = new Set(configuration.interventions.filter(
+        item => item.action.type === 'survey' && item.action.survey_id === removed
+      ).map(item => item.id));
       configuration.surveys.splice(index, 1);
       configuration.interventions = configuration.interventions.filter(
         (item) => item.action.type !== 'survey' || item.action.survey_id !== removed
+      );
+      configuration.automations = configuration.automations.filter(
+        item => item.type !== 'occurrence' || !removedActions.has(item.intervention_id)
       );
     },
 
@@ -597,58 +647,47 @@ export function createDraft() {
      * Idempotent, so it never destroys a key that is already held — including one just imported.
      */
     ensureKeys() {
+      if (imported) return;
       if (signing.kind === 'empty') generateSigning();
       if (hpke.kind === 'empty') generateHpke();
+      if (savedRevision === null && !studyStarted(configuration)) savedRevision = authoringRevision;
     },
 
     /** Both imports derive the public half locally; the file beside it is never trusted for it. */
     importSigning(text: string) {
       const pair = signingKeyPairFromPrivate(text);
+      if (imported && pair.publicKey !== configuration.signer.public_key) throw new KeyMismatchError('signing');
       signing = { kind: 'held', material: pair };
       configuration.signer.public_key = pair.publicKey;
       sent['signing-private'] = false;
-      kept['signing-private'] = false;
+      kept['signing-private'] = true;
     },
 
     importHpke(text: string) {
       const pair = hpkeKeyPairFromPrivate(text);
+      if (imported && pair.publicKey !== configuration.export.hpke_public_key) throw new KeyMismatchError('hpke');
       hpke = { kind: 'held', material: pair };
       configuration.export.hpke_public_key = pair.publicKey;
       sent['hpke-private'] = false;
-      kept['hpke-private'] = false;
+      kept['hpke-private'] = true;
     },
 
-    /**
-     * Loading replaces the document, then re-attaches whichever public halves are held here: a
-     * loaded file's signer is only usable by whoever holds its private key, and this page cannot
-     * know whether that is the same person sitting in front of it.
-     */
+    replaceSigning(pair: SigningKeyPair) {
+      signing = { kind: 'held', material: signingKeyPairFromPrivate(pair.privateKey) };
+      configuration.signer.public_key = signing.material.publicKey;
+      signerKeyIdPin = '';
+      sent['signing-private'] = kept['signing-private'] = false;
+    },
+    replaceHpke(pair: HpkeKeyPair) {
+      hpke = { kind: 'held', material: hpkeKeyPairFromPrivate(pair.privateKey) };
+      configuration.export.hpke_public_key = hpke.material.publicKey;
+      exportKeyIdPin = '';
+      sent['hpke-private'] = kept['hpke-private'] = false;
+    },
+
+    /** Preserve imported public-key identity and retain only matching held private keys. */
     load(source: Uint8Array) {
-      const loaded = parseConfiguration(source);
-      // Measured against the file's *own* public halves, before the two lines below replace them:
-      // the question is whether this file names its keys the way this page would have.
-      signerKeyIdPin = adoptedName(
-        loaded.signer.key_id,
-        deriveSignerKeyId(loaded.signer.public_key)
-      );
-      exportKeyIdPin = adoptedName(
-        loaded.export.researcher_key_id,
-        deriveExportKeyId(loaded.export.hpke_public_key)
-      );
-      if (signing.kind === 'held') loaded.signer.public_key = signing.material.publicKey;
-      if (hpke.kind === 'held') loaded.export.hpke_public_key = hpke.material.publicKey;
-      configuration = loaded;
-      // The file's own name, adopted. A file whose name this editor could not have written is not
-      // inherited: the title derives one instead, and the researcher can still override it.
-      experimentIdPin = ID_PATTERN.test(loaded.experiment_id) ? loaded.experiment_id : '';
-      signature = null;
-      envelope = null;
-      signedCanonical = null;
-      attempted = false;
-      blindingConfirmed = false;
-      touched.clear();
-      sent = { ...sent, canonical: false, partcfg: false };
-      kept = { ...kept, canonical: false, partcfg: false };
+      adoptConfiguration(parseConfiguration(source));
     },
 
     /**
@@ -668,6 +707,7 @@ export function createDraft() {
     markSent(id: ArtifactId) {
       sent[id] = true;
       if (!isSecret(id)) kept[id] = true;
+      if (id === 'canonical') savedRevision = authoringRevision;
     },
 
     /** The researcher says the file is on their disk. The only claim a browser cannot make. */
@@ -682,7 +722,7 @@ export function createDraft() {
      */
     sign(): SignOutcome {
       attempted = true;
-      if (requiresBlindingConfirmation && !blindingConfirmed) return 'failed';
+      if (issues.length > 0) return 'failed';
       if (signing.kind !== 'held') return 'failed';
       const material = signing.material;
       // One snapshot for the whole act, so the bytes that are signed, the bytes that go in the
@@ -722,7 +762,9 @@ export function createDraft() {
       envelope = null;
       signedCanonical = null;
       attempted = false;
-      blindingConfirmed = false;
+      confirmedCanonical = null;
+      imported = false;
+      savedRevision = null;
       sent = { ...NO_ARTIFACTS };
       kept = { ...NO_ARTIFACTS };
       bundle = null;

@@ -110,6 +110,7 @@ export const zhTW: Messages = {
   },
 
   step: {
+    overview: '總覽',
     keys: '金鑰',
     study: '研究',
     sign: '簽署',
@@ -307,7 +308,9 @@ export const zhTW: Messages = {
     resource_owner: '每個持續性資源都必須恰好有一個 binding automation',
     trigger_source_liveness: 'automation 使用的 collector 必須是必要項目並持續啟用',
     dependency_cycle: '資源條件形成無法安全評估的循環依賴',
-    unbounded_state: '這個視窗或序列可能保留超過 4,096 筆項目'
+    unbounded_state: '這個視窗或序列可能保留超過 4,096 筆項目',
+    private_key_missing: '簽署前請匯入相符的簽署私鑰',
+    review_required: '簽署前請檢查並確認參與者預覽'
   },
 
   status: {
@@ -331,6 +334,7 @@ export const zhTW: Messages = {
     clipboard: '複製失敗，請自己選取文字複製。',
     notFound: '找不到這個頁面。',
     bundle: {
+      registry_mismatch: '這份匯出檔使用不同的事件登錄版本。請使用與匯出檔相符的 Particeps 分析工具版本。',
       not_a_bundle: '這不是有效的匯出檔，無法讀取。',
       too_large: '這個檔案太大，這個分頁開不起來。',
       wrong_study: '這個匯出檔屬於別的研究，請改用那個研究的設定檔。',
@@ -344,9 +348,9 @@ export const zhTW: Messages = {
   confirm: {
     startOver: {
       title: '捨棄這個分頁裡的所有內容？',
-      body: '金鑰與設定檔只存在於這個分頁，沒有其他備份。尚未下載的內容都會消失。'
+      body: '尚未保存的研究變更與沒有備份的金鑰將會遺失。'
     },
-    leave: { title: '金鑰還沒存檔，確定要離開？' },
+    leave: { title: '研究變更或金鑰尚未保存，確定要離開？' },
     replaceKey: {
       title: '要換掉這個分頁裡的金鑰嗎？',
       body: '會捨棄這個分頁裡的金鑰組，改用新產生的一組。已經簽好的檔案仍然屬於原本的金鑰 ID。'

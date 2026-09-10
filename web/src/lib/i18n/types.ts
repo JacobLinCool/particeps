@@ -88,6 +88,8 @@ export interface IssueMessages {
   trigger_source_liveness: string;
   dependency_cycle: string;
   unbounded_state: string;
+  private_key_missing: string;
+  review_required: string;
 }
 
 export type IssueCode = keyof IssueMessages;
@@ -194,6 +196,7 @@ export interface Messages {
   };
 
   step: {
+    overview: string;
     keys: string;
     study: string;
     sign: string;
@@ -341,6 +344,7 @@ export interface Messages {
      */
     bundle: {
       not_a_bundle: string;
+      registry_mismatch: string;
       too_large: string;
       wrong_study: string;
       wrong_key: string;

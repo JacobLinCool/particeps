@@ -12,6 +12,8 @@
    * overwrite for the same reason, and two private keys are two decisions.
    */
   import ArtifactGroup from '$lib/ui/ArtifactGroup.svelte';
+  import ResearcherHandoff from './ResearcherHandoff.svelte';
+  import { i18n } from '$lib/ui/i18n.svelte';
   import Button from '$lib/ui/Button.svelte';
   import CopyButton from '$lib/ui/CopyButton.svelte';
   import DownloadTile from '$lib/ui/DownloadTile.svelte';
@@ -234,6 +236,8 @@
     <Fingerprint value={draft.fingerprint} size="plaque" testid="print-fingerprint" />
   {/if}
 </div>
+
+<ResearcherHandoff {draft} locale={i18n.locale} />
 
 <style>
   .handoff {

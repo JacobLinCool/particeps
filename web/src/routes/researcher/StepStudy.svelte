@@ -1,20 +1,7 @@
 <script lang="ts">
-  /**
-   * The study itself, in six blocks separated by ground rather than by cards — the treatment
-   * `Disclosure` gets in the app, for the same reason: these are one document, not six objects.
-   *
-   * What is asked here is what only a person can answer. Nothing on this step names the study:
-   * `experiment_id` and `configuration_id` are derived from the title and from the document's own
-   * bytes (`lib/particeps/ids.ts`, shown on the sign step), and `minimum_client_version` is pinned, so three
-   * controls that were arithmetic dressed as questions are gone.
-   *
-   * Two placements are deliberate. `storage.maximum_local_bytes` sits under the collectors even
-   * though it is a study-level field, because the decision is only meaningful next to the things
-   * that fill it — and it is now the only cost signal on the page that is measured in anything. And
-   * delivery sits last, next to a chip pointing back at the consent text, because a study that
-   * transmits has to say so in words the participant reads before agreeing.
-   */
-  import Chip from '$lib/ui/Chip.svelte';
+  import Button from '$lib/ui/Button.svelte';
+  import ResearcherHandoff from './ResearcherHandoff.svelte';
+  import type { StudySection } from './steps';
   import Icon from '$lib/ui/Icon.svelte';
   import InstantField, { zoneOptions } from '$lib/ui/InstantField.svelte';
   import Note from '$lib/ui/Note.svelte';
@@ -27,8 +14,6 @@
   import InterventionEditor from './InterventionEditor.svelte';
   import TrafficShapingEditor from './TrafficShapingEditor.svelte';
   import ResourceAutomationEditor from './ResourceAutomationEditor.svelte';
-  import ParticipantStudyPreview from './ParticipantStudyPreview.svelte';
-  import SyntheticTraceSimulator from './SyntheticTraceSimulator.svelte';
   import QuotaMeter from './QuotaMeter.svelte';
   import WindowStrip from './WindowStrip.svelte';
   import { COLLECTOR_ORDER, type Draft } from './draft.svelte';
@@ -42,9 +27,11 @@
     draft: Draft;
     m: Messages;
     units: Units;
+    activeSection: StudySection;
+    onnavigate: (section: StudySection) => void;
   }
 
-  let { draft, m, units }: Props = $props();
+  let { draft, m, units, activeSection, onnavigate }: Props = $props();
 
   const configuration = $derived(draft.configuration);
   const section = $derived(m.researcher.study.section);
@@ -84,7 +71,13 @@
   });
 </script>
 
+<nav class="study-nav" aria-label={i18n.locale === 'zh-TW' ? '研究設定區塊' : 'Study sections'}>
+  {#each ([['details', '基本資料', 'Details'], ['data', '資料收集', 'Data collection'], ['activities', '問卷與活動', 'Surveys & activities'], ['rules', '條件規則', 'Rules'], ['delivery', '傳送', 'Delivery']] as const) as item}
+    <button type="button" class:current={activeSection === item[0]} aria-current={activeSection === item[0] ? 'page' : undefined} onclick={() => onnavigate(item[0])}>{i18n.locale === 'zh-TW' ? item[1] : item[2]}</button>
+  {/each}
+</nav>
 <div class="stack">
+  {#if activeSection === 'details'}
   <Section id="about" title={section.about.title} icon="person">
     <TextField
       label={m.field.label.title}
@@ -212,6 +205,8 @@
     <IdentityField {draft} {m} />
   </Section>
 
+  {/if}
+  {#if activeSection === 'data'}
   <Section id="collectors" path="collectors" title={section.collectors.title} icon="sources">
     <!-- Said once for the section, because it is the same sentence on all twelve cards. Every
          必要 control points at this `id`, so the consequence is still one hop from the decision,
@@ -254,6 +249,8 @@
     />
   </Section>
 
+  {/if}
+  {#if activeSection === 'details'}
   <Section id="consent" title={section.consent.title} icon="seal">
     <TextField
       label={m.field.label.consentDocumentVersion}
@@ -277,26 +274,27 @@
     <Note icon="info" tone="plain" text={m.researcher.study.note.disclosure} />
   </Section>
 
-  <Section id="traffic-shaping" title={i18n.locale === 'zh-TW' ? 'App 資料傳輸調整' : 'App data-transfer adjustment'} icon="connection">
+  <TextField label={i18n.locale === 'zh-TW' ? '最低 App 版本（versionCode）' : 'Minimum app version (versionCode)'} path="minimum_client_version" max={10} value={configuration.minimum_client_version} inputmode="numeric" onchange={(value) => configuration.minimum_client_version = value} />
+  {/if}
+  {#if activeSection === 'rules'}
+  <Section path="traffic_shaping" id="traffic-shaping" title={i18n.locale === 'zh-TW' ? 'App 資料傳輸調整' : 'App data-transfer adjustment'} icon="connection">
     <TrafficShapingEditor {draft} locale={i18n.locale} />
   </Section>
 
-  <Section id="interventions" title={section.interventions.title} icon="bell">
+  {/if}
+  {#if activeSection === 'activities'}
+  <Section path="interventions surveys" id="interventions" title={section.interventions.title} icon="bell">
     <InterventionEditor {draft} {m} locale={i18n.locale} />
   </Section>
 
-  <Section id="resource-automations" title={i18n.locale === 'zh-TW' ? '條件與資源規則' : 'Conditions and resource rules'} icon="clock">
+  {/if}
+  {#if activeSection === 'rules'}
+  <Section path="automations" id="resource-automations" title={i18n.locale === 'zh-TW' ? '條件與資源規則' : 'Conditions and resource rules'} icon="clock">
     <ResourceAutomationEditor {draft} locale={i18n.locale} />
   </Section>
 
-  <Section id="participant-preview" title={i18n.locale === 'zh-TW' ? '參與者預覽' : 'Participant preview'} icon="participant">
-    <ParticipantStudyPreview {draft} />
-  </Section>
-
-  <Section id="simulator" title={i18n.locale === 'zh-TW' ? '合成事件模擬' : 'Synthetic trace simulator'} icon="motion">
-    <SyntheticTraceSimulator {draft} locale={i18n.locale} />
-  </Section>
-
+  {/if}
+  {#if activeSection === 'delivery'}
   <Section id="delivery" title={section.delivery.title} lead={section.delivery.note} icon="send-auto">
     <ToggleField
       label={m.field.label.upload}
@@ -342,12 +340,19 @@
       />
       <!-- Upload must be disclosed. The site cannot check the text; it can put the two things
            next to each other. -->
-      <Chip icon="link-out" tone="accent" href="#consent" label={section.consent.title} />
+      <Button variant="quiet" icon="arrow-right" label={section.consent.title} onclick={() => onnavigate('details')} />
     {/if}
   </Section>
+  <ResearcherHandoff {draft} locale={i18n.locale} />
+  {/if}
 </div>
 
 <style>
+  .study-nav { display: flex; flex-wrap: wrap; gap: var(--sp-2); border-block-end: var(--line-solid) solid var(--rule); padding-block-end: var(--sp-4); margin-block-end: var(--sp-6); }
+  .study-nav button { font: inherit; cursor: pointer; padding: var(--sp-3) var(--sp-4); color: var(--ink-soft); background: transparent; border: var(--line-solid) solid transparent; border-radius: var(--r-field); }
+  .study-nav button.current { color: var(--ink); border-color: var(--rule); background: var(--surface-sunk); }
+  .study-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
   /* Rows, not columns. The two-column band had to choose between the pickers and the presets at a
      788px section column and chose the pickers' segments: at 212px Chrome finishes the seconds and
      drops the AM/PM, so the widest this site ever gets was the width at which 22:39 read as

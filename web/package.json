@@ -10,7 +10,8 @@
     "test": "vitest run",
     "e2e": "node e2e/researcher-flow.mjs",
     "e2e:one-line": "node e2e/one-line.mjs",
-    "e2e:units": "node e2e/units.mjs"
+    "e2e:units": "node e2e/units.mjs",
+    "e2e:improvements": "node e2e/researcher-improvements.mjs"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.10",

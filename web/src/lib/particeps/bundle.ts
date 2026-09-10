@@ -84,7 +84,7 @@ export function isRuntimeComponentKind(value: string): value is typeof COMPONENT
 
 // Browser-only memory policy, not a Protocol wire limit. Automatic uploads happen to share this
 // bound; larger manual exports remain valid and belong in the streaming particeps-analysis CLI.
-const MAXIMUM_BROWSER_PREVIEW_BYTES = 33_554_432;
+export const MAXIMUM_BROWSER_PREVIEW_BYTES = 33_554_432;
 export const BUNDLE_FORMAT = 'particeps-research-bundle-v1';
 
 export interface ResearchTime {
@@ -224,6 +224,7 @@ export interface ResearchBundle {
 }
 
 export type BundleFailure =
+  | 'registry_mismatch'
   | 'not_a_bundle'
   | 'too_large'
   | 'wrong_study'
@@ -335,10 +336,18 @@ export async function openBundle(
   } catch {
     return failed('unreadable');
   }
+  if (registryMismatch(parsed)) return failed('registry_mismatch');
   const document = readDocument(parsed, configuration, bundleId, digestHex);
   return document
     ? { ok: true, bundle: { keyId, document, text, bytes: plaintext.length } }
     : failed('unreadable');
+}
+
+/** Diagnostic only after authenticated decryption; it does not permit an alternate registry. */
+function registryMismatch(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const digest = (value as Record<string, unknown>).event_source_registry_sha256;
+  return typeof digest === 'string' && /^[0-9a-f]{64}$/.test(digest) && digest !== EVENT_SOURCE_REGISTRY_SHA256;
 }
 
 /* RFC 9180 base mode: DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM. */
