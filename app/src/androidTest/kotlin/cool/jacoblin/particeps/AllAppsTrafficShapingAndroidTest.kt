@@ -49,7 +49,11 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AllAppsTrafficShapingAndroidTest {
     @Test fun allAppsIncludesTheResearchAppAndForwardsThroughTheCappedVpn() = runBlocking {
-        val endpoint = InstrumentationRegistry.getArguments().getString("traffic_test_endpoint")
+        val arguments = InstrumentationRegistry.getArguments()
+        val endpoint = arguments.getString("traffic_test_endpoint")
+        if (arguments.getString("particepsHostHarness") == "true") {
+            require(!endpoint.isNullOrBlank()) { "The blocking host gate requires its local TCP test server" }
+        }
         assumeTrue("Requires the local TCP test server", endpoint != null)
         val address = requireNotNull(endpoint).split(':')
         require(address.size == 2)

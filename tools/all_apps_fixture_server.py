@@ -3,6 +3,7 @@
 
 import argparse
 import socketserver
+from pathlib import Path
 
 
 class PayloadHandler(socketserver.BaseRequestHandler):
@@ -21,6 +22,11 @@ class PayloadServer(socketserver.ThreadingTCPServer):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=18766)
+    parser.add_argument("--ready", type=Path)
     args = parser.parse_args()
     with PayloadServer(("127.0.0.1", args.port), PayloadHandler) as server:
+        if args.ready is not None:
+            temporary = args.ready.with_name(f".{args.ready.name}.tmp")
+            temporary.write_text(f"{server.server_address[1]}\n", encoding="ascii")
+            temporary.replace(args.ready)
         server.serve_forever()

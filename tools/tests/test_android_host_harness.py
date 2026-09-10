@@ -19,6 +19,70 @@ MODULES = (
 
 
 class AndroidHostHarnessContractTest(unittest.TestCase):
+    def run_host_instrumentation_result(
+        self, output: str,
+    ) -> tuple[subprocess.CompletedProcess[str], str]:
+        harness = (ROOT / "tools/android-host-harness.sh").read_text()
+        declaration = "run_instrumentation() {"
+        function_body = harness.split(declaration, 1)[1].split("\n}", 1)[0]
+        script = (
+            "set -euo pipefail\n"
+            f"{declaration}{function_body}\n}}\n"
+            "run_instrumentation transfer AllAppsClass -e traffic_test_endpoint 10.0.2.2:18766\n"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            adb = directory / "adb"
+            result_file = directory / "result.txt"
+            log = directory / "adb.log"
+            result_file.write_text(output)
+            adb.write_text(
+                '#!/usr/bin/env bash\n'
+                'printf "%s\\n" "$*" > "$FAKE_ADB_LOG"\n'
+                'cat "$FAKE_ADB_RESULT"\n'
+            )
+            adb.chmod(0o755)
+            environment = os.environ.copy()
+            environment.update({
+                "adb_binary": str(adb),
+                "harness_temporary": temporary,
+                "test_class": "UnusedDefaultClass",
+                "test_runner": "fixture/Runner",
+                "FAKE_ADB_LOG": str(log),
+                "FAKE_ADB_RESULT": str(result_file),
+            })
+            result = subprocess.run(
+                ["bash", "-s"],
+                input=script,
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+            return result, log.read_text()
+
+    def test_host_gate_requires_a_completed_successful_instrumentation_test(self) -> None:
+        result, commands = self.run_host_instrumentation_result(
+            "INSTRUMENTATION_STATUS_CODE: 1\r\n"
+            "INSTRUMENTATION_STATUS_CODE: 0\r\n"
+            "OK (1 test)\r\n"
+            "INSTRUMENTATION_CODE: -1\r\n",
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("-e class AllAppsClass#transfer", commands)
+        self.assertIn("-e traffic_test_endpoint 10.0.2.2:18766", commands)
+
+    def test_host_gate_rejects_skips_failures_and_summary_only_results(self) -> None:
+        for output in (
+            "INSTRUMENTATION_STATUS_CODE: -3\nOK (1 test)\n",
+            "INSTRUMENTATION_STATUS_CODE: -4\nOK (1 test)\n",
+            "INSTRUMENTATION_STATUS_CODE: 0\nINSTRUMENTATION_STATUS_CODE: -2\nOK (1 test)\n",
+            "INSTRUMENTATION_STATUS_CODE: 0\nOK (1 test)\nINSTRUMENTATION_FAILED: test process died\n",
+            "OK (1 test)\n",
+        ):
+            with self.subTest(output=output):
+                result, _ = self.run_host_instrumentation_result(output)
+                self.assertNotEqual(0, result.returncode)
+
     def run_api37_classifier(
         self,
         evidence: str,
@@ -219,7 +283,8 @@ esac
         harness = (ROOT / "tools/android-host-harness.sh").read_text()
         required_cases = (
             "aggregate_64_512_4096_kbps_and_control_bypass",
-            "tcp_udp_dns_ipv4_ipv6_through_verified_vpn",
+            "all_apps_capped_tcp_round_trip",
+            "protocol_attempts_preserve_verified_vpn",
             "process_kill_recovers_safety_paused",
             "reboot_recovers_safety_paused",
             "target_replace_safety_pauses",

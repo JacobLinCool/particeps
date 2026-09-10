@@ -47,7 +47,16 @@ and wake the runtime; it must not call back into the engine.
 
 The direct proxy is intentionally thin: it opens raw TCP/UDP sockets and
 synchronously protects each descriptor. Shaping remains at the TUN boundary,
-and Particeps does not replace or tune the upstream tun2socks/gVisor stack.
+with the pinned tun2socks/gVisor stack handling IP and transport packets.
+
+TCP forwarding connects the protected upstream socket before acknowledging
+the application's connection through TUN. An unreachable destination rejects
+that connection without reporting a successful local handshake, so applications
+can continue their IPv4/IPv6 connection race. Each upstream dial is limited to
+five seconds and canceled when the engine stops. Established connections retain
+TCP half-close behavior with a 60-second drain deadline; stopping closes both
+sides and waits for forwarding handlers to exit. Ordinary connection failures
+do not fail the engine; socket-protection failures remain terminal.
 
 The upstream logger is set to its silent implementation before the network
 stack is created. This module has no logging surface and never reports packet

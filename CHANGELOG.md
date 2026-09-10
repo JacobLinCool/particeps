@@ -7,6 +7,39 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
+## v1.0.0-rc.12 — 2026-09-11
+
+- Fixed the local VPN completing an app's TCP handshake before its protected upstream connection
+  succeeded. An unreachable IPv6 destination could appear connected and prevent the app from trying
+  a working IPv4 address. The VPN now connects upstream first and rejects failed connections before
+  acknowledging them, while retaining IPv4 and IPv6 support.
+- VPN shutdown cancels pending TCP connections, closes upstream sockets, and waits for endpoint
+  registration before shutting down the network stack. TCP half-close preserves the server's
+  response after the client finishes sending.
+- Added IPv4/IPv6 packet-level regressions for handshake ordering, rejected connections, complete
+  bidirectional transfers, half-close, and cancellation during connection setup and shutdown.
+  UDP round-trip tests verify complete packets and shaping transitions. The Android host harness
+  now requires a complete VPN download; failed transfers and skipped scenarios cannot count as a pass.
+
+**Application update from `v1.0.0-rc.11`:** retain any required research exports, then install the
+signed RC12 APK over the existing app without uninstalling. The application ID and production
+signing certificate are unchanged, and the Android version code increases.
+
+**Local studies and exported data:** RC12 introduces no local-store migration, mandatory reset,
+or event-source-registry change from RC11. Existing signed configurations and local study data remain
+in place. Reopen the app after updating, complete normal recovery and access checks, and explicitly
+Resume the study. Installing the APK does not change a study's collectors, schedule, consent, or
+questionnaire. The restrictions for older configurations documented in earlier releases still apply.
+
+**Fresh install:** install the signed RC12 APK, then scan a research-team QR code or import its
+signed study file. Review the study and data collection, provide consent, complete required access
+setup, and explicitly Start.
+
+**Verification before tagging:** native Go race tests and vet, 22 traffic-shaping Kotlin unit
+tests, and an API 34 emulator test transferring the complete 256 KiB payload through the capped
+all-App VPN passed. The user reported restored browsing after installing the repair on a Pixel 10a
+running Android 16. The physical-device check used an ADB update of the production-signed APK.
+
 ## v1.0.0-rc.11 — 2026-09-09
 
 - Added an in-app camera scanner as the primary way to join a study. Scanning uses the same

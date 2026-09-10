@@ -21,6 +21,14 @@ unselected control connection must exceed that upper bound, proving it bypasses 
 and limiter.
 Before that measurement, the same TCP/UDP/DNS/IPv4/IPv6 attempt matrix runs while the signed VPN
 resource is verified; the host requires the original Particeps process and study to remain RUNNING.
+This matrix exercises packet submission and failed-connection handling against documentation-only
+addresses. It does not require a response and does not establish UDP, DNS, or IPv6 connectivity.
+
+A separate blocking all-apps gate transfers and checks 256 KiB from a controlled local TCP server
+through the research app's default socket. It verifies the VPN remains healthy, applies the 500 kbps
+download cap, and releases cleanly. The harness supplies the server endpoint and requires an actual
+successful instrumentation result; skipped tests and missing endpoints fail this gate. The existing
+selected-app throughput stage independently checks TCP forwarding and aggregate upload shaping.
 
 Live package replacement, uninstall, shared-UID peer installation, competing-VPN replacement, and
 underlying-network handover use a debug-only, read-only state receiver. The host rejects a changed

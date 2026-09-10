@@ -49,9 +49,10 @@ type engineState struct {
 	gate     sync.RWMutex
 	shaped   *shapedTun
 
-	endpoint *iobased.Endpoint
-	stack    *stack.Stack
-	tunnel   *tunnel.Tunnel
+	endpoint     *iobased.Endpoint
+	stack        *stack.Stack
+	tunnel       *tunnel.Tunnel
+	tcpForwarder *tcpForwarder
 
 	profile    *appliedProfile
 	generation int64
@@ -153,16 +154,17 @@ func (e *engineState) start() (err error) {
 	var endpoint *iobased.Endpoint
 	var networkStack *stack.Stack
 	var forwarder *tunnel.Tunnel
+	var tcpForwarder *tcpForwarder
 	committed := false
 	defer func() {
 		if recover() != nil {
 			e.startFailed()
-			cleanupNetworkStack(endpoint, networkStack, forwarder)
+			cleanupNetworkStack(endpoint, networkStack, forwarder, tcpForwarder)
 			err = errNativeStack
 			return
 		}
-		if !committed && (endpoint != nil || networkStack != nil || forwarder != nil) {
-			cleanupNetworkStack(endpoint, networkStack, forwarder)
+		if !committed && (endpoint != nil || networkStack != nil || forwarder != nil || tcpForwarder != nil) {
+			cleanupNetworkStack(endpoint, networkStack, forwarder, tcpForwarder)
 		}
 	}()
 
@@ -208,14 +210,18 @@ func (e *engineState) start() (err error) {
 	}
 	forwarder = tunnel.New(direct, statistic.DefaultManager)
 	forwarder.ProcessAsync()
+	tcpForwarder = newTCPForwarder(e.ctx, direct.DialContext, e.failTerminal)
 	networkStack, err = core.CreateStack(&core.Config{
-		LinkEndpoint:     endpoint,
+		LinkEndpoint:     tcpForwarder.wrap(endpoint),
 		TransportHandler: forwarder,
 	})
 	if err != nil {
 		e.startFailed()
 		return errNativeStack
 	}
+	// TUN admission is still suspended, so no SYN can reach the default
+	// handshake-first handler before our upstream-first handler replaces it.
+	tcpForwarder.install(networkStack)
 
 	e.mu.Lock()
 	if e.stopped || e.terminal {
@@ -227,6 +233,7 @@ func (e *engineState) start() (err error) {
 	e.endpoint = endpoint
 	e.stack = networkStack
 	e.tunnel = forwarder
+	e.tcpForwarder = tcpForwarder
 	e.started = true
 	e.starting = false
 	e.mu.Unlock()
@@ -337,16 +344,18 @@ func (e *engineState) stop() {
 	endpoint := e.endpoint
 	networkStack := e.stack
 	forwarder := e.tunnel
+	tcpForwarder := e.tcpForwarder
 	e.endpoint = nil
 	e.stack = nil
 	e.tunnel = nil
+	e.tcpForwarder = nil
 	e.mu.Unlock()
 
 	e.cancel()
 	e.uplink.close()
 	e.downlink.close()
 	_ = e.tun.Close()
-	cleanupNetworkStack(endpoint, networkStack, forwarder)
+	cleanupNetworkStack(endpoint, networkStack, forwarder, tcpForwarder)
 }
 
 func (e *engineState) failTerminal(code string) {
@@ -458,13 +467,20 @@ func cleanupNetworkStack(
 	endpoint *iobased.Endpoint,
 	networkStack *stack.Stack,
 	forwarder *tunnel.Tunnel,
+	tcpForwarder *tcpForwarder,
 ) {
+	if tcpForwarder != nil {
+		tcpForwarder.close()
+	}
 	if forwarder != nil {
 		forwarder.Close()
 	}
 	if networkStack != nil {
 		networkStack.Close()
 		networkStack.Wait()
+	}
+	if tcpForwarder != nil {
+		tcpForwarder.wait()
 	}
 	if endpoint != nil {
 		endpoint.Close()

@@ -148,12 +148,20 @@ prepare_permissions() {
 
 run_instrumentation() {
   local method="$1"
+  local instrumentation_class="${2:-$test_class}"
+  if (( $# >= 2 )); then
+    shift 2
+  else
+    shift
+  fi
   local output="$harness_temporary/instrumentation-$method.txt"
   "$adb_binary" shell am instrument -w -r \
     -e particepsHostHarness true \
-    -e class "$test_class#$method" \
-    "$test_runner" > "$output"
-  grep -Eq '^OK \(1 test\)' "$output"
+    -e class "$instrumentation_class#$method" \
+    "$@" "$test_runner" | tr -d '\r' > "$output"
+  grep -Eq '^OK \(1 test\)$' "$output"
+  grep -qx 'INSTRUMENTATION_STATUS_CODE: 0' "$output"
+  ! grep -Eq 'INSTRUMENTATION_STATUS_CODE: -[1-4]$|FAILURES!!!|INSTRUMENTATION_(ABORTED|FAILED)|shortMsg=' "$output"
 }
 
 particeps_pid() {
@@ -422,6 +430,27 @@ wait_for_boot() {
   return 1
 }
 
+case_all_apps_tcp_round_trip() {
+  local ready="$harness_temporary/all-apps-server.ready"
+  local port
+  reset_study
+  python3 tools/all_apps_fixture_server.py --port 0 --ready "$ready" &
+  server_pid="$!"
+  for _ in $(seq 1 50); do
+    [[ -f "$ready" ]] && break
+    kill -0 "$server_pid"
+    sleep 0.1
+  done
+  test -f "$ready"
+  port="$(cat "$ready")"
+  [[ "$port" =~ ^[0-9]+$ ]]
+  run_instrumentation \
+    allAppsIncludesTheResearchAppAndForwardsThroughTheCappedVpn \
+    cool.jacoblin.particeps.AllAppsTrafficShapingAndroidTest \
+    -e traffic_test_endpoint "10.0.2.2:$port"
+  authorize_vpn "$particeps_package"
+}
+
 case_fixture_inventory_and_protocols() {
   local shared_target_uid shared_peer_uid control_uid
   shared_target_uid="$(package_uid "$shared_target_package")"
@@ -641,8 +670,9 @@ run_case() {
   case_durations+=("$((ended - started))")
 }
 
-run_case "fixture_inventory_tcp_udp_dns_ipv4_ipv6_and_shared_uid" case_fixture_inventory_and_protocols
-run_case "tcp_udp_dns_ipv4_ipv6_through_verified_vpn" case_protocol_matrix_through_verified_vpn
+run_case "all_apps_capped_tcp_round_trip" case_all_apps_tcp_round_trip
+run_case "fixture_inventory_protocol_attempts_and_shared_uid" case_fixture_inventory_and_protocols
+run_case "protocol_attempts_preserve_verified_vpn" case_protocol_matrix_through_verified_vpn
 run_case "aggregate_64_512_4096_kbps_and_control_bypass" case_three_profile_throughput_and_control_bypass
 run_case "process_kill_recovers_safety_paused" case_process_kill_recovery
 run_case "reboot_recovers_safety_paused" case_reboot_recovery
