@@ -35,10 +35,19 @@ questionnaire. The restrictions for older configurations documented in earlier r
 signed study file. Review the study and data collection, provide consent, complete required access
 setup, and explicitly Start.
 
-**Verification before tagging:** native Go race tests and vet, 22 traffic-shaping Kotlin unit
-tests, and an API 34 emulator test transferring the complete 256 KiB payload through the capped
-all-App VPN passed. The user reported restored browsing after installing the repair on a Pixel 10a
-running Android 16. The physical-device check used an ADB update of the production-signed APK.
+**Verification scope:** this prerelease uses a locally built production-signed APK with version
+code 39. Native Go race tests and vet, host unit tests, debug/release lint, and APK signing and
+native-packaging verification passed. The remote API 34 complete functional gate and Web, receiver,
+and analysis consumer checks also passed. Packet tests include a complete 256 KiB download through
+the capped all-App VPN. The user reported restored browsing on a Pixel 10a running Android 16 after
+an ADB update of the production-signed repair.
+
+The remote API 37 x86_64 / 16 KiB gate was blocked before instrumentation by the existing
+SurfaceFlinger / `mapper.ranchu.so` DMA-capability assertion on image revision 6 and emulator
+37.1.11. Its three APK-install attempts failed with a package-service broken pipe, so the automated
+publish job was skipped. Separate API 37 / 16 KiB ARM64 compatibility instrumentation passed on the
+Play Store image revision 4; this does not establish a pass for the remote x86_64 lane or its full
+host harness. See the [RC12 workflow evidence](https://github.com/JacobLinCool/particeps/actions/runs/34508171857).
 
 ## v1.0.0-rc.11 — 2026-09-09
 
