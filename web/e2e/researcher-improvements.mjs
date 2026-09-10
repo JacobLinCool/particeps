@@ -32,6 +32,39 @@ const save = async name => {
   await (await next).saveAs(path);
   return { path, value: JSON.parse(readFileSync(path, 'utf8')) };
 };
+const ruleLayout = async label => {
+  const geometry = await page.getByTestId('study-overview').evaluate(overview => {
+    const rules = overview.querySelector('[data-testid="overview-rules"]');
+    const rect = element => element.getBoundingClientRect().toJSON();
+    return {
+      rules: rect(rules),
+      assumptions: rect(overview.querySelector('[data-testid="overview-assumptions"]')),
+      rows: [...rules.querySelectorAll(':scope > details')].map(row => ({
+        id: row.querySelector('code').textContent,
+        bounds: rect(row),
+        children: [...row.children].filter(child => row.open || child.tagName === 'SUMMARY').map(rect),
+        titleLines: [...row.querySelector('code').getClientRects()].map(line => line.toJSON())
+      })),
+      documentWidth: document.documentElement.scrollWidth,
+      viewportWidth: innerWidth
+    };
+  });
+  assert.equal(geometry.rows.length, fixture.automations.length, `${label}: every rule is rendered`);
+  for (const [index, row] of geometry.rows.entries()) {
+    for (const child of [...row.children, ...row.titleLines]) {
+      assert(child.top >= row.bounds.top - 1 && child.bottom <= row.bounds.bottom + 1,
+        `${label}: ${row.id} contains its visible content vertically`);
+      assert(child.left >= row.bounds.left - 1 && child.right <= row.bounds.right + 1,
+        `${label}: ${row.id} contains its visible content horizontally`);
+    }
+    const nextTop = geometry.rows[index + 1]?.bounds.top ?? geometry.assumptions.top;
+    assert(row.bounds.bottom <= nextTop + 1, `${label}: ${row.id} does not overlap the following row or section`);
+    assert(row.bounds.bottom <= geometry.rules.bottom + 1, `${label}: all rows remain inside the rules section`);
+  }
+  assert(geometry.rules.bottom <= geometry.assumptions.top, `${label}: assumptions follow all rules`);
+  assert(geometry.documentWidth <= geometry.viewportWidth, `${label}: no document overflow`);
+  return geometry;
+};
 try {
   await page.goto(`${origin}/researcher/`, { waitUntil: 'networkidle' });
   const initial = await save('initial.partdraft');
@@ -110,12 +143,54 @@ try {
   assert.match(figures, /1\s*\/\s*1/, 'same collector population is used for file and lifetime');
   assert.match(figures, /1–3\s*\/\s*3/, 'commit coverage is compared to durable head');
   assert.match(await page.getByTestId('read-summary').innerText(), /commit 1 through the declared durable head/);
+
+  // Exercise real imported rule data: the longest valid identifier must wrap on narrow screens.
+  const layoutDraft = structuredClone(imported.value);
+  layoutDraft.configuration.title = 'Rule layout regression';
+  layoutDraft.configuration.automations[0].id = 'a'.repeat(64);
+  await file('load-configuration', { name: 'rule-layout.partdraft', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(layoutDraft)) });
+  await page.getByRole('dialog').filter({ hasText: 'Replace the current study with this file?' }).getByRole('button', { name: 'Confirm', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="field-title"] input')?.value === 'Rule layout regression');
+  await navigate('overview');
+  const rules = page.getByTestId('overview-rules');
+  const rows = rules.locator(':scope > details');
+  await rules.locator(':scope > summary').click();
+  await page.getByTestId('overview-assumptions').locator(':scope > summary').click();
+  const ruleScreenshots = [];
+  const ruleGeometries = {};
+  for (const locale of ['en', 'zh-TW']) {
+    await page.getByTestId('locale-menu').filter({ visible: true }).click();
+    await page.getByRole('radio', { name: locale === 'en' ? 'English' : '正體中文', exact: true }).click();
+    for (const [size, viewport] of [['desktop', { width: 1440, height: 1100 }], ['mobile', { width: 390, height: 844 }]]) {
+      await page.setViewportSize(viewport);
+      const colorScheme = locale === 'en' ? 'light' : 'dark';
+      await page.emulateMedia({ colorScheme });
+      const label = `${locale}-${size}-${colorScheme}`;
+      const closed = await ruleLayout(`${label} closed`);
+      if (size === 'mobile') assert(closed.rows[0].titleLines.length > 1, `${label}: long rule identifier wraps`);
+      await rows.first().locator(':scope > summary').press('Enter');
+      await rows.last().locator(':scope > summary').press('Space');
+      assert(await rows.first().evaluate(row => row.open), `${label}: Enter expands the first rule`);
+      assert(await rows.last().evaluate(row => row.open), `${label}: Space expands the last rule`);
+      ruleGeometries[label] = { closed, expanded: await ruleLayout(`${label} expanded`) };
+      const screenshot = `rules-${label}.png`;
+      // Keep the sticky toolbar out of this crop, which can be taller than the viewport.
+      await rules.screenshot({ path: join(output, screenshot), animations: 'disabled', style: '.site-header { visibility: hidden; }' });
+      ruleScreenshots.push(screenshot);
+      await rows.first().locator(':scope > summary').press('Enter');
+      await rows.last().locator(':scope > summary').press('Space');
+      assert(await rows.evaluateAll(elements => elements.every(row => !row.open)), `${label}: keyboard collapses the rules`);
+    }
+  }
+  writeFileSync(join(output, 'rules-layout.json'), JSON.stringify(ruleGeometries, null, 2));
   assert.deepEqual(errors, []);
   writeFileSync(join(output, 'result.json'), JSON.stringify({ status: 'pass', checks: [
     'import preserves public keys', 'all six questions represented', 'day 3 cap and survey timeline',
     'timeline edit opens occurrence', 'fractional unfinished draft round trip', 'matching signing key',
     'review gates signing', 'export private key optional when signing', 'mobile overflow absent',
-    'authenticated bundle read and honest commit coverage', 'trace edits clear stale simulator output'
-  ], screenshots: ['desktop.png', 'mobile.png', 'overview.png'] }, null, 2));
+    'authenticated bundle read and honest commit coverage', 'trace edits clear stale simulator output',
+    'closed and expanded rules never overlap adjacent content', 'keyboard rule disclosure',
+    'long rule IDs wrap in English and Traditional Chinese across desktop/mobile and light/dark'
+  ], screenshots: ['desktop.png', 'mobile.png', 'overview.png', ...ruleScreenshots] }, null, 2));
   console.log(`PASS researcher improvements: imported keys, six questions, timeline, draft round trip, review, mobile and authenticated bundle.\nArtifacts: ${output}`);
 } finally { await browser.close(); }

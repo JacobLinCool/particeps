@@ -201,7 +201,7 @@
       <summary>{t('All study rules', '所有研究規則')} <span>{summary.rules.length} · {t('Including event-dependent activity', '包含依事件決定的活動')}</span></summary>
       <p class="rules__intro">{t('Rules can depend on events, continuous history, guards and previous activations. Their exact times require device observations. Every rule is listed here, including rules that do not activate on the selected day.', '規則可能依事件、連續歷史、守衛條件及先前啟動次數決定，確切時刻需要裝置觀測才能判定。此處列出所有規則，包含所選日期未啟動的規則。')}</p>
       {#each summary.rules as rule}
-        <details class="rule">
+        <details class="study-rule" data-testid="overview-rule">
           <summary><code>{rule.id}</code>{#if rule.conditional}<span class="rule__conditional">{t('Depends on events / history', '依事件／歷史決定')}</span>{/if}</summary>
           <p>{rule.summary}</p>
           {#if onedit}<Button variant="ghost" label={t('Edit rule', '編輯規則')} onclick={() => onedit?.(rule.editPath)} />{/if}
@@ -281,7 +281,7 @@
   .event:active .event__dot { transform: scale(.9); }
   .chart__empty, .empty { color: var(--ink-soft); padding-block: var(--sp-5); }
   .selection { display: flex; align-items: start; justify-content: space-between; gap: var(--sp-5); padding: var(--sp-6); background: var(--surface-sunk); border-radius: var(--r-field); }
-  .selection p, .rule > p { white-space: pre-line; overflow-wrap: anywhere; font-size: var(--type-fine); color: var(--ink-soft); margin-block-start: var(--sp-4); }
+  .selection p, .study-rule > p { white-space: pre-line; overflow-wrap: anywhere; font-size: var(--type-fine); color: var(--ink-soft); margin-block-start: var(--sp-4); }
   .agenda, .rules, .assumptions { border-block-start: var(--line-hair) solid var(--rule); }
   .agenda__content { padding-block: var(--sp-4); }
   h3 { font-size: var(--type-body); font-weight: var(--w-medium); }
@@ -295,8 +295,8 @@
   .collection-list h4 span { margin-inline-start: var(--sp-4); font-weight: var(--w-regular); }
   .collection-list li { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: var(--sp-5); padding-block-start: var(--sp-4); overflow-wrap: anywhere; }
   .rules__intro { margin-block: var(--sp-4) var(--sp-5); font-size: var(--type-fine); }
-  .rule { margin-inline-start: var(--sp-5); border-block-end: var(--line-hair) solid var(--rule); padding-block-end: var(--sp-4); }
-  .rule code { font-size: var(--type-fine); overflow-wrap: anywhere; }
+  .study-rule { margin-inline-start: var(--sp-5); border-block-end: var(--line-hair) solid var(--rule); padding-block-end: var(--sp-4); }
+  .study-rule code { font-size: var(--type-fine); overflow-wrap: anywhere; }
   .rule__conditional { color: var(--caution-ink); }
   .assumptions summary :global(svg) { display: inline-block; vertical-align: middle; margin-inline-end: var(--sp-3); }
   .assumptions li { padding-block: var(--sp-4); padding-inline-start: var(--sp-5); font-size: var(--type-fine); color: var(--ink-soft); max-inline-size: 76ch; }
