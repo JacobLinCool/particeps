@@ -24,8 +24,9 @@ must do.
 
 **Application update from `v1.0.0-rc.12`:** install the signed RC13 APK over the existing app
 without uninstalling or clearing its data. The application ID and production signing certificate
-are unchanged, and the Android version code increases. If an export is still active, cancel it and
-allow cleanup to finish before updating.
+are unchanged, and the Android version code increases. Allow an active export to finish before
+updating when possible. RC12 has no export-cancellation control; if updating interrupts an export,
+discard that incomplete file and export again after reopening RC13.
 
 **Local studies and exported data:** RC13 introduces no local-store migration, mandatory reset,
 event-source-registry change, or bundle-format change from RC12. Existing signed configurations and
@@ -39,8 +40,20 @@ app reports successful completion.
 signed study file. Review the study and data collection, provide consent, complete required access
 setup, and explicitly Start.
 
-**Verification scope:** host unit tests, API 34 storage and participant-export instrumentation,
-Kotlin-to-Python encrypted-bundle verification, and debug/release lint and builds passed locally.
+**Verification scope:** this prerelease uses a locally built production-signed APK with version
+code 40. APK signing and native-packaging verification, native Go race tests and vet, host unit
+tests, API 34 storage and participant-export instrumentation, Kotlin-to-Python encrypted-bundle
+verification, and debug/release lint and builds passed locally. The remote API 34 complete functional
+gate, host CI, and Web, receiver, and analysis consumer checks also passed.
+
+The remote API 37 x86_64 / 16 KiB gate was blocked before instrumentation by the existing
+SurfaceFlinger / `mapper.ranchu.so` DMA-capability assertion on image revision 6 and emulator
+37.1.11. All three APK-install attempts failed with a package-service broken pipe. Separate API 37
+/ 16 KiB ARM64 compatibility instrumentation passed on the Play Store image revision 4; this does
+not establish a pass for the remote x86_64 lane or its full host harness. The automated publisher
+was skipped because it depends on that gate. See the
+[RC13 workflow evidence](https://github.com/JacobLinCool/particeps/actions/runs/34773740598).
+
 For 53.3 MB of synthetic data, the desktop export-core median decreased from 1.470 seconds to
 0.253 seconds; this excludes Android Keystore, storage-provider, and network time and is not a
 measurement of export duration on a participant's phone. A blocking provider write or close can
