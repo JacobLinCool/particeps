@@ -18,7 +18,7 @@ import cool.jacoblin.particeps.core.model.SourceCheckpoint
 import cool.jacoblin.particeps.core.model.SourceCoverage
 import cool.jacoblin.particeps.core.model.SourceObservation
 import cool.jacoblin.particeps.core.model.StudyClockCheckpoint
-import cool.jacoblin.particeps.core.model.StudyStore
+import cool.jacoblin.particeps.core.model.StudyReadSnapshot
 import cool.jacoblin.particeps.core.protocol.VerifiedConfiguration
 import java.io.FilterOutputStream
 import java.io.InputStream
@@ -34,6 +34,8 @@ import javax.crypto.KeyGenerator
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 enum class BundleKind(val wireValue: String) {
@@ -145,10 +147,15 @@ object ResearchExport {
 
     suspend fun encrypt(
         snapshot: ExportSnapshot,
-        store: StudyStore,
+        store: StudyReadSnapshot,
         destination: OutputStream,
+        onProgress: (ExportProgress) -> Unit = {},
     ): ExportReceipt = withContext(Dispatchers.IO) {
+        val coroutineContext = currentCoroutineContext()
+        coroutineContext.ensureActive()
+        val progress = ExportProgressReporter(onProgress)
         val configuration = snapshot.verifiedConfiguration.configuration
+        require(snapshot.runtime == store.runtime) { "Export runtime does not match its pinned snapshot" }
         validate(configuration)
         val runtime = snapshot.runtime
         val requestedBoundary = snapshot.throughCommit ?: runtime.revision
@@ -162,7 +169,13 @@ object ResearchExport {
                 "Automatic upload does not start after its durable watermark"
             }
         }
-        val selection = selectBoundary(snapshot, store, requestedBoundary)
+        val selection = if (snapshot.maximumPlaintextBytes == null) {
+            CommitSelection(requestedBoundary, requestedBoundary - snapshot.fromCommit + 1, null, null)
+        } else {
+            selectBoundary(snapshot, store, requestedBoundary, progress)
+        }
+        coroutineContext.ensureActive()
+        progress.report(ExportStage.ENCRYPTING, 0, selection.commitCount, force = true)
         val context = contextInfo(
             snapshot.bundleId,
             snapshot.verifiedConfiguration.configurationSha256,
@@ -189,16 +202,21 @@ object ResearchExport {
                 .put(wrappedKey)
                 .array(),
         )
-        CanonicalJsonWriter(CipherOutputStream(digesting, cipher)).use { writer ->
-            writeSnapshot(writer, snapshot, store, selection)
+        val eventCount = CanonicalJsonWriter(CipherOutputStream(digesting, cipher)).use { writer ->
+            val count = writeSnapshot(writer, snapshot, store, selection, progress)
+            coroutineContext.ensureActive()
+            progress.report(ExportStage.FINALIZING, selection.commitCount, selection.commitCount, force = true)
+            coroutineContext.ensureActive()
+            count
         }
+        coroutineContext.ensureActive()
         ExportReceipt(
             bundleId = snapshot.bundleId,
             configurationSha256 = snapshot.verifiedConfiguration.configurationSha256,
             firstCommitSequence = snapshot.fromCommit,
             lastCommitSequence = selection.boundary,
             commitCount = selection.commitCount,
-            eventCount = selection.eventCount,
+            eventCount = eventCount,
             sha256 = digesting.digest().toHex(),
             byteCount = digesting.count,
         )
@@ -261,60 +279,74 @@ object ResearchExport {
 
     private suspend fun selectBoundary(
         snapshot: ExportSnapshot,
-        store: StudyStore,
+        store: StudyReadSnapshot,
         requestedBoundary: Long,
+        progress: ExportProgressReporter,
     ): CommitSelection {
+        val coroutineContext = currentCoroutineContext()
+        val budget = requireNotNull(snapshot.maximumPlaintextBytes)
+        val available = requestedBoundary - snapshot.fromCommit + 1
+        progress.report(ExportStage.SELECTING, 0, available, force = true)
         if (snapshot.fromCommit > requestedBoundary) {
             return CommitSelection(snapshot.fromCommit - 1, 0, 0, null)
         }
-        val budget = snapshot.maximumPlaintextBytes
         var expected = snapshot.fromCommit
         var boundary = snapshot.fromCommit - 1
         var eventCount = 0L
         var stopped = false
         var previousCommitSha256: String? = null
-        var lastCommitSha256: String? = null
         val counter = CountingOutputStream(DiscardingOutputStream)
         CanonicalJsonWriter(counter).use { writer ->
             writer.beginArray()
             store.readCommits(snapshot.fromCommit, requestedBoundary) { commit ->
-                if (!stopped) {
-                    require(commit.commitSequence == expected) { "Non-contiguous export commit range" }
-                    EngineCommitIntegrity.verify(commit)
-                    if (expected == 1L) require(commit.previousCommitSha256 == GENESIS_DIGEST) {
-                        "Genesis commit has a predecessor"
-                    }
-                    previousCommitSha256?.let { previous ->
-                        require(commit.previousCommitSha256 == previous) { "Broken export commit chain" }
-                    }
-                    writer.writeCommit(commit)
-                    writer.flush()
-                    boundary = commit.commitSequence
-                    eventCount = Math.addExact(eventCount, commit.events.size.toLong())
-                    previousCommitSha256 = commit.commitSha256
-                    lastCommitSha256 = commit.commitSha256
-                    expected++
-                    stopped = budget != null && counter.count >= budget
-                }
+                coroutineContext.ensureActive()
+                verifyCommit(commit, expected, previousCommitSha256)
+                writer.writeCommit(commit)
+                writer.flush()
+                boundary = commit.commitSequence
+                eventCount = Math.addExact(eventCount, commit.events.size.toLong())
+                previousCommitSha256 = commit.commitSha256
+                expected++
+                stopped = counter.count >= budget
+                progress.report(ExportStage.SELECTING, boundary - snapshot.fromCommit + 1, available)
+                !stopped
             }
             writer.endArray()
         }
+        coroutineContext.ensureActive()
         require(boundary >= snapshot.fromCommit) { "Retained commit range is unavailable" }
         if (!stopped) require(boundary == requestedBoundary) { "Retained commit range is incomplete" }
-        if (boundary == snapshot.runtime.revision) {
+        verifyHead(snapshot, boundary, previousCommitSha256)
+        return CommitSelection(boundary, boundary - snapshot.fromCommit + 1, eventCount, previousCommitSha256)
+    }
+
+    private fun verifyCommit(commit: EngineCommit, expected: Long, previousCommitSha256: String?) {
+        require(commit.commitSequence == expected) { "Non-contiguous export commit range" }
+        EngineCommitIntegrity.verify(commit)
+        if (expected == 1L) require(commit.previousCommitSha256 == GENESIS_DIGEST) {
+            "Genesis commit has a predecessor"
+        }
+        previousCommitSha256?.let { previous ->
+            require(commit.previousCommitSha256 == previous) { "Broken export commit chain" }
+        }
+    }
+
+    private fun verifyHead(snapshot: ExportSnapshot, boundary: Long, lastCommitSha256: String?) {
+        if (boundary == snapshot.runtime.revision && boundary >= snapshot.fromCommit) {
             require(lastCommitSha256 == snapshot.runtime.lastCommitSha256) {
                 "Runtime head does not match the exported commit chain"
             }
         }
-        return CommitSelection(boundary, boundary - snapshot.fromCommit + 1, eventCount, lastCommitSha256)
     }
 
     private suspend fun writeSnapshot(
         writer: CanonicalJsonWriter,
         snapshot: ExportSnapshot,
-        store: StudyStore,
+        store: StudyReadSnapshot,
         selection: CommitSelection,
-    ) {
+        progress: ExportProgressReporter,
+    ): Long {
+        val coroutineContext = currentCoroutineContext()
         val verified = snapshot.verifiedConfiguration
         val runtime = snapshot.runtime
         writer.beginObject()
@@ -336,25 +368,28 @@ object ResearchExport {
         var previousCommitSha256: String? = null
         if (selection.commitCount > 0) {
             store.readCommits(snapshot.fromCommit, selection.boundary) { commit ->
-                require(commit.commitSequence == expected) { "Non-contiguous export commit range" }
-                EngineCommitIntegrity.verify(commit)
-                previousCommitSha256?.let { previous ->
-                    require(commit.previousCommitSha256 == previous) { "Broken export commit chain" }
-                }
+                coroutineContext.ensureActive()
+                verifyCommit(commit, expected, previousCommitSha256)
                 writer.writeCommit(commit)
                 eventCount = Math.addExact(eventCount, commit.events.size.toLong())
                 previousCommitSha256 = commit.commitSha256
                 expected++
+                progress.report(ExportStage.ENCRYPTING, expected - snapshot.fromCommit, selection.commitCount)
+                true
             }
         }
+        coroutineContext.ensureActive()
         require(expected == selection.boundary + 1) { "Export commit count mismatch" }
-        require(eventCount == selection.eventCount) { "Export event count changed during snapshot" }
-        require(previousCommitSha256 == selection.lastCommitSha256) { "Export commit chain changed during snapshot" }
+        if (selection.eventCount != null) {
+            require(eventCount == selection.eventCount) { "Export event count changed during snapshot" }
+            require(previousCommitSha256 == selection.lastCommitSha256) { "Export commit chain changed during snapshot" }
+        }
+        verifyHead(snapshot, selection.boundary, previousCommitSha256)
         writer.endArray()
         writer.name("configuration_id").value(runtime.configurationId)
         writer.name("durable_through_commit").valueDecimal(runtime.revision)
         writer.name("evaluated_through_commit").valueDecimal(runtime.evaluatedThroughCommit)
-        writer.name("event_count").valueDecimal(selection.eventCount)
+        writer.name("event_count").valueDecimal(eventCount)
         writer.name("experiment_id").value(runtime.experimentId)
         writer.name("first_commit_sequence").valueDecimal(snapshot.fromCommit)
         writer.name("last_commit_sequence").valueDecimal(selection.boundary)
@@ -372,6 +407,7 @@ object ResearchExport {
         writer.name("platform").value(snapshot.producer.platform)
         writer.endObject()
         writer.endObject()
+        return eventCount
     }
 
     private fun CanonicalJsonWriter.writeCommit(commit: EngineCommit) {
@@ -549,7 +585,7 @@ object ResearchExport {
     private data class CommitSelection(
         val boundary: Long,
         val commitCount: Long,
-        val eventCount: Long,
+        val eventCount: Long?,
         val lastCommitSha256: String?,
     )
 

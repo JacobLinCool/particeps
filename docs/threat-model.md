@@ -132,18 +132,26 @@ The bounded encrypted pending-input slot protects a causal batch while admission
 resource barrier. A commit can consume it only by naming the exact digest. Recovery with a staged
 cause commits a quality gap and safety pause if safe continuation cannot be proved.
 
-### Snapshot performance boundary
+### Recovery and live read snapshots
 
-Normal open authenticates the latest runtime snapshot, verifies its named commit boundary, and
-decrypts/replays complete frames after that revision. It does not reprocess historical event payloads
-already represented by the authenticated checkpoint, which keeps cold-start cost bounded for long
-studies. Export/upload and any ranged commit read still decrypt and authenticate every selected
-frame.
+Cold open authenticates the runtime checkpoint and the complete retained commit chain, including
+historical payloads at or before that checkpoint. It verifies the named boundary and replays only
+the later complete commits. A current checkpoint does not conceal corruption in retained history;
+missing or invalid recovery state fails closed without metadata reconstruction.
 
-Thus corruption in a historical reclaimed-unread frame is detected when that range is read rather
-than by every clean startup. It cannot enter a verified bundle: export/upload fails before
-publishing/staging success. A missing/corrupt snapshot falls back only to full authenticated
-commit-chain replay, not to unauthenticated metadata reconstruction.
+Live export/upload captures acknowledged runtime and fixed encrypted segment lengths through a
+scoped read snapshot, without repeating cold recovery. Every selected frame is still decrypted and
+authenticated as it is read. Pinned files cannot be reclaimed or cleared until the scope releases
+them; appends remain permitted and cannot extend the captured export boundary. The reader does not
+hold the store mutex during export processing or destination writes, and cancellation releases its
+pin. The local quota remains enforced while reclamation is deferred.
+
+A manual export streams the selected range once and counts events while writing. A size-limited
+upload selects complete commits, stops reading when its budget is reached, then checks the selected
+chain and counts again during output. Both validate the final range before returning a receipt.
+Cancellation, output failure, or final-close failure produces no successful receipt. The Android
+app attempts to remove incomplete destination files and explicitly reports unsuccessful removal;
+partial ciphertext must never be treated as a completed research bundle.
 
 Old layout files are explicitly detected and rejected. The app uses a participant-confirmed generic
 reset flow; it neither migrates nor silently deletes/uploads them.

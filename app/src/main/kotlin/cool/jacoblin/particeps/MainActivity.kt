@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Bundle
 import android.os.Build
+import android.provider.DocumentsContract
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -43,10 +44,17 @@ class MainActivity : ComponentActivity() {
     private val exportLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream"),
     ) { uri ->
-        if (uri == null) return@registerForActivityResult
-        viewModel.export {
-            requireNotNull(contentResolver.openOutputStream(uri, "w")) { "Cannot open export destination" }
+        if (uri == null) {
+            viewModel.exportDestinationCancelled()
+            return@registerForActivityResult
         }
+        val resolver = applicationContext.contentResolver
+        viewModel.export(
+            openDestination = {
+                requireNotNull(resolver.openOutputStream(uri, "w")) { "Cannot open export destination" }
+            },
+            removeIncomplete = { DocumentsContract.deleteDocument(resolver, uri) },
+        )
     }
 
     private val permissionLauncher = registerForActivityResult(
@@ -121,9 +129,16 @@ class MainActivity : ComponentActivity() {
                     complete = viewModel::complete,
                     withdraw = viewModel::withdraw,
                     export = {
-                        val id = (state as? StudyUiState.ActiveStudy)?.model?.experimentId ?: "research"
-                        exportLauncher.launch("$id-${Instant.now().epochSecond}.partexp")
+                        if (state is StudyUiState.ActiveStudy && viewModel.chooseExportDestination()) {
+                            val id = state.model.experimentId
+                            try {
+                                exportLauncher.launch("$id-${Instant.now().epochSecond}.partexp")
+                            } catch (_: ActivityNotFoundException) {
+                                viewModel.exportDestinationUnavailable()
+                            }
+                        }
                     },
+                    cancelExport = viewModel::cancelExport,
                     delete = viewModel::deleteLocalData,
                     retryRecovery = viewModel::retryRecovery,
                     resetAndRestart = viewModel::resetAndRestart,

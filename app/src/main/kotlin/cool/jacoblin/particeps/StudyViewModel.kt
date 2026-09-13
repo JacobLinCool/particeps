@@ -1,5 +1,6 @@
 package cool.jacoblin.particeps
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -44,6 +45,7 @@ sealed interface StudyUiState {
 
     data class ActiveStudy(
         val model: ParticipantStudyUiModel,
+        val export: ParticipantExportState,
         override val message: ParticipantMessage?,
         override val busy: Boolean,
         override val recoveryStatus: ParticipantRecoveryState?,
@@ -61,12 +63,18 @@ class StudyViewModel(
 ) : ViewModel() {
     private val localMessage = MutableStateFlow<ParticipantMessage?>(null)
     private val operationBusy = MutableStateFlow(false)
+    private val exportController = ParticipantExportController(
+        scope = viewModelScope,
+        writeExport = { destination, progress -> session.exportTo(destination, progress) },
+        reportDiagnostic = { Log.i("ParticepsExport", it) },
+    )
 
     val state: StateFlow<StudyUiState> = combine(
         session.snapshot,
         localMessage,
         operationBusy,
-    ) { snapshot, message, operating ->
+        exportController.state,
+    ) { snapshot, message, operating, export ->
         val recovery = snapshot.recoveryStatus.toParticipantRecoveryState()
         val visibleMessage = message ?: when (snapshot.recoveryStatus) {
             StudyRecoveryStatus.RECOVERED_PAUSED -> ParticipantMessage.STUDY_PAUSED_FOR_SAFETY
@@ -79,6 +87,7 @@ class StudyViewModel(
             snapshot.study == null -> StudyUiState.NoStudy(visibleMessage, operating, recovery)
             else -> StudyUiState.ActiveStudy(
                 model = snapshot.toParticipantUiModel(),
+                export = export,
                 message = visibleMessage,
                 busy = operating,
                 recoveryStatus = recovery,
@@ -118,17 +127,28 @@ class StudyViewModel(
 
     fun resetAndRestart() = operation(ParticipantMessage.RESET_FAILED) {
         session.resetAfterRecoveryFailure()
+        exportController.clearResult()
     }
 
-    fun export(openDestination: () -> OutputStream) = operation(ParticipantMessage.EXPORT_FAILED) {
-        val destination = withContext(Dispatchers.IO) { openDestination() }
-        session.exportTo(destination)
-        localMessage.value = ParticipantMessage.EXPORT_COMPLETE
+    fun chooseExportDestination(): Boolean = !operationBusy.value && exportController.chooseDestination()
+
+    fun exportDestinationCancelled() = exportController.destinationCancelled()
+
+    fun exportDestinationUnavailable() = exportController.destinationUnavailable()
+
+    fun export(openDestination: () -> OutputStream, removeIncomplete: () -> Boolean) {
+        exportController.start(openDestination, removeIncomplete)
     }
 
-    fun deleteLocalData() = operation(ParticipantMessage.DELETE_FAILED) {
-        session.deleteLocalData()
-        localMessage.value = ParticipantMessage.LOCAL_DATA_DELETED
+    fun cancelExport() = exportController.cancel()
+
+    fun deleteLocalData() {
+        if (exportController.state.value.isActive) return
+        operation(ParticipantMessage.DELETE_FAILED) {
+            session.deleteLocalData()
+            exportController.clearResult()
+            localMessage.value = ParticipantMessage.LOCAL_DATA_DELETED
+        }
     }
 
     fun refreshAccess() {

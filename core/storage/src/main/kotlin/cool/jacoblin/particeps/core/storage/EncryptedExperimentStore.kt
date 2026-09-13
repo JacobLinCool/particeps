@@ -11,6 +11,7 @@ import cool.jacoblin.particeps.core.model.EngineInputKind
 import cool.jacoblin.particeps.core.model.PendingEngineInput
 import cool.jacoblin.particeps.core.model.RuntimeDocument
 import cool.jacoblin.particeps.core.model.StorageUsage
+import cool.jacoblin.particeps.core.model.StudyReadSnapshot
 import cool.jacoblin.particeps.core.model.StudyStore
 import cool.jacoblin.particeps.core.model.StudyStoreRecoveryException
 import cool.jacoblin.particeps.core.model.StudyStoreRecoveryFailure
@@ -25,11 +26,15 @@ import java.nio.ByteBuffer
 import java.nio.file.Files
 import java.security.KeyStore
 import java.security.MessageDigest
+import java.util.Collections
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -74,6 +79,7 @@ class EncryptedExperimentStore internal constructor(
     private val commitDirectory = rootDirectory.resolve("$opaqueId.commits3")
     private var runtime: RuntimeDocument? = null
     private var pending: PendingEngineInput? = null
+    private var activeReadSnapshots = 0
 
     init {
         require(maximumLocalBytes in MINIMUM_LOCAL_BYTES..MAXIMUM_LOCAL_BYTES) {
@@ -195,22 +201,64 @@ class EncryptedExperimentStore internal constructor(
         mutex.withLock { appendValidated(commit, successor, consumePending = true) }
     }
 
-    override suspend fun readCommits(
-        fromCommitInclusive: Long,
-        throughCommitInclusive: Long,
-        consume: (EngineCommit) -> Unit,
-    ) = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            val current = requireNotNull(runtime) { "Study storage is not initialized" }
-            require(throughCommitInclusive in 0..current.revision) { "Invalid commit snapshot boundary" }
-            require(fromCommitInclusive in current.retainedFromCommit..(throughCommitInclusive + 1)) {
-                "Requested commits were reclaimed"
+    override suspend fun <T> withReadSnapshot(block: suspend (StudyReadSnapshot) -> T): T =
+        withContext(Dispatchers.IO) {
+            val snapshot = mutex.withLock {
+                val current = requireNotNull(runtime) { "Study storage is not initialized" }
+                val key = existingKey() ?: error("Encrypted experiment key is unavailable")
+                val capturedSegments = segments().map { CapturedSegment(it, it.file.length()) }
+                val capturedRuntime = current.copy(
+                    sourceCheckpoints = Collections.unmodifiableMap(current.sourceCheckpoints.toMap()),
+                    components = Collections.unmodifiableMap(current.components.toMap()),
+                )
+                PinnedReadSnapshot(capturedRuntime, key, capturedSegments).also { activeReadSnapshots++ }
             }
-            if (fromCommitInclusive > throughCommitInclusive) return@withLock
-            val key = existingKey() ?: error("Encrypted experiment key is unavailable")
-            // Keep the store locked while the synchronous consumer runs so append/eviction cannot
-            // change the selected snapshot. Only one decrypted commit is live at a time.
-            readCommitRange(fromCommitInclusive, throughCommitInclusive, key, consume)
+            try {
+                block(snapshot)
+            } finally {
+                withContext(NonCancellable) { snapshot.release() }
+            }
+        }
+
+    private inner class PinnedReadSnapshot(
+        override val runtime: RuntimeDocument,
+        private val key: SecretKey,
+        private val capturedSegments: List<CapturedSegment>,
+    ) : StudyReadSnapshot {
+        private val readerMutex = Mutex()
+        private var active = true
+
+        override suspend fun readCommits(
+            fromCommitInclusive: Long,
+            throughCommitInclusive: Long,
+            consume: (EngineCommit) -> Boolean,
+        ) = withContext(Dispatchers.IO) {
+            readerMutex.withLock {
+                check(active) { "Study read snapshot is closed" }
+                require(throughCommitInclusive in 0..runtime.revision) { "Invalid commit snapshot boundary" }
+                require(fromCommitInclusive in runtime.retainedFromCommit..(throughCommitInclusive + 1)) {
+                    "Requested commits were reclaimed"
+                }
+                if (fromCommitInclusive > throughCommitInclusive) return@withLock
+                val context = currentCoroutineContext()
+                readCommitRange(
+                    fromCommitInclusive,
+                    throughCommitInclusive,
+                    key,
+                    capturedSegments,
+                    context::ensureActive,
+                    consume,
+                )
+            }
+        }
+
+        suspend fun release() = readerMutex.withLock {
+            check(active) { "Study read snapshot is already closed" }
+            active = false
+            mutex.withLock {
+                check(activeReadSnapshots > 0) { "Study read snapshot pin is missing" }
+                activeReadSnapshots--
+            }
         }
     }
 
@@ -229,6 +277,8 @@ class EncryptedExperimentStore internal constructor(
             require(runtime == current) { "Runtime changed before eviction" }
             require(pending == null && !pendingFile.exists()) { "Cannot evict while input is staged" }
             require(targetBytes >= 0) { "Target size must be non-negative" }
+            // Active snapshots retain their immutable encrypted prefixes while writers append.
+            if (activeReadSnapshots > 0) return@withLock runtime
             val safeThrough = minOf(runtime.uploadedThroughCommit, runtime.evaluatedThroughCommit)
             if (safeThrough < runtime.retainedFromCommit || storageBytes() <= targetBytes) {
                 return@withLock runtime
@@ -268,6 +318,7 @@ class EncryptedExperimentStore internal constructor(
 
     override suspend fun clear() = withContext(Dispatchers.IO) {
         mutex.withLock {
+            check(activeReadSnapshots == 0) { "Cannot clear storage while a read snapshot is open" }
             snapshotFile.delete()
             pendingFile.delete()
             segmentEntries().forEach { entry ->
@@ -326,6 +377,7 @@ class EncryptedExperimentStore internal constructor(
                     throughSequenceInclusive = commit.commitSequence,
                 ) { scanned ->
                     acknowledged = scanned.sequence == commit.commitSequence && scanned.commit == commit
+                    true
                 }
             }.onFailure { acknowledged = false }
             if (!acknowledged) throw failure
@@ -475,6 +527,7 @@ class EncryptedExperimentStore internal constructor(
         var found = false
         readCommitRange(current.retainedFromCommit, current.revision, key) { commit ->
             if (commit.consumedPendingInputSha256 == digest) found = true
+            true
         }
         return found
     }
@@ -493,7 +546,7 @@ class EncryptedExperimentStore internal constructor(
             recoverTail = recoverTail,
             decryptFromSequence = snapshot.retainedFromCommit,
         ) { frame ->
-            if (frame.sequence < snapshot.retainedFromCommit) return@scanFrames
+            if (frame.sequence < snapshot.retainedFromCommit) return@scanFrames true
             require(frame.sequence == expectedRetainedSequence) { "Retained commit sequence gap" }
             val commit = requireNotNull(frame.commit) { "Retained commit was not authenticated" }
             previousRetainedDigest?.let { previous ->
@@ -512,6 +565,7 @@ class EncryptedExperimentStore internal constructor(
                 require(commit.previousCommitSha256 == recovered.lastCommitSha256) { "Commit chain mismatch" }
                 recovered = recovered.advance(commit)
             }
+            true
         }
         require(snapshotBoundarySeen) { "Retained log does not reach the snapshot boundary" }
         return recovered
@@ -521,18 +575,23 @@ class EncryptedExperimentStore internal constructor(
         from: Long,
         through: Long,
         key: SecretKey,
-        consume: (EngineCommit) -> Unit,
+        capturedSegments: List<CapturedSegment>? = null,
+        checkCancellation: () -> Unit = {},
+        consume: (EngineCommit) -> Boolean,
     ) {
         var expectedSequence = from
         var consumed = 0L
         var previousDigest: String? = null
+        var stopped = false
         scanFrames(
             key = key,
             recoverTail = false,
             decryptFromSequence = from,
             throughSequenceInclusive = through,
+            capturedSegments = capturedSegments,
+            checkCancellation = checkCancellation,
         ) { frame ->
-            if (frame.sequence < from) return@scanFrames
+            if (frame.sequence < from) return@scanFrames true
             require(frame.sequence == expectedSequence) { "Commit range is unavailable" }
             val commit = requireNotNull(frame.commit) { "Commit range was not authenticated" }
             previousDigest?.let { previous ->
@@ -540,12 +599,13 @@ class EncryptedExperimentStore internal constructor(
                     "Commit range is not one authenticated chain"
                 }
             }
-            consume(commit)
+            stopped = !consume(commit)
             previousDigest = commit.commitSha256
             consumed = Math.addExact(consumed, 1L)
             if (frame.sequence < through) expectedSequence = Math.addExact(expectedSequence, 1L)
+            !stopped
         }
-        require(consumed == Math.addExact(Math.subtractExact(through, from), 1L)) {
+        require(stopped || consumed == Math.addExact(Math.subtractExact(through, from), 1L)) {
             "Commit range is unavailable"
         }
     }
@@ -555,24 +615,31 @@ class EncryptedExperimentStore internal constructor(
         recoverTail: Boolean,
         decryptFromSequence: Long,
         throughSequenceInclusive: Long? = null,
-        consume: (FrameResult) -> Unit,
+        capturedSegments: List<CapturedSegment>? = null,
+        checkCancellation: () -> Unit = {},
+        consume: (FrameResult) -> Boolean,
     ) {
-        repairSegmentResidue()
-        val segments = segments()
-        segments.zipWithNext().forEach { (left, right) ->
-            require(right.index == left.index + 1) { "Commit segment index gap" }
+        val selectedSegments = capturedSegments ?: run {
+            repairSegmentResidue()
+            segments().map { CapturedSegment(it, it.file.length()) }
+        }
+        selectedSegments.zipWithNext().forEach { (left, right) ->
+            require(right.segment.index == left.segment.index + 1) { "Commit segment index gap" }
         }
         var previousSequence: Long? = null
         var reachedUpperBound = false
-        segments.forEachIndexed { segmentPosition, segment ->
+        selectedSegments.forEachIndexed { segmentPosition, captured ->
             if (reachedUpperBound) return@forEachIndexed
-            val isLastSegment = segmentPosition == segments.lastIndex
+            checkCancellation()
+            val segment = captured.segment
+            val isLastSegment = segmentPosition == selectedSegments.lastIndex
             var truncateAt: Long? = null
             DataInputStream(BufferedInputStream(FileInputStream(segment.file), SCAN_BUFFER_BYTES)).use { input ->
                 validateSegmentHeader(input, segment.index)
                 var offset = SEGMENT_HEADER_BYTES.toLong()
-                val length = segment.file.length()
+                val length = captured.length
                 while (offset < length) {
+                    checkCancellation()
                     val frameStart = offset
                     if (length - offset < FRAME_FIXED_BYTES) {
                         if (recoverTail && isLastSegment) {
@@ -620,8 +687,9 @@ class EncryptedExperimentStore internal constructor(
                             EngineCommitIntegrity.verify(decoded)
                         }
                     }
-                    consume(FrameResult(sequence, footerHex, commit))
-                    if (throughSequenceInclusive != null && sequence >= throughSequenceInclusive) {
+                    if (!consume(FrameResult(sequence, footerHex, commit)) ||
+                        (throughSequenceInclusive != null && sequence >= throughSequenceInclusive)
+                    ) {
                         reachedUpperBound = true
                         break
                     }
@@ -883,6 +951,7 @@ class EncryptedExperimentStore internal constructor(
     }
 
     private data class Segment(val index: Int, val file: File)
+    private data class CapturedSegment(val segment: Segment, val length: Long)
     private data class SegmentSummary(
         val segment: Segment,
         val firstCommit: Long,

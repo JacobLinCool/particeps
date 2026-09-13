@@ -185,8 +185,13 @@ snapshot that does not name the retained chain's exact boundary fails closed. Th
 metadata reconstruction path.
 
 Cold start never materializes the log: retained frames are authenticated sequentially with at most
-one decrypted commit in memory. Export/upload range reads use the same bounded streaming scan and
-stop at the requested complete-commit upper boundary instead of decrypting the later suffix.
+one decrypted commit in memory. Live export/upload uses `StudyStore.withReadSnapshot` to capture
+acknowledged runtime and fixed encrypted segment lengths without running recovery again. The scoped
+snapshot pins retained files, opens one segment at a time, and checks cancellation between frames.
+Its consumer runs outside the store mutex, so appends and participant lifecycle commands can proceed
+while a destination is slow. Reclamation waits for the snapshot to close; the existing storage quota
+still applies while files are pinned. Reads stop at the requested boundary or when the consumer
+declines the next commit. Locating a range still scans earlier frame headers in retained segments.
 
 Old event-segment/metadata layouts are detected and rejected. The app uses its existing generic
 recovery/reset surface and never deletes or uploads them automatically.
@@ -439,6 +444,24 @@ canonical JSON, encrypts with a fresh AES-256-GCM content key/nonce, and wraps t
 RFC 9180 HPKE. The decrypted document repeats configuration/signature/registry digest and full
 commit data. Its verifier publishes nothing before all framing, AEAD, JCS, signature, registry,
 chain, observation, mutation, checkpoint, epoch, and range checks pass.
+
+Manual export derives commit count from the captured range and accumulates event count while
+streaming that range once. Budgeted upload performs a bounded selection pass, then verifies the
+selected counts and final chain digest during output. Character buffering and complete string-span
+writes preserve canonical JSON and strict surrogate checks. Neither path stores plaintext on disk.
+
+The participant export operation has its own state and cancellation job, separate from lifecycle
+commands. Preparation is indeterminate, encryption reports completed batches in the captured range,
+and finalization remains indeterminate until the destination closes successfully. Cancellation is
+checked between commits; a blocking document provider may delay cancellation, but does not hold the
+store or session mutex. The app closes every accepted destination on IO, then attempts to delete
+incomplete files on cancellation or failure. Failed removal is explicitly shown. Successful export
+metadata is published only after close succeeds and cancellation has been checked.
+
+The `ParticepsExport` log tag records fixed phase names, elapsed times, outcome and successful
+aggregate commit/event/byte counts. It excludes study identities, destination URIs, exception text
+and event contents. Phase timings separate opening, preparation, selection, encryption, finalization
+and cleanup; preparation includes lock waits and the scoped snapshot capture.
 
 Automatic upload stages immutable ciphertext before HTTP. Headers and receipts name complete commit
 ranges and aggregate event count; participant identity stays encrypted. Exact replay reuses bytes.

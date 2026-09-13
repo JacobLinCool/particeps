@@ -75,6 +75,7 @@ class QrStudyEntryUiTest {
         complete = {},
         withdraw = {},
         export = {},
+        cancelExport = {},
         delete = {},
         retryRecovery = {},
         resetAndRestart = {},

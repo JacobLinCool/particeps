@@ -174,6 +174,11 @@ problem persists, contact the research team.
 signed configuration. Particeps cannot decrypt it. A manual export contains the complete encrypted
 research records still retained on the phone through the boundary captured when export began.
 
+The app shows preparation, export progress, and final saving. You can still pause, complete, or
+withdraw while an export runs. **Cancel export** stops that export without deleting the study's
+local data. A slow storage provider may take time to finish cancelling. Wait for the success message
+before sharing the file. To delete local study data, first finish or cancel the export.
+
 If the signed study includes automatic upload, the app sends immutable encrypted chunks to that
 configured HTTPS endpoint. A delivered prefix can be removed locally only after an exact receipt
 confirms the same encrypted bytes and complete range. Pausing stops collection but does not
@@ -203,7 +208,8 @@ your confirmation before destructive reset.
 | Another VPN stops working or the study pauses | Android permits only one active VPN for the same phone user. Choose which VPN to use; Particeps will not resume the study automatically. |
 | A data category is unavailable | Check its Android access or hardware. Required categories stop the study; optional categories can remain off. |
 | A study notification or survey is late | Android background scheduling is best effort. Do not treat delivery time as proof that the participant saw it. |
-| Export fails | Keep the app data intact and retry with enough storage and a writable destination. The app never publishes a partial plaintext or partial encrypted export. |
+| Export takes a long time | Check the displayed phase and progress. You can still pause or withdraw, or cancel the export and retry with a local storage destination. |
+| Export fails or is cancelled | The app keeps your study data and tries to remove the incomplete export. If it reports that the file could not be removed, delete that file before retrying. Only share an export after the success message. |
 | Recovery asks for reset | Export information if the existing generic recovery flow offers it, then confirm only if you accept permanent removal of the incompatible local study. |
 
 For protocol-level field definitions, data quality, and interpretation limits, researchers should

@@ -489,6 +489,12 @@ Exports are HPKE/AES-GCM encrypted to the signed researcher key and contain comp
 `EngineCommit` frames. Automatic upload sends immutable ciphertext over HTTPS. Clear routing
 metadata identifies bundle/configuration/key and complete commit range, not participant ID.
 
+Manual exports capture one retained boundary and continue independently of participant pause,
+completion, or withdrawal. Events committed afterward belong to a later export. Participants see
+phase progress and can cancel; they should share a file only after the success message. A cancelled
+or failed destination is removed when its storage provider permits deletion, otherwise the app
+reports that the incomplete file remains. Analysis must continue to reject incomplete bundles.
+
 The receiver validates framing, bounds, clear metadata, content digest, exact replay, and receipt
 shape without decrypting. Store the receiver’s ciphertext objects and canonical receipts; run
 offline decryption only in the controlled analysis environment.

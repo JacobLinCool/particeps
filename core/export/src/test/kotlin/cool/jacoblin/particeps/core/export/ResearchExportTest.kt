@@ -30,7 +30,6 @@ import cool.jacoblin.particeps.core.model.EventTypeKey
 import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.model.GENESIS_DIGEST
 import cool.jacoblin.particeps.core.model.ObservationAdmissionKind
-import cool.jacoblin.particeps.core.model.PendingEngineInput
 import cool.jacoblin.particeps.core.model.RecordedEvent
 import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.core.model.RuntimeComponentKey
@@ -41,9 +40,8 @@ import cool.jacoblin.particeps.core.model.RuntimeMutationOperation
 import cool.jacoblin.particeps.core.model.RuntimeProjection
 import cool.jacoblin.particeps.core.model.SourceCheckpoint
 import cool.jacoblin.particeps.core.model.SourceObservation
-import cool.jacoblin.particeps.core.model.StorageUsage
 import cool.jacoblin.particeps.core.model.StudyClockCheckpoint
-import cool.jacoblin.particeps.core.model.StudyStore
+import cool.jacoblin.particeps.core.model.StudyReadSnapshot
 import cool.jacoblin.particeps.core.model.withComputedDigest
 import cool.jacoblin.particeps.core.protocol.VerifiedConfiguration
 import cool.jacoblin.particeps.core.resource.AppliedResourceState
@@ -63,6 +61,10 @@ import java.security.Signature
 import java.time.Instant
 import java.util.UUID
 import java.util.Base64
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -176,6 +178,117 @@ class ResearchExportTest {
     }
 
     @Test
+    fun manualExportReadsOnceAndReportsWritingBeforeFinalization() = runBlocking {
+        val fixture = fixture()
+        val chain = commitChain(fixture.verified.configurationSha256)
+        val progress = mutableListOf<ExportProgress>()
+        val receipt = ResearchExport.encrypt(
+            snapshot(fixture, chain.runtime), chain.store, ByteArrayOutputStream(), progress::add,
+        )
+
+        assertEquals(1, chain.store.reads)
+        assertEquals(listOf(1L, 2L, 3L), chain.store.visits)
+        assertEquals(5L, receipt.eventCount)
+        assertEquals(ExportProgress(ExportStage.ENCRYPTING, 0, 3), progress.first())
+        assertTrue(progress.none { it.stage == ExportStage.SELECTING })
+        assertTrue(ExportProgress(ExportStage.ENCRYPTING, 3, 3) in progress)
+        assertEquals(ExportProgress(ExportStage.FINALIZING, 3, 3), progress.last())
+    }
+
+    @Test
+    fun singlePassExportRejectsMissingCommitsBrokenChainAndRuntimeHead() = runBlocking {
+        val fixture = fixture()
+        val chain = commitChain(fixture.verified.configurationSha256)
+        val broken = chain.commits.toMutableList().apply {
+            this[1] = this[1].copy(previousCommitSha256 = "9".repeat(64)).withComputedDigest()
+        }
+        for (commits in listOf(chain.commits.dropLast(1), chain.commits.drop(1), broken)) {
+            assertThrows(IllegalArgumentException::class.java) {
+                runBlocking {
+                    ResearchExport.encrypt(
+                        snapshot(fixture, chain.runtime), SnapshotStore(chain.runtime, commits), ByteArrayOutputStream(),
+                    )
+                }
+            }
+        }
+        val wrongHead = chain.runtime.copy(lastCommitSha256 = "8".repeat(64))
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                ResearchExport.encrypt(
+                    snapshot(fixture, wrongHead), SnapshotStore(wrongHead, chain.commits), ByteArrayOutputStream(),
+                )
+            }
+        }
+        Unit
+    }
+
+    @Test
+    fun budgetedExportRejectsAnAuthenticatedCommitThatChangedBetweenPasses() = runBlocking {
+        val fixture = fixture()
+        val chain = commitChain(fixture.verified.configurationSha256)
+        val changed = chain.commits.first().copy(resultingCheckpointSha256 = "a".repeat(64)).withComputedDigest()
+        val reader = object : StudyReadSnapshot {
+            override val runtime = chain.runtime
+            var reads = 0
+            override suspend fun readCommits(fromCommitInclusive: Long, throughCommitInclusive: Long, consume: (EngineCommit) -> Boolean) {
+                consume(if (reads++ == 0) chain.commits.first() else changed)
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                ResearchExport.encrypt(
+                    snapshot(fixture, chain.runtime, BundleKind.AUTOMATIC_UPLOAD, 1), reader, ByteArrayOutputStream(),
+                )
+            }
+        }
+        Unit
+    }
+
+    @Test
+    fun cancellationStopsBeforeTheNextCommitAndNeverReturnsAReceipt() = runBlocking {
+        val fixture = fixture()
+        val chain = commitChain(fixture.verified.configurationSha256)
+        var consumed = 0
+        var completed = false
+        val reader = object : StudyReadSnapshot {
+            override val runtime = chain.runtime
+            override suspend fun readCommits(fromCommitInclusive: Long, throughCommitInclusive: Long, consume: (EngineCommit) -> Boolean) {
+                val job = currentCoroutineContext().job
+                for (commit in chain.commits) {
+                    consume(commit)
+                    consumed++
+                    job.cancel(CancellationException("cancel export"))
+                }
+            }
+        }
+        val job = launch {
+            ResearchExport.encrypt(snapshot(fixture, chain.runtime), reader, ByteArrayOutputStream())
+            completed = true
+        }
+        job.join()
+        assertTrue(job.isCancelled)
+        assertEquals(1, consumed)
+        assertFalse(completed)
+    }
+
+    @Test
+    fun cancellationDuringFinalizationDoesNotPublishSuccess() = runBlocking {
+        val fixture = fixture()
+        val chain = commitChain(fixture.verified.configurationSha256)
+        var completed = false
+        val job = launch {
+            val exportJob = currentCoroutineContext().job
+            ResearchExport.encrypt(snapshot(fixture, chain.runtime), chain.store, ByteArrayOutputStream()) { progress ->
+                if (progress.stage == ExportStage.FINALIZING) exportJob.cancel()
+            }
+            completed = true
+        }
+        job.join()
+        assertTrue(job.isCancelled)
+        assertFalse(completed)
+    }
+
+    @Test
     fun automaticBudgetStopsOnlyAtACompleteCommitBoundary() = runBlocking {
         val fixture = fixture()
         val chain = commitChain(fixture.verified.configurationSha256)
@@ -191,6 +304,8 @@ class ResearchExportTest {
             destination,
         )
 
+        assertEquals(listOf(1L, 1L), chain.store.visits)
+        assertEquals(2, chain.store.reads)
         assertEquals(1L, receipt.firstCommitSequence)
         assertEquals(1L, receipt.lastCommitSequence)
         assertEquals(1L, receipt.commitCount)
@@ -848,28 +963,24 @@ class ResearchExportTest {
     )
 
     private class SnapshotStore(
-        private var runtime: RuntimeDocument,
+        override val runtime: RuntimeDocument,
         private val commits: List<EngineCommit>,
-    ) : StudyStore {
-        override suspend fun loadRuntime() = runtime
-        override suspend fun initialize(runtime: RuntimeDocument) { this.runtime = runtime }
-        override suspend fun appendCommit(commit: EngineCommit, successor: RuntimeDocument) = error("Not supported")
-        override suspend fun stagePendingInput(input: PendingEngineInput) = error("Not supported")
-        override suspend fun replacePendingInput(expectedSha256: String, input: PendingEngineInput) =
-            error("Not supported")
-        override suspend fun loadPendingInput(): PendingEngineInput? = null
-        override suspend fun appendCommitConsumingPending(commit: EngineCommit, successor: RuntimeDocument) =
-            error("Not supported")
+    ) : StudyReadSnapshot {
+        val visits = mutableListOf<Long>()
+        var reads = 0
         override suspend fun readCommits(
             fromCommitInclusive: Long,
             throughCommitInclusive: Long,
-            consume: (EngineCommit) -> Unit,
+            consume: (EngineCommit) -> Boolean,
         ) {
-            commits.filter { it.commitSequence in fromCommitInclusive..throughCommitInclusive }.forEach(consume)
+            reads++
+            for (commit in commits) {
+                if (commit.commitSequence in fromCommitInclusive..throughCommitInclusive) {
+                    visits += commit.commitSequence
+                    if (!consume(commit)) break
+                }
+            }
         }
-        override suspend fun storageUsage() = StorageUsage(commits.size.toLong(), 16_777_216)
-        override suspend fun evictThrough(runtime: RuntimeDocument, targetBytes: Long) = runtime
-        override suspend fun clear() = Unit
     }
 
     private companion object {

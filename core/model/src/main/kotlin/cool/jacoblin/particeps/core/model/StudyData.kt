@@ -370,19 +370,28 @@ data class StorageUsage(val usedBytes: Long, val quotaBytes: Long) {
     val fraction: Double get() = usedBytes.toDouble() / quotaBytes.toDouble()
 }
 
+/** A retained, acknowledged commit boundary, valid only inside [StudyStore.withReadSnapshot]. */
+interface StudyReadSnapshot {
+    val runtime: RuntimeDocument
+
+    /** Visits complete commits in order; returning false stops before reading the next commit. */
+    suspend fun readCommits(
+        fromCommitInclusive: Long,
+        throughCommitInclusive: Long,
+        consume: (EngineCommit) -> Boolean,
+    )
+}
+
 interface StudyStore {
     suspend fun loadRuntime(): RuntimeDocument?
+    /** Captures initialized durable state without recovery; pins the range while allowing appends. */
+    suspend fun <T> withReadSnapshot(block: suspend (StudyReadSnapshot) -> T): T
     suspend fun initialize(runtime: RuntimeDocument)
     suspend fun appendCommit(commit: EngineCommit, successor: RuntimeDocument)
     suspend fun stagePendingInput(input: PendingEngineInput)
     suspend fun replacePendingInput(expectedSha256: String, input: PendingEngineInput)
     suspend fun loadPendingInput(): PendingEngineInput?
     suspend fun appendCommitConsumingPending(commit: EngineCommit, successor: RuntimeDocument)
-    suspend fun readCommits(
-        fromCommitInclusive: Long,
-        throughCommitInclusive: Long,
-        consume: (EngineCommit) -> Unit,
-    )
     suspend fun storageUsage(): StorageUsage
     suspend fun evictThrough(runtime: RuntimeDocument, targetBytes: Long): RuntimeDocument
     suspend fun clear()

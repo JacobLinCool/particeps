@@ -1,5 +1,6 @@
 package cool.jacoblin.particeps.core.export
 
+import java.io.BufferedWriter
 import java.io.Closeable
 import java.io.OutputStream
 import java.io.OutputStreamWriter
@@ -7,7 +8,7 @@ import java.io.Writer
 
 /** Small RFC 8785 writer that enforces lexical member order while streaming bundle events. */
 internal class CanonicalJsonWriter(output: OutputStream) : Closeable {
-    private val output: Writer = OutputStreamWriter(output, Charsets.UTF_8)
+    private val output: Writer = BufferedWriter(OutputStreamWriter(output, Charsets.UTF_8))
     private val scopes = ArrayDeque<Scope>()
     private var rootWritten = false
 
@@ -123,31 +124,33 @@ internal class CanonicalJsonWriter(output: OutputStream) : Closeable {
     private fun writeString(value: String) {
         output.write("\"")
         var index = 0
+        var segmentStart = 0
         while (index < value.length) {
             val character = value[index]
-            when (character) {
-                '"' -> output.write("\\\"")
-                '\\' -> output.write("\\\\")
-                '\b' -> output.write("\\b")
-                '\t' -> output.write("\\t")
-                '\n' -> output.write("\\n")
-                '\u000c' -> output.write("\\f")
-                '\r' -> output.write("\\r")
+            val escape = when (character) {
+                '"' -> "\\\""
+                '\\' -> "\\\\"
                 else -> when {
-                    character < ' ' -> output.write("\\u%04x".format(character.code))
+                    character < ' ' -> CONTROL_CHARACTER_ESCAPES[character.code]
                     character.isHighSurrogate() -> {
                         require(index + 1 < value.length && value[index + 1].isLowSurrogate()) {
                             "Invalid Unicode surrogate"
                         }
-                        output.write(character.code)
-                        output.write(value[++index].code)
+                        index++
+                        null
                     }
                     character.isLowSurrogate() -> throw IllegalArgumentException("Invalid Unicode surrogate")
-                    else -> output.write(character.code)
+                    else -> null
                 }
+            }
+            if (escape != null) {
+                if (index > segmentStart) output.write(value, segmentStart, index - segmentStart)
+                output.write(escape)
+                segmentStart = index + 1
             }
             index++
         }
+        if (segmentStart < value.length) output.write(value, segmentStart, value.length - segmentStart)
         output.write("\"")
     }
 
@@ -163,5 +166,16 @@ internal class CanonicalJsonWriter(output: OutputStream) : Closeable {
 
     private companion object {
         val CANONICAL_INTEGER = Regex("-?(0|[1-9][0-9]*)")
+        const val HEX_DIGITS = "0123456789abcdef"
+        val CONTROL_CHARACTER_ESCAPES = Array(32) { code ->
+            when (code.toChar()) {
+                '\b' -> "\\b"
+                '\t' -> "\\t"
+                '\n' -> "\\n"
+                '\u000c' -> "\\f"
+                '\r' -> "\\r"
+                else -> "\\u00${HEX_DIGITS[code ushr 4]}${HEX_DIGITS[code and 0xf]}"
+            }
+        }
     }
 }

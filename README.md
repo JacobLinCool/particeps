@@ -91,7 +91,7 @@ Studies collect from people's personal phones, so the platform is built to suppo
   Random choices and action IDs become durable before Android work. Native survey answers enter the
   log only as one validated final submission.
 - **Separated participant identities.** Every import gets a fresh random instance UUID. A configuration may additionally carry an opaque researcher-assigned code; both appear in the encrypted document. Upload URLs and headers contain no participant, assigned, experiment, or configuration ID. Their bundle UUID, configuration digest, researcher key ID, exact range/count, size, and digest are untrusted routing claims, not participant authentication.
-- **Encrypted, participant-directed export.** Getting data to the research team is an export the participant performs and directs, encrypted with a fresh key per export and wrapped to your HPKE public key. The app never holds your private key.
+- **Encrypted, participant-directed export.** Getting data to the research team is an export the participant performs and directs, encrypted with a fresh key per export and wrapped to your HPKE public key. The app shows progress and supports cancellation while pause, completion, and withdrawal remain available. The app never holds your private key.
 - **Commit-boundary upload, when the study asks for it.** A configuration may name an HTTPS endpoint,
   interval, and metered-network policy. Before HTTP starts, the app stages one immutable ciphertext
   bundle containing complete commits. Retries send exact bytes. Only a canonical receipt matching

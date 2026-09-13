@@ -7,6 +7,45 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
+## v1.0.0-rc.13 — 2026-09-14
+
+- Manual encrypted export reads each retained commit once, using a scoped read snapshot instead of
+  repeating storage recovery and a full JSON prescan. Size-limited uploads stop reading when their
+  complete-commit budget is reached. Canonical JSON writing buffers characters and emits complete
+  string spans while retaining Unicode validation.
+- Exports show phase progress and support cancellation. Pause, completion, and withdrawal remain
+  available during export, including slow destination writes. Destination open, close, and failed
+  export cleanup run off the main thread; success is reported only after final close succeeds.
+- Cancelled or failed exports remove their incomplete file when the document provider permits it,
+  and report when manual removal is needed. Local study data remains available for retry.
+- Added a 24-hour study timeline, structured survey and automation editors, and native WebMCP
+  authoring tools to the researcher site. Improved simulation, import, key handling, review, and
+  bundle summaries, and fixed study-rule panels collapsing into dividers.
+
+**Application update from `v1.0.0-rc.12`:** install the signed RC13 APK over the existing app
+without uninstalling or clearing its data. The application ID and production signing certificate
+are unchanged, and the Android version code increases. If an export is still active, cancel it and
+allow cleanup to finish before updating.
+
+**Local studies and exported data:** RC13 introduces no local-store migration, mandatory reset,
+event-source-registry change, or bundle-format change from RC12. Existing signed configurations and
+local study data remain in place; they do not need to be re-signed. Reopen the app after updating,
+complete normal recovery and access checks, and explicitly Resume the study. Older-release
+restrictions documented below still apply. An export includes the fixed data boundary captured
+when it starts; later study actions are included in the next export. Only send files for which the
+app reports successful completion.
+
+**Fresh install:** install the signed RC13 APK, then scan a research-team QR code or import its
+signed study file. Review the study and data collection, provide consent, complete required access
+setup, and explicitly Start.
+
+**Verification scope:** host unit tests, API 34 storage and participant-export instrumentation,
+Kotlin-to-Python encrypted-bundle verification, and debug/release lint and builds passed locally.
+For 53.3 MB of synthetic data, the desktop export-core median decreased from 1.470 seconds to
+0.253 seconds; this excludes Android Keystore, storage-provider, and network time and is not a
+measurement of export duration on a participant's phone. A blocking provider write or close can
+delay cancellation cleanup; study controls remain available while it finishes.
+
 ## v1.0.0-rc.12 — 2026-09-11
 
 - Fixed the local VPN completing an app's TCP handshake before its protected upstream connection

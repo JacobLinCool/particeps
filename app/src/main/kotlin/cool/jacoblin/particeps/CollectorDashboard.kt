@@ -49,6 +49,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -79,6 +81,10 @@ object UiTags {
     const val COMPLETE = "complete"
     const val WITHDRAW = "withdraw"
     const val EXPORT = "export"
+    const val EXPORT_STATUS = "export_status"
+    const val EXPORT_PROGRESS = "export_progress"
+    const val EXPORT_CANCEL = "export_cancel"
+    const val DELETE = "delete"
     const val EVENT_COUNT = "event_count"
     const val PAUSED_SINCE = "paused_since"
     const val RECOVERY_RETRY = "recovery_retry"
@@ -108,6 +114,7 @@ data class StudyUiActions(
     val complete: () -> Unit,
     val withdraw: () -> Unit,
     val export: () -> Unit,
+    val cancelExport: () -> Unit,
     val delete: () -> Unit,
     val retryRecovery: () -> Unit,
     val resetAndRestart: () -> Unit,
@@ -232,6 +239,7 @@ private fun Dashboard(
         }
 
         if (accessRemediation) {
+            ExportStatus(study.export, actions.cancelExport)
             AccessPanel(
                 study = model,
                 checks = model.access,
@@ -947,18 +955,117 @@ private fun CollectionPanel(study: StudyUiState.ActiveStudy, actions: StudyUiAct
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.COMPLETE),
             ) { Text(stringResource(R.string.action_complete_study)) }
         }
+        ExportStatus(study.export, actions.cancelExport)
         Button(
             onClick = actions.export,
-            enabled = !busy,
+            enabled = !busy && !study.export.isActive,
             modifier = Modifier.fillMaxWidth().testTag(UiTags.EXPORT),
         ) { Text(stringResource(R.string.action_export)) }
         if (state in TERMINAL_STATES) {
-            OutlinedButton(onClick = actions.delete, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = actions.delete,
+                enabled = !busy && !study.export.isActive,
+                modifier = Modifier.fillMaxWidth().testTag(UiTags.DELETE),
+            ) {
                 Text(stringResource(R.string.action_delete))
+            }
+            if (study.export.isActive) {
+                Text(
+                    stringResource(R.string.export_delete_unavailable),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
         if (state != ExperimentState.WITHDRAWN) WithdrawLink(actions, busy)
         StudyDetails(study)
+    }
+}
+
+@Composable
+private fun ExportStatus(state: ParticipantExportState, cancel: () -> Unit) {
+    if (state == ParticipantExportState.Idle) return
+    val title = when (state) {
+        ParticipantExportState.Idle -> error("Idle export has no status")
+        ParticipantExportState.ChoosingDestination -> R.string.export_choose_destination
+        is ParticipantExportState.Running -> when (state.phase) {
+            ParticipantExportPhase.PREPARING -> R.string.export_preparing
+            ParticipantExportPhase.READING -> R.string.export_reading
+            ParticipantExportPhase.ENCRYPTING -> R.string.export_encrypting
+            ParticipantExportPhase.FINISHING -> R.string.export_finishing
+        }
+        ParticipantExportState.Cancelling -> R.string.export_cancelling
+        ParticipantExportState.Succeeded -> R.string.message_export_complete
+        is ParticipantExportState.Cancelled -> R.string.export_cancelled
+        is ParticipantExportState.Failed -> R.string.message_export_failed
+    }
+    Column(
+        Modifier.fillMaxWidth().testTag(UiTags.EXPORT_STATUS),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            stringResource(title),
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            style = MaterialTheme.typography.titleSmall,
+            color = if (state is ParticipantExportState.Failed) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+        )
+        when (state) {
+            is ParticipantExportState.Running -> {
+                val fraction = state.phaseFraction
+                val phaseDescription = stringResource(title)
+                val progressModifier = Modifier
+                    .fillMaxWidth()
+                    .testTag(UiTags.EXPORT_PROGRESS)
+                    .semantics { contentDescription = phaseDescription }
+                if (fraction == null) {
+                    LinearProgressIndicator(modifier = progressModifier)
+                } else {
+                    LinearProgressIndicator(progress = { fraction }, modifier = progressModifier)
+                    val numbers = NumberFormat.getIntegerInstance()
+                    Text(
+                        stringResource(
+                            R.string.export_phase_progress,
+                            numbers.format(state.completedBatches),
+                            numbers.format(state.totalBatches),
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                OutlinedButton(
+                    onClick = cancel,
+                    modifier = Modifier.fillMaxWidth().testTag(UiTags.EXPORT_CANCEL),
+                ) { Text(stringResource(R.string.action_cancel_export)) }
+            }
+            ParticipantExportState.Cancelling -> {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(
+                    stringResource(R.string.export_cancelling_detail),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            is ParticipantExportState.Failed -> Text(
+                stringResource(R.string.export_retry_hint),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            else -> Unit
+        }
+        val incompleteFileRemains = when (state) {
+            is ParticipantExportState.Cancelled -> state.incompleteFileRemains
+            is ParticipantExportState.Failed -> state.incompleteFileRemains
+            else -> false
+        }
+        if (incompleteFileRemains) {
+            Text(
+                stringResource(R.string.export_incomplete_file_remains),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
     }
 }
 
@@ -1309,12 +1416,10 @@ private fun stateTint(state: ExperimentState): Color = when (state) {
 private fun ParticipantMessage.textResource(): Int = when (this) {
     ParticipantMessage.CONFIGURATION_IMPORT_FAILED -> R.string.message_configuration_import_failed
     ParticipantMessage.JOIN_IMPORT_FAILED -> R.string.message_join_import_failed
-    ParticipantMessage.EXPORT_FAILED -> R.string.message_export_failed
     ParticipantMessage.ACCESS_INSPECTION_FAILED -> R.string.message_access_inspection_failed
     ParticipantMessage.OPERATION_FAILED -> R.string.message_operation_failed
     ParticipantMessage.RESET_FAILED -> R.string.message_reset_failed
     ParticipantMessage.DELETE_FAILED -> R.string.message_delete_failed
-    ParticipantMessage.EXPORT_COMPLETE -> R.string.message_export_complete
     ParticipantMessage.LOCAL_DATA_DELETED -> R.string.message_local_data_deleted
     ParticipantMessage.STUDY_PAUSED_FOR_SAFETY -> R.string.message_study_paused_for_safety
 }

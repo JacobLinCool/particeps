@@ -55,6 +55,7 @@ import cool.jacoblin.particeps.core.model.RuntimeDocument
 import cool.jacoblin.particeps.core.model.SourceCoverage
 import cool.jacoblin.particeps.core.model.SourceClockBasis
 import cool.jacoblin.particeps.core.model.StorageUsage
+import cool.jacoblin.particeps.core.model.StudyReadSnapshot
 import cool.jacoblin.particeps.core.model.StudyStore
 import cool.jacoblin.particeps.core.model.withComputedDigest
 import cool.jacoblin.particeps.core.resource.ApplyReceipt
@@ -2540,12 +2541,21 @@ class ExperimentRuntimeTest {
             runtime = successor
             pending = null
         }
-        override suspend fun readCommits(
-            fromCommitInclusive: Long,
-            throughCommitInclusive: Long,
-            consume: (EngineCommit) -> Unit,
-        ) {
-            commits.filter { it.commitSequence in fromCommitInclusive..throughCommitInclusive }.forEach(consume)
+        override suspend fun <T> withReadSnapshot(block: suspend (StudyReadSnapshot) -> T): T {
+            val capturedRuntime = requireNotNull(runtime)
+            val capturedCommits = commits.toList()
+            return block(object : StudyReadSnapshot {
+                override val runtime = capturedRuntime
+                override suspend fun readCommits(
+                    fromCommitInclusive: Long,
+                    throughCommitInclusive: Long,
+                    consume: (EngineCommit) -> Boolean,
+                ) {
+                    for (commit in capturedCommits) {
+                        if (commit.commitSequence in fromCommitInclusive..throughCommitInclusive && !consume(commit)) break
+                    }
+                }
+            })
         }
         override suspend fun storageUsage() = StorageUsage(0, 1)
         override suspend fun evictThrough(runtime: RuntimeDocument, targetBytes: Long): RuntimeDocument = runtime

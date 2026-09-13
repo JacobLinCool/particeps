@@ -32,6 +32,8 @@ import cool.jacoblin.particeps.core.definition.resourceKey
 import cool.jacoblin.particeps.core.definition.signedProfiles
 import cool.jacoblin.particeps.core.export.BundleKind
 import cool.jacoblin.particeps.core.export.BundleProducer
+import cool.jacoblin.particeps.core.export.ExportProgress
+import cool.jacoblin.particeps.core.export.ExportStage
 import cool.jacoblin.particeps.core.export.ExportReceipt
 import cool.jacoblin.particeps.core.export.ExportSnapshot
 import cool.jacoblin.particeps.core.export.ResearchExport
@@ -70,6 +72,11 @@ import java.time.ZoneId
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -737,32 +744,42 @@ class StudySessionManager(
     fun intervention(interventionId: String): InterventionConfiguration? =
         verified?.configuration?.interventions?.singleOrNull { it.id == interventionId }
 
-    suspend fun exportTo(destination: OutputStream): ExportReceipt = exportMutex.withLock {
-        val request = sessionMutex.withLock {
-            check(!mutableSnapshot.value.deletionPending) { "Study deletion is pending" }
-            val configuration = checkNotNull(verified) { "No active study" }
-            val currentStore = checkNotNull(store) { "No active study store" }
-            val document = checkNotNull(currentStore.loadRuntime()) { "No durable runtime" }
-            ExportRequest(
-                snapshot = ExportSnapshot(
-                    verifiedConfiguration = configuration,
-                    runtime = document,
-                    producer = bundleProducer,
-                    bundleKind = BundleKind.MANUAL_EXPORT,
-                    exportedAtUtcMillis = exportedAtUtcMillis(),
-                    throughCommit = document.revision,
-                ),
-                store = currentStore,
-                configurationSha256 = configuration.configurationSha256,
-            )
+    /** Owns [destination] immediately; all paths close it on IO before publishing success. */
+    suspend fun exportTo(
+        destination: OutputStream,
+        onProgress: (ExportProgress) -> Unit = {},
+    ): ExportReceipt {
+        val receipt = destination.useOnIo { output ->
+            onProgress(ExportProgress(ExportStage.PREPARING))
+            exportMutex.withLock {
+                val request = sessionMutex.withLock {
+                    check(!mutableSnapshot.value.deletionPending) { "Study deletion is pending" }
+                    ExportRequest(
+                        configuration = checkNotNull(verified) { "No active study" },
+                        store = checkNotNull(store) { "No active study store" },
+                    )
+                }
+                request.store.withReadSnapshot { reader ->
+                    ResearchExport.encrypt(
+                        ExportSnapshot(
+                            verifiedConfiguration = request.configuration,
+                            runtime = reader.runtime,
+                            producer = bundleProducer,
+                            bundleKind = BundleKind.MANUAL_EXPORT,
+                            exportedAtUtcMillis = exportedAtUtcMillis(),
+                        ),
+                        reader,
+                        output,
+                        onProgress,
+                    )
+                }
+            }
         }
-        val receipt = destination.use { output ->
-            ResearchExport.encrypt(request.snapshot, request.store, output)
-        }
+        currentCoroutineContext().ensureActive()
         sessionMutex.withLock {
             if (
                 !mutableSnapshot.value.deletionPending &&
-                verified?.configurationSha256 == request.configurationSha256
+                verified?.configurationSha256 == receipt.configurationSha256
             ) {
                 mutableSnapshot.update {
                     it.copy(
@@ -775,7 +792,7 @@ class StudySessionManager(
                 }
             }
         }
-        receipt
+        return receipt
     }
 
     /** Encrypts one durable automatic-upload stage. The caller owns atomic staging and retries. */
@@ -783,31 +800,34 @@ class StudySessionManager(
         destination: OutputStream,
         bundleId: UUID,
         maximumPlaintextBytes: Long? = null,
-    ): ExportReceipt? = exportMutex.withLock {
-        val request = sessionMutex.withLock {
-            check(!mutableSnapshot.value.deletionPending) { "Study deletion is pending" }
-            val configuration = verified ?: return@withLock null
-            if (configuration.configuration.upload == null) return@withLock null
-            val currentStore = store ?: return@withLock null
-            val document = currentStore.loadRuntime() ?: return@withLock null
-            if (document.uploadedThroughCommit >= document.revision) return@withLock null
-            ExportRequest(
-                snapshot = ExportSnapshot(
-                    verifiedConfiguration = configuration,
-                    runtime = document,
-                    producer = bundleProducer,
-                    bundleKind = BundleKind.AUTOMATIC_UPLOAD,
-                    exportedAtUtcMillis = exportedAtUtcMillis(),
-                    bundleId = bundleId,
-                    fromCommit = document.uploadedThroughCommit + 1,
-                    throughCommit = document.revision,
-                    maximumPlaintextBytes = maximumPlaintextBytes,
-                ),
-                store = currentStore,
-                configurationSha256 = configuration.configurationSha256,
-            )
-        } ?: return@withLock null
-        destination.use { output -> ResearchExport.encrypt(request.snapshot, request.store, output) }
+    ): ExportReceipt? = destination.useOnIo { output ->
+        exportMutex.withLock {
+            val request = sessionMutex.withLock {
+                check(!mutableSnapshot.value.deletionPending) { "Study deletion is pending" }
+                val configuration = verified ?: return@withLock null
+                if (configuration.configuration.upload == null) return@withLock null
+                val currentStore = store ?: return@withLock null
+                ExportRequest(configuration, currentStore)
+            } ?: return@withLock null
+            request.store.withReadSnapshot { reader ->
+                val document = reader.runtime
+                if (document.uploadedThroughCommit >= document.revision) return@withReadSnapshot null
+                ResearchExport.encrypt(
+                    ExportSnapshot(
+                        verifiedConfiguration = request.configuration,
+                        runtime = document,
+                        producer = bundleProducer,
+                        bundleKind = BundleKind.AUTOMATIC_UPLOAD,
+                        exportedAtUtcMillis = exportedAtUtcMillis(),
+                        bundleId = bundleId,
+                        fromCommit = document.uploadedThroughCommit + 1,
+                        maximumPlaintextBytes = maximumPlaintextBytes,
+                    ),
+                    reader,
+                    output,
+                )
+            }
+        }
     }
 
     /** Persists the authenticated server acknowledgement before deleting the staged ciphertext. */
@@ -1137,9 +1157,8 @@ class StudySessionManager(
     }
 
     private data class ExportRequest(
-        val snapshot: ExportSnapshot,
+        val configuration: VerifiedConfiguration,
         val store: StudyStore,
-        val configurationSha256: String,
     )
 
     private data class PendingCleanup(
@@ -1216,4 +1235,30 @@ private fun jsonString(value: String): String = buildString {
 
 private fun Throwable.rethrowCancellation() {
     if (this is CancellationException) throw this
+}
+
+/** Closing may block in a document provider; cancellation must neither leak it nor publish success. */
+private suspend fun <T> OutputStream.useOnIo(block: suspend (OutputStream) -> T): T {
+    var failure: Throwable? = null
+    val result = try {
+        withContext(Dispatchers.IO) { block(this@useOnIo) }
+    } catch (caught: Throwable) {
+        failure = caught
+        throw caught
+    } finally {
+        withContext(NonCancellable + Dispatchers.IO) {
+            val originalFailure = failure
+            if (originalFailure == null) {
+                close()
+            } else {
+                try {
+                    close()
+                } catch (closeFailure: Throwable) {
+                    originalFailure.addSuppressed(closeFailure)
+                }
+            }
+        }
+    }
+    currentCoroutineContext().ensureActive()
+    return result
 }

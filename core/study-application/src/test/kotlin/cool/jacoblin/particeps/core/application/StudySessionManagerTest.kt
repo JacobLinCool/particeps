@@ -22,15 +22,29 @@ import cool.jacoblin.particeps.core.model.RuntimeDocument
 import cool.jacoblin.particeps.core.model.StorageUsage
 import cool.jacoblin.particeps.core.model.StudyResetMarker
 import cool.jacoblin.particeps.core.model.StudyResetStore
+import cool.jacoblin.particeps.core.model.StudyReadSnapshot
 import cool.jacoblin.particeps.core.model.StudyStore
 import cool.jacoblin.particeps.core.protocol.ActiveStudyRecord
 import cool.jacoblin.particeps.core.protocol.ActiveStudyStore
 import cool.jacoblin.particeps.core.protocol.VerifiedConfiguration
 import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.OutputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -77,6 +91,162 @@ class StudySessionManagerTest {
         assertNull(fixture.active.record)
         assertNull(fixture.manager.snapshot.value.study)
         assertTrue(fixture.manager.snapshot.value.initialized)
+    }
+
+    @Test
+    fun slowExportAllowsPauseAndWithdrawWithoutRecoveryAndKeepsItsOriginalBoundary() = runTest {
+        val fixture = fixture()
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        fixture.manager.reviewStudy()
+        fixture.manager.acceptConsent()
+        fixture.manager.completeAccessSetup()
+        fixture.manager.start()
+        fixture.store.rejectRecoveryReads = true
+        val boundary = requireNotNull(fixture.store.runtime).revision
+        val writing = CompletableDeferred<Unit>()
+        val release = CountDownLatch(1)
+        val firstWrite = AtomicBoolean(true)
+        var closed = false
+        val destination = object : ByteArrayOutputStream() {
+            override fun write(bytes: ByteArray, offset: Int, length: Int) {
+                if (firstWrite.compareAndSet(true, false)) {
+                    writing.complete(Unit)
+                    check(release.await(10, TimeUnit.SECONDS)) { "Test did not release export" }
+                }
+                super.write(bytes, offset, length)
+            }
+            override fun close() { closed = true }
+        }
+        val exporting = async { fixture.manager.exportTo(destination) }
+        try {
+            writing.await()
+            assertEquals(StudyCommandResult.Success, withTimeout(2_000) { fixture.manager.pause() })
+            assertEquals(StudyCommandResult.Success, withTimeout(2_000) { fixture.manager.withdraw() })
+            runCurrent()
+            assertEquals(ExperimentState.WITHDRAWN, fixture.manager.snapshot.value.runtime.state)
+            assertTrue(exporting.isActive)
+            assertNull(fixture.manager.snapshot.value.lastExport)
+        } finally {
+            release.countDown()
+        }
+        val receipt = exporting.await()
+        assertEquals(boundary, receipt.lastCommitSequence)
+        assertTrue(requireNotNull(fixture.store.runtime).revision > receipt.lastCommitSequence)
+        assertTrue(closed)
+        fixture.manager.shutdownProcess()
+    }
+
+    @Test
+    fun cancellingWhileWaitingForAnotherExportClosesDestinationWithoutSuccess() = runTest {
+        val fixture = fixture()
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        val writing = CompletableDeferred<Unit>()
+        val release = CountDownLatch(1)
+        val first = async {
+            fixture.manager.exportTo(object : OutputStream() {
+                override fun write(value: Int) {
+                    writing.complete(Unit)
+                    check(release.await(10, TimeUnit.SECONDS))
+                }
+            })
+        }
+        try {
+            writing.await()
+            val waiting = CompletableDeferred<Unit>()
+            var closed = false
+            var succeeded = false
+            val second = launch {
+                fixture.manager.exportTo(object : ByteArrayOutputStream() {
+                    override fun close() { closed = true }
+                }) { waiting.complete(Unit) }
+                succeeded = true
+            }
+            waiting.await()
+            second.cancelAndJoin()
+            assertTrue(closed)
+            assertFalse(succeeded)
+            assertNull(fixture.manager.snapshot.value.lastExport)
+        } finally {
+            release.countDown()
+        }
+        first.await()
+        fixture.manager.shutdownProcess()
+    }
+
+    @Test
+    fun destinationCloseFailureDoesNotPublishLastExport() = runTest {
+        val fixture = fixture()
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        var closedOffCallerThread = false
+        val callerThread = Thread.currentThread()
+        val destination = object : ByteArrayOutputStream() {
+            override fun close() {
+                closedOffCallerThread = Thread.currentThread() != callerThread
+                throw IOException("provider close failed")
+            }
+        }
+        var failure: IOException? = null
+        try {
+            fixture.manager.exportTo(destination)
+        } catch (caught: IOException) {
+            failure = caught
+        }
+        assertEquals("provider close failed", requireNotNull(failure).message)
+        assertTrue(closedOffCallerThread)
+        assertNull(fixture.manager.snapshot.value.lastExport)
+        fixture.manager.shutdownProcess()
+    }
+
+    @Test
+    fun automaticUploadCancelledDuringFinalCloseDoesNotReturnAReceipt() = runTest {
+        val fixture = fixture(studyConfiguration = configuration(withUpload = true))
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        fixture.store.rejectRecoveryReads = true
+        var completed = false
+        var closed = false
+        val exporting = launch(Dispatchers.IO) {
+            val exportJob = currentCoroutineContext().job
+            fixture.manager.prepareAutomaticUpload(object : ByteArrayOutputStream() {
+                override fun close() {
+                    exportJob.cancel()
+                    closed = true
+                }
+            }, UUID.randomUUID(), 1)
+            completed = true
+        }
+        exporting.join()
+        assertTrue(exporting.isCancelled)
+        assertTrue(closed)
+        assertFalse(completed)
+        fixture.manager.shutdownProcess()
+    }
+
+    @Test
+    fun missingStudyAndEmptyAutomaticUploadStillCloseTheirDestinations() = runTest {
+        val fixture = fixture(studyConfiguration = configuration(withUpload = true))
+        fixture.manager.initialize()
+        var closes = 0
+        fun destination() = object : ByteArrayOutputStream() {
+            override fun close() { closes++ }
+        }
+        var failed = false
+        try {
+            fixture.manager.exportTo(destination())
+        } catch (_: IllegalStateException) {
+            failed = true
+        }
+        assertTrue(failed)
+        assertEquals(1, closes)
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        val document = requireNotNull(fixture.store.runtime)
+        fixture.store.runtime = document.copy(uploadedThroughCommit = document.revision)
+        assertNull(fixture.manager.prepareAutomaticUpload(destination(), UUID.randomUUID(), 1))
+        assertEquals(2, closes)
+        fixture.manager.shutdownProcess()
     }
 
     @Test
@@ -394,12 +564,21 @@ class StudySessionManagerTest {
             runtime = successor
             pending = null
         }
-        override suspend fun readCommits(
-            fromCommitInclusive: Long,
-            throughCommitInclusive: Long,
-            consume: (EngineCommit) -> Unit,
-        ) {
-            commits.filter { it.commitSequence in fromCommitInclusive..throughCommitInclusive }.forEach(consume)
+        override suspend fun <T> withReadSnapshot(block: suspend (StudyReadSnapshot) -> T): T {
+            val capturedRuntime = requireNotNull(runtime)
+            val capturedCommits = commits.toList()
+            return block(object : StudyReadSnapshot {
+                override val runtime = capturedRuntime
+                override suspend fun readCommits(
+                    fromCommitInclusive: Long,
+                    throughCommitInclusive: Long,
+                    consume: (EngineCommit) -> Boolean,
+                ) {
+                    for (commit in capturedCommits) {
+                        if (commit.commitSequence in fromCommitInclusive..throughCommitInclusive && !consume(commit)) break
+                    }
+                }
+            })
         }
         override suspend fun storageUsage(): StorageUsage = StorageUsage(0, StudyConfiguration.MINIMUM_LOCAL_BYTES)
         override suspend fun evictThrough(runtime: RuntimeDocument, targetBytes: Long): RuntimeDocument = runtime

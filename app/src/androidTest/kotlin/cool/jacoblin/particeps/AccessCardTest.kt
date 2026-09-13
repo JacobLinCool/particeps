@@ -1,11 +1,18 @@
 package cool.jacoblin.particeps
 
+import android.graphics.Bitmap
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import cool.jacoblin.particeps.core.collector.AccessKind
@@ -191,6 +198,7 @@ class AccessCardTest {
             CollectorApp(
                 state = StudyUiState.ActiveStudy(
                     model = participantModel(emptyList(), state.value),
+                    export = ParticipantExportState.Idle,
                     message = null,
                     busy = false,
                     recoveryStatus = null,
@@ -219,6 +227,85 @@ class AccessCardTest {
         composeRule.onNodeWithTag(UiTags.COMPLETE).assertDoesNotExist()
     }
 
+    @Test
+    fun exportAndCancellationLeaveCollectionControlsAvailable() {
+        val export = mutableStateOf<ParticipantExportState>(
+            ParticipantExportState.Running(ParticipantExportPhase.ENCRYPTING, 10, 20),
+        )
+        var pauses = 0
+        composeRule.setContent {
+            CollectorApp(
+                state = StudyUiState.ActiveStudy(
+                    model = participantModel(emptyList()),
+                    export = export.value,
+                    message = null,
+                    busy = false,
+                    recoveryStatus = null,
+                ),
+                actions = actions().copy(
+                    pause = { pauses++ },
+                    cancelExport = { export.value = ParticipantExportState.Cancelling },
+                ),
+            )
+        }
+        composeRule.onNodeWithTag(UiTags.PAUSE).performScrollTo().assertIsEnabled().performClick()
+        assertEquals(1, pauses)
+        composeRule.onNodeWithTag(UiTags.COMPLETE).performScrollTo().assertIsEnabled()
+        composeRule.onNodeWithTag(UiTags.WITHDRAW).performScrollTo().assertIsEnabled()
+        composeRule.onNodeWithTag(UiTags.EXPORT).performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithTag(UiTags.EXPORT_STATUS).performScrollTo()
+        captureExportScreenshot("export-progress")
+        composeRule.onNodeWithTag(UiTags.EXPORT_CANCEL).performScrollTo().performClick()
+        composeRule.onNodeWithTag(UiTags.EXPORT_CANCEL).assertDoesNotExist()
+        composeRule.onNodeWithTag(UiTags.EXPORT_STATUS).performScrollTo()
+        captureExportScreenshot("export-cancelling")
+        composeRule.onNodeWithTag(UiTags.PAUSE).performScrollTo().assertIsEnabled()
+        composeRule.onNodeWithTag(UiTags.COMPLETE).performScrollTo().assertIsEnabled()
+        composeRule.onNodeWithTag(UiTags.WITHDRAW).performScrollTo().assertIsEnabled()
+        composeRule.onNodeWithTag(UiTags.EXPORT).performScrollTo().assertIsNotEnabled()
+    }
+
+    @Test
+    fun terminalDeletionWaitsForExportCleanupAndReportsAnUnremovedFile() {
+        val export = mutableStateOf<ParticipantExportState>(ParticipantExportState.Cancelling)
+        composeRule.setContent {
+            CollectorApp(
+                state = StudyUiState.ActiveStudy(
+                    model = participantModel(emptyList(), ExperimentState.COMPLETED),
+                    export = export.value,
+                    message = null,
+                    busy = false,
+                    recoveryStatus = null,
+                ),
+                actions = actions(),
+            )
+        }
+        composeRule.onNodeWithTag(UiTags.DELETE).performScrollTo().assertIsNotEnabled()
+        composeRule.runOnIdle {
+            export.value = ParticipantExportState.Cancelled(incompleteFileRemains = true)
+        }
+        composeRule.onNodeWithTag(UiTags.DELETE).performScrollTo().assertIsEnabled()
+        composeRule.onNodeWithTag(UiTags.EXPORT).performScrollTo().assertIsEnabled()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        composeRule.onNodeWithText(context.getString(R.string.export_incomplete_file_remains))
+            .performScrollTo().assertExists()
+        composeRule.runOnIdle { export.value = ParticipantExportState.Failed(incompleteFileRemains = true) }
+        composeRule.onNodeWithTag(UiTags.EXPORT_STATUS).performScrollTo()
+        captureExportScreenshot("export-failed")
+    }
+
+    private fun captureExportScreenshot(name: String) {
+        if (InstrumentationRegistry.getArguments().getString("captureExportScreenshots") != "true") return
+        composeRule.waitForIdle()
+        val bitmap = composeRule.onRoot().captureToImage().asAndroidBitmap()
+        val directory = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir
+            .resolve("export-screenshots")
+        check(directory.isDirectory || directory.mkdirs())
+        directory.resolve("$name.png").outputStream().use { output ->
+            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output))
+        }
+    }
+
     private fun actions(requestAccess: (SetupAction) -> Unit = {}) = StudyUiActions(
         scan = {},
         import = {},
@@ -233,6 +320,7 @@ class AccessCardTest {
         complete = {},
         withdraw = {},
         export = {},
+        cancelExport = {},
         delete = {},
         retryRecovery = {},
         resetAndRestart = {},

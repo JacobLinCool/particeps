@@ -17,9 +17,12 @@ import cool.jacoblin.particeps.core.model.PendingSourceSubmission
 import cool.jacoblin.particeps.core.model.RecordedEvent
 import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.core.model.RuntimeDocument
+import cool.jacoblin.particeps.core.model.RuntimeComponentKey
+import cool.jacoblin.particeps.core.model.RuntimeComponentKind
 import cool.jacoblin.particeps.core.model.RuntimeMutation
 import cool.jacoblin.particeps.core.model.RuntimeProjection
 import cool.jacoblin.particeps.core.model.SourceObservation
+import cool.jacoblin.particeps.core.model.StudyReadSnapshot
 import cool.jacoblin.particeps.core.model.StudyStoreRecoveryException
 import cool.jacoblin.particeps.core.model.StudyStoreRecoveryFailure
 import cool.jacoblin.particeps.core.model.withComputedDigest
@@ -28,7 +31,11 @@ import java.io.IOException
 import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.util.UUID
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertArrayEquals
@@ -252,6 +259,182 @@ class EncryptedExperimentStoreTest {
     }
 
     @Test
+    fun warmSnapshotUsesAcknowledgedRuntimeWithoutReopeningTheRecoveryCheckpoint() = runBlocking {
+        val initial = initialRuntime()
+        store.initialize(initial)
+        val (commit, successor) = lifecycleCommit(initial, ExperimentState.CONFIG_VERIFIED)
+        store.appendCommit(commit, successor)
+        snapshotFile().writeBytes(byteArrayOf(0))
+
+        store.withReadSnapshot { snapshot ->
+            assertEquals(successor, snapshot.runtime)
+            snapshot.readCommits(1, 1) {
+                assertEquals(commit, it)
+                true
+            }
+        }
+        val failure = assertThrows(StudyStoreRecoveryException::class.java) {
+            runBlocking { newStore().loadRuntime() }
+        }
+        assertEquals(StudyStoreRecoveryFailure.SNAPSHOT_INVALID, failure.failure)
+    }
+
+    @Test
+    fun snapshotConsumerCanAppendWhileItsRuntimeAndReadBoundaryStayFixed() = runBlocking {
+        val initial = initialRuntime()
+        store.initialize(initial)
+        val (first, afterFirst) = lifecycleCommit(initial, ExperimentState.CONFIG_VERIFIED)
+        store.appendCommit(first, afterFirst)
+        val (second, afterSecond) = lifecycleCommit(afterFirst, ExperimentState.CONSENT_PENDING)
+
+        store.withReadSnapshot { snapshot ->
+            snapshot.readCommits(1, 1) {
+                runBlocking { withTimeout(5_000) { store.appendCommit(second, afterSecond) } }
+                true
+            }
+            assertEquals(afterFirst, snapshot.runtime)
+            val sequences = mutableListOf<Long>()
+            snapshot.readCommits(1, 1) {
+                sequences += it.commitSequence
+                true
+            }
+            assertEquals(listOf(1L), sequences)
+            assertThrows(IllegalArgumentException::class.java) {
+                runBlocking { snapshot.readCommits(1, 2) { true } }
+            }
+        }
+        store.withReadSnapshot { assertEquals(afterSecond, it.runtime) }
+    }
+
+    @Test
+    fun snapshotRuntimeOwnsItsCollectionValues() = runBlocking {
+        val component = RuntimeComponentKey(RuntimeComponentKind.RESOURCE, "test-resource")
+        val components = mutableMapOf(component to "before")
+        store.initialize(initialRuntime().copy(components = components))
+
+        store.withReadSnapshot { snapshot ->
+            components[component] = "after"
+            assertEquals("before", snapshot.runtime.components[component])
+            assertThrows(UnsupportedOperationException::class.java) {
+                (snapshot.runtime.components as MutableMap<RuntimeComponentKey, String>)[component] = "changed"
+            }
+        }
+        Unit
+    }
+
+    @Test
+    fun coldTailRecoveryPreservesAnOpenReadSnapshot() = runBlocking {
+        val initial = initialRuntime()
+        store.initialize(initial)
+        val (commit, successor) = lifecycleCommit(initial, ExperimentState.CONFIG_VERIFIED)
+        store.appendCommit(commit, successor)
+        val segment = commitSegments().single()
+        val acknowledgedLength = segment.length()
+
+        store.withReadSnapshot { snapshot ->
+            RandomAccessFile(segment, "rw").use { file ->
+                file.seek(file.length())
+                file.writeLong(2)
+                file.writeInt(1024)
+                file.fd.sync()
+            }
+            assertEquals(successor, store.loadRuntime())
+            assertEquals(acknowledgedLength, segment.length())
+            snapshot.readCommits(1, 1) {
+                assertEquals(commit, it)
+                true
+            }
+        }
+    }
+
+    @Test
+    fun snapshotConsumerStopsBeforeDecryptingTheRemainingRequestedRange() = runBlocking {
+        var current = initialRuntime()
+        store.initialize(current)
+        repeat(3) {
+            val (commit, successor) = lifecycleCommit(current, ExperimentState.CONFIG_VERIFIED)
+            store.appendCommit(commit, successor)
+            current = successor
+        }
+        corruptCommitCiphertext(3)
+
+        store.withReadSnapshot { snapshot ->
+            val sequences = mutableListOf<Long>()
+            snapshot.readCommits(1, 3) {
+                sequences += it.commitSequence
+                it.commitSequence < 2
+            }
+            assertEquals(listOf(1L, 2L), sequences)
+            assertThrows(Exception::class.java) {
+                runBlocking { snapshot.readCommits(1, 3) { true } }
+            }
+        }
+        Unit
+    }
+
+    @Test
+    fun cancellationStopsTheScanAndReleasesTheSnapshotPin() = runBlocking {
+        var current = initialRuntime()
+        store.initialize(current)
+        repeat(3) {
+            val (commit, successor) = lifecycleCommit(current, ExperimentState.CONFIG_VERIFIED)
+            store.appendCommit(commit, successor)
+            current = successor
+        }
+        var consumed = 0
+        val reader = launch {
+            val context = currentCoroutineContext()
+            store.withReadSnapshot { snapshot ->
+                snapshot.readCommits(1, 3) {
+                    consumed++
+                    context.cancel()
+                    true
+                }
+            }
+        }
+        withTimeout(5_000) { reader.join() }
+        assertTrue(reader.isCancelled)
+        assertEquals(1, consumed)
+        store.clear()
+        assertTrue(commitSegments().isEmpty())
+    }
+
+    @Test
+    fun readSnapshotCannotBeUsedOutsideItsScope() = runBlocking {
+        store.initialize(initialRuntime())
+        lateinit var released: StudyReadSnapshot
+        store.withReadSnapshot { released = it }
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking { released.readCommits(1, 0) { true } }
+        }
+        Unit
+    }
+
+    @Test
+    fun pinnedSnapshotDefersEvictionAndRejectsClearUntilReleased() = runBlocking {
+        val initial = initialRuntime()
+        store.initialize(initial)
+        val (commit, successor) = lifecycleCommit(
+            initial,
+            ExperimentState.CONFIG_VERIFIED,
+            uploadedThroughCommit = 1,
+        )
+        store.appendCommit(commit, successor)
+
+        store.withReadSnapshot { snapshot ->
+            assertEquals(successor, store.evictThrough(successor, targetBytes = 0))
+            assertThrows(IllegalStateException::class.java) { runBlocking { store.clear() } }
+            snapshot.readCommits(1, 1) {
+                assertEquals(commit, it)
+                true
+            }
+        }
+        val evicted = store.evictThrough(successor, targetBytes = 0)
+        assertEquals(2L, evicted.retainedFromCommit)
+        assertTrue(commitSegments().isEmpty())
+    }
+
+    @Test
     fun tornUncommittedTailIsTruncatedWithoutChangingTheSnapshot() = runBlocking {
         val initial = initialRuntime()
         store.initialize(initial)
@@ -369,6 +552,7 @@ class EncryptedExperimentStoreTest {
         events: List<RecordedEvent> = emptyList(),
         observations: List<SourceObservation> = emptyList(),
         mutations: List<RuntimeMutation> = emptyList(),
+        uploadedThroughCommit: Long = current.uploadedThroughCommit,
     ): Pair<EngineCommit, RuntimeDocument> {
         val projection = RuntimeProjection(
             state = state,
@@ -381,7 +565,7 @@ class EncryptedExperimentStoreTest {
             clockCheckpoint = current.clockCheckpoint,
             activeConditionEpoch = current.activeConditionEpoch,
             lifetimeDataEventCount = current.lifetimeDataEventCount + events.size,
-            uploadedThroughCommit = current.uploadedThroughCommit,
+            uploadedThroughCommit = uploadedThroughCommit,
             evaluatedThroughCommit = current.revision + 1,
             retainedFromCommit = current.retainedFromCommit,
         )
@@ -433,6 +617,17 @@ class EncryptedExperimentStoreTest {
     )
 
     private fun newStore() = EncryptedExperimentStore(context, experimentId, QUOTA_BYTES)
+
+    private suspend fun EncryptedExperimentStore.readCommits(
+        fromCommitInclusive: Long,
+        throughCommitInclusive: Long,
+        consume: (EngineCommit) -> Unit,
+    ) = withReadSnapshot { snapshot ->
+        snapshot.readCommits(fromCommitInclusive, throughCommitInclusive) {
+            consume(it)
+            true
+        }
+    }
 
     private fun snapshotFile(): File = context.noBackupFilesDir.resolve("experiments")
         .resolve("${opaqueId()}.runtime3.ptc")

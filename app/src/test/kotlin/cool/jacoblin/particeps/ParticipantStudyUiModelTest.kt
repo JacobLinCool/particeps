@@ -30,6 +30,9 @@ class ParticipantStudyUiModelTest {
             ParticipantAccessItem::class.java,
             ParticipantUploadDisclosure::class.java,
             ParticipantExportSummary::class.java,
+            ParticipantExportState.Running::class.java,
+            ParticipantExportState.Failed::class.java,
+            ParticipantExportState.Cancelled::class.java,
         )
         val PROHIBITED_IDENTIFIERS = listOf(
             "targetpackage",
