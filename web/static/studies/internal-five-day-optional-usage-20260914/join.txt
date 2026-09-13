@@ -1,0 +1,1 @@
+particeps://join/v1?artifact=https%3A%2F%2Fjacoblincool.github.io%2Fparticeps%2Fstudies%2Finternal-five-day-optional-usage-20260914%2F8e24d3e8a524ca2735256ac841bf17c1bf16f11fb9ac15c57be32bfa4ca9ccd1.partcfg&sha256=8e24d3e8a524ca2735256ac841bf17c1bf16f11fb9ac15c57be32bfa4ca9ccd1&signer_fingerprint=3E17CD8A4AD2198D87B781EA9EBD3201
