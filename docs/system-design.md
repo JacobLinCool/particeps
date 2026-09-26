@@ -705,12 +705,18 @@ that ended it. Every total stops at the signed duration, which also covers a dea
 late after the phone was off. The study day is 24-hour periods of that study length, ending at the
 planned end; the planned end is shown only while the deadline is trusted. The screen also shows
 local storage, which `StudySessionManager` measures only when the screen opens, and the size and
-event count of the last export made since the process started. That export summary lives only in
-the process's session snapshot, so after a process restart the row is absent until the next export
-rather than claiming that nothing was exported. Both byte figures depend on how many commits the
-study makes, and so on its automation (the gyroscope and accelerometer commit window); the threat
-model lists them as residual side channels. For the same reason the running screen shows upload
-progress, and export shows phase progress, only as whole-percent shares, never as commit counts. The signed `configuration_id` is not part of the projection: it differs between study arms
+event count of the last export made since the process started. Both sizes are shown in 50 MB steps
+("Less than 50 MB", then "50–100 MB", "100–150 MB", and so on, counting 1 MB as 1,000,000 bytes).
+The steps limit the bytes stored per event to what a 50 MB difference reveals; they do not hide
+collection windows, because the export's event count and the running screen's live event count
+are exact and already give the rate of collection between two readings. The view model reduces
+each size to its `ParticipantSizeBucket` step, so no byte count reaches the projection or Compose. That export
+summary lives only in the process's session snapshot, so after a process restart the row is absent
+until the next export rather than claiming that nothing was exported. Even in steps, both sizes
+depend on how many commits the study makes, and so on its automation (the gyroscope and
+accelerometer commit window); the threat model lists them as residual side channels. For the same
+reason the running screen shows upload progress, and export shows phase progress, only as
+whole-percent shares, never as commit counts. The signed `configuration_id` is not part of the projection: it differs between study arms
 and, from the Web tool, carries a digest of the whole configuration. Each state offers
 only the exit its command accepts: setup states offer "Decline and remove this study" (the local
 deletion path, since Withdraw is a runtime command only from `RUNNING` or `PAUSED`), started studies

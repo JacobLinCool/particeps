@@ -20,6 +20,7 @@ import cool.jacoblin.particeps.core.definition.StudyConfigurationCodec
 import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.protocol.VerifiedConfiguration
 import java.security.MessageDigest
+import java.text.NumberFormat
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -57,7 +58,7 @@ class StudyAndMyDataSentinelTest {
                 StudyAccessStatus(AccessKind.USAGE_ACCESS, true, AccessResolution.Satisfied, null),
                 StudyAccessStatus(AccessKind.GYROSCOPE_HARDWARE, true, AccessResolution.Satisfied, null),
             ),
-            lastExport = CoreExportSummary(commitCount = 12, eventCount = 1_200, byteCount = 2_500_000),
+            lastExport = CoreExportSummary(commitCount = 12, eventCount = 1_200, byteCount = EXPORTED_BYTES),
         ).toParticipantUiModel()
         composeRule.setContent {
             CollectorApp(
@@ -86,11 +87,17 @@ class StudyAndMyDataSentinelTest {
 
         composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA).performScrollTo().performClick()
         composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA_SCREEN).assertExists()
-        composeRule.waitUntil {
-            semanticsDump().contains(Formatter.formatShortFileSize(context, STORED_BYTES))
-        }
+        // Both sizes appear only as their 50 MB step: stored 123.5 MB, exported 2.5 MB.
+        val numbers = NumberFormat.getIntegerInstance()
+        val storedStep = context.getString(R.string.size_step_range, numbers.format(100), numbers.format(150))
+        val exportedStep = context.getString(R.string.size_below_step, numbers.format(50))
+        composeRule.waitUntil { semanticsDump().contains(storedStep) }
         val screen = semanticsDump()
         assertNoSentinel(screen, "Study and my data")
+        listOf(STORED_BYTES, EXPORTED_BYTES).forEach { bytes ->
+            listOf(Formatter.formatShortFileSize(context, bytes), Formatter.formatFileSize(context, bytes))
+                .forEach { exact -> assertFalse("Shows the exact size $exact:\n$screen", exact in screen) }
+        }
         assertShows(
             screen,
             listOf(
@@ -110,7 +117,8 @@ class StudyAndMyDataSentinelTest {
                 context.getString(R.string.data_access_line, context.getString(R.string.access_usage_access)),
                 context.getString(R.string.rights_withdraw_upload),
                 context.getString(R.string.rights_delete_upload),
-                Formatter.formatShortFileSize(context, STORED_BYTES),
+                storedStep,
+                context.getString(R.string.details_last_export_value, exportedStep, numbers.format(1_200)),
             ) + categoryNames,
         )
     }
@@ -186,7 +194,7 @@ class StudyAndMyDataSentinelTest {
         delete = {},
         retryRecovery = {},
         resetAndRestart = {},
-        readLocalStorageBytes = { STORED_BYTES },
+        readLocalStorageSize = { ParticipantSizeBucket.of(STORED_BYTES) },
     )
 
     private companion object {
@@ -199,7 +207,8 @@ class StudyAndMyDataSentinelTest {
         const val FLOOR_ASSIGNED_ID = "P-FLOOR-42"
         const val FLOOR_UPLOAD_HOST = "upload.example.invalid"
         const val INSTANCE_ID = "5f0c3a1e-9d2b-4c7a-8e61-2b4d6f8a0c13"
-        const val STORED_BYTES = 3_145_728L
+        const val STORED_BYTES = 123_456_789L
+        const val EXPORTED_BYTES = 2_500_000L
         const val HPKE_PUBLIC_KEY = "ZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5_gIGCg4Q"
         const val SIGNER_PUBLIC_KEY = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
 

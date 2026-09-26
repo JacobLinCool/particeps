@@ -336,11 +336,15 @@
     <string name="participation_active">Collecting time</string>
     <string name="participation_paused">Paused time</string>
     <string name="details_last_export">Last export</string>
-    <!-- %1$s is a file size such as "2.4 MB"; %2$s is a locale-formatted event count. -->
+    <!-- %1$s is a size in 50 MB steps, size_below_step or size_step_range; %2$s is a locale-formatted event count. -->
     <string name="details_last_export_value">%1$s · %2$s events</string>
     <string name="participation_storage">Stored on this phone</string>
     <string name="participation_storage_checking">Checking…</string>
     <string name="participation_storage_unavailable">Not available</string>
+    <!-- Sizes are shown only in 50 MB steps, so that reading them twice does not reveal how fast data is collected. %1$s is the locale-formatted step, 50. -->
+    <string name="size_below_step">Less than %1$s MB</string>
+    <!-- %1$s and %2$s are the locale-formatted bounds of one 50 MB step, such as 50 and 100. -->
+    <string name="size_step_range">%1$s–%2$s MB</string>
 
     <string name="my_data_rights_title">Your rights</string>
     <string name="rights_pause_title">Pause and resume</string>

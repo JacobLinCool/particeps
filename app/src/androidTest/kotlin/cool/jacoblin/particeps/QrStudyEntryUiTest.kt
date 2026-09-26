@@ -80,6 +80,6 @@ class QrStudyEntryUiTest {
         delete = {},
         retryRecovery = {},
         resetAndRestart = {},
-        readLocalStorageBytes = { null },
+        readLocalStorageSize = { null },
     )
 }

@@ -22,6 +22,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import cool.jacoblin.particeps.core.application.StudyCommandResult
 import cool.jacoblin.particeps.core.collector.AccessKind
 import cool.jacoblin.particeps.core.model.ExperimentState
+import java.text.NumberFormat
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -138,6 +139,12 @@ class CoreFlowTest {
         val unavailable = composeRule.activity.getString(R.string.participation_storage_unavailable)
         waitUntilExactlyOneNode(hasTestTag(UiTags.PARTICIPATION_STORAGE) and !hasText(checking))
         composeRule.onNodeWithTag(UiTags.PARTICIPATION_STORAGE).assert(!hasText(unavailable))
+        // A study this young stores well under one 50 MB step, and only the step is shown.
+        val firstStep = composeRule.activity.getString(
+            R.string.size_below_step,
+            NumberFormat.getIntegerInstance().format(ParticipantSizeBucket.STEP_MEGABYTES),
+        )
+        composeRule.onNodeWithTag(UiTags.PARTICIPATION_STORAGE).assert(hasText(firstStep))
         Espresso.pressBack()
         waitUntilExactlyOneNode(hasTestTag(UiTags.PAUSE))
         composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA_SCREEN).assertDoesNotExist()

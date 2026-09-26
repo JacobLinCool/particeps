@@ -1,6 +1,5 @@
 package cool.jacoblin.particeps
 
-import android.text.format.Formatter
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,7 +19,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -76,7 +74,7 @@ internal fun StudyAndMyDataEntry(onOpen: () -> Unit) {
 @Composable
 internal fun StudyAndMyDataScreen(
     study: ParticipantStudyUiModel,
-    readLocalStorageBytes: suspend () -> Long?,
+    readLocalStorageSize: suspend () -> ParticipantSizeBucket?,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -111,7 +109,7 @@ internal fun StudyAndMyDataScreen(
         }
         Section(R.string.my_data_about_title) { AboutThisStudy(study) }
         Section(R.string.my_data_collected_title) { WhatIsCollected(study) }
-        Section(R.string.my_data_participation_title) { YourParticipation(study, readLocalStorageBytes) }
+        Section(R.string.my_data_participation_title) { YourParticipation(study, readLocalStorageSize) }
         Section(R.string.my_data_rights_title) { YourRights(uploads = study.upload != null) }
     }
 }
@@ -245,20 +243,20 @@ private fun WhatIsCollected(study: ParticipantStudyUiModel) {
 private sealed interface StorageReading {
     data object Checking : StorageReading
     data object Unavailable : StorageReading
-    data class Measured(val bytes: Long) : StorageReading
+    data class Measured(val size: ParticipantSizeBucket) : StorageReading
 }
 
 @Composable
 private fun YourParticipation(
     study: ParticipantStudyUiModel,
-    readLocalStorageBytes: suspend () -> Long?,
+    readLocalStorageSize: suspend () -> ParticipantSizeBucket?,
 ) {
-    val context = LocalContext.current
     val now by rememberWallClockMillis()
     // One read per visit. The figure is measured off the main thread by the caller and is never
-    // refreshed in the background; reopening the screen measures it again.
+    // refreshed in the background; reopening the screen measures it again. Like the export size,
+    // it arrives as a 50 MB step, never as bytes.
     val storage by produceState<StorageReading>(StorageReading.Checking) {
-        value = readLocalStorageBytes()?.let(StorageReading::Measured) ?: StorageReading.Unavailable
+        value = readLocalStorageSize()?.let(StorageReading::Measured) ?: StorageReading.Unavailable
     }
     val participation = study.participation
     val numbers = NumberFormat.getIntegerInstance()
@@ -291,7 +289,7 @@ private fun YourParticipation(
                 stringResource(R.string.details_last_export),
                 stringResource(
                     R.string.details_last_export_value,
-                    Formatter.formatShortFileSize(context, it.byteCount),
+                    sizeLabel(it.size),
                     numbers.format(it.eventCount),
                 ),
             )
@@ -301,9 +299,24 @@ private fun YourParticipation(
             when (val reading = storage) {
                 StorageReading.Checking -> stringResource(R.string.participation_storage_checking)
                 StorageReading.Unavailable -> stringResource(R.string.participation_storage_unavailable)
-                is StorageReading.Measured -> Formatter.formatShortFileSize(context, reading.bytes)
+                is StorageReading.Measured -> sizeLabel(reading.size)
             },
             modifier = Modifier.testTag(UiTags.PARTICIPATION_STORAGE),
+        )
+    }
+}
+
+/** "Less than 50 MB" for the first step, otherwise the step's bounds, such as "50–100 MB". */
+@Composable
+private fun sizeLabel(size: ParticipantSizeBucket): String {
+    val numbers = NumberFormat.getIntegerInstance()
+    return if (size.step == 0L) {
+        stringResource(R.string.size_below_step, numbers.format(ParticipantSizeBucket.STEP_MEGABYTES))
+    } else {
+        stringResource(
+            R.string.size_step_range,
+            numbers.format(size.lowerMegabytes),
+            numbers.format(size.upperMegabytes),
         )
     }
 }

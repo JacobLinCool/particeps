@@ -20,8 +20,13 @@ APK, a version code, or release-gate evidence.
   that may adjust transfer speed, and what Pause, Resume, Withdraw, and Delete local data do. It
   also shows the state, study day, planned end once the phone's clock is verified, collecting and
   paused time, the size and event count of an export made since Particeps last started, and local
-  storage measured when the page opens. It has no lifecycle control. The Details toggle is gone,
-  and the signed configuration ID, which differs between study arms, is no longer shown anywhere.
+  storage measured when the page opens. Both sizes are shown in 50 MB steps ("Less than 50 MB",
+  "50–100 MB", and so on), and no byte count reaches the screen. The steps limit the bytes stored
+  per event, which depend on the arm's automation through per-commit overhead, to what a 50 MB
+  difference reveals. They do not hide when collection runs: the export's event count on this page
+  and the running screen's live event count stay exact. It has no lifecycle control. The Details
+  toggle is gone, and the signed configuration ID, which differs between study arms, is no longer
+  shown anywhere.
 - Every setup step, from import through Ready, offers **Decline and remove this study**. After a
   confirmation it removes the study and setup progress through the local deletion path; Android
   access granted during setup stays on.

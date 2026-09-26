@@ -183,7 +183,8 @@ screen. It has four parts:
   Particeps can verify the phone’s clock; time spent collecting and time paused; the size of your
   last export, if you exported since Particeps last started (Particeps does not keep it after
   Android closes the app); and how much space the study uses on this phone, measured when you open
-  the page.
+  the page. Both sizes are shown in 50 MB steps, such as “Less than 50 MB” or “50–100 MB”; the
+  export's event count is exact.
 - **Your rights** — what **Pause** and **Resume**, **Withdraw**, and **Delete local data** do,
   including what happens to data that has not been sent yet.
 

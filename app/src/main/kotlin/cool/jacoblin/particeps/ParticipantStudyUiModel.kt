@@ -166,8 +166,34 @@ data class ParticipantUploadDisclosure(
 data class ParticipantExportSummary(
     val commitCount: Long,
     val eventCount: Long,
-    val byteCount: Long,
+    val size: ParticipantSizeBucket,
 )
+
+/**
+ * A size as the participant sees it: the 50 MB step that holds it, counting 1 MB as 1,000,000
+ * bytes as Android's own storage figures do. Step 0 is "less than 50 MB", step 1 is 50–100 MB, and
+ * so on. An exact size read twice would give the rate of collection in between, and that rate can
+ * reveal when a study's collection windows fall, so neither the stored size nor an export's size
+ * reaches Compose in any finer form.
+ */
+data class ParticipantSizeBucket(val step: Long) {
+    init {
+        require(step >= 0) { "A size step cannot be negative" }
+    }
+
+    val lowerMegabytes: Long get() = step * STEP_MEGABYTES
+    val upperMegabytes: Long get() = lowerMegabytes + STEP_MEGABYTES
+
+    companion object {
+        const val STEP_MEGABYTES = 50L
+        const val STEP_BYTES = STEP_MEGABYTES * 1_000_000L
+
+        fun of(bytes: Long): ParticipantSizeBucket {
+            require(bytes >= 0) { "A size cannot be negative" }
+            return ParticipantSizeBucket(bytes / STEP_BYTES)
+        }
+    }
+}
 
 enum class ParticipantMessage {
     CONFIGURATION_IMPORT_FAILED,

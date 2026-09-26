@@ -283,6 +283,8 @@
     <string name="participation_storage">手機上占用的空間</string>
     <string name="participation_storage_checking">正在確認…</string>
     <string name="participation_storage_unavailable">無法取得</string>
+    <string name="size_below_step">不到 %1$s MB</string>
+    <string name="size_step_range">%1$s–%2$s MB</string>
 
     <string name="my_data_rights_title">你的權利</string>
     <string name="rights_pause_title">暫停與繼續收集</string>

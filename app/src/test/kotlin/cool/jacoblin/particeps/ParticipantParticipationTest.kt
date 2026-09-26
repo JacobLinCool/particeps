@@ -1,10 +1,15 @@
 package cool.jacoblin.particeps
 
+import cool.jacoblin.particeps.core.application.ParticipantDataCategorySummary
+import cool.jacoblin.particeps.core.application.ParticipantExportSummary as CoreExportSummary
 import cool.jacoblin.particeps.core.application.ParticipantRuntimeStatus
+import cool.jacoblin.particeps.core.application.ParticipantStudySummary
+import cool.jacoblin.particeps.core.application.StudySessionSnapshot
 import cool.jacoblin.particeps.core.model.ExperimentState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -195,6 +200,58 @@ class ParticipantParticipationTest {
         assertNull(participation.studyLength)
         assertNull(participation.studyDayAt(START))
         assertEquals(0L, participation.activeCollection.millisAt(START))
+    }
+
+    @Test
+    fun sizesAreShownOnlyAsTheFiftyMegabyteStepThatHoldsThem() {
+        assertEquals(ParticipantSizeBucket(0), ParticipantSizeBucket.of(0))
+        assertEquals(ParticipantSizeBucket(0), ParticipantSizeBucket.of(49_999_999))
+        assertEquals(ParticipantSizeBucket(1), ParticipantSizeBucket.of(50_000_000))
+        assertEquals(ParticipantSizeBucket(1), ParticipantSizeBucket.of(99_999_999))
+        assertEquals(ParticipantSizeBucket(2), ParticipantSizeBucket.of(100_000_000))
+
+        val step = ParticipantSizeBucket.of(123_456_789)
+        assertEquals(100L, step.lowerMegabytes)
+        assertEquals(150L, step.upperMegabytes)
+        // Two readings anywhere inside one step are indistinguishable.
+        assertEquals(ParticipantSizeBucket.of(100_000_000), ParticipantSizeBucket.of(149_999_999))
+    }
+
+    @Test
+    fun anExportSizeReachesTheProjectionOnlyAsItsStep() {
+        val snapshot = StudySessionSnapshot(
+            initialized = true,
+            study = ParticipantStudySummary(
+                experimentId = "size-test",
+                configurationId = "size-test-config",
+                assignedParticipantId = null,
+                title = "Study",
+                researcherName = "Researcher",
+                researcherContact = "researcher@example.invalid",
+                purpose = "Purpose",
+                durationHours = 120,
+                consentDocumentVersion = "consent-1",
+                consentSummary = "Consent",
+                signerFingerprint = "ab".repeat(32),
+                signerAnchored = false,
+                dataCategories = listOf(ParticipantDataCategorySummary("screen_state.v1", required = true)),
+                mayAdjustAppTransferSpeed = false,
+                upload = null,
+            ),
+            runtime = status(ExperimentState.RUNNING),
+            lastExport = CoreExportSummary(commitCount = 12, eventCount = 1_200, byteCount = 123_456_789),
+        )
+
+        assertEquals(
+            ParticipantExportSummary(commitCount = 12, eventCount = 1_200, size = ParticipantSizeBucket(2)),
+            snapshot.toParticipantUiModel().lastExport,
+        )
+    }
+
+    @Test
+    fun aSizeStepCannotBeNegative() {
+        assertThrows(IllegalArgumentException::class.java) { ParticipantSizeBucket.of(-1) }
+        assertThrows(IllegalArgumentException::class.java) { ParticipantSizeBucket(-1) }
     }
 
     private fun status(

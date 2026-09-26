@@ -130,11 +130,12 @@ class StudyViewModel(
     fun cancelExport() = exportController.cancel()
 
     /**
-     * Read once when the participant opens *Study and my data*, never polled. A figure that cannot
-     * be measured, for instance because the study is being deleted, is simply not shown.
+     * Read once when the participant opens *Study and my data*, never polled, and reduced to its
+     * 50 MB step here so that the exact byte count never reaches Compose. A figure that cannot be
+     * measured, for instance because the study is being deleted, is simply not shown.
      */
-    suspend fun localStorageBytes(): Long? = try {
-        withContext(Dispatchers.IO) { session.localStorageBytes() }
+    suspend fun localStorageSize(): ParticipantSizeBucket? = try {
+        withContext(Dispatchers.IO) { session.localStorageBytes()?.let(ParticipantSizeBucket::of) }
     } catch (failure: Throwable) {
         if (failure is CancellationException) throw failure
         null
@@ -327,7 +328,9 @@ internal fun StudySessionSnapshot.toParticipantUiModel(): ParticipantStudyUiMode
         retainedFromCommit = runtime.retainedFromCommit,
         pausedAtUtcMillis = runtime.stateEnteredAtUtcMillis.takeIf { state == ExperimentState.PAUSED },
         participation = runtime.toParticipation(summary.durationHours),
-        lastExport = lastExport?.let { ParticipantExportSummary(it.commitCount, it.eventCount, it.byteCount) },
+        lastExport = lastExport?.let {
+            ParticipantExportSummary(it.commitCount, it.eventCount, ParticipantSizeBucket.of(it.byteCount))
+        },
         trafficShapingDisclosureRequired = summary.mayAdjustAppTransferSpeed,
     )
 }

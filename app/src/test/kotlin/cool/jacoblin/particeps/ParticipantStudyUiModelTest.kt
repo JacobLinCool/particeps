@@ -84,6 +84,7 @@ class ParticipantStudyUiModelTest {
             ParticipantAccessItem::class.java,
             ParticipantUploadDisclosure::class.java,
             ParticipantExportSummary::class.java,
+            ParticipantSizeBucket::class.java,
             ParticipantParticipationSummary::class.java,
             ParticipantElapsedTime.Settled::class.java,
             ParticipantElapsedTime.Growing::class.java,
@@ -109,7 +110,8 @@ class ParticipantStudyUiModelTest {
             "ParticipantDataCategory" to sortedSetOf("kind", "optional"),
             "ParticipantAccessItem" to sortedSetOf("kind", "required", "owners", "resolution", "guidance"),
             "ParticipantUploadDisclosure" to sortedSetOf("destinationHost", "intervalMinutes", "allowMetered"),
-            "ParticipantExportSummary" to sortedSetOf("commitCount", "eventCount", "byteCount"),
+            "ParticipantExportSummary" to sortedSetOf("commitCount", "eventCount", "size"),
+            "ParticipantSizeBucket" to sortedSetOf("step"),
             "ParticipantParticipationSummary" to sortedSetOf(
                 "studyDayCount", "plannedEndUtcMillis", "studyLength", "activeCollection", "ended",
             ),
@@ -152,6 +154,8 @@ class ParticipantStudyUiModelTest {
             "reasoncode",
             "collectorhealth",
             "applieddigest",
+            // Sizes reach Compose only as 50 MB steps; an exact byte count reveals collection rate.
+            "byte",
         )
     }
 }

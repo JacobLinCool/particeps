@@ -134,10 +134,10 @@ data class StudyUiActions(
     val retryRecovery: () -> Unit,
     val resetAndRestart: () -> Unit,
     /**
-     * A read, not a command: how much the active study occupies on this phone, or null when that
-     * cannot be measured. *Study and my data* calls it once each time it opens.
+     * A read, not a command: the 50 MB step of how much the active study occupies on this phone,
+     * or null when that cannot be measured. *Study and my data* calls it once each time it opens.
      */
-    val readLocalStorageBytes: suspend () -> Long?,
+    val readLocalStorageSize: suspend () -> ParticipantSizeBucket?,
 )
 
 /**
@@ -187,7 +187,7 @@ fun CollectorApp(
                     BackHandler { studyAndMyDataOpen = false }
                     StudyAndMyDataScreen(
                         study = startedStudy,
-                        readLocalStorageBytes = actions.readLocalStorageBytes,
+                        readLocalStorageSize = actions.readLocalStorageSize,
                         onBack = { studyAndMyDataOpen = false },
                         modifier = Modifier.padding(padding),
                     )

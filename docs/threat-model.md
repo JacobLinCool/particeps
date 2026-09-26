@@ -353,9 +353,9 @@ three layers:
 Compose receives a whitelist participant projection rather than the full signed/runtime model.
 The *Study and my data* screen restates only floor information and participation facts (study
 day, deadline, active and paused time, the size and event count of an export made since Particeps
-last started, and local storage measured when the screen opens); its entry is identical in every
-study arm so its presence cannot reveal assignment. Its two byte figures are not arm-independent;
-see the residual side channels below.
+last started, and local storage measured when the screen opens, both sizes in 50 MB steps); its
+entry is identical in every study arm so its presence cannot reveal assignment. Its two sizes are
+not arm-independent; see the residual side channels below.
 It does not show the signed `configuration_id`, which differs between arms and, when the Web tool
 derives it, ends in a 30-bit tag of the canonical configuration: two participants comparing it
 could tell their arms apart, and someone holding a template could test a guessed cap or window
@@ -397,7 +397,10 @@ every traffic profile, target, and automation window. A blinded study should dis
 
 The running screen's live event count is a residual side channel: when a collector runs only in a
 scheduled window, the count's rate of increase can reveal that window. The local-storage and
-last-export byte figures on *Study and my data* are residual side channels too. Every commit
+last-export sizes on *Study and my data* are residual side channels too, and are shown only in
+50 MB steps. The steps do not hide collection windows: the live event count and the last export's
+exact event count already give the rate of collection between two readings. What they limit is the
+bytes stored per event, which a step resolves only to a 50 MB difference. Every commit
 carries fixed overhead (several SHA-256 digests, the successor projection, the commit time, and
 AEAD framing), and how many commits a study makes depends on its automation: a gyroscope or
 accelerometer commits through a 5 s window only when no automation matches it and the program keeps
@@ -405,8 +408,9 @@ no sequence or window state, and otherwise commits without waiting, merging only
 are already queued. Two arms with the same collectors
 can therefore store very different bytes per event, and a participant who compares phones, or who
 knows the expected ratio, can learn whether their arm's automation reads motion or keeps sequence or
-window state. For the same reason the participant UI never shows a commit ("data batch") count:
-upload progress and export progress appear only as whole-percent shares, and the projection's
+window state once the difference spans a 50 MB step. For the same reason the participant UI never
+shows a commit ("data batch") count: upload progress and export progress appear only as
+whole-percent shares, and the projection's
 commit fields are used only for those shares, for whether any sent data has been removed, and for
 whether an earlier release already delivered setup records before Start (which changes the decline
 confirmation). Lock-screen observers can

@@ -1,7 +1,6 @@
 package cool.jacoblin.particeps
 
 import android.graphics.Bitmap
-import android.text.format.Formatter
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -25,6 +24,7 @@ import cool.jacoblin.particeps.core.collector.AccessKind
 import cool.jacoblin.particeps.core.collector.SetupAction
 import cool.jacoblin.particeps.core.collector.SetupGuidance
 import cool.jacoblin.particeps.core.model.ExperimentState
+import java.text.NumberFormat
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -504,9 +504,9 @@ class AccessCardTest {
                     recoveryStatus = null,
                 ),
                 actions = actions().copy(
-                    readLocalStorageBytes = {
+                    readLocalStorageSize = {
                         storageReads++
-                        2_048L
+                        ParticipantSizeBucket.of(2_048L)
                     },
                 ),
             )
@@ -523,7 +523,9 @@ class AccessCardTest {
         ).forEach { composeRule.onNodeWithText(context.getString(it)).performScrollTo().assertExists() }
         composeRule.onNodeWithTag(UiTags.PARTICIPATION_STORAGE).performScrollTo()
         composeRule.waitUntil { storageReads == 1 }
-        composeRule.onNodeWithText(Formatter.formatShortFileSize(context, 2_048L)).assertExists()
+        composeRule.onNodeWithText(
+            context.getString(R.string.size_below_step, NumberFormat.getIntegerInstance().format(50)),
+        ).assertExists()
 
         Espresso.pressBack()
         composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA_SCREEN).assertDoesNotExist()
@@ -595,7 +597,7 @@ class AccessCardTest {
         delete = {},
         retryRecovery = {},
         resetAndRestart = {},
-        readLocalStorageBytes = { null },
+        readLocalStorageSize = { null },
     )
 
     private fun accessItem(

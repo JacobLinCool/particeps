@@ -142,7 +142,7 @@ class MainActivity : ComponentActivity() {
                     delete = viewModel::deleteLocalData,
                     retryRecovery = viewModel::retryRecovery,
                     resetAndRestart = viewModel::resetAndRestart,
-                    readLocalStorageBytes = viewModel::localStorageBytes,
+                    readLocalStorageSize = viewModel::localStorageSize,
                 ),
             )
         }
