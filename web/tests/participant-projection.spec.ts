@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   PARTICIPANT_VPN_DISCLOSURE,
@@ -25,8 +26,25 @@ describe('participant-safe study projection', () => {
     expect(JSON.stringify(model)).not.toMatch(/secret|64|512|180|automation|profile|epoch|digest|owner/i);
   });
 
-  it('keeps the fixed bilingual VPN disclosures exact', () => {
-    expect(PARTICIPANT_VPN_DISCLOSURE.en).toContain('not sent through a Particeps server');
-    expect(PARTICIPANT_VPN_DISCLOSURE['zh-TW']).toContain('不會經由 Particeps 伺服器傳送');
+  it('keeps the fixed bilingual VPN disclosures identical to the App copy', () => {
+    expect(PARTICIPANT_VPN_DISCLOSURE.en).toBe(appString('values', 'traffic_shaping_disclosure'));
+    expect(PARTICIPANT_VPN_DISCLOSURE['zh-TW']).toBe(appString('values-zh-rTW', 'traffic_shaping_disclosure'));
   });
 });
+
+/** One plain `<string>` from the App's resources, with Android's escapes resolved. */
+function appString(directory: string, name: string): string {
+  const resources = readFileSync(
+    new URL(`../../app/src/main/res/${directory}/strings.xml`, import.meta.url),
+    'utf8'
+  );
+  const match = resources.match(new RegExp(`<string name="${name}">([^<]*)</string>`));
+  if (!match) throw new Error(`${directory}/strings.xml has no plain string ${name}`);
+  return match[1]
+    .replace(/\\(['"])/g, '$1')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}

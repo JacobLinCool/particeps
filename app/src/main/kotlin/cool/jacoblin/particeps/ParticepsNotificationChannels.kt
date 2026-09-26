@@ -2,7 +2,6 @@ package cool.jacoblin.particeps
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.Notification
 import android.content.Context
 import cool.jacoblin.particeps.core.collector.NotificationAccessFeature
 
@@ -19,6 +18,12 @@ internal object ParticepsNotificationChannels {
         NotificationAccessFeature.INTERVENTIONS to INTERVENTIONS,
     )
 
+    /**
+     * Lock-screen visibility is not set here. Android replaces the value an app gives its own
+     * channel with the no-override default, so each notification sets its own: recovery
+     * notifications are secret, and intervention notifications are private with a neutral public
+     * version, which Android shows only when the participant's lock screen hides sensitive content.
+     */
     fun ensureCreated(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannels(
@@ -51,7 +56,6 @@ internal object ParticepsNotificationChannels {
                     NotificationManager.IMPORTANCE_DEFAULT,
                 ).apply {
                     description = context.getString(R.string.recovery_channel_description)
-                    lockscreenVisibility = Notification.VISIBILITY_SECRET
                 },
             ),
         )

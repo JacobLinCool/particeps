@@ -361,6 +361,41 @@ data class ParticipantUploadSummary(
     val allowMetered: Boolean,
 )
 
+/**
+ * The only path from a verified signed configuration to [ParticipantStudySummary]. Every field it
+ * copies is platform-floor information; automation, resources, profiles, targets, caps, and export
+ * keys are never read here.
+ */
+fun participantStudySummary(configuration: VerifiedConfiguration): ParticipantStudySummary {
+    val signed = configuration.configuration
+    val categories = signed.collectors.map {
+        ParticipantDataCategorySummary(sourceId = it.id, required = it.required)
+    }.sortedBy(ParticipantDataCategorySummary::sourceId)
+    return ParticipantStudySummary(
+        experimentId = signed.experimentId,
+        configurationId = signed.configurationId,
+        assignedParticipantId = signed.assignedParticipantId,
+        title = signed.title,
+        researcherName = signed.researcherName,
+        researcherContact = signed.researcherContact,
+        purpose = signed.purpose,
+        durationHours = signed.durationHours,
+        consentDocumentVersion = signed.consentDocumentVersion,
+        consentSummary = signed.consentSummary,
+        signerFingerprint = signed.signer.fingerprint,
+        signerAnchored = configuration.signerAnchored,
+        dataCategories = categories,
+        mayAdjustAppTransferSpeed = signed.trafficShaping is TrafficShapingConfiguration.Enabled,
+        upload = signed.upload?.let { upload ->
+            ParticipantUploadSummary(
+                destinationHost = checkNotNull(java.net.URI(upload.endpoint).host),
+                intervalMinutes = upload.intervalMinutes,
+                allowMetered = upload.allowMetered,
+            )
+        },
+    )
+}
+
 /** Runtime projection safe for participant surfaces: no epoch, digest, profile, trigger, or reason. */
 data class ParticipantRuntimeStatus(
     val state: ExperimentState? = null,
@@ -374,7 +409,26 @@ data class ParticipantRuntimeStatus(
     val deadlineUtcTrusted: Boolean = false,
     val activeRunningElapsedMillis: Long = 0,
     val calendarElapsedMillis: Long = 0,
-    val lastObservedAtUtcMillis: Long? = null,
+    /**
+     * This phone's wall time at which [activeRunningElapsedMillis] and [calendarElapsedMillis] were
+     * measured. The study clock advances only when a commit lands, so a caller that shows these
+     * totals live extends them by the phone's wall time since this instant. Compare it only with
+     * this phone's wall time, never with [startedAtUtcMillis] or [deadlineUtcMillis]: those come
+     * from network time when it is available, and mixing the two clocks turns an offset in the
+     * phone's clock into time that did not pass.
+     */
+    val elapsedMeasuredAtUtcMillis: Long? = null,
+    /**
+     * When the study entered [state]: the participant's pause or end time. Unlike the clock anchor,
+     * it stays put while later commits in the same state record uploads or re-anchor the clock.
+     */
+    val stateEnteredAtUtcMillis: Long? = null,
+    /**
+     * [calendarElapsedMillis] at that same commit; null whenever [stateEnteredAtUtcMillis] is, and
+     * before Start. For an ended study it is the study's length, which later commits in the ended
+     * state do not change even though they still advance [calendarElapsedMillis].
+     */
+    val stateEnteredCalendarElapsedMillis: Long? = null,
 )
 
 data class ParticipantExportSummary(
@@ -795,7 +849,22 @@ class StudySessionManager(
         return receipt
     }
 
-    /** Encrypts one durable automatic-upload stage. The caller owns atomic staging and retries. */
+    /**
+     * Bytes the active study currently occupies on this phone, or null when no study store is open.
+     * It is read on demand only; the session lock is released before the store is measured, so a
+     * participant looking at the figure never holds up a lifecycle command.
+     */
+    suspend fun localStorageBytes(): Long? {
+        val current = sessionMutex.withLock {
+            store.takeUnless { mutableSnapshot.value.deletionPending }
+        } ?: return null
+        return current.storageUsage().usedBytes
+    }
+
+    /**
+     * Encrypts one durable automatic-upload stage. The caller owns atomic staging and retries.
+     * Nothing is staged before Start: a participant who declines during setup has sent nothing.
+     */
     suspend fun prepareAutomaticUpload(
         destination: OutputStream,
         bundleId: UUID,
@@ -811,6 +880,7 @@ class StudySessionManager(
             } ?: return@withLock null
             request.store.withReadSnapshot { reader ->
                 val document = reader.runtime
+                if (document.state !in STARTED_STATES) return@withReadSnapshot null
                 if (document.uploadedThroughCommit >= document.revision) return@withReadSnapshot null
                 ResearchExport.encrypt(
                     ExportSnapshot(
@@ -938,7 +1008,7 @@ class StudySessionManager(
                 val access = accessPolicy.inspect(signed, collectorRegistry, accessGateway)
                 mutableSnapshot.value = StudySessionSnapshot(
                     initialized = true,
-                    study = participantSummary(configuration),
+                    study = participantStudySummary(configuration),
                     runtime = participantRuntime(nextAssembly.runtime.snapshot.value),
                     access = access,
                     recoveryStatus = if (result.recoveredFailClosed) {
@@ -951,7 +1021,10 @@ class StudySessionManager(
                     uploadCoordinator.reconcile(
                         UploadReconciliation(plan, document.uploadedThroughCommit),
                     )
-                    uploadScheduler.ensureScheduled(plan)
+                    // A study still in setup arms its upload chain at Start instead.
+                    if (nextAssembly.runtime.snapshot.value.state in STARTED_STATES) {
+                        uploadScheduler.ensureScheduled(plan)
+                    }
                 }
                 recoveryReporter.clear()
             }
@@ -962,7 +1035,13 @@ class StudySessionManager(
         val current = runtimeOrInvalid() ?: return@withLock StudyCommandResult.InvalidState
         val access = refreshAccessLocked()
         if (access.any { it.required && !it.granted }) return@withLock StudyCommandResult.AccessRequired
-        mapCommand(if (resume) current.resume() else current.start())
+        val result = mapCommand(if (resume) current.resume() else current.start())
+        // Start is where automatic upload begins, including a start that failed closed to PAUSED;
+        // the first bundle then begins at commit 1 and carries setup together with collection.
+        if (!resume && current.snapshot.value.state in STARTED_STATES) {
+            verified?.uploadPlan()?.let { uploadScheduler.ensureScheduled(it) }
+        }
+        result
     }
 
     private suspend fun runtimeCommand(
@@ -1003,36 +1082,6 @@ class StudySessionManager(
                 }
             }
         }
-    }
-
-    private fun participantSummary(configuration: VerifiedConfiguration): ParticipantStudySummary {
-        val signed = configuration.configuration
-        val categories = signed.collectors.map {
-            ParticipantDataCategorySummary(sourceId = it.id, required = it.required)
-        }.sortedBy(ParticipantDataCategorySummary::sourceId)
-        return ParticipantStudySummary(
-            experimentId = signed.experimentId,
-            configurationId = signed.configurationId,
-            assignedParticipantId = signed.assignedParticipantId,
-            title = signed.title,
-            researcherName = signed.researcherName,
-            researcherContact = signed.researcherContact,
-            purpose = signed.purpose,
-            durationHours = signed.durationHours,
-            consentDocumentVersion = signed.consentDocumentVersion,
-            consentSummary = signed.consentSummary,
-            signerFingerprint = signed.signer.fingerprint,
-            signerAnchored = configuration.signerAnchored,
-            dataCategories = categories,
-            mayAdjustAppTransferSpeed = signed.trafficShaping is TrafficShapingConfiguration.Enabled,
-            upload = signed.upload?.let { upload ->
-                ParticipantUploadSummary(
-                    destinationHost = checkNotNull(java.net.URI(upload.endpoint).host),
-                    intervalMinutes = upload.intervalMinutes,
-                    allowMetered = upload.allowMetered,
-                )
-            },
-        )
     }
 
     private suspend fun surveyBindingLocked(actionId: String): SurveyBinding? {
@@ -1094,7 +1143,9 @@ class StudySessionManager(
         deadlineUtcTrusted = runtime.deadlineUtcTrusted,
         activeRunningElapsedMillis = runtime.activeRunningElapsedNanos / NANOS_PER_MILLISECOND,
         calendarElapsedMillis = runtime.calendarElapsedNanos / NANOS_PER_MILLISECOND,
-        lastObservedAtUtcMillis = runtime.clockAnchorWallTimeUtcMillis,
+        elapsedMeasuredAtUtcMillis = runtime.clockAnchorWallTimeUtcMillis,
+        stateEnteredAtUtcMillis = runtime.stateEnteredAtUtcMillis,
+        stateEnteredCalendarElapsedMillis = runtime.stateEnteredCalendarElapsedNanos?.div(NANOS_PER_MILLISECOND),
     )
 
     private fun mapCommand(result: RuntimeCommandResult): StudyCommandResult = when (result) {
@@ -1181,6 +1232,9 @@ class StudySessionManager(
             ExperimentState.ACTIVATING,
             ExperimentState.PAUSING,
         )
+
+        /** States after Start; only these stage or schedule automatic upload. */
+        val STARTED_STATES = DELETABLE_ACTIVE_STATES + setOf(ExperimentState.COMPLETED, ExperimentState.WITHDRAWN)
     }
 }
 

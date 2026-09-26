@@ -74,10 +74,12 @@ class QrStudyEntryUiTest {
         resume = {},
         complete = {},
         withdraw = {},
+        decline = {},
         export = {},
         cancelExport = {},
         delete = {},
         retryRecovery = {},
         resetAndRestart = {},
+        readLocalStorageBytes = { null },
     )
 }

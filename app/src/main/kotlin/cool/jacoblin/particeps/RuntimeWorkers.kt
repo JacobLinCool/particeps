@@ -16,6 +16,7 @@ import androidx.work.ListenableWorker
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import cool.jacoblin.particeps.core.application.StudyCommandResult
+import cool.jacoblin.particeps.core.definition.InterventionAction
 import cool.jacoblin.particeps.core.definition.NotificationAction
 import cool.jacoblin.particeps.core.definition.SurveyAction
 import cool.jacoblin.particeps.core.model.ExperimentState
@@ -82,6 +83,35 @@ class RuntimeTimerWorker(
 internal suspend fun <T> runTimerWakeupAtomically(block: suspend () -> T): T =
     withContext(NonCancellable) { block() }
 
+/**
+ * The researcher's activity text, marked private so that a secure lock screen which redacts it
+ * shows the public version instead: fixed app copy that is the same for every activity, survey, and
+ * study arm. Whoever holds the locked phone then learns only that Particeps has something for its
+ * owner. Whether the lock screen redacts is the participant's Android setting; an app cannot force
+ * it for its own channel, and a lock screen set to show all content shows the researcher's text.
+ */
+internal fun interventionNotification(
+    context: Context,
+    action: InterventionAction,
+    contentIntent: PendingIntent,
+): Notification {
+    val publicVersion = Notification.Builder(context, ParticepsNotificationChannels.INTERVENTIONS)
+        .setSmallIcon(R.drawable.ic_app)
+        .setContentTitle(context.getString(R.string.app_name))
+        .setContentText(context.getString(R.string.intervention_public_text))
+        .build()
+    return Notification.Builder(context, ParticepsNotificationChannels.INTERVENTIONS)
+        .setSmallIcon(R.drawable.ic_app)
+        .setContentTitle(action.notificationTitle)
+        .setContentText(action.notificationMessage)
+        .setStyle(Notification.BigTextStyle().bigText(action.notificationMessage))
+        .setContentIntent(contentIntent)
+        .setAutoCancel(action is SurveyAction)
+        .setVisibility(Notification.VISIBILITY_PRIVATE)
+        .setPublicVersion(publicVersion)
+        .build()
+}
+
 class ActionOutboxWorker(
     context: Context,
     parameters: WorkerParameters,
@@ -124,14 +154,7 @@ class ActionOutboxWorker(
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
         }
-        val notification = Notification.Builder(applicationContext, ParticepsNotificationChannels.INTERVENTIONS)
-            .setSmallIcon(R.drawable.ic_app)
-            .setContentTitle(action.notificationTitle)
-            .setContentText(action.notificationMessage)
-            .setStyle(Notification.BigTextStyle().bigText(action.notificationMessage))
-            .setContentIntent(contentIntent)
-            .setAutoCancel(action is SurveyAction)
-            .build()
+        val notification = interventionNotification(applicationContext, action, contentIntent)
         val notifications = applicationContext.getSystemService(NotificationManager::class.java)
         val displayed = try {
             application.actionOutboxNotifier.displayIfRunning(

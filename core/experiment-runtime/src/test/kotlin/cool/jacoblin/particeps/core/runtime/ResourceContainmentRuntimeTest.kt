@@ -492,7 +492,10 @@ class ResourceContainmentRuntimeTest {
         var pending: PendingEngineInput? = null
         val commits = mutableListOf<EngineCommit>()
 
-        override suspend fun loadRuntime(): RuntimeDocument? = runtime
+        override suspend fun loadRuntime(observeRetained: (EngineCommit) -> Unit): RuntimeDocument? =
+            runtime?.also { current ->
+                commits.filter { it.commitSequence >= current.retainedFromCommit }.forEach(observeRetained)
+            }
 
         override suspend fun initialize(runtime: RuntimeDocument) {
             check(this.runtime == null)

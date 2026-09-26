@@ -81,6 +81,33 @@ class EncryptedExperimentStoreTest {
     }
 
     @Test
+    fun recoveryShowsEachRetainedCommitInOrderDuringItsAuthenticationPass() = runBlocking {
+        store = EncryptedExperimentStore(
+            context, experimentId, QUOTA_BYTES, File::delete,
+            snapshotPolicy = SnapshotCheckpointPolicy(maximumCommits = 2),
+        )
+        var current = initialRuntime()
+        store.initialize(current)
+        val appended = mutableListOf<EngineCommit>()
+        // With a two-commit checkpoint budget, recovery sees commits both before and after the
+        // snapshot boundary it restores from.
+        listOf(
+            ExperimentState.CONFIG_VERIFIED to EngineInputKind.LIFECYCLE_COMMAND,
+            ExperimentState.CONSENT_PENDING to EngineInputKind.LIFECYCLE_COMMAND,
+            ExperimentState.CONSENT_PENDING to EngineInputKind.SOURCE_OBSERVATION,
+        ).forEach { (state, inputKind) ->
+            val (commit, successor) = lifecycleCommit(current, state, inputKind = inputKind)
+            store.appendCommit(commit, successor)
+            appended += commit
+            current = successor
+        }
+
+        val observed = mutableListOf<EngineCommit>()
+        assertEquals(current, newStore().loadRuntime(observed::add))
+        assertEquals(appended, observed)
+    }
+
+    @Test
     fun sourceCommitsRecoverFromTheLogBeforeTheirSnapshotCheckpoint() = runBlocking {
         var current = initialRuntime()
         store.initialize(current)

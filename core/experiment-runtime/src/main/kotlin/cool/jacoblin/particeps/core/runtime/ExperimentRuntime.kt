@@ -138,6 +138,7 @@ class ExperimentRuntime(
     private var studyDeadlineTimer: DurableTimer? = null
     private var actionInvocations = sortedMapOf<String, DurableActionInvocation>()
     private var latestUploadAcknowledgement: DurableUploadAcknowledgement? = null
+    private var stateEntry: StateEntry? = null
     @Volatile private var barrierBuffer: BarrierInputBuffer? = null
     @Volatile private var activeBarrier: CoordinatedBarrier? = null
     private val mutableSnapshot = MutableStateFlow(RuntimeSnapshot())
@@ -185,7 +186,8 @@ class ExperimentRuntime(
         }
         return try {
             mutex.withLock {
-                var loaded = store.loadRuntime()
+                val retainedTransition = RetainedStateTransition()
+                var loaded = store.loadRuntime(retainedTransition::observe)
                 if (loaded == null) {
                     loaded = RuntimeDocument.initial(
                         experimentId = study.experimentId,
@@ -199,6 +201,7 @@ class ExperimentRuntime(
                 }
                 validateIdentity(loaded)
                 document = loaded
+                stateEntry = retainedTransition.entry(loaded)
                 restoreComponents(loaded)
                 bindTerminalListeners()
                 val pending = store.loadPendingInput()
@@ -2773,6 +2776,7 @@ class ExperimentRuntime(
             store.appendCommit(commit, successor)
         }
         document = successor
+        if (successor.state != current.state) stateEntry = StateEntry.of(commit)
         automationCheckpoint = checkpoint
         applyComponentMutations(mutations)
         require(
@@ -3642,7 +3646,52 @@ class ExperimentRuntime(
             },
             deadlineUtcMillis = current.clockCheckpoint?.deadlineUtcMillis,
             deadlineUtcTrusted = current.clockCheckpoint?.deadlineUtcTrusted == true,
+            stateEnteredAtUtcMillis = stateEntry?.wallTimeUtcMillis,
+            stateEnteredCalendarElapsedNanos = stateEntry?.calendarElapsedNanos,
         )
+    }
+
+    /**
+     * Finds, in the one authenticated pass of cold-start recovery, the commit that entered the
+     * recovered state. Later commits in the same state (upload acknowledgements, paused clock
+     * re-anchors, action results) advance the clock anchor but are not that transition. A commit is
+     * a transition only when its retained predecessor is known to be in another state, so a
+     * transition below the retained floor stays unknown rather than being guessed.
+     */
+    private class RetainedStateTransition {
+        private var lastState: ExperimentState? = null
+        private var lastSequence: Long? = null
+        private var entered: StateEntry? = null
+
+        fun observe(commit: EngineCommit) {
+            val state = commit.successorProjection.state
+            if (lastState != null && state != lastState) entered = StateEntry.of(commit)
+            lastState = state
+            lastSequence = commit.commitSequence
+        }
+
+        fun entry(recovered: RuntimeDocument): StateEntry? {
+            if (lastSequence == null) return null
+            check(lastSequence == recovered.revision && lastState == recovered.state) {
+                "Recovery observed a retained log that does not end at the recovered runtime"
+            }
+            return entered
+        }
+    }
+
+    /**
+     * The commit that entered the current state, as its committed wall time and the study's
+     * calendar time at that commit. The calendar time is monotonic study time, so a finished
+     * study's length does not depend on how far this phone's clock is from network time. It is
+     * null for a commit before Start, which has no study clock.
+     */
+    private data class StateEntry(val wallTimeUtcMillis: Long, val calendarElapsedNanos: Long?) {
+        companion object {
+            fun of(commit: EngineCommit) = StateEntry(
+                wallTimeUtcMillis = commit.committedAt.wallTimeUtcMillis,
+                calendarElapsedNanos = commit.successorProjection.clockCheckpoint?.calendarElapsedNanos,
+            )
+        }
     }
 
     private inner class BarrierInputBuffer(

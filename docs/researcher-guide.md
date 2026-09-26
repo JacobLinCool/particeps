@@ -442,24 +442,46 @@ Resume cannot be safely anchored.
 
 ## 10. Participant disclosure and blinding
 
-The Android participant app intentionally keeps the existing five setup steps and compact running
-surface. Particeps-generated UI shows high-level data categories, ordinary access, participant
-controls, and generic safety pause. It does not derive or display signed conditions, treatment
-state, resource settings, causal history, or internal diagnostics.
+What participants are told is your decision, and the default is blinding. The Android App keeps
+the five setup steps and compact running surface as its primary controls. Particeps-generated UI
+shows the platform floor: study identity, purpose, your contact details, the consent text, the
+enabled data categories and what each records, ordinary access, upload terms, participant rights,
+and generic safety pause. A labeled *Study and my data* entry, identical in every study arm, lets
+participants reread that floor and see coarse participation facts (study day, deadline, active and
+paused time) once the study has started, including while required Android access is being
+repaired; it is not shown during setup or while recovery asks for action. The App does not derive
+or display signed conditions, treatment state, resource settings, causal history, or internal
+diagnostics. It also does not show `configuration_id`, because that differs between arms; a
+participant who contacts you identifies their data by the installation code, which travels inside
+every bundle as the participant instance ID.
 
-A shaping study adds one fixed high-level paragraph inline in the existing Access step. Done/Resume
+Disclosing more (intervention targets, timing, or strength, assignment, charts of the participant's
+own data, or a debrief) is planned as an explicit signed participant disclosure policy. Protocol v1
+does not carry that policy yet, so every study currently runs with the default.
+
+A shaping study adds one fixed high-level paragraph inline in the existing Access step, repeated on
+*Study and my data*. The paragraph is the same for selected-package and all-app targets and does not
+say which one a study uses. Done/Resume
 then invokes Android’s required local-network permission (Android 17+) and system VPN consent. There
-is no new VPN card, screen, dashboard, or second ongoing notification. Android’s VPN icon/consent is
-system UI and cannot be removed.
+is no VPN card, status screen, dashboard, or second ongoing notification. Android’s VPN icon/consent
+is system UI and cannot be removed.
+
+A signed `.partcfg` is plaintext: anyone holding it can read every profile, target, and window.
+Blinding controls what Particeps presents, not what a participant can obtain, so do not publish the
+readable `study.json` for a blinded study.
 
 Researcher-authored study title, purpose, researcher name/contact, consent, notification, and survey
 strings are shown verbatim. These signed free-text fields are the explicit exception to the
-generated-UI blinding boundary. Before signing, the Web tool requires the researcher to acknowledge
+generated-UI blinding boundary. Notification title and message can also appear on a locked phone:
+Android replaces them with fixed Particeps copy only when the participant's lock-screen setting
+hides sensitive content, and its default shows everything, so write them to be safe for a bystander
+to read. Before signing, the Web tool requires the researcher to acknowledge
 that every one of them follows the study’s blinding and ethics plan. Runtime cannot semantically
 guarantee that arbitrary free text omits treatment information.
 
-Use the participant preview and accessibility sentinel before signing. It intentionally receives a
-whitelist projection rather than the full configuration.
+Use the participant preview before signing. It intentionally receives a whitelist projection rather
+than the full configuration. The blinding confirmation is held only in the browser session; keep
+your own record of the review for the ethics file.
 
 ## 11. Simulation and testing a study
 
@@ -488,6 +510,13 @@ or document the platform limitation.
 Exports are HPKE/AES-GCM encrypted to the signed researcher key and contain complete authenticated
 `EngineCommit` frames. Automatic upload sends immutable ciphertext over HTTPS. Clear routing
 metadata identifies bundle/configuration/key and complete commit range, not participant ID.
+Automatic upload starts only after the participant presses Start: nothing reaches your receiver
+from someone who imports a study and declines during setup. The first bundle after Start begins at
+commit 1, so the setup commits still arrive, together with the first collection. After completion
+or withdrawal, the upload work already queued sends one more bundle and queues no successor; each
+later start of Particeps, such as the participant opening it, queues one again. A backlog larger
+than one bundle can therefore wait indefinitely, so ask for a manual export when you need
+everything by a date.
 
 Manual exports capture one retained boundary and continue independently of participant pause,
 completion, or withdrawal. Events committed afterward belong to a later export. Participants see
@@ -515,8 +544,9 @@ proportionally, or publish a “best effort” table.
   requires a policy declaration.
 - `VpnService` use likewise requires the Google Play VpnService declaration. This repository’s
   implementation and release verification do not themselves submit a Play listing.
-- Android 17 local-network access is used only to forward local connections initiated by selected
-  apps; Particeps does not discover local devices. Refusal/revocation safely pauses a shaping study.
+- Android 17 local-network access is used only to forward local connections initiated by the shaped
+  apps (the selected packages, or every app for an all-app target); Particeps does not discover
+  local devices. Refusal/revocation safely pauses a shaping study.
 - Release verification builds the Go binding from pinned source, verifies proxy/sumdb hashes, four
   ABIs, 16 KiB alignment, manifest permissions/service flags, SBOM/licenses, registry digest, and
   absence of tracked native binaries or sensitive packet logging.

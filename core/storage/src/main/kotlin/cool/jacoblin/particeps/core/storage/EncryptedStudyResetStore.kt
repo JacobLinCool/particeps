@@ -156,7 +156,12 @@ class EncryptedStudyResetStore(
     }
 }
 
-/** Strictly clears the single-study encrypted storage namespace and every matching core alias. */
+/**
+ * Strictly clears the single-study encrypted storage namespace and every engine key alias.
+ *
+ * The other two alias families are not this resetter's: the active-study record's key is deleted
+ * by that store's own clear in the same reset, and the reset witness key outlives every reset.
+ */
 class EncryptedStudyStorageResetter(
     context: Context,
 ) : StudyStorageResetter {
@@ -184,10 +189,9 @@ class EncryptedStudyStorageResetter(
             AndroidAcknowledgedFileSystem.syncDirectory(noBackupRoot)
         }
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        keyStore.aliases().toList().filter { it.startsWith(CORE_KEY_PREFIX) }.forEach(keyStore::deleteEntry)
-    }
-
-    private companion object {
-        const val CORE_KEY_PREFIX = "particeps-core-"
+        keyStore.aliases().toList().filter { it.startsWith(ENGINE_KEY_ALIAS_PREFIX) }.forEach(keyStore::deleteEntry)
+        check(keyStore.aliases().toList().none { it.startsWith(ENGINE_KEY_ALIAS_PREFIX) }) {
+            "Engine key survived reset deletion"
+        }
     }
 }

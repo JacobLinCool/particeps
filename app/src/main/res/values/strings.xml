@@ -16,6 +16,8 @@
     <string name="app_name" translatable="false">Particeps</string>
     <string name="intervention_channel">Research activities</string>
     <string name="intervention_channel_description">Scheduled study activities and surveys</string>
+    <!-- The lock-screen stand-in for every activity notification; it never carries researcher text. -->
+    <string name="intervention_public_text">A research activity is available. Unlock your phone to see it.</string>
     <string name="daily_channel">Daily study reminder</string>
     <string name="daily_channel_description">A quiet daily reminder that the study is collecting or paused</string>
     <string name="collection_channel">Active research collection</string>
@@ -89,6 +91,7 @@
     <string name="action_complete_study">Complete study</string>
     <string name="action_export">Export encrypted data</string>
     <string name="action_withdraw">Withdraw</string>
+    <string name="action_decline">Decline and remove this study</string>
     <string name="action_delete">Delete local data</string>
     <string name="action_confirm">Confirm</string>
     <string name="action_cancel">Cancel</string>
@@ -98,7 +101,6 @@
 
     <!-- Content descriptions for controls that carry no text -->
     <string name="cd_language">Language</string>
-    <string name="cd_details">Details</string>
 
     <!-- Step 1: the study -->
     <plurals name="study_duration_hours">
@@ -111,61 +113,81 @@
     </plurals>
     <string name="study_duration_days_hours">%1$dd %2$dh</string>
 
-    <!-- Step 2: what is collected. One template per collector, filled from the signed study. -->
+    <!--
+      Step 2 and Study and my data: what each data category records. The copy is fixed per source
+      and describes the category, never a study's profile: sampling rates, polling intervals, and
+      schedules stay out because they can differ between study arms. A field a profile may leave
+      out is phrased "may include". The not-recorded phrases fill data_not_recorded.
+    -->
     <string name="data_optional">Optional</string>
-    <string name="participant_data_accelerometer_detail">Movement measured by the phone’s motion sensor</string>
-    <string name="participant_data_gyroscope_detail">Raw rotation measured by the phone; no activity is inferred</string>
-    <string name="participant_data_ambient_light_detail">Raw surrounding light level; it does not record images or environmental content</string>
-    <string name="participant_data_proximity_detail">The phone’s raw near or distance sensor reading; it is not a presence claim</string>
-    <string name="participant_data_network_usage_detail">Total bytes this phone sends and receives</string>
-    <string name="participant_data_usage_events_detail">Which apps open and close, and when the screen turns on</string>
-    <string name="participant_data_location_detail">The phone’s location</string>
+    <string name="data_required">Required</string>
+    <string name="data_not_recorded">Not recorded: %1$s</string>
+    <!-- %1$s is one or more Android access names joined with list_separator. -->
+    <string name="data_access_line">Android access: %1$s</string>
+    <string name="data_access_none">Android access: nothing to grant</string>
+    <string name="list_separator">", "</string>
 
-    <string name="collector_app_lifecycle_name">App activity</string>
-    <string name="collector_app_lifecycle_detail">When this app itself is opened and closed</string>
+    <string name="collector_app_lifecycle_name">Particeps app activity</string>
+    <string name="collector_app_lifecycle_records">When Particeps’ own screens open, move to the foreground or background, and close, and which Particeps screen it was.</string>
+    <string name="collector_app_lifecycle_not_recorded">activity in other apps, or what is shown on Particeps’ screens</string>
 
     <string name="collector_accelerometer_name">Motion</string>
-    <plurals name="collector_accelerometer_detail">
-        <item quantity="one">Movement of the phone, about once a second or more</item>
-        <item quantity="other">Movement of the phone, about %1$d times per second or more</item>
-    </plurals>
+    <string name="collector_accelerometer_records">Raw acceleration of the phone along three axes, including gravity, with each reading’s sensor time and accuracy.</string>
+    <string name="collector_accelerometer_not_recorded">audio, images, or location; no activity such as walking is inferred</string>
 
     <string name="collector_battery_state_name">Battery context</string>
-    <string name="collector_battery_state_detail">Whole battery percentage, charging state and source, and power-save mode — not battery health, temperature, or hardware identity</string>
+    <string name="collector_battery_state_records">Whole battery percentage, charging state, charging source, and whether power-saving mode is on.</string>
+    <string name="collector_battery_state_not_recorded">battery health, temperature, or hardware identity</string>
 
     <string name="collector_temporal_context_name">Time context</string>
-    <string name="collector_temporal_context_detail">Time-zone setting, UTC offset, daylight-saving state, and clock changes — a setting, not a location or travel claim</string>
+    <string name="collector_temporal_context_records">The phone’s time-zone setting, UTC offset, and daylight-saving state, and why each was recorded, such as the study starting or the time zone or clock changing.</string>
+    <string name="collector_temporal_context_not_recorded">location; the time zone is a phone setting and no travel is inferred from it</string>
 
     <string name="collector_gyroscope_name">Phone rotation</string>
-    <plurals name="collector_gyroscope_detail">
-        <item quantity="one">Raw rotation of the phone, about once a second or more; no orientation or activity is inferred</item>
-        <item quantity="other">Raw rotation of the phone, about %1$d times per second or more; no orientation or activity is inferred</item>
-    </plurals>
+    <string name="collector_gyroscope_records">Raw rotation speed of the phone around three axes, with each reading’s sensor time and accuracy.</string>
+    <string name="collector_gyroscope_not_recorded">audio, images, or location; no orientation or activity is inferred</string>
 
     <string name="collector_ambient_light_name">Ambient light</string>
-    <string name="collector_ambient_light_detail">Raw light level at most every %1$s after a change of %2$d millilux; it does not record environmental content</string>
+    <string name="collector_ambient_light_records">The light level measured by the phone’s light sensor, with each reading’s sensor time and accuracy.</string>
+    <string name="collector_ambient_light_not_recorded">images, or anything about your surroundings beyond the light level</string>
 
     <string name="collector_proximity_name">Proximity sensor</string>
-    <string name="collector_proximity_detail">Raw near/distance state at most every %1$s after a %2$d mm change or any near/far transition. Many phones report only near or far; this is not a presence claim</string>
+    <string name="collector_proximity_records">Whether something is close to the phone’s proximity sensor, the raw distance reading, the sensor’s range, and the sensor time.</string>
+    <string name="collector_proximity_not_recorded">images or who is nearby; a near reading does not mean a person is present, and many phones report only near or far</string>
+
+    <string name="collector_screen_state_name">Screen power and lock state</string>
+    <string name="collector_screen_state_records">Whether the screen is on, off, or in a low-power display mode, whether the phone is interactive, and whether the lock screen is showing.</string>
+    <string name="collector_screen_state_not_recorded">what is on the screen; a screen that is on does not show that you are looking at it or using the phone</string>
 
     <string name="collector_network_state_name">Connection type</string>
-    <string name="collector_network_state_detail">Whether you are on Wi-Fi or mobile data, and whether it is metered</string>
+    <string name="collector_network_state_records">Whether the phone’s main connection is available and whether it uses Wi-Fi, mobile data, ethernet, or a VPN; whether it is metered or roaming; and whether Android confirmed that it reaches the internet. It may include Android’s estimate of the connection’s speed.</string>
+    <string name="collector_network_state_not_recorded">network names, addresses, websites, or the content of your traffic</string>
+
     <string name="collector_vpn_state_name">VPN connection state</string>
-    <string name="collector_vpn_state_detail">Records VPN connection changes visible to Android, including VPNs used by other apps. Does not record traffic content.</string>
+    <string name="collector_vpn_state_records">Whether any VPN on this phone is connected, including VPNs from other apps, as Android reports it.</string>
+    <string name="collector_vpn_state_not_recorded">which VPN app it is, VPN server addresses, or the content of your traffic</string>
+
+    <string name="collector_network_throughput_name">Observed network throughput</string>
+    <string name="collector_network_throughput_records">How many bytes the whole phone sent and received in each measured interval, and when each interval began and ended.</string>
+    <string name="collector_network_throughput_not_recorded">which app used the data, destinations, or content; no speed test is run</string>
 
     <string name="collector_network_usage_name">Data volume</string>
-    <string name="collector_network_usage_detail">Total bytes your phone sent and received, every %1$s</string>
+    <string name="collector_network_usage_records">Total bytes and packets the whole phone sent and received over Wi-Fi or mobile data, for each period Android reports.</string>
+    <string name="collector_network_usage_not_recorded">which app used the data, destinations, or content</string>
 
     <string name="collector_usage_events_name">App and screen use</string>
-    <string name="collector_usage_events_detail">Which apps open and close, and when the screen turns on, every %1$s</string>
+    <string name="collector_usage_events_records">When apps come to the foreground and leave it, with each app’s package name when Android provides it and a code that tells an app’s screens apart without naming them; when the screen turns on or off; when the lock screen appears or is dismissed; and when the phone starts up or shuts down.</string>
+    <string name="collector_usage_events_not_recorded">what is shown on the screen, what you type, notification content, or the names of an app’s screens</string>
 
     <string name="collector_location_name">Location</string>
-    <string name="collector_location_detail">Where the phone is, about every %1$s, after it moves at least %2$s</string>
+    <string name="collector_location_records">The phone’s location (latitude and longitude) with its accuracy and time, including while Particeps is not open. It may include altitude, speed, and direction of travel with their accuracy, and whether Android marked the location as simulated.</string>
+    <string name="collector_location_not_recorded">photos, nearby-device scans, or place names; Particeps does not infer which places you visit</string>
 
     <string name="collector_keyboard_touch_name">Keyboard touch</string>
-    <string name="collector_keyboard_touch_detail">How you touch the keys — position, timing, pressure — inside the research keyboard only</string>
+    <string name="collector_keyboard_touch_records">For touches on the Particeps research keyboard only: the kind of key (letter, space, backspace, or enter), where on the key and when you touched it, and the touch pressure, size, and angle as the phone reports them.</string>
+    <string name="collector_keyboard_touch_not_recorded">which letter you pressed, the text you type, touches in password fields, or input from any other keyboard</string>
 
-    <!-- Units, used to fill the templates above -->
+    <!-- Units for duration labels -->
     <string name="unit_seconds">%1$d s</string>
     <string name="unit_milliseconds">%1$d ms</string>
     <string name="unit_microseconds">%1$d µs</string>
@@ -196,8 +218,8 @@
     <string name="consent_upload_cadence">%1$s, %2$s</string>
     <string name="consent_upload_encrypted">Only the research team\'s key can open what is sent. Neither the network it travels over nor the server that receives it can read the contents.</string>
     <string name="consent_upload_instance_id">A randomly generated code travels with the data so the team can tell participants apart. It contains no name and no account.</string>
-    <string name="consent_upload_mandatory">Automatic sending is part of this study and cannot be switched off on its own. Pausing or withdrawing stops new collection, but data already collected and not yet sent still goes to the research team.</string>
-    <string name="consent_checkbox">I have read and agree to the data collection and export described above.</string>
+    <string name="consent_upload_mandatory">Automatic sending is part of this study and cannot be switched off on its own. Pausing or withdrawing stops new collection, but data already collected and not yet sent can still be sent to the research team.</string>
+    <string name="consent_checkbox">I have read and agree to the data collection and sharing described above.</string>
 
     <plurals name="upload_every_minutes">
         <item quantity="one">About every minute</item>
@@ -238,7 +260,11 @@
     <string name="access_location_settings_change_unavailable">Android reports that this phone cannot satisfy the location settings required by this study. Contact the research team before starting.</string>
     <string name="access_location_settings_check_failed">Particeps could not verify whether this phone can satisfy the study’s configured location request. Contact the research team before starting.</string>
     <string name="access_system_screen_unavailable">This phone does not provide the required Android settings screen. Contact the research team before starting.</string>
-    <string name="traffic_shaping_disclosure">This study may use a VPN on this device to adjust how quickly some apps transfer data. Traffic stays on your usual network and is not sent through a Particeps server. Particeps only checks whether the study’s apps are installed; it does not save or upload your installed-app list. On Android 17 or later, local-network access is used only to forward local connections those apps initiate; Particeps does not discover local devices. Another VPN can interrupt this function; if that happens, the study pauses.</string>
+    <!--
+      Fixed platform copy, identical for every study that may adjust transfer speed. It must stay
+      true whether the study targets particular apps or every app, and must not reveal which.
+    -->
+    <string name="traffic_shaping_disclosure">This study may use a VPN on this device to adjust how quickly apps on this phone transfer data. Traffic stays on your usual network and is not sent through a Particeps server, and Particeps does not record its content or destinations. Particeps may check whether particular apps are installed, but it does not save or upload a list of your installed apps. On Android 17 or later, local-network access is used only to forward local connections that apps start; Particeps does not look for devices on your local network. Another VPN can interrupt this function; if that happens, the study pauses.</string>
 
     <string name="access_fine_location_settings_description">Android no longer offers the permission dialog after repeated denial. Restore precise location from Particeps App info.</string>
     <string name="access_fine_location_settings_step_permissions">In App info, open Permissions, then Location.</string>
@@ -281,22 +307,58 @@
     <string name="meter_sent">%1$s data batches sent</string>
     <string name="meter_reclaimed">The first %1$s data batches have been sent and removed from this phone. A later export will not include them.</string>
 
-    <!-- Details, behind a toggle: identifiers matter when something goes wrong and are noise otherwise -->
-    <string name="details_configuration">Configuration</string>
-    <string name="details_consent_document">Consent document</string>
+    <!--
+      Study and my data: one secondary screen behind one labeled entry that is the same for every
+      study and every study arm. It restates what the participant agreed to and coarse facts about
+      their own participation, and it carries no lifecycle control of its own.
+    -->
+    <string name="my_data_entry">Study and my data</string>
+    <string name="my_data_entry_detail">Reread what you agreed to, what is collected, and your choices</string>
+    <string name="action_back">Back</string>
+    <string name="my_data_about_title">About this study</string>
+    <string name="my_data_consent_title">What you agreed to</string>
+    <string name="details_consent_document">Consent document version</string>
     <string name="details_instance_id">Installation code</string>
-    <string name="details_assigned_id">Assigned code</string>
-    <string name="details_signature">Signature</string>
+    <string name="my_data_collected_title">What is collected</string>
+    <string name="my_data_notifications">Particeps also uses notifications for study status and ongoing collection, and for scheduled activities when a study has them.</string>
+
+    <string name="my_data_participation_title">Your participation</string>
+    <string name="participation_status">Status</string>
+    <string name="participation_day">Study day</string>
+    <!-- %1$d is the current study day, counted in 24-hour periods since Start; %2$d is the number of study days. -->
+    <string name="participation_day_value">Day %1$d of %2$d</string>
+    <string name="participation_planned_end">Planned end</string>
+    <string name="participation_planned_end_unconfirmed">Confirmed once Particeps can verify the phone’s clock</string>
+    <string name="participation_active">Collecting time</string>
+    <string name="participation_paused">Paused time</string>
     <string name="details_last_export">Last export</string>
-    <string name="details_last_export_value">%1$s events · %2$s data batches</string>
+    <!-- %1$s is a file size such as "2.4 MB"; %2$s is a locale-formatted event count. -->
+    <string name="details_last_export_value">%1$s · %2$s events</string>
+    <string name="participation_no_export">Not exported yet</string>
+    <string name="participation_storage">Stored on this phone</string>
+    <string name="participation_storage_checking">Checking…</string>
+    <string name="participation_storage_unavailable">Not available</string>
+
+    <string name="my_data_rights_title">Your rights</string>
+    <string name="rights_pause_title">Pause and resume</string>
+    <string name="rights_pause_body">Pause stops every data category until you choose Resume. While the study is paused, Particeps still records when the phone’s clock or time zone changes, including the new time zone, and when the phone restarts, so that the study’s timeline stays correct. Resume checks the required Android access again.</string>
+    <string name="rights_pause_upload">Data that was already collected continues to be sent while the study is paused.</string>
+    <string name="rights_withdraw_title">Withdraw</string>
+    <string name="rights_withdraw_body">Withdrawing ends collection permanently. You do not need to give a reason, and you can still export what was already collected.</string>
+    <string name="rights_withdraw_upload">Data already collected but not yet sent may still be sent to the research team.</string>
+    <string name="rights_delete_title">Delete local data</string>
+    <string name="rights_delete_body">After the study is completed or withdrawn, Delete local data removes the study and everything it recorded from this phone. This cannot be undone, so export first if the research team should receive a copy.</string>
+    <string name="rights_delete_upload">Deleting also cancels any sending that has not happened yet. Data already sent cannot be deleted from this phone. To ask the research team about it, you need the researcher’s contact details and your installation code shown above; deleting removes both from this phone, so note them first.</string>
 
     <!-- Irreversible actions are exactly where text earns its place -->
     <string name="confirm_complete_title">Complete this study?</string>
     <string name="confirm_complete_body">Collection will stop permanently. You can still export what was already collected.</string>
     <string name="confirm_withdraw_title">Withdraw from this study?</string>
     <string name="confirm_withdraw_body">All collection stops permanently. You can still export what was already collected, until you delete it.</string>
+    <string name="confirm_decline_title">Decline this study?</string>
+    <string name="confirm_decline_body">Collection has not started, so none of the data this study asks for has been collected, and no study data has been sent to the research team. Declining removes the study and your setup progress from this phone. This cannot be undone. Android access you granted during setup stays on until you turn it off in Android Settings or uninstall Particeps.</string>
     <string name="confirm_delete_title">Delete local data permanently?</string>
-    <string name="confirm_delete_body">Encrypted events, study state, and the configuration are all removed. This cannot be undone.</string>
+    <string name="confirm_delete_body">Encrypted events, study state, and the configuration are all removed, including the researcher’s contact details and your installation code. If you may later ask the research team about data already sent or exported, write both down from Study and my data first. This cannot be undone.</string>
 
     <!-- Language -->
     <string name="language_title">Language</string>
@@ -334,9 +396,6 @@
     <string name="export_incomplete_file_remains">The unfinished file could not be removed. Check the location you chose and delete it.</string>
     <string name="export_delete_unavailable">Finish or cancel the export before deleting local data.</string>
     <string name="message_local_data_deleted">The local study data was deleted.</string>
+    <string name="message_study_removed">The study was removed from this phone.</string>
     <string name="message_study_paused_for_safety">The study paused because Particeps could not verify safe collection. Review any Android access shown below, then resume.</string>
-    <string name="collector_screen_state_name">Screen power and lock state</string>
-    <string name="collector_screen_state_detail">Records screen power, interactive state, and whether the lock screen is showing. Does not establish attention or activity.</string>
-    <string name="collector_network_throughput_name">Observed network throughput</string>
-    <string name="collector_network_throughput_detail">Records device-wide transfer counter changes and interval timing. Does not test available network capacity or identify individual app traffic.</string>
 </resources>

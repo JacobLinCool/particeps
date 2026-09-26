@@ -185,7 +185,13 @@ snapshot that does not name the retained chain's exact boundary fails closed. Th
 metadata reconstruction path.
 
 Cold start never materializes the log: retained frames are authenticated sequentially with at most
-one decrypted commit in memory. Live export/upload uses `StudyStore.withReadSnapshot` to capture
+one decrypted commit in memory. `StudyStore.loadRuntime` hands each authenticated retained commit to
+the caller during that same pass. The runtime keeps only the commit that entered the current state,
+as its committed wall time (the participant's pause or end time) and the study calendar time in
+its successor clock checkpoint (a finished study's length). Later same-state commits (upload
+acknowledgements, paused re-anchors, action results) move the clock anchor and keep advancing
+calendar time, but change neither value. Both live in process memory, are re-derived on every cold
+start, and stay unknown when the transition lies below the retained floor. Live export/upload uses `StudyStore.withReadSnapshot` to capture
 acknowledged runtime and fixed encrypted segment lengths without running recovery again. The scoped
 snapshot pins retained files, opens one segment at a time, and checks cancellation between frames.
 Its consumer runs outside the store mutex, so appends and participant lifecycle commands can proceed
@@ -420,15 +426,49 @@ Compose receives `ParticipantStudyUiModel`, a whitelist projection. It contains 
 identity/consent, profile-independent data categories, ordinary access status, participant controls,
 safe state/count/time/export summaries, and one shaping-disclosure flag. It cannot carry target
 packages, resource profiles, caps, automation, timers, epochs, digests, owner UID, health, or typed
-failure reasons. Reflection/accessibility snapshot tests enforce this boundary.
+failure reasons. A reflection test pins the field names of the participant projection types and
+every type reachable from them. A Compose semantics sentinel test renders a configuration fixture
+carrying sentinel values in every non-displayed field through the real projection and checks that
+neither the running screen nor *Study and my data* exposes them; notification sentinel tests cover
+the shared foreground notification and the lock-screen public version of intervention notifications.
 
-The existing five setup steps and normal running screen remain. Shaping adds only the fixed inline
-paragraph next to the existing Access completion control; Done/Resume sequences Android 17 local
-network permission and system VPN consent. No VPN card/screen/status/history or second ongoing
-notification is added. `CollectionService` and the VPN service share one neutral notification
-identity while either foreground service remains active.
+Participant disclosure is a researcher decision with blinding as the default. The platform floor
+(study identity, purpose, contact, consent, data categories and what each records, access, upload
+terms, the fixed intervention-existence disclosure, and participant rights) is always available.
+Intervention targets, timing, strength, assignment, self-view charts, and debrief are reserved for a
+future signed participant disclosure policy that must be explicit, cannot go below the floor, and
+pairs every hidden dimension with a debrief. Protocol v1 does not carry it yet, so the App applies
+only the default. Automation/profile identifiers, timers, epochs, digests, owner UID, and typed
+failure reasons are never shown under any policy.
 
-Particeps-generated/derived UI never reveals treatment control. Researcher-authored study title,
+The existing five setup steps and normal running screen remain the primary surface. One labeled
+*Study and my data* entry, identical in every study arm, opens a secondary screen that restates the
+floor information and coarse participation facts; it adds no lifecycle control. It is a Compose
+state with a back handler inside `MainActivity`, so `app_lifecycle.v1` records no extra Activity.
+The entry is shown once the study has started: on the collection panel, and on the access panel
+that replaces it while required access is repaired in `RUNNING` or `PAUSED`. It is absent during
+setup and while recovery requires action.
+Its facts come from `ParticipantParticipationSummary`, built only from the monotonic study clock:
+study length is calendar elapsed time, collecting time is active-running time, and paused time is
+their difference. While the study is under way, each total is extended live by the phone's wall
+time since the clock anchor (collecting time only while `RUNNING`), never by a difference between
+the phone's clock and the network-time start or deadline, so a skewed or changed phone clock
+neither invents nor hides paused time. An ended study's length is the calendar time at the commit
+that ended it. Every total stops at the signed duration, which also covers a deadline processed
+late after the phone was off. The study day is 24-hour periods of that study length, ending at the
+planned end; the planned end is shown only while the deadline is trusted. The screen also shows the
+last export size and local storage, which `StudySessionManager` measures only when the screen
+opens. The signed `configuration_id` is not part of the projection: it differs between study arms
+and, from the Web tool, carries a digest of the whole configuration. Each state offers
+only the exit its command accepts: setup states offer "Decline and remove this study" (the local
+deletion path, since Withdraw is a runtime command only from `RUNNING` or `PAUSED`), started studies
+offer Withdraw, and ended studies offer Delete local data. Shaping adds only
+the fixed inline paragraph next to the existing Access completion control; Done/Resume sequences
+Android 17 local network permission and system VPN consent. No VPN card/status/history or second
+ongoing notification is added. `CollectionService` and the VPN service share one neutral
+notification identity while either foreground service remains active.
+
+Under the default policy, Particeps-generated/derived UI never reveals treatment control. Researcher-authored study title,
 purpose, researcher name/contact, consent, notification, and survey strings remain verbatim. These
 signed free-text fields are the explicit exception to the generated-UI blinding boundary; Web
 requires a blinding/ethics acknowledgement before signing because Android runtime cannot
@@ -465,6 +505,11 @@ and cleanup; preparation includes lock waits and the scoped snapshot capture.
 
 Automatic upload stages immutable ciphertext before HTTP. Headers and receipts name complete commit
 ranges and aggregate event count; participant identity stays encrypted. Exact replay reuses bytes.
+Nothing is staged or scheduled before Start: `StudySessionManager` arms the upload chain when Start
+leaves setup (including a start that fails closed to `PAUSED`) and on each process start of a
+started study, and refuses to stage while the runtime is in a setup state. A participant who
+declines during setup has therefore sent nothing; for one who starts, the first bundle begins at
+commit 1 and carries the setup commits with the first collection.
 The receiver validates bounds/digest/identity/range and stores ciphertext atomically without keys.
 
 Python inventory copies ciphertext into a content-addressed workspace. Materialization verifies each

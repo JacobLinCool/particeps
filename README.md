@@ -108,10 +108,16 @@ Studies collect from people's personal phones, so the platform is built to suppo
   recovers fail-closed to Paused, records the quality gap, and requires explicit participant Resume.
   Active-running time does not advance while paused and retrospective collectors never backfill the
   unverified interval.
-- **Participant UI is intentionally stable.** The existing five setup steps and compact running
-  controls remain. A traffic-shaping study adds one fixed high-level inline disclosure and Android's
-  mandatory permission/VPN consent, not a trigger/treatment/rate/history dashboard or second ongoing
-  notification.
+- **Disclosure is the researcher's decision; the default is blinding.** The five setup steps and
+  compact running controls remain the primary surface. One labeled *Study and my data* entry,
+  identical in every study arm, lets a participant reread what they agreed to (purpose, researcher
+  contact, consent text, what each data category records, upload terms, their rights) and see
+  coarse participation facts such as study day, deadline, and active collection time. Everything
+  beyond that platform floor (intervention targets, timing, or strength, assignment, charts of the
+  participant's own data, a debrief) is reserved for an explicit signed disclosure policy. Protocol
+  v1 does not carry that policy yet, so every study currently runs with the default. A
+  traffic-shaping study still adds only one fixed high-level disclosure plus Android's mandatory
+  permission/VPN consent, and no second ongoing notification.
 
 ### Who published the study
 

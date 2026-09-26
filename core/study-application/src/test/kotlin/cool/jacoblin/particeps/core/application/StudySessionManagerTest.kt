@@ -94,6 +94,96 @@ class StudySessionManagerTest {
     }
 
     @Test
+    fun setupStatesCannotWithdrawButDeclineRemovesTheStudy() = runTest {
+        listOf(ExperimentState.CONSENT_PENDING, ExperimentState.READY).forEach { setupState ->
+            val fixture = fixture()
+            fixture.manager.initialize()
+            fixture.manager.importSignedConfiguration(ENVELOPE)
+            assertEquals(StudyCommandResult.Success, fixture.manager.reviewStudy())
+            if (setupState == ExperimentState.READY) {
+                assertEquals(StudyCommandResult.Success, fixture.manager.acceptConsent())
+                assertEquals(StudyCommandResult.Success, fixture.manager.completeAccessSetup())
+            }
+            runCurrent()
+            assertEquals(setupState, fixture.manager.snapshot.value.runtime.state)
+            val commitsBeforeWithdraw = fixture.store.commits.size
+
+            assertEquals(StudyCommandResult.InvalidState, fixture.manager.withdraw())
+            assertEquals(commitsBeforeWithdraw, fixture.store.commits.size)
+
+            fixture.manager.deleteLocalData()
+
+            assertTrue(fixture.store.cleared)
+            assertNull(fixture.active.record)
+            assertNull(fixture.manager.snapshot.value.study)
+            assertTrue(fixture.manager.snapshot.value.initialized)
+            assertFalse(fixture.manager.snapshot.value.deletionPending)
+        }
+    }
+
+    @Test
+    fun completedStudyCannotWithdrawButCanStillBeDeleted() = runTest {
+        val fixture = fixture()
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        fixture.manager.reviewStudy()
+        fixture.manager.acceptConsent()
+        fixture.manager.completeAccessSetup()
+        fixture.manager.start()
+        assertEquals(StudyCommandResult.Success, fixture.manager.complete())
+        val commitsBeforeWithdraw = fixture.store.commits.size
+
+        assertEquals(StudyCommandResult.InvalidState, fixture.manager.withdraw())
+        assertEquals(commitsBeforeWithdraw, fixture.store.commits.size)
+        runCurrent()
+        assertEquals(ExperimentState.COMPLETED, fixture.manager.snapshot.value.runtime.state)
+
+        fixture.manager.deleteLocalData()
+
+        assertTrue(fixture.store.cleared)
+        assertNull(fixture.manager.snapshot.value.study)
+    }
+
+    @Test
+    fun pauseTimeStaysAtItsTransitionThroughUploadAcknowledgementAndRestart() = runTest {
+        val fixture = fixture(studyConfiguration = configuration(withUpload = true))
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        fixture.manager.reviewStudy()
+        fixture.manager.acceptConsent()
+        fixture.manager.completeAccessSetup()
+        fixture.manager.start()
+        assertEquals(StudyCommandResult.Success, fixture.manager.pause())
+        runCurrent()
+        val pausedAt = requireNotNull(fixture.manager.snapshot.value.runtime.stateEnteredAtUtcMillis)
+        assertEquals(fixture.store.stateEnteredAtUtcMillis(), pausedAt)
+
+        val receipt = requireNotNull(
+            fixture.manager.prepareAutomaticUpload(
+                ByteArrayOutputStream(),
+                UUID.fromString("123e4567-e89b-42d3-a456-426614174098"),
+            ),
+        )
+        assertEquals(StudyCommandResult.Success, fixture.manager.acknowledgeAutomaticUpload(receipt))
+        runCurrent()
+
+        // The acknowledgement is a later PAUSED commit whose clock anchor is past the pause.
+        val acknowledged = requireNotNull(fixture.store.runtime)
+        assertEquals(ExperimentState.PAUSED, acknowledged.state)
+        assertTrue(requireNotNull(acknowledged.clockCheckpoint).anchor.wallTimeUtcMillis > pausedAt)
+        assertEquals(pausedAt, fixture.manager.snapshot.value.runtime.stateEnteredAtUtcMillis)
+
+        fixture.manager.shutdownProcess()
+        val restarted = fixture.newManager()
+        restarted.initialize()
+        runCurrent()
+
+        assertEquals(ExperimentState.PAUSED, restarted.snapshot.value.runtime.state)
+        assertEquals(pausedAt, restarted.snapshot.value.runtime.stateEnteredAtUtcMillis)
+        restarted.shutdownProcess()
+    }
+
+    @Test
     fun slowExportAllowsPauseAndWithdrawWithoutRecoveryAndKeepsItsOriginalBoundary() = runTest {
         val fixture = fixture()
         fixture.manager.initialize()
@@ -205,6 +295,10 @@ class StudySessionManagerTest {
         val fixture = fixture(studyConfiguration = configuration(withUpload = true))
         fixture.manager.initialize()
         fixture.manager.importSignedConfiguration(ENVELOPE)
+        fixture.manager.reviewStudy()
+        fixture.manager.acceptConsent()
+        fixture.manager.completeAccessSetup()
+        fixture.manager.start()
         fixture.store.rejectRecoveryReads = true
         var completed = false
         var closed = false
@@ -242,6 +336,10 @@ class StudySessionManagerTest {
         assertTrue(failed)
         assertEquals(1, closes)
         fixture.manager.importSignedConfiguration(ENVELOPE)
+        fixture.manager.reviewStudy()
+        fixture.manager.acceptConsent()
+        fixture.manager.completeAccessSetup()
+        fixture.manager.start()
         val document = requireNotNull(fixture.store.runtime)
         fixture.store.runtime = document.copy(uploadedThroughCommit = document.revision)
         assertNull(fixture.manager.prepareAutomaticUpload(destination(), UUID.randomUUID(), 1))
@@ -288,7 +386,28 @@ class StudySessionManagerTest {
         assertEquals(clock.deadlineUtcMillis - 24 * 3_600_000L, projection.startedAtUtcMillis)
         assertEquals(clock.activeRunningElapsedNanos / 1_000_000L, projection.activeRunningElapsedMillis)
         assertEquals(clock.calendarElapsedNanos / 1_000_000L, projection.calendarElapsedMillis)
-        assertEquals(clock.anchor.wallTimeUtcMillis, projection.lastObservedAtUtcMillis)
+        assertEquals(clock.anchor.wallTimeUtcMillis, projection.elapsedMeasuredAtUtcMillis)
+        assertEquals(fixture.store.stateEnteredAtUtcMillis(), projection.stateEnteredAtUtcMillis)
+    }
+
+    @Test
+    fun localStorageIsMeasuredOnlyForAnOpenStudyStore() = runTest {
+        val fixture = fixture()
+        fixture.manager.initialize()
+        assertNull(fixture.manager.localStorageBytes())
+
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        fixture.store.usedBytes = 123_456L
+        assertEquals(123_456L, fixture.manager.localStorageBytes())
+        fixture.manager.reviewStudy()
+        fixture.manager.acceptConsent()
+        fixture.manager.completeAccessSetup()
+        fixture.manager.start()
+        assertEquals(StudyCommandResult.Success, fixture.manager.withdraw())
+        assertEquals(123_456L, fixture.manager.localStorageBytes())
+
+        fixture.manager.deleteLocalData()
+        assertNull(fixture.manager.localStorageBytes())
     }
 
     @Test
@@ -338,6 +457,10 @@ class StudySessionManagerTest {
         val fixture = fixture(studyConfiguration = configuration(withUpload = true))
         fixture.manager.initialize()
         fixture.manager.importSignedConfiguration(ENVELOPE)
+        fixture.manager.reviewStudy()
+        fixture.manager.acceptConsent()
+        fixture.manager.completeAccessSetup()
+        fixture.manager.start()
         val beforeUpload = requireNotNull(fixture.store.runtime)
         val bundleId = UUID.fromString("123e4567-e89b-42d3-a456-426614174099")
 
@@ -357,6 +480,89 @@ class StudySessionManagerTest {
         assertEquals(listOf(bundleId), fixture.uploadCoordinator.acknowledged)
         assertEquals(2, fixture.uploadScheduler.scheduled.size)
         fixture.manager.shutdownProcess()
+    }
+
+    @Test
+    fun automaticUploadIsNeitherScheduledNorStagedBeforeStart() = runTest {
+        val fixture = fixture(studyConfiguration = configuration(withUpload = true))
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        var closes = 0
+        fun destination() = object : ByteArrayOutputStream() {
+            override fun close() { closes++ }
+        }
+        suspend fun assertNothingLeavesThePhone(state: ExperimentState, manager: StudySessionManager) {
+            assertEquals(state, requireNotNull(fixture.store.runtime).state)
+            assertTrue(requireNotNull(fixture.store.runtime).revision > 0)
+            val before = closes
+            assertNull(manager.prepareAutomaticUpload(destination(), UUID.randomUUID()))
+            assertEquals(before + 1, closes)
+            assertTrue("$state armed automatic upload", fixture.uploadScheduler.scheduled.isEmpty())
+        }
+
+        assertNothingLeavesThePhone(ExperimentState.CONFIG_VERIFIED, fixture.manager)
+        assertEquals(StudyCommandResult.Success, fixture.manager.reviewStudy())
+        assertNothingLeavesThePhone(ExperimentState.CONSENT_PENDING, fixture.manager)
+        assertEquals(StudyCommandResult.Success, fixture.manager.acceptConsent())
+        assertNothingLeavesThePhone(ExperimentState.ACCESS_SETUP, fixture.manager)
+        assertEquals(StudyCommandResult.Success, fixture.manager.completeAccessSetup())
+        assertNothingLeavesThePhone(ExperimentState.READY, fixture.manager)
+
+        // A process restart during setup re-binds the plan but still does not arm the chain.
+        fixture.manager.shutdownProcess()
+        val restarted = fixture.newManager()
+        restarted.initialize()
+        runCurrent()
+        assertEquals(2, fixture.uploadCoordinator.reconciliations.size)
+        assertNothingLeavesThePhone(ExperimentState.READY, restarted)
+
+        // Start arms it, and the first bundle carries setup from commit 1 together with collection.
+        assertEquals(StudyCommandResult.Success, restarted.start())
+        assertEquals(1, fixture.uploadScheduler.scheduled.size)
+        val started = requireNotNull(fixture.store.runtime)
+        val receipt = requireNotNull(restarted.prepareAutomaticUpload(destination(), UUID.randomUUID()))
+        assertEquals(1L, receipt.firstCommitSequence)
+        assertEquals(started.revision, receipt.lastCommitSequence)
+        restarted.shutdownProcess()
+    }
+
+    @Test
+    fun aStudyDeclinedDuringSetupNeverArmedAutomaticUpload() = runTest {
+        val fixture = fixture(studyConfiguration = configuration(withUpload = true))
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        fixture.manager.reviewStudy()
+        fixture.manager.acceptConsent()
+        fixture.manager.completeAccessSetup()
+        runCurrent()
+
+        fixture.manager.deleteLocalData()
+
+        assertTrue(fixture.uploadScheduler.scheduled.isEmpty())
+        assertTrue(fixture.store.cleared)
+        assertNull(fixture.manager.snapshot.value.study)
+    }
+
+    @Test
+    fun aStartedStudyReArmsAutomaticUploadOnEveryProcessStart() = runTest {
+        val fixture = fixture(studyConfiguration = configuration(withUpload = true))
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        fixture.manager.reviewStudy()
+        fixture.manager.acceptConsent()
+        fixture.manager.completeAccessSetup()
+        fixture.manager.start()
+        assertEquals(StudyCommandResult.Success, fixture.manager.withdraw())
+        assertEquals(1, fixture.uploadScheduler.scheduled.size)
+        fixture.manager.shutdownProcess()
+
+        val restarted = fixture.newManager()
+        restarted.initialize()
+        runCurrent()
+
+        assertEquals(ExperimentState.WITHDRAWN, restarted.snapshot.value.runtime.state)
+        assertEquals(2, fixture.uploadScheduler.scheduled.size)
+        restarted.shutdownProcess()
     }
 
     @Test
@@ -534,12 +740,21 @@ class StudySessionManagerTest {
         val commits = mutableListOf<EngineCommit>()
         var cleared = false
 
+        /** Committed wall time of the last commit whose state differs from its predecessor's. */
+        fun stateEnteredAtUtcMillis(): Long? = commits.zipWithNext()
+            .lastOrNull { (before, after) -> before.successorProjection.state != after.successorProjection.state }
+            ?.second
+            ?.committedAt
+            ?.wallTimeUtcMillis
+
         var recoveryReads = 0
         var rejectRecoveryReads = false
-        override suspend fun loadRuntime(): RuntimeDocument? {
+        override suspend fun loadRuntime(observeRetained: (EngineCommit) -> Unit): RuntimeDocument? {
             check(!rejectRecoveryReads) { "Live projection must not invoke disk recovery" }
             recoveryReads++
-            return runtime
+            return runtime?.also { current ->
+                commits.filter { it.commitSequence >= current.retainedFromCommit }.forEach(observeRetained)
+            }
         }
         override suspend fun initialize(runtime: RuntimeDocument) {
             check(this.runtime == null)
@@ -580,7 +795,8 @@ class StudySessionManagerTest {
                 }
             })
         }
-        override suspend fun storageUsage(): StorageUsage = StorageUsage(0, StudyConfiguration.MINIMUM_LOCAL_BYTES)
+        var usedBytes = 0L
+        override suspend fun storageUsage(): StorageUsage = StorageUsage(usedBytes, StudyConfiguration.MINIMUM_LOCAL_BYTES)
         override suspend fun evictThrough(runtime: RuntimeDocument, targetBytes: Long): RuntimeDocument = runtime
         override suspend fun clear() {
             runtime = null

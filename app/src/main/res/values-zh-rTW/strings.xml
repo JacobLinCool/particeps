@@ -6,6 +6,7 @@
 <resources>
     <string name="intervention_channel">研究活動</string>
     <string name="intervention_channel_description">排程的研究活動與問卷</string>
+    <string name="intervention_public_text">有一項研究活動，解鎖手機後即可查看。</string>
     <string name="daily_channel">每日研究提醒</string>
     <string name="daily_channel_description">每日安靜提醒研究目前正在收集或已暫停</string>
     <string name="collection_channel">研究資料收集中</string>
@@ -67,6 +68,7 @@
     <string name="action_complete_study">完成研究</string>
     <string name="action_export">匯出加密資料</string>
     <string name="action_withdraw">退出研究</string>
+    <string name="action_decline">不參加並移除這項研究</string>
     <string name="action_delete">刪除本機資料</string>
     <string name="action_confirm">確認</string>
     <string name="action_cancel">取消</string>
@@ -75,7 +77,6 @@
     <string name="action_choose_keyboard">選擇鍵盤</string>
 
     <string name="cd_language">語言</string>
-    <string name="cd_details">詳細資訊</string>
 
     <plurals name="study_duration_hours">
         <item quantity="other">%1$d 小時</item>
@@ -86,55 +87,71 @@
     <string name="study_duration_days_hours">%1$d 天 %2$d 小時</string>
 
     <string name="data_optional">選用</string>
-    <string name="participant_data_accelerometer_detail">手機動作感測器量到的移動狀況</string>
-    <string name="participant_data_gyroscope_detail">手機量到的原始旋轉資訊；不據此推論活動</string>
-    <string name="participant_data_ambient_light_detail">周遭的原始光線強度；不會記錄影像或環境內容</string>
-    <string name="participant_data_proximity_detail">手機接近感測器量到的原始遠近或距離；不代表有人在場</string>
-    <string name="participant_data_network_usage_detail">手機傳送與接收的總位元組數</string>
-    <string name="participant_data_usage_events_detail">哪些 App 開啟或關閉，以及螢幕何時亮起</string>
-    <string name="participant_data_location_detail">手機的位置</string>
+    <string name="data_required">必要</string>
+    <string name="data_not_recorded">不記錄：%1$s</string>
+    <string name="data_access_line">Android 存取權：%1$s</string>
+    <string name="data_access_none">Android 存取權：不需要另外授權</string>
+    <string name="list_separator">、</string>
 
-    <string name="collector_app_lifecycle_name">App 使用狀況</string>
-    <string name="collector_app_lifecycle_detail">這個 App 本身開啟與關閉的時間</string>
+    <string name="collector_app_lifecycle_name">Particeps 本身的使用狀況</string>
+    <string name="collector_app_lifecycle_records">Particeps 自身畫面開啟、切換到前景或背景、關閉的時間，以及是哪一個 Particeps 畫面。</string>
+    <string name="collector_app_lifecycle_not_recorded">其他 App 的活動，或 Particeps 畫面上顯示的內容</string>
 
     <string name="collector_accelerometer_name">手機移動</string>
-    <plurals name="collector_accelerometer_detail">
-        <item quantity="other">手機的移動狀況，每秒約記錄 %1$d 次以上</item>
-    </plurals>
+    <string name="collector_accelerometer_records">手機在三個軸向上的原始加速度（含重力），以及每筆讀數的感測器時間與準確度。</string>
+    <string name="collector_accelerometer_not_recorded">聲音、影像或位置；也不推論走路等活動</string>
 
     <string name="collector_battery_state_name">電池情境</string>
-    <string name="collector_battery_state_detail">整數電量百分比、充電狀態與來源，以及省電模式；不收集電池健康、溫度或硬體識別碼</string>
+    <string name="collector_battery_state_records">整數電量百分比、充電狀態、充電來源，以及是否開啟省電模式。</string>
+    <string name="collector_battery_state_not_recorded">電池健康度、溫度或硬體識別碼</string>
 
     <string name="collector_temporal_context_name">時間情境</string>
-    <string name="collector_temporal_context_detail">時區設定、UTC 偏移、日光節約時間狀態與時鐘變更；這是裝置設定，不代表位置或旅行</string>
+    <string name="collector_temporal_context_records">手機的時區設定、UTC 偏移與日光節約時間狀態，以及每次記錄的原因，例如研究開始或時區、時鐘變更。</string>
+    <string name="collector_temporal_context_not_recorded">位置；時區只是手機設定，不據此推論你是否旅行</string>
 
     <string name="collector_gyroscope_name">手機旋轉</string>
-    <plurals name="collector_gyroscope_detail">
-        <item quantity="other">手機的原始旋轉速度，每秒約記錄 %1$d 次以上；不推論方向或活動</item>
-    </plurals>
+    <string name="collector_gyroscope_records">手機繞三個軸向的原始旋轉速度，以及每筆讀數的感測器時間與準確度。</string>
+    <string name="collector_gyroscope_not_recorded">聲音、影像或位置；也不推論手機方向或活動</string>
 
     <string name="collector_ambient_light_name">環境光線</string>
-    <string name="collector_ambient_light_detail">光線變化至少 %2$d millilux 時，最多每隔 %1$s記錄原始照度；不會記錄環境內容</string>
+    <string name="collector_ambient_light_records">手機光線感測器量到的光線強度，以及每筆讀數的感測器時間與準確度。</string>
+    <string name="collector_ambient_light_not_recorded">影像，或光線強度以外的任何周遭環境資訊</string>
 
     <string name="collector_proximity_name">接近感測器</string>
-    <string name="collector_proximity_detail">距離變化至少 %2$d mm 或遠近狀態切換時，最多每隔 %1$s記錄原始接近或距離狀態。許多手機只能回報近或遠，不能據此判定有人在場</string>
+    <string name="collector_proximity_records">是否有物體靠近手機的接近感測器、原始距離讀數、感測器的量測範圍，以及感測器時間。</string>
+    <string name="collector_proximity_not_recorded">影像或附近是誰；讀數為「近」不代表有人在場，許多手機也只能回報近或遠</string>
+
+    <string name="collector_screen_state_name">螢幕電源與鎖定狀態</string>
+    <string name="collector_screen_state_records">螢幕是開啟、關閉或處於低耗電顯示模式，手機是否可互動，以及是否顯示鎖定畫面。</string>
+    <string name="collector_screen_state_not_recorded">螢幕上顯示的內容；螢幕亮著不代表你正在看或使用手機</string>
 
     <string name="collector_network_state_name">連線類型</string>
-    <string name="collector_network_state_detail">目前使用 Wi-Fi 或行動網路，以及連線是否按流量計費</string>
+    <string name="collector_network_state_records">手機的主要連線是否可用，以及使用 Wi-Fi、行動網路、乙太網路或 VPN；連線是否按流量計費或漫遊；以及 Android 是否確認可連上網際網路。也可能包含 Android 對連線速度的估計值。</string>
+    <string name="collector_network_state_not_recorded">網路名稱、位址、瀏覽的網站或傳輸內容</string>
+
     <string name="collector_vpn_state_name">VPN 連線狀態</string>
-    <string name="collector_vpn_state_detail">記錄 Android 可觀察的 VPN 連線變化，包含其他 App 使用的 VPN，不記錄傳輸內容。</string>
+    <string name="collector_vpn_state_records">Android 回報的這支手機是否有 VPN 連線，包括其他 App 的 VPN。</string>
+    <string name="collector_vpn_state_not_recorded">是哪一個 VPN App、VPN 伺服器位址或傳輸內容</string>
+
+    <string name="collector_network_throughput_name">實際網路傳輸速率</string>
+    <string name="collector_network_throughput_records">整支手機在每個量測區間傳送與接收的位元組數，以及每個區間的開始與結束時間。</string>
+    <string name="collector_network_throughput_not_recorded">哪個 App 使用了流量、連線目的地或內容；也不會進行測速</string>
 
     <string name="collector_network_usage_name">流量</string>
-    <string name="collector_network_usage_detail">每隔 %1$s記錄手機傳送與接收的總位元組數</string>
+    <string name="collector_network_usage_records">整支手機在 Android 回報的每個期間內，透過 Wi-Fi 或行動網路傳送與接收的總位元組數與封包數。</string>
+    <string name="collector_network_usage_not_recorded">哪個 App 使用了流量、連線目的地或內容</string>
 
     <string name="collector_usage_events_name">App 與螢幕使用</string>
-    <string name="collector_usage_events_detail">每隔 %1$s記錄開啟或關閉了哪些 App，以及螢幕何時亮起</string>
+    <string name="collector_usage_events_records">App 進入與離開前景的時間，以及 Android 有提供時的 App 套件名稱，和一組只用來區分同一 App 不同畫面、不含畫面名稱的代碼；螢幕開啟或關閉、鎖定畫面出現或解除，以及手機開機或關機的時間。</string>
+    <string name="collector_usage_events_not_recorded">螢幕上顯示的內容、你輸入的文字、通知內容，或 App 內各畫面的名稱</string>
 
     <string name="collector_location_name">位置</string>
-    <string name="collector_location_detail">約每隔 %1$s記錄一次手機位置，移動超過 %2$s才會記錄</string>
+    <string name="collector_location_records">手機的位置（緯度與經度）及其準確度與時間，包括 Particeps 未開啟時。也可能包含高度、速度、行進方向及其準確度，以及 Android 是否將該位置標示為模擬位置。</string>
+    <string name="collector_location_not_recorded">照片、附近裝置掃描或地點名稱；Particeps 也不推論你去過哪些地方</string>
 
     <string name="collector_keyboard_touch_name">鍵盤觸控</string>
-    <string name="collector_keyboard_touch_detail">你在研究鍵盤內的觸控方式，包括觸碰位置、時間與力道</string>
+    <string name="collector_keyboard_touch_records">只限於 Particeps 研究鍵盤上的觸控：按鍵類別（字母、空白鍵、倒退鍵或 Enter）、觸碰按鍵的位置與時間，以及手機回報的觸控壓力、面積與角度。</string>
+    <string name="collector_keyboard_touch_not_recorded">你按下的是哪個字母、輸入的文字、密碼欄位中的觸控，或任何其他鍵盤的輸入</string>
 
     <string name="unit_seconds">%1$d 秒</string>
     <string name="unit_milliseconds">%1$d 毫秒</string>
@@ -164,8 +181,8 @@
     <string name="consent_upload_cadence">%1$s，%2$s</string>
     <string name="consent_upload_encrypted">傳送內容只有研究團隊持有的解密金鑰能開啟，傳輸途中與接收伺服器都無法讀取內容。</string>
     <string name="consent_upload_instance_id">傳送的資料會附帶一組隨機產生的安裝代碼，讓研究團隊區分不同的 App 安裝。代碼不含你的姓名或帳號。</string>
-    <string name="consent_upload_mandatory">自動傳送是這個研究的一部分，無法單獨關閉。暫停或退出研究會停止收集新資料，但已收集且尚未傳送的資料仍會傳送給研究團隊。</string>
-    <string name="consent_checkbox">我已閱讀並同意上述資料收集與傳送方式。</string>
+    <string name="consent_upload_mandatory">自動傳送是這個研究的一部分，無法單獨關閉。暫停或退出研究會停止收集新資料，但已收集且尚未傳送的資料仍可能傳送給研究團隊。</string>
+    <string name="consent_checkbox">我已閱讀並同意上述的資料收集與分享方式。</string>
 
     <plurals name="upload_every_minutes">
         <item quantity="other">約每 %1$d 分鐘</item>
@@ -202,7 +219,7 @@
     <string name="access_location_settings_change_unavailable">Android 回報這支手機無法滿足本研究要求的位置設定。開始前請聯絡研究團隊。</string>
     <string name="access_location_settings_check_failed">Particeps 無法確認這支手機是否能滿足研究設定的位置請求。開始前請聯絡研究團隊。</string>
     <string name="access_system_screen_unavailable">這支手機沒有提供所需的 Android 設定畫面，請先聯絡研究團隊，不要開始研究。</string>
-    <string name="traffic_shaping_disclosure">這項研究可能會使用此裝置上的 VPN，調整部分 App 傳輸資料的速度。流量仍使用你原本的網路，不會經由 Particeps 伺服器傳送。Particeps 只會檢查研究所需 App 是否已安裝，不會儲存或上傳已安裝 App 清單。Android 17 以上的本機網路權限只用來轉送這些 App 原本發出的本機連線；Particeps 不會搜尋本機網路裝置。其他 VPN 可能中斷此功能，屆時研究會暫停。</string>
+    <string name="traffic_shaping_disclosure">這項研究可能會使用此裝置上的 VPN，調整這支手機上 App 傳輸資料的速度。流量仍使用你原本的網路，不會經由 Particeps 伺服器傳送，Particeps 也不會記錄流量的內容或目的地。Particeps 可能會檢查特定 App 是否已安裝，但不會儲存或上傳你的已安裝 App 清單。Android 17 以上的本機網路權限只用來轉送 App 發起的本機連線；Particeps 不會搜尋你本機網路上的裝置。其他 VPN 可能中斷此功能，屆時研究會暫停。</string>
 
     <string name="access_fine_location_settings_description">多次拒絕後，Android 不會再顯示權限對話框。請從 Particeps 的應用程式資訊恢復精確位置。</string>
     <string name="access_fine_location_settings_step_permissions">在「應用程式資訊」中開啟「權限」，再選擇「位置」。</string>
@@ -243,20 +260,50 @@
     <string name="meter_sent">已傳送 %1$s 個資料批次</string>
     <string name="meter_reclaimed">前 %1$s 個資料批次已傳送並從手機移除，之後匯出的檔案不會包含這些資料。</string>
 
-    <string name="details_configuration">設定檔</string>
-    <string name="details_consent_document">同意書</string>
+    <string name="my_data_entry">研究說明與我的資料</string>
+    <string name="my_data_entry_detail">重新查看你同意的內容、收集的資料與你的權利</string>
+    <string name="action_back">返回</string>
+    <string name="my_data_about_title">關於這項研究</string>
+    <string name="my_data_consent_title">你同意的內容</string>
+    <string name="details_consent_document">同意書版本</string>
     <string name="details_instance_id">安裝代碼</string>
-    <string name="details_assigned_id">參與者代碼</string>
-    <string name="details_signature">簽章</string>
+    <string name="my_data_collected_title">收集的資料</string>
+    <string name="my_data_notifications">Particeps 也會使用通知顯示研究狀態與持續收集；研究有排程活動時，也會用通知提醒活動。</string>
+
+    <string name="my_data_participation_title">你的參與情形</string>
+    <string name="participation_status">狀態</string>
+    <string name="participation_day">研究天數</string>
+    <string name="participation_day_value">第 %1$d 天，共 %2$d 天</string>
+    <string name="participation_planned_end">預計結束</string>
+    <string name="participation_planned_end_unconfirmed">待 Particeps 確認手機時間後才能確定</string>
+    <string name="participation_active">收集時間</string>
+    <string name="participation_paused">暫停時間</string>
     <string name="details_last_export">上次匯出</string>
-    <string name="details_last_export_value">%1$s 筆事件 · %2$s 個資料批次</string>
+    <string name="details_last_export_value">%1$s · %2$s 筆事件</string>
+    <string name="participation_no_export">尚未匯出</string>
+    <string name="participation_storage">手機上占用的空間</string>
+    <string name="participation_storage_checking">正在確認…</string>
+    <string name="participation_storage_unavailable">無法取得</string>
+
+    <string name="my_data_rights_title">你的權利</string>
+    <string name="rights_pause_title">暫停與繼續收集</string>
+    <string name="rights_pause_body">暫停後，所有資料類別都會停止收集，直到你選擇「繼續收集」。暫停期間，Particeps 仍會記錄手機時鐘或時區的變更（包括新的時區）以及手機重新開機，讓研究的時間軸保持正確。繼續收集時，App 會再次檢查必要的 Android 存取權。</string>
+    <string name="rights_pause_upload">暫停期間，已收集的資料仍會繼續傳送。</string>
+    <string name="rights_withdraw_title">退出研究</string>
+    <string name="rights_withdraw_body">退出研究會永久停止收集。你不需要說明原因，而且仍可匯出已收集的資料。</string>
+    <string name="rights_withdraw_upload">已收集但尚未傳送的資料，仍可能傳送給研究團隊。</string>
+    <string name="rights_delete_title">刪除本機資料</string>
+    <string name="rights_delete_body">研究完成或退出後，「刪除本機資料」會從這支手機移除這項研究與所有記錄的資料。此操作無法復原，若研究團隊需要一份資料，請先匯出。</string>
+    <string name="rights_delete_upload">刪除時也會取消所有尚未完成的傳送。已傳送的資料無法從這支手機刪除。若要向研究團隊詢問這些資料，你需要上方列出的研究人員聯絡方式與你的安裝代碼；刪除後兩者都會從這支手機移除，請先記下來。</string>
 
     <string name="confirm_complete_title">確定完成這項研究？</string>
     <string name="confirm_complete_body">資料收集將永久停止，你仍可匯出先前已收集的資料。</string>
     <string name="confirm_withdraw_title">確定退出研究？</string>
     <string name="confirm_withdraw_body">App 將永久停止收集資料。在刪除本機資料前，你仍可匯出既有資料。</string>
+    <string name="confirm_decline_title">確定不參加這項研究？</string>
+    <string name="confirm_decline_body">研究尚未開始收集，這項研究列出的各類資料都還沒有收集，也沒有任何研究資料傳送給研究團隊。選擇不參加後，這項研究與你目前的設定進度都會從這支手機移除，且無法復原。你在設定過程中授予的 Android 存取權會保持開啟，直到你在 Android 設定中關閉，或解除安裝 Particeps。</string>
     <string name="confirm_delete_title">永久刪除本機資料？</string>
-    <string name="confirm_delete_body">已加密的資料、研究狀態與設定檔都會從手機移除，且無法復原。</string>
+    <string name="confirm_delete_body">已加密的資料、研究狀態與設定檔都會從手機移除，研究人員的聯絡方式與你的安裝代碼也會一併移除。日後若要向研究團隊詢問已傳送或已匯出的資料，請先在「研究說明與我的資料」記下這兩項資訊。此操作無法復原。</string>
 
     <string name="language_title">語言</string>
     <string name="language_system">跟隨系統</string>
@@ -293,9 +340,6 @@
     <string name="export_incomplete_file_remains">無法移除未完成的檔案。請到你選擇的位置檢查並刪除。</string>
     <string name="export_delete_unavailable">請先完成或取消匯出，再刪除本機資料。</string>
     <string name="message_local_data_deleted">本機研究資料已刪除。</string>
+    <string name="message_study_removed">這項研究已從這支手機移除。</string>
     <string name="message_study_paused_for_safety">Particeps 無法驗證安全收集，因此研究已暫停。請先處理下方顯示的 Android 存取權，再恢復研究。</string>
-    <string name="collector_screen_state_name">螢幕電源與鎖定狀態</string>
-    <string name="collector_screen_state_detail">記錄螢幕電源、可互動狀態與鎖定畫面是否顯示，無法判定注意力或活動。</string>
-    <string name="collector_network_throughput_name">實際網路傳輸速率</string>
-    <string name="collector_network_throughput_detail">記錄全裝置流量計數的變化與區間時間，不主動測試網路容量，也不識別個別 App 流量。</string>
 </resources>

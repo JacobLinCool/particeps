@@ -40,6 +40,12 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
+ * The Android Keystore alias family of [EncryptedExperimentStore]: one AES key per experiment,
+ * named by the SHA-256 of its experiment ID. A full storage reset deletes every alias in it.
+ */
+internal const val ENGINE_KEY_ALIAS_PREFIX = "particeps-engine-"
+
+/**
  * Layout-3 encrypted study store. Complete [EngineCommit] frames are the incremental truth;
  * snapshots are bounded recovery caches and can only advance by replaying authenticated frames.
  */
@@ -66,7 +72,7 @@ class EncryptedExperimentStore internal constructor(
     private val mutex = Mutex()
     private val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
     private val opaqueId = sha256(experimentId.toByteArray()).toHex()
-    private val keyAlias = "particeps-engine-$opaqueId"
+    private val keyAlias = "$ENGINE_KEY_ALIAS_PREFIX$opaqueId"
     private val rootDirectory = context.noBackupFilesDir.resolve(STORAGE_DIRECTORY)
     private val snapshotFile = AcknowledgedAtomicFile(
         rootDirectory.resolve("$opaqueId.runtime3.ptc"),
@@ -87,7 +93,9 @@ class EncryptedExperimentStore internal constructor(
         }
     }
 
-    override suspend fun loadRuntime(): RuntimeDocument? = withContext(Dispatchers.IO) {
+    override suspend fun loadRuntime(
+        observeRetained: (EngineCommit) -> Unit,
+    ): RuntimeDocument? = withContext(Dispatchers.IO) {
         mutex.withLock {
             if (!snapshotFile.exists()) {
                 if (legacyStorageExists()) {
@@ -103,7 +111,7 @@ class EncryptedExperimentStore internal constructor(
                 ?: throw StudyStoreRecoveryException(StudyStoreRecoveryFailure.KEY_UNAVAILABLE)
             val snapshot = recoverSnapshot(key)
             val recovered = try {
-                replayAfter(snapshot, key, recoverTail = true)
+                replayAfter(snapshot, key, recoverTail = true, observeRetained)
             } catch (failure: Throwable) {
                 if (failure is StudyStoreRecoveryException) throw failure
                 throw StudyStoreRecoveryException(StudyStoreRecoveryFailure.COMMIT_LOG_INVALID, failure)
@@ -536,6 +544,7 @@ class EncryptedExperimentStore internal constructor(
         snapshot: RuntimeDocument,
         key: SecretKey,
         recoverTail: Boolean,
+        observeRetained: (EngineCommit) -> Unit,
     ): RuntimeDocument {
         var recovered = snapshot
         var expectedRetainedSequence = snapshot.retainedFromCommit
@@ -565,6 +574,7 @@ class EncryptedExperimentStore internal constructor(
                 require(commit.previousCommitSha256 == recovered.lastCommitSha256) { "Commit chain mismatch" }
                 recovered = recovered.advance(commit)
             }
+            observeRetained(commit)
             true
         }
         require(snapshotBoundarySeen) { "Retained log does not reach the snapshot boundary" }

@@ -1,11 +1,16 @@
 package cool.jacoblin.particeps
 
 import android.Manifest
+import android.app.Notification
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import cool.jacoblin.particeps.core.definition.NotificationAction
+import cool.jacoblin.particeps.core.definition.SurveyAction
 import cool.jacoblin.particeps.platform.SerializedSharedForegroundNotificationLease
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -33,6 +38,50 @@ class ForegroundNotificationSentinelTest {
                 notification.extras.getCharSequence("android.bigText"),
             ).joinToString(separator = "\n")
             assertFalse("Participant notification leaked signed study text", sensitiveTitle in visibleCopy)
+        }
+    }
+
+    @Test
+    fun interventionLockScreenVersionNeverShowsResearcherAuthoredText() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val sensitiveTitle = "TREATMENT slow-instagram-after-three-minutes"
+        val sensitiveMessage = "You are in the throttled arm; rate your Instagram session."
+        val contentIntent = PendingIntent.getActivity(
+            context,
+            0,
+            Intent(context, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+        val actions = listOf(
+            NotificationAction(sensitiveTitle, sensitiveMessage),
+            SurveyAction(sensitiveTitle, sensitiveMessage, "session-rating"),
+        )
+
+        actions.forEach { action ->
+            val notification = interventionNotification(context, action, contentIntent)
+            assertEquals(Notification.VISIBILITY_PRIVATE, notification.visibility)
+            assertEquals(sensitiveTitle, notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+            val publicVersion = checkNotNull(notification.publicVersion) { "Lock-screen version is required" }
+            val lockScreenCopy = listOf(
+                Notification.EXTRA_TITLE,
+                Notification.EXTRA_TITLE_BIG,
+                Notification.EXTRA_TEXT,
+                Notification.EXTRA_BIG_TEXT,
+                Notification.EXTRA_SUB_TEXT,
+                Notification.EXTRA_INFO_TEXT,
+                Notification.EXTRA_SUMMARY_TEXT,
+            ).mapNotNull { publicVersion.extras.getCharSequence(it)?.toString() } +
+                listOfNotNull(publicVersion.tickerText?.toString())
+            lockScreenCopy.forEach { copy ->
+                assertFalse("Lock screen leaked the activity title", sensitiveTitle in copy)
+                assertFalse("Lock screen leaked the activity message", sensitiveMessage in copy)
+            }
+            assertEquals(
+                listOf(context.getString(R.string.app_name), context.getString(R.string.intervention_public_text)),
+                lockScreenCopy,
+            )
+            assertEquals(ParticepsNotificationChannels.INTERVENTIONS, notification.channelId)
+            assertEquals(ParticepsNotificationChannels.INTERVENTIONS, publicVersion.channelId)
         }
     }
 

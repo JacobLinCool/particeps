@@ -824,6 +824,102 @@ class ExperimentRuntimeTest {
     }
 
     @Test
+    fun stateEntryTimeIgnoresLaterSameStateCommitsAndSurvivesRestartAndReboot() = runTest {
+        val store = InMemoryStudyStore()
+        val first = fixture(backgroundScope, store)
+        first.runtime.initialize()
+        completeSetup(first.runtime)
+        first.runtime.start()
+        first.clock.advanceMillis(60_000)
+        assertEquals(RuntimeCommandResult.Success, first.runtime.pause())
+        val pauseCommit = store.commits.first { it.successorProjection.state == ExperimentState.PAUSED }
+        val pausedAt = pauseCommit.committedAt.wallTimeUtcMillis
+        val pausedAtCalendar = requireNotNull(pauseCommit.successorProjection.clockCheckpoint).calendarElapsedNanos
+        assertEquals(pausedAt, first.runtime.snapshot.value.stateEnteredAtUtcMillis)
+        assertEquals(pausedAtCalendar, first.runtime.snapshot.value.stateEnteredCalendarElapsedNanos)
+
+        first.clock.advanceMillis(600_000)
+        assertEquals(
+            RuntimeCommandResult.Success,
+            first.runtime.acknowledgeUpload(
+                "123e4567-e89b-42d3-a456-426614174099",
+                1,
+                first.runtime.snapshot.value.revision,
+                "b".repeat(64),
+            ),
+        )
+        assertEquals(EngineInputKind.UPLOAD_ACKNOWLEDGEMENT, store.commits.last().inputKind)
+        assertTrue(requireNotNull(first.runtime.snapshot.value.clockAnchorWallTimeUtcMillis) >= pausedAt + 600_000)
+        assertTrue(first.runtime.snapshot.value.calendarElapsedNanos > pausedAtCalendar)
+        assertEquals(pausedAt, first.runtime.snapshot.value.stateEnteredAtUtcMillis)
+        assertEquals(pausedAtCalendar, first.runtime.snapshot.value.stateEnteredCalendarElapsedNanos)
+        first.runtime.close()
+
+        val restarted = fixture(backgroundScope, store)
+        assertTrue(restarted.runtime.initialize() is RuntimeInitializationResult.Ready)
+        assertEquals(ExperimentState.PAUSED, restarted.runtime.snapshot.value.state)
+        assertEquals(pausedAt, restarted.runtime.snapshot.value.stateEnteredAtUtcMillis)
+        assertEquals(pausedAtCalendar, restarted.runtime.snapshot.value.stateEnteredCalendarElapsedNanos)
+        restarted.runtime.close()
+
+        val anchorWall = requireNotNull(store.runtime?.clockCheckpoint).anchor.wallTimeUtcMillis
+        val rebooted = fixture(
+            backgroundScope,
+            store,
+            clock = FakeClocks("boot-after-reboot", trustedUtcAvailable = true, wallBaseMillis = anchorWall + 60_000),
+        )
+        assertTrue(rebooted.runtime.initialize() is RuntimeInitializationResult.Ready)
+        assertEquals(EngineInputKind.RECOVERY, store.commits.last().inputKind)
+        assertEquals(ExperimentState.PAUSED, store.commits.last().successorProjection.state)
+        assertEquals(pausedAt, rebooted.runtime.snapshot.value.stateEnteredAtUtcMillis)
+        assertEquals(pausedAtCalendar, rebooted.runtime.snapshot.value.stateEnteredCalendarElapsedNanos)
+
+        rebooted.clock.advanceMillis(1_000)
+        assertEquals(RuntimeCommandResult.Success, rebooted.runtime.complete())
+        val completion = store.commits.first { it.successorProjection.state == ExperimentState.COMPLETED }
+        val completedAt = completion.committedAt.wallTimeUtcMillis
+        val completedAtCalendar = requireNotNull(completion.successorProjection.clockCheckpoint).calendarElapsedNanos
+        assertTrue(completedAt > pausedAt)
+        assertTrue(completedAtCalendar > pausedAtCalendar)
+        assertEquals(completedAt, rebooted.runtime.snapshot.value.stateEnteredAtUtcMillis)
+        assertEquals(completedAtCalendar, rebooted.runtime.snapshot.value.stateEnteredCalendarElapsedNanos)
+        rebooted.runtime.close()
+
+        val reopened = fixture(backgroundScope, store)
+        assertTrue(reopened.runtime.initialize() is RuntimeInitializationResult.Ready)
+        assertEquals(completedAt, reopened.runtime.snapshot.value.stateEnteredAtUtcMillis)
+        assertEquals(completedAtCalendar, reopened.runtime.snapshot.value.stateEnteredCalendarElapsedNanos)
+    }
+
+    @Test
+    fun stateEntryBelowTheRetainedFloorIsUnknownRatherThanGuessed() = runTest {
+        val store = InMemoryStudyStore()
+        val first = fixture(backgroundScope, store)
+        first.runtime.initialize()
+        completeSetup(first.runtime)
+        first.runtime.start()
+        first.runtime.pause()
+        assertEquals(
+            RuntimeCommandResult.Success,
+            first.runtime.acknowledgeUpload(
+                "123e4567-e89b-42d3-a456-426614174099",
+                1,
+                first.runtime.snapshot.value.revision,
+                "b".repeat(64),
+            ),
+        )
+        first.runtime.close()
+        val acknowledged = requireNotNull(store.runtime)
+        store.runtime = acknowledged.copy(retainedFromCommit = acknowledged.revision)
+
+        val restarted = fixture(backgroundScope, store)
+        assertTrue(restarted.runtime.initialize() is RuntimeInitializationResult.Ready)
+        assertEquals(ExperimentState.PAUSED, restarted.runtime.snapshot.value.state)
+        assertNull(restarted.runtime.snapshot.value.stateEnteredAtUtcMillis)
+        assertNull(restarted.runtime.snapshot.value.stateEnteredCalendarElapsedNanos)
+    }
+
+    @Test
     fun clockDiscontinuityCommitsQualityGapWithoutPausingOrResettingActiveClock() = runTest {
         val fixture = fixture(backgroundScope)
         fixture.runtime.initialize()
@@ -2513,7 +2609,10 @@ class ExperimentRuntimeTest {
         var failPendingConsumption = false
         var afterPendingStaged: suspend () -> Unit = {}
 
-        override suspend fun loadRuntime(): RuntimeDocument? = runtime
+        override suspend fun loadRuntime(observeRetained: (EngineCommit) -> Unit): RuntimeDocument? =
+            runtime?.also { current ->
+                commits.filter { it.commitSequence >= current.retainedFromCommit }.forEach(observeRetained)
+            }
         override suspend fun initialize(runtime: RuntimeDocument) {
             check(this.runtime == null)
             this.runtime = runtime

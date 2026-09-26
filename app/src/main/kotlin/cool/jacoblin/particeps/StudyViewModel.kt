@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import cool.jacoblin.particeps.core.application.ParticipantRuntimeStatus
 import cool.jacoblin.particeps.core.application.StartupStage
 import cool.jacoblin.particeps.core.application.StudyAccessStatus
 import cool.jacoblin.particeps.core.application.StudyCommandResult
@@ -13,6 +14,7 @@ import cool.jacoblin.particeps.core.application.StudySessionSnapshot
 import cool.jacoblin.particeps.core.collector.AccessKind
 import cool.jacoblin.particeps.core.collector.AccessResolution
 import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
+import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.protocol.JoinLink
 import cool.jacoblin.particeps.core.protocol.SignedConfigurationCodec
 import java.io.OutputStream
@@ -142,13 +144,27 @@ class StudyViewModel(
 
     fun cancelExport() = exportController.cancel()
 
-    fun deleteLocalData() {
-        if (exportController.state.value.isActive) return
-        operation(ParticipantMessage.DELETE_FAILED) {
-            session.deleteLocalData()
-            exportController.clearResult()
-            localMessage.value = ParticipantMessage.LOCAL_DATA_DELETED
-        }
+    /**
+     * Read once when the participant opens *Study and my data*, never polled. A figure that cannot
+     * be measured, for instance because the study is being deleted, is simply not shown.
+     */
+    suspend fun localStorageBytes(): Long? = try {
+        withContext(Dispatchers.IO) { session.localStorageBytes() }
+    } catch (failure: Throwable) {
+        if (failure is CancellationException) throw failure
+        null
+    }
+
+    fun deleteLocalData() = removeLocalStudy(ParticipantMessage.LOCAL_DATA_DELETED)
+
+    /**
+     * Leaving before Start. There is no started session to withdraw, so the study, its consent
+     * record, and its setup progress are removed through the same local deletion as Delete.
+     */
+    fun declineStudy() {
+        val state = session.snapshot.value.runtime.state ?: return
+        if (participantExit(state) != ParticipantExit.DECLINE) return
+        removeLocalStudy(ParticipantMessage.STUDY_REMOVED)
     }
 
     fun refreshAccess() {
@@ -162,6 +178,15 @@ class StudyViewModel(
 
     fun reportMessage(message: ParticipantMessage) {
         localMessage.value = message
+    }
+
+    private fun removeLocalStudy(removedMessage: ParticipantMessage) {
+        if (exportController.state.value.isActive) return
+        operation(ParticipantMessage.DELETE_FAILED) {
+            session.deleteLocalData()
+            exportController.clearResult()
+            localMessage.value = removedMessage
+        }
     }
 
     private fun command(execute: suspend () -> StudyCommandResult) = operation(
@@ -205,7 +230,7 @@ class StudyViewModel(
     }
 }
 
-private fun StudySessionSnapshot.toParticipantUiModel(): ParticipantStudyUiModel {
+internal fun StudySessionSnapshot.toParticipantUiModel(): ParticipantStudyUiModel {
     val summary = checkNotNull(study) { "Participant study summary is unavailable" }
     val state = checkNotNull(runtime.state) { "Participant runtime state is unavailable" }
     val categories = summary.dataCategories.map { category ->
@@ -223,7 +248,6 @@ private fun StudySessionSnapshot.toParticipantUiModel(): ParticipantStudyUiModel
         durationHours = summary.durationHours,
         consentSummary = summary.consentSummary,
         consentDocumentVersion = summary.consentDocumentVersion,
-        configurationId = summary.configurationId,
         signerFingerprint = summary.signerFingerprint,
         signerAnchored = summary.signerAnchored,
         assignedParticipantId = summary.assignedParticipantId,
@@ -240,20 +264,49 @@ private fun StudySessionSnapshot.toParticipantUiModel(): ParticipantStudyUiModel
         durableThroughCommit = runtime.durableThroughCommit,
         uploadedThroughCommit = runtime.uploadedThroughCommit,
         retainedFromCommit = runtime.retainedFromCommit,
-        startedAtUtcMillis = runtime.startedAtUtcMillis,
-        pausedAtUtcMillis = runtime.lastObservedAtUtcMillis.takeIf {
-            state == cool.jacoblin.particeps.core.model.ExperimentState.PAUSED
-        },
-        endedAtUtcMillis = runtime.lastObservedAtUtcMillis.takeIf {
-            state in setOf(
-                cool.jacoblin.particeps.core.model.ExperimentState.COMPLETED,
-                cool.jacoblin.particeps.core.model.ExperimentState.WITHDRAWN,
-            )
-        },
-        lastExport = lastExport?.let { ParticipantExportSummary(it.commitCount, it.eventCount) },
+        pausedAtUtcMillis = runtime.stateEnteredAtUtcMillis.takeIf { state == ExperimentState.PAUSED },
+        participation = runtime.toParticipation(summary.durationHours),
+        lastExport = lastExport?.let { ParticipantExportSummary(it.commitCount, it.eventCount, it.byteCount) },
         trafficShapingDisclosureRequired = summary.mayAdjustAppTransferSpeed,
     )
 }
+
+/**
+ * Coarse participation facts. Only the study clock and lifecycle state are read; the clock's
+ * measurement instant is used to keep the totals live and is not itself carried forward.
+ *
+ * Every total is monotonic study time, extended live by this phone's wall time since it was
+ * measured. None is a difference between the phone's clock and the network-time start or deadline,
+ * so a phone whose clock is off, or whose clock is changed mid-study, shows neither pause time that
+ * never happened nor a shifted study day. Totals stop at the signed duration, including for a study
+ * whose deadline was processed late because the phone was off.
+ */
+internal fun ParticipantRuntimeStatus.toParticipation(durationHours: Int): ParticipantParticipationSummary {
+    val ended = state in ENDED_STATES
+    val durationMillis = durationHours * MILLIS_PER_HOUR
+    val measuredAt = elapsedMeasuredAtUtcMillis
+    val studyLength = when {
+        measuredAt == null -> null
+        ended -> stateEnteredCalendarElapsedMillis?.let { ParticipantElapsedTime.Settled(it.coerceAtMost(durationMillis)) }
+        else -> ParticipantElapsedTime.Growing(measuredAt - calendarElapsedMillis, durationMillis)
+    }
+    val activeCollection = if (state == ExperimentState.RUNNING && measuredAt != null) {
+        ParticipantElapsedTime.Growing(measuredAt - activeRunningElapsedMillis, durationMillis)
+    } else {
+        ParticipantElapsedTime.Settled(activeRunningElapsedMillis.coerceAtMost(durationMillis))
+    }
+    return ParticipantParticipationSummary(
+        studyDayCount = (durationHours + HOURS_PER_DAY - 1) / HOURS_PER_DAY,
+        plannedEndUtcMillis = deadlineUtcMillis.takeIf { deadlineUtcTrusted && !ended },
+        studyLength = studyLength,
+        activeCollection = activeCollection,
+        ended = ended,
+    )
+}
+
+private val ENDED_STATES = setOf(ExperimentState.COMPLETED, ExperimentState.WITHDRAWN)
+private const val HOURS_PER_DAY = 24
+private const val MILLIS_PER_HOUR = 3_600_000L
 
 private fun StudyAccessStatus.toParticipantAccess(
     categories: List<ParticipantDataCategory>,

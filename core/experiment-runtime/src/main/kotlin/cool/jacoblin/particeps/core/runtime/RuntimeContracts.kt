@@ -228,6 +228,17 @@ data class RuntimeSnapshot(
     val startedAtUtcMillis: Long? = null,
     val deadlineUtcMillis: Long? = null,
     val deadlineUtcTrusted: Boolean = false,
+    /**
+     * Committed wall time of the commit that entered [state], known when this process wrote it or
+     * cold-start recovery authenticated it together with its predecessor. Process memory only.
+     */
+    val stateEnteredAtUtcMillis: Long? = null,
+    /**
+     * Study calendar time at that same commit. It is null whenever [stateEnteredAtUtcMillis] is, and
+     * for a state entered before Start, which has no study clock. For an ended study it is the
+     * study's length: later commits in the ended state still advance [calendarElapsedNanos].
+     */
+    val stateEnteredCalendarElapsedNanos: Long? = null,
 )
 
 sealed interface RuntimeCommandResult {

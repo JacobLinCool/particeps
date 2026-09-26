@@ -323,22 +323,77 @@ caused only by the cap, or the participant was attending to the app.
 
 ## Participant UI and blinding
 
+What a participant is told is a researcher decision, and the default is blinding. The model has
+three layers:
+
+- **Platform floor, always shown.** Study identity, purpose, researcher contact, consent text and
+  version, the enabled data categories and what each records, Android access, upload terms, the
+  fixed intervention-existence disclosure, and participant rights. These can be restated on any
+  participant screen.
+- **Policy-gated.** Intervention targets, timing, and strength, assignment, charts of the
+  participant's own data, and a debrief. A signed participant disclosure policy may relax the
+  default one dimension at a time. It must be explicit in the signed bytes, can never go below the
+  floor, and must pair any dimension hidden at enrollment with a debrief. Protocol v1 does not yet
+  carry this policy, so every current study runs with the default and none of these dimensions is
+  shown.
+- **Never shown.** Automation and profile identifiers, timer state, condition epochs, vector
+  digests, owner UID, typed internal failure reasons, and participant-specific random instants.
+
 Compose receives a whitelist participant projection rather than the full signed/runtime model.
-Particeps-generated screens/notifications do not carry target packages, control conditions,
-resource settings, timers, epochs, vector/digests, owner UID, or typed failure reasons. Shaping adds
-one fixed high-level disclosure in the existing Access step plus Android’s mandatory permission/VPN
-system surfaces; it does not add a dashboard or second ongoing notification.
+The *Study and my data* screen restates only floor information and coarse participation facts
+(study day, deadline, active and paused time, last export size, and local storage measured when the
+screen opens); its entry is identical in every study arm so its presence cannot reveal assignment.
+It does not show the signed `configuration_id`, which differs between arms and, when the Web tool
+derives it, ends in a 30-bit tag of the canonical configuration: two participants comparing it
+could tell their arms apart, and someone holding a template could test a guessed cap or window
+against it offline. The installation code is the identifier a participant gives the research team.
+It is a Compose state inside `MainActivity`, not another Activity, so opening it adds nothing to
+`app_lifecycle.v1`. The fixed shaping disclosure it repeats is worded to be true for both
+explicit-package and all-app targets, so its text does not reveal which applies. Shaping adds one fixed high-level disclosure in the existing
+Access step plus Android’s mandatory permission/VPN system surfaces; it adds no second ongoing
+notification.
 
-Accessibility semantics and screenshot/snapshot tests inject sensitive fixture values and assert
-they do not appear. This protects against accidental derived UI leakage, not malicious
-researcher-authored text: study title, purpose, researcher name/contact, consent, notifications,
-and surveys are rendered verbatim. Those signed free-text fields are the explicit blinding
-exception. Web requires the researcher to acknowledge their blinding/ethics responsibility before
-signing, and ethics review remains responsible for the content.
+A reflection test pins the field names of the participant projection types and requires every type
+reachable from the projection to be one of them. A Compose semantics sentinel test decodes a
+configuration fixture with sentinel values in every field the participant UI must not show (target
+package, traffic profile identifiers and caps, collector profile identifiers and parameters,
+automation identifiers, schedule times, availability, survey and notification text, export key,
+upload path, and storage quota), passes it through the real participant projection, and asserts
+that the semantics tree of neither the running screen nor *Study and my data* contains any of them
+while the floor information is present. Notification sentinel tests assert that sensitive fixture
+values never reach the shared foreground notification and that an intervention notification's
+lock-screen version carries none of its researcher text.
+These protect against accidental derived UI leakage, not malicious researcher-authored text: study
+title, purpose, researcher name/contact, consent, notifications, and surveys are rendered verbatim.
+Those signed free-text fields are the explicit blinding exception, and they can disclose a
+schedule or condition the policy keeps hidden. Web asks the researcher to confirm their
+blinding/ethics responsibility before signing, but that confirmation lives only in the browser
+session and is not recorded; ethics review remains responsible for the content.
 
-Lock-screen observers can learn that Particeps is running and Android can show a VPN icon. Neutral
-notification copy omits study/treatment identity but cannot hide app/VPN presence from the OS or a
-person inspecting device settings.
+Blinding controls what Particeps presents, not what a participant can obtain. A `.partcfg` is the
+signed plaintext canonical configuration, so anyone holding the file or its join link can read
+every traffic profile, target, and automation window. A blinded study should distribute only the
+`.partcfg` through its recruitment channel and not publish the readable `study.json` beside it.
+
+The running screen's live event count is a residual side channel: when a collector runs only in a
+scheduled window, the count's rate of increase can reveal that window. Lock-screen observers can
+learn that Particeps is running and Android can show a VPN icon. Neutral notification copy omits
+study/treatment identity but cannot hide app/VPN presence from the OS or a person inspecting device
+settings.
+
+Intervention notifications are the one Particeps notification that carries researcher-authored
+text, so each is posted with `VISIBILITY_PRIVATE` and a fixed public version (the app name and
+"A research activity is available. Unlock your phone to see it."), identical for every action,
+survey, and arm. Android shows that public version only when the participant's lock-screen setting
+hides sensitive notification content. Android's default setting shows all content, and then anyone
+holding the locked phone can read the researcher's notification title and message; researcher
+text that must stay off lock screens therefore has to be neutral in the signed configuration
+itself. An app cannot force redaction: Android replaces the lock-screen visibility an app sets on
+its own notification channel with the no-override default, so Particeps sets visibility on each
+notification rather than on its channels. The same applies to the recovery notification, which is
+hidden from secure lock screens by its own `VISIBILITY_SECRET`, not by its channel. Posting only
+neutral copy and showing the researcher's text after the tap would change what an intervention
+delivers, so it is not done.
 
 ## Export cryptography and metadata
 
@@ -358,6 +413,12 @@ plausible inputs within its OS trust boundary; there is no attestation.
 
 Clear request metadata and traffic analysis can reveal study configuration, approximate data
 volume, and upload timing. Use a receiver policy and study design appropriate to that leakage.
+
+Automatic upload is neither scheduled nor staged before Start. Setup commits carry the participant
+instance ID, any assigned participant ID, and the wall time of each setup step, so a receiver that
+got them before consent would hold a record of someone who never agreed to take part. They reach
+the receiver only in the first bundle after Start. A participant who declines during setup has
+sent nothing, and the decline copy says so.
 
 ## Analysis and publication boundary
 
@@ -393,7 +454,13 @@ bounded to development builds and should still avoid collected values. Participa
 generic messages, not internal reason codes.
 
 Completion/withdrawal permits participant-confirmed deletion of snapshot, pending input, commit
-segments, staged upload/export metadata, and Keystore alias. File/directory operations are
+segments, staged upload/export metadata, and Keystore alias. Before Start the same deletion is the
+participant's way to decline: Withdraw is a runtime command only for a running or paused study, so
+setup screens offer "Decline and remove this study" instead. The confirmed recovery reset deletes
+the whole experiment storage directory and every engine key alias
+(`particeps-engine-<SHA-256 of the experiment ID>`); the active-study record's key is deleted by
+that store's own clear in the same reset, while the reset-witness key (`particeps-reset-v1`) is
+kept so an interrupted reset stays readable and repeatable. File/directory operations are
 acknowledged; failure remains visible and retried rather than reporting deletion early. Flash
 wear-leveling means ordinary file deletion is not guaranteed forensic secure erasure; loss of the
 non-exportable encryption key is the practical confidentiality boundary.
@@ -411,7 +478,9 @@ The repository gates:
   scenarios, plus a blocking API 37 revision 5+ 16-KiB compatibility lane for install, manifest,
   native-load, and non-snapshot instrumentation checks;
 - Go vet/race, token-bucket throughput, TCP/UDP/DNS/IPv4/IPv6/protect/silent-log tests;
-- Web validation/simulation/participant preview and Compose accessibility leakage sentinels;
+- Web validation/simulation/participant preview, the participant-projection field and reachable-type
+  allowlist, the Compose semantics leakage sentinel for the running screen and *Study and my data*,
+  and the foreground- and intervention-notification leakage sentinels;
 - Python encrypted-bundle replay/materialization failures;
 - release manifest/ABI/alignment/sums/SBOM/licenses/registry/no-binary/no-sensitive-log checks.
 

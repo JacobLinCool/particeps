@@ -383,7 +383,13 @@ interface StudyReadSnapshot {
 }
 
 interface StudyStore {
-    suspend fun loadRuntime(): RuntimeDocument?
+    /**
+     * Recovers the durable runtime. Recovery authenticates every retained commit, and
+     * [observeRetained] sees each of them in commit order during that same pass: a caller learns
+     * what the scalar successor does not carry without reading the log a second time. A commit it
+     * has seen is not yet recovered truth; only a returned runtime is.
+     */
+    suspend fun loadRuntime(observeRetained: (EngineCommit) -> Unit = {}): RuntimeDocument?
     /** Captures initialized durable state without recovery; pins the range while allowing appends. */
     suspend fun <T> withReadSnapshot(block: suspend (StudyReadSnapshot) -> T): T
     suspend fun initialize(runtime: RuntimeDocument)

@@ -128,6 +128,7 @@ class MainActivity : ComponentActivity() {
                     resume = { runAfterTrafficPrerequisites(PendingTrafficAction.RESUME) },
                     complete = viewModel::complete,
                     withdraw = viewModel::withdraw,
+                    decline = viewModel::declineStudy,
                     export = {
                         if (state is StudyUiState.ActiveStudy && viewModel.chooseExportDestination()) {
                             val id = state.model.experimentId
@@ -142,6 +143,7 @@ class MainActivity : ComponentActivity() {
                     delete = viewModel::deleteLocalData,
                     retryRecovery = viewModel::retryRecovery,
                     resetAndRestart = viewModel::resetAndRestart,
+                    readLocalStorageBytes = viewModel::localStorageBytes,
                 ),
             )
         }

@@ -3,6 +3,7 @@ package cool.jacoblin.particeps
 import android.Manifest
 import android.app.NotificationManager
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasTestTag
@@ -14,6 +15,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.lifecycle.Lifecycle
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import cool.jacoblin.particeps.core.collector.AccessKind
@@ -123,6 +125,19 @@ class CoreFlowTest {
             )
         }
 
+        // Study and my data measures the real store once and returns to unchanged controls.
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA).performScrollTo().performClick()
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA_SCREEN).assertExists()
+        composeRule.onNodeWithTag(UiTags.PAUSE).assertDoesNotExist()
+        val checking = composeRule.activity.getString(R.string.participation_storage_checking)
+        val unavailable = composeRule.activity.getString(R.string.participation_storage_unavailable)
+        waitUntilExactlyOneNode(hasTestTag(UiTags.PARTICIPATION_STORAGE) and !hasText(checking))
+        composeRule.onNodeWithTag(UiTags.PARTICIPATION_STORAGE).assert(!hasText(unavailable))
+        Espresso.pressBack()
+        waitUntilExactlyOneNode(hasTestTag(UiTags.PAUSE))
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA_SCREEN).assertDoesNotExist()
+        assertEquals(ExperimentState.RUNNING, session.snapshot.value.runtime.state)
+
         composeRule.onNodeWithTag(UiTags.PAUSE).performScrollTo()
         val pauseWidth = composeRule.onNodeWithTag(UiTags.PAUSE).fetchSemanticsNode().boundsInRoot.width
         composeRule.onNodeWithTag(UiTags.EXPORT).performScrollTo()
@@ -190,6 +205,32 @@ class CoreFlowTest {
             .assertTextEquals(composeRule.activity.getString(R.string.state_withdrawn))
         composeRule.onNodeWithTag(UiTags.EXPORT).performScrollTo()
         runBlocking { session.deleteLocalData() }
+    }
+
+    @Test
+    fun decliningBeforeStartRemovesTheStudyAndReturnsToImport() {
+        val session = session()
+        waitUntilExactlyOneNode(hasTestTag(UiTags.IMPORT_DEMO))
+        composeRule.onNodeWithTag(UiTags.IMPORT_DEMO).performScrollTo().performClick()
+        composeRule.waitUntil(TIMEOUT_MILLIS) {
+            session.snapshot.value.runtime.state == ExperimentState.CONFIG_VERIFIED
+        }
+        composeRule.onNodeWithTag(UiTags.REVIEW).performScrollTo().performClick()
+        composeRule.waitUntil(TIMEOUT_MILLIS) {
+            session.snapshot.value.runtime.state == ExperimentState.CONSENT_PENDING
+        }
+
+        composeRule.onNodeWithTag(UiTags.WITHDRAW).assertDoesNotExist()
+        waitUntilExactlyOneNode(hasTestTag(UiTags.DECLINE) and isEnabled())
+        composeRule.onNodeWithTag(UiTags.DECLINE).performScrollTo().performClick()
+        val confirm = composeRule.activity.getString(R.string.action_confirm)
+        waitUntilExactlyOneNode(hasText(confirm))
+        composeRule.onNodeWithText(confirm).performClick()
+
+        composeRule.waitUntil(TIMEOUT_MILLIS) { session.snapshot.value.study == null }
+        assertTrue(session.snapshot.value.initialized)
+        waitUntilExactlyOneNode(hasTestTag(UiTags.SCAN_STUDY_QR))
+        composeRule.onNodeWithText(composeRule.activity.getString(R.string.message_study_removed)).assertExists()
     }
 
     private fun session() = (composeRule.activity.application as CollectorApplication).session

@@ -1,9 +1,14 @@
 package cool.jacoblin.particeps
 
 import android.graphics.Bitmap
+import android.text.format.Formatter
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.captureToImage
@@ -13,6 +18,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import cool.jacoblin.particeps.core.collector.AccessKind
@@ -228,6 +234,102 @@ class AccessCardTest {
     }
 
     @Test
+    fun setupStatesOfferDeclineAndNeverAWithdrawThatCannotSucceed() {
+        val requiredMissing = accessItem(
+            kind = AccessKind.USAGE_ACCESS,
+            resolution = ParticipantAccessResolution.ActionRequired(SetupAction.SystemSettings.USAGE_ACCESS),
+            guidance = SetupGuidance.USAGE_ACCESS,
+            owners = listOf(
+                ParticipantAccessOwner.DataCategory(ParticipantDataKind.USAGE_EVENTS, required = true),
+            ),
+        )
+        val model = mutableStateOf(participantModel(emptyList(), ExperimentState.CONSENT_PENDING))
+        var declines = 0
+        composeRule.setContent {
+            CollectorApp(
+                state = StudyUiState.ActiveStudy(
+                    model = model.value,
+                    export = ParticipantExportState.Idle,
+                    message = null,
+                    busy = false,
+                    recoveryStatus = null,
+                ),
+                actions = actions().copy(
+                    decline = { declines += 1 },
+                    withdraw = { error("Withdraw is not a command before Start") },
+                ),
+            )
+        }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        fun assertOnlyDeclineIsOffered() {
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag(UiTags.WITHDRAW).assertDoesNotExist()
+            composeRule.onNodeWithTag(UiTags.DECLINE).performScrollTo().assertIsEnabled()
+        }
+
+        // CONSENT_PENDING: the data page, then the consent page.
+        assertOnlyDeclineIsOffered()
+        composeRule.onNodeWithTag(UiTags.CONTINUE).performScrollTo().performClick()
+        composeRule.onNodeWithTag(UiTags.CONSENT_CHECKBOX).assertExists()
+        assertOnlyDeclineIsOffered()
+        composeRule.onNodeWithTag(UiTags.DECLINE).performScrollTo().performClick()
+        composeRule.onNodeWithText(context.getString(R.string.confirm_decline_title)).assertExists()
+        composeRule.onNodeWithText(context.getString(R.string.confirm_decline_body)).assertExists()
+        assertEquals(0, declines)
+        composeRule.onNodeWithText(context.getString(R.string.action_confirm)).performClick()
+        assertEquals(1, declines)
+
+        // READY: the Start step, and the remediation screen when required access went missing.
+        composeRule.runOnUiThread { model.value = participantModel(emptyList(), ExperimentState.READY) }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(UiTags.START).assertExists()
+        assertOnlyDeclineIsOffered()
+        composeRule.runOnUiThread {
+            model.value = participantModel(listOf(requiredMissing), ExperimentState.READY)
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(UiTags.START).assertDoesNotExist()
+        composeRule.onNodeWithTag(UiTags.accessItem(AccessKind.USAGE_ACCESS)).assertExists()
+        assertOnlyDeclineIsOffered()
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA).assertDoesNotExist()
+        composeRule.onNodeWithTag(UiTags.DECLINE).performScrollTo().performClick()
+        composeRule.onNodeWithText(context.getString(R.string.action_confirm)).performClick()
+        assertEquals(2, declines)
+    }
+
+    @Test
+    fun endedStudyOffersDeleteWithoutAWithdrawThatCannotSucceed() {
+        val state = mutableStateOf(ExperimentState.COMPLETED)
+        composeRule.setContent {
+            CollectorApp(
+                state = StudyUiState.ActiveStudy(
+                    model = participantModel(emptyList(), state.value),
+                    export = ParticipantExportState.Idle,
+                    message = null,
+                    busy = false,
+                    recoveryStatus = null,
+                ),
+                actions = actions(),
+            )
+        }
+
+        listOf(ExperimentState.COMPLETED, ExperimentState.WITHDRAWN).forEach { ended ->
+            composeRule.runOnUiThread { state.value = ended }
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag(UiTags.DELETE).performScrollTo().assertIsEnabled()
+            composeRule.onNodeWithTag(UiTags.WITHDRAW).assertDoesNotExist()
+            composeRule.onNodeWithTag(UiTags.DECLINE).assertDoesNotExist()
+        }
+        listOf(ExperimentState.RUNNING, ExperimentState.PAUSED).forEach { started ->
+            composeRule.runOnUiThread { state.value = started }
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag(UiTags.WITHDRAW).performScrollTo().assertIsEnabled()
+            composeRule.onNodeWithTag(UiTags.DECLINE).assertDoesNotExist()
+            composeRule.onNodeWithTag(UiTags.DELETE).assertDoesNotExist()
+        }
+    }
+
+    @Test
     fun exportAndCancellationLeaveCollectionControlsAvailable() {
         val export = mutableStateOf<ParticipantExportState>(
             ParticipantExportState.Running(ParticipantExportPhase.ENCRYPTING, 10, 20),
@@ -294,6 +396,151 @@ class AccessCardTest {
         captureExportScreenshot("export-failed")
     }
 
+    @Test
+    fun studyAndMyDataIsOneIdenticalEntryOnEveryCollectionScreen() {
+        val model = mutableStateOf(participantModel(emptyList()))
+        composeRule.setContent {
+            CollectorApp(
+                state = StudyUiState.ActiveStudy(
+                    model = model.value,
+                    export = ParticipantExportState.Idle,
+                    message = null,
+                    busy = false,
+                    recoveryStatus = null,
+                ),
+                actions = actions(),
+            )
+        }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val expectedLabel = listOf(
+            context.getString(R.string.my_data_entry),
+            context.getString(R.string.my_data_entry_detail),
+        )
+        val shaped = listOf(false, true)
+        val requiredMissing = accessItem(
+            kind = AccessKind.USAGE_ACCESS,
+            resolution = ParticipantAccessResolution.ActionRequired(SetupAction.SystemSettings.USAGE_ACCESS),
+            guidance = SetupGuidance.USAGE_ACCESS,
+            owners = listOf(
+                ParticipantAccessOwner.DataCategory(ParticipantDataKind.USAGE_EVENTS, required = true),
+            ),
+        )
+        fun assertTheEntry(case: String) {
+            composeRule.waitForIdle()
+            val entry = composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA).performScrollTo()
+            entry.assertIsEnabled()
+            val node = entry.fetchSemanticsNode()
+            assertEquals(case, expectedLabel, node.config[SemanticsProperties.Text].map { it.text })
+            // The title names the destination; it is not repeated as the click action's verb.
+            assertEquals(case, null, node.config[SemanticsActions.OnClick].label)
+        }
+        listOf(
+            ExperimentState.RUNNING,
+            ExperimentState.PAUSED,
+            ExperimentState.COMPLETED,
+            ExperimentState.WITHDRAWN,
+        ).forEach { collectionState ->
+            shaped.forEach { trafficShaping ->
+                composeRule.runOnUiThread {
+                    model.value = participantModel(emptyList(), collectionState, trafficShaping)
+                }
+                assertTheEntry("$collectionState, shaping=$trafficShaping")
+            }
+        }
+        // Repairing required access replaces the collection screen but keeps the same entry.
+        listOf(ExperimentState.RUNNING, ExperimentState.PAUSED).forEach { startedState ->
+            composeRule.runOnUiThread { model.value = participantModel(listOf(requiredMissing), startedState) }
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag(UiTags.accessItem(AccessKind.USAGE_ACCESS)).assertExists()
+            composeRule.onNodeWithTag(UiTags.EXPORT).assertDoesNotExist()
+            assertTheEntry("$startedState, repairing access")
+        }
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA).performClick()
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA_SCREEN)
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.PaneTitle, context.getString(R.string.my_data_entry)))
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA_BACK).performClick()
+        // Setup keeps its five steps; the entry appears only once the study has started.
+        composeRule.runOnUiThread { model.value = participantModel(emptyList(), ExperimentState.READY) }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA).assertDoesNotExist()
+    }
+
+    @Test
+    fun studyAndMyDataAddsNoLifecycleControlAndBackReturnsToTheSameControls() {
+        var storageReads = 0
+        composeRule.setContent {
+            CollectorApp(
+                state = StudyUiState.ActiveStudy(
+                    model = participantModel(
+                        access = emptyList(),
+                        upload = ParticipantUploadDisclosure("upload.example.invalid", 60, false),
+                    ),
+                    export = ParticipantExportState.Idle,
+                    message = null,
+                    busy = false,
+                    recoveryStatus = null,
+                ),
+                actions = actions().copy(
+                    readLocalStorageBytes = {
+                        storageReads++
+                        2_048L
+                    },
+                ),
+            )
+        }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA).performScrollTo().performClick()
+
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA_SCREEN).assertExists()
+        LIFECYCLE_CONTROLS.forEach { composeRule.onNodeWithTag(it).assertDoesNotExist() }
+        listOf(
+            R.string.rights_pause_upload,
+            R.string.rights_withdraw_upload,
+            R.string.rights_delete_upload,
+        ).forEach { composeRule.onNodeWithText(context.getString(it)).performScrollTo().assertExists() }
+        composeRule.onNodeWithTag(UiTags.PARTICIPATION_STORAGE).performScrollTo()
+        composeRule.waitUntil { storageReads == 1 }
+        composeRule.onNodeWithText(Formatter.formatShortFileSize(context, 2_048L)).assertExists()
+
+        Espresso.pressBack()
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA_SCREEN).assertDoesNotExist()
+        composeRule.onNodeWithTag(UiTags.PAUSE).performScrollTo().assertIsEnabled()
+        composeRule.onNodeWithTag(UiTags.WITHDRAW).performScrollTo().assertIsEnabled()
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA).performScrollTo().performClick()
+        composeRule.waitUntil { storageReads == 2 }
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA_BACK).performClick()
+        composeRule.onNodeWithTag(UiTags.EXPORT).performScrollTo().assertIsEnabled()
+        composeRule.waitForIdle()
+        assertEquals("Storage is read once per visit, never polled", 2, storageReads)
+    }
+
+    @Test
+    fun studyWithoutUploadStatesNoUploadConsequences() {
+        composeRule.setContent {
+            CollectorApp(
+                state = StudyUiState.ActiveStudy(
+                    model = participantModel(emptyList(), ExperimentState.WITHDRAWN),
+                    export = ParticipantExportState.Idle,
+                    message = null,
+                    busy = false,
+                    recoveryStatus = null,
+                ),
+                actions = actions(),
+            )
+        }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA).performScrollTo().performClick()
+
+        composeRule.onNodeWithText(context.getString(R.string.rights_delete_body)).performScrollTo().assertExists()
+        listOf(
+            R.string.rights_pause_upload,
+            R.string.rights_withdraw_upload,
+            R.string.rights_delete_upload,
+        ).forEach { composeRule.onNodeWithText(context.getString(it)).assertDoesNotExist() }
+        composeRule.onNodeWithText(context.getString(R.string.consent_upload_none_title)).performScrollTo().assertExists()
+        composeRule.onNodeWithTag(UiTags.DELETE).assertDoesNotExist()
+    }
+
     private fun captureExportScreenshot(name: String) {
         if (InstrumentationRegistry.getArguments().getString("captureExportScreenshots") != "true") return
         composeRule.waitForIdle()
@@ -319,11 +566,13 @@ class AccessCardTest {
         resume = {},
         complete = {},
         withdraw = {},
+        decline = {},
         export = {},
         cancelExport = {},
         delete = {},
         retryRecovery = {},
         resetAndRestart = {},
+        readLocalStorageBytes = { null },
     )
 
     private fun accessItem(
@@ -337,6 +586,8 @@ class AccessCardTest {
     private fun participantModel(
         access: List<ParticipantAccessItem>,
         state: ExperimentState = ExperimentState.RUNNING,
+        trafficShaping: Boolean = false,
+        upload: ParticipantUploadDisclosure? = null,
     ) = ParticipantStudyUiModel(
         experimentId = "access-card-test",
         title = "Access card test",
@@ -346,25 +597,42 @@ class AccessCardTest {
         durationHours = 1,
         consentSummary = "Test consent",
         consentDocumentVersion = "test-1",
-        configurationId = "access-card-config",
         signerFingerprint = "0000 0000 0000 0000 0000 0000 0000 0000",
         signerAnchored = false,
         assignedParticipantId = null,
         participantInstanceId = "00000000-0000-4000-8000-000000000000",
         dataCategories = listOf(ParticipantDataCategory(ParticipantDataKind.USAGE_EVENTS, optional = true)),
         access = access,
-        upload = null,
+        upload = upload,
         state = state,
         lifetimeDataEventCount = 0,
         durableThroughCommit = 0,
         uploadedThroughCommit = 0,
         retainedFromCommit = 1,
-        startedAtUtcMillis = null,
         pausedAtUtcMillis = null,
-        endedAtUtcMillis = null,
+        participation = ParticipantParticipationSummary(
+            studyDayCount = 1,
+            plannedEndUtcMillis = null,
+            studyLength = null,
+            activeCollection = ParticipantElapsedTime.Settled(0),
+            ended = state == ExperimentState.COMPLETED || state == ExperimentState.WITHDRAWN,
+        ),
         lastExport = null,
-        trafficShapingDisclosureRequired = false,
+        trafficShapingDisclosureRequired = trafficShaping,
     )
+
+    private companion object {
+        val LIFECYCLE_CONTROLS = listOf(
+            UiTags.START,
+            UiTags.PAUSE,
+            UiTags.RESUME,
+            UiTags.COMPLETE,
+            UiTags.WITHDRAW,
+            UiTags.DECLINE,
+            UiTags.EXPORT,
+            UiTags.DELETE,
+        )
+    }
 
     private fun prerequisiteLabel(kind: AccessKind): Int = when (kind) {
         AccessKind.FINE_LOCATION -> R.string.access_fine_location
