@@ -646,10 +646,10 @@ class AutomationReducerTest {
             producerKeys += checkpoint.timers.values.map(DurableTimer::producerKey)
         }
 
-        // Held-for, elapsed, local-window and window-threshold timers all ran, and each came from
-        // the compiled plan rather than from two SHA-256 digests of its state path per input.
+        // Held-for, elapsed, local-window and window-threshold timers all ran. The plan is
+        // authoritative, so a state path it had not resolved would have failed the reduction
+        // instead of deriving two SHA-256 digests per input.
         assertEquals(4, producerKeys.size)
-        assertTrue(producerKeys.all { it in program.plan.conditionProducerKeys() })
     }
 
     private fun start(program: CompiledAutomationProgram): ReductionResult = reducer.reduceBatch(

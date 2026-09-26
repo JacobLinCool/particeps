@@ -257,11 +257,11 @@
     <plurals name="meter_events">
         <item quantity="other">%1$s 筆</item>
     </plurals>
-    <string name="meter_sent">已傳送 %1$s 個資料批次</string>
-    <string name="meter_reclaimed">前 %1$s 個資料批次已傳送並從手機移除，之後匯出的檔案不會包含這些資料。</string>
+    <string name="meter_sent">已傳送 %1$s 的資料批次</string>
+    <string name="meter_reclaimed">部分已傳送的資料已從手機移除，之後匯出的檔案不會包含這些資料。</string>
 
     <string name="my_data_entry">研究說明與我的資料</string>
-    <string name="my_data_entry_detail">重新查看你同意的內容、收集的資料與你的權利</string>
+    <string name="my_data_entry_detail">重新查看你同意的內容、收集的資料與你可以做的選擇</string>
     <string name="action_back">返回</string>
     <string name="my_data_about_title">關於這項研究</string>
     <string name="my_data_consent_title">你同意的內容</string>
@@ -272,15 +272,14 @@
 
     <string name="my_data_participation_title">你的參與情形</string>
     <string name="participation_status">狀態</string>
-    <string name="participation_day">研究天數</string>
+    <string name="participation_day">目前研究日</string>
     <string name="participation_day_value">第 %1$d 天，共 %2$d 天</string>
     <string name="participation_planned_end">預計結束</string>
     <string name="participation_planned_end_unconfirmed">待 Particeps 確認手機時間後才能確定</string>
-    <string name="participation_active">收集時間</string>
-    <string name="participation_paused">暫停時間</string>
+    <string name="participation_active">已收集時長</string>
+    <string name="participation_paused">已暫停時長</string>
     <string name="details_last_export">上次匯出</string>
     <string name="details_last_export_value">%1$s · %2$s 筆事件</string>
-    <string name="participation_no_export">尚未匯出</string>
     <string name="participation_storage">手機上占用的空間</string>
     <string name="participation_storage_checking">正在確認…</string>
     <string name="participation_storage_unavailable">無法取得</string>
@@ -302,6 +301,7 @@
     <string name="confirm_withdraw_body">App 將永久停止收集資料。在刪除本機資料前，你仍可匯出既有資料。</string>
     <string name="confirm_decline_title">確定不參加這項研究？</string>
     <string name="confirm_decline_body">研究尚未開始收集，這項研究列出的各類資料都還沒有收集，也沒有任何研究資料傳送給研究團隊。選擇不參加後，這項研究與你目前的設定進度都會從這支手機移除，且無法復原。你在設定過程中授予的 Android 存取權會保持開啟，直到你在 Android 設定中關閉，或解除安裝 Particeps。</string>
+    <string name="confirm_decline_body_setup_sent">研究尚未開始收集，這項研究列出的各類資料都還沒有收集。先前版本的 Particeps 已將你的設定步驟紀錄（例如你何時同意）與安裝代碼傳送給研究團隊，選擇不參加也無法收回。選擇不參加後，這項研究與你目前的設定進度都會從這支手機移除，且無法復原。你在設定過程中授予的 Android 存取權會保持開啟，直到你在 Android 設定中關閉，或解除安裝 Particeps。</string>
     <string name="confirm_delete_title">永久刪除本機資料？</string>
     <string name="confirm_delete_body">已加密的資料、研究狀態與設定檔都會從手機移除，研究人員的聯絡方式與你的安裝代碼也會一併移除。日後若要向研究團隊詢問已傳送或已匯出的資料，請先在「研究說明與我的資料」記下這兩項資訊。此操作無法復原。</string>
 
@@ -331,7 +331,7 @@
     <string name="export_reading">正在讀取已收集的資料…</string>
     <string name="export_encrypting">正在加密已收集的資料…</string>
     <string name="export_finishing">正在完成匯出…</string>
-    <string name="export_phase_progress">目前步驟：%1$s／%2$s 個資料批次</string>
+    <string name="export_phase_progress">目前步驟：%1$s</string>
     <string name="action_cancel_export">取消匯出</string>
     <string name="export_cancelling">正在取消匯出…</string>
     <string name="export_cancelling_detail">正在停止匯出並移除未完成的檔案，可能需要稍候。</string>

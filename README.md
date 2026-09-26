@@ -211,9 +211,13 @@ New contributors should treat [`protocol/v1`](protocol/v1/README.md) as the norm
 For `random_window`, trace the signed schedule in
 [`AutomationDefinitions.kt`](core/study-definition/src/main/kotlin/cool/jacoblin/particeps/core/definition/AutomationDefinitions.kt),
 the generic timer producer in
-[`Timers.kt`](core/automation/src/main/kotlin/cool/jacoblin/particeps/core/automation/Timers.kt), and the
+[`Timers.kt`](core/automation/src/main/kotlin/cool/jacoblin/particeps/core/automation/Timers.kt), the
 single coordinator in
-[`ExperimentRuntime.kt`](core/experiment-runtime/src/main/kotlin/cool/jacoblin/particeps/core/runtime/ExperimentRuntime.kt).
+[`ExperimentRuntime.kt`](core/experiment-runtime/src/main/kotlin/cool/jacoblin/particeps/core/runtime/ExperimentRuntime.kt),
+its post-commit effects in
+[`PostCommitEffectRunner.kt`](core/experiment-runtime/src/main/kotlin/cool/jacoblin/particeps/core/runtime/PostCommitEffectRunner.kt),
+which materialize the selected timer, and its due-timer handling in
+[`TimerCoordinator.kt`](core/experiment-runtime/src/main/kotlin/cool/jacoblin/particeps/core/runtime/TimerCoordinator.kt).
 The selected deadline becomes durable before Android receives a wakeup request; the wakeup carries
 only the timer identity and generation, and the same deterministic reducer reconciles retries,
 pause, reboot, clock, and time-zone changes. Random scheduling therefore has no parallel planner,

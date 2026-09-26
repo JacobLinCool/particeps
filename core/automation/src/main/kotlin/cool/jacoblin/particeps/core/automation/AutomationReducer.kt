@@ -13,6 +13,9 @@ import cool.jacoblin.particeps.core.definition.Trigger
 import cool.jacoblin.particeps.core.model.EventSourceId
 import cool.jacoblin.particeps.core.model.EventTypeKey
 import cool.jacoblin.particeps.core.model.ResearchTime
+import cool.jacoblin.particeps.core.model.inKeyOrder
+import cool.jacoblin.particeps.core.model.isEventFieldKey
+import cool.jacoblin.particeps.core.model.toLowerHex
 import cool.jacoblin.particeps.core.resource.ResourceGeneration
 import cool.jacoblin.particeps.core.resource.ResourceKey
 import java.math.BigInteger
@@ -42,13 +45,7 @@ data class AutomationEvent(
     init {
         require(sequenceNumber > 0) { "Automation event sequence must be positive" }
         require(fields.size <= 32) { "Automation event has too many fields" }
-        require(fields.keys.all(::isFieldName)) { "Invalid automation event field" }
-    }
-
-    private companion object {
-        /** Exactly `[a-z][a-z0-9_]{0,63}`, checked for every field of every input without a regex. */
-        fun isFieldName(value: String): Boolean = value.length in 1..64 && value[0] in 'a'..'z' &&
-            value.all { it in 'a'..'z' || it in '0'..'9' || it == '_' }
+        require(fields.keys.all(String::isEventFieldKey)) { "Invalid automation event field" }
     }
 }
 
@@ -648,7 +645,7 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
             val child = evaluateCondition(
                 program,
                 condition.condition,
-                "$path:child",
+                ReducerStatePaths.heldChild(path),
                 input,
                 timerIntents,
                 automationId,
@@ -705,15 +702,15 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
             automationId,
         )
         is StateCondition.All -> condition.conditions.mapIndexed { index, child ->
-            evaluateCondition(program, child, "$path:$index", input, timerIntents, automationId)
+            evaluateCondition(program, child, ReducerStatePaths.member(path, index), input, timerIntents, automationId)
         }.all { it }
         is StateCondition.Any -> condition.conditions.mapIndexed { index, child ->
-            evaluateCondition(program, child, "$path:$index", input, timerIntents, automationId)
+            evaluateCondition(program, child, ReducerStatePaths.member(path, index), input, timerIntents, automationId)
         }.any { it }
         is StateCondition.Not -> !evaluateCondition(
             program,
             condition.condition,
-            "$path:not",
+            ReducerStatePaths.negated(path),
             input,
             timerIntents,
             automationId,
@@ -968,39 +965,13 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
 
     private fun matches(program: CompiledAutomationProgram, matcher: EventMatcher, event: AutomationEvent): Boolean {
         if (event.key != matcher.event) return false
-        val compiled = program.plan.matcher(matcher) ?: return matchesUncompiled(program, matcher, event)
-        return compiled.predicates.all { predicate ->
+        return program.plan.matcher(matcher).predicates.all { predicate ->
             val actualCanonical = event.fields[predicate.field] ?: return@all false
             val actual = TypedFieldDecoder.decodeEventWire(predicate.contract, actualCanonical)
             if (predicate.operator == FieldOperator.IN) {
                 predicate.literals.any { expected -> compareTyped(actual, expected, FieldOperator.EQ) }
             } else {
                 compareTyped(actual, predicate.literals.single(), predicate.operator)
-            }
-        }
-    }
-
-    private fun matchesUncompiled(
-        program: CompiledAutomationProgram,
-        matcher: EventMatcher,
-        event: AutomationEvent,
-    ): Boolean {
-        val contract = requireNotNull(program.contracts[matcher.event])
-        return matcher.predicates.all { predicate ->
-            val actualCanonical = event.fields[predicate.field] ?: return@all false
-            val fieldContract = requireNotNull(contract.fields[predicate.field])
-            val actual = TypedFieldDecoder.decodeEventWire(fieldContract, actualCanonical)
-            if (predicate.operator == FieldOperator.IN) {
-                predicate.values.orEmpty().any { expected ->
-                    compareTyped(
-                        actual,
-                        TypedFieldDecoder.decodePredicateLiteral(fieldContract, expected),
-                        FieldOperator.EQ,
-                    )
-                }
-            } else {
-                val expected = TypedFieldDecoder.decodePredicateLiteral(fieldContract, requireNotNull(predicate.value))
-                compareTyped(actual, expected, predicate.operator)
             }
         }
     }

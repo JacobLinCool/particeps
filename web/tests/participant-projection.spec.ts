@@ -21,9 +21,26 @@ describe('participant-safe study projection', () => {
     });
 
     const model = participantStudyUiModel(configuration);
-    expect(Object.keys(model)).toEqual(['title', 'purpose', 'data_category_ids', 'shows_traffic_disclosure']);
+    expect(Object.keys(model)).toEqual([
+      'title', 'purpose', 'data_category_ids', 'shows_traffic_disclosure', 'upload_destination_host'
+    ]);
     expect(model.shows_traffic_disclosure).toBe(true);
     expect(JSON.stringify(model)).not.toMatch(/secret|64|512|180|automation|profile|epoch|digest|owner/i);
+  });
+
+  it('shows only the upload host, as the App does', () => {
+    const configuration = validConfiguration();
+    expect(participantStudyUiModel(configuration).upload_destination_host).toBeNull();
+    configuration.upload = {
+      endpoint: 'https://upload.example.org/secret-path?arm=treatment',
+      interval_minutes: 360,
+      allow_metered: false
+    };
+    const model = participantStudyUiModel(configuration);
+    expect(model.upload_destination_host).toBe('upload.example.org');
+    expect(JSON.stringify(model)).not.toMatch(/secret|arm=|treatment/);
+    configuration.upload.endpoint = 'not yet a url';
+    expect(participantStudyUiModel(configuration).upload_destination_host).toBeNull();
   });
 
   it('keeps the fixed bilingual VPN disclosures identical to the App copy', () => {

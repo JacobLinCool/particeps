@@ -56,7 +56,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class CollectorAutomationReferenceAssemblyTest {
     @Test
-    fun onlyTheSensorTheSignedAutomationReferencesIsMarkedReferenced() = runTest {
+    fun onlyTheSensorTheSignedAutomationReferencesRequiresPromptCommits() = runTest {
         val gyroscopeSample = EventTypeKey(EventSourceId(GyroscopeV1ProfileConfiguration.SOURCE_ID), 1, "GYROSCOPE_SAMPLE")
         val latch = StateCondition.EventLatch(
             setWhen = listOf(
@@ -68,11 +68,11 @@ class CollectorAutomationReferenceAssemblyTest {
         )
 
         // The accelerometer's binding latches on gyroscope samples; nothing references the accelerometer.
-        assertEquals(mapOf(GYROSCOPE to true, ACCELEROMETER to false), referencedFlags(latch, withBattery = false))
+        assertEquals(mapOf(GYROSCOPE to true, ACCELEROMETER to false), promptCommitFlags(latch, withBattery = false))
     }
 
     @Test
-    fun everySourceOfAProgramWithWindowStateIsMarkedReferenced() = runTest {
+    fun everySourceOfAProgramWithWindowStateRequiresPromptCommits() = runTest {
         val lowBattery = StateCondition.WindowThreshold(
             EventMatcher(
                 EventTypeKey(EventSourceId(BatteryStateV1ProfileConfiguration.SOURCE_ID), 1, "BATTERY_STATE"),
@@ -87,12 +87,12 @@ class CollectorAutomationReferenceAssemblyTest {
         // No matcher names either sensor, but the battery window requires every event in time order.
         assertEquals(
             mapOf(GYROSCOPE to true, ACCELEROMETER to true, BATTERY to true),
-            referencedFlags(lowBattery, withBattery = true),
+            promptCommitFlags(lowBattery, withBattery = true),
         )
     }
 
     /** Assembles and starts a study whose accelerometer binding also has [condition]. */
-    private suspend fun TestScope.referencedFlags(condition: StateCondition, withBattery: Boolean): Map<String, Boolean> {
+    private suspend fun TestScope.promptCommitFlags(condition: StateCondition, withBattery: Boolean): Map<String, Boolean> {
         val plugins = listOfNotNull(
             RecordingPlugin(AccelerometerV1ProfileConfiguration.SOURCE_ID),
             RecordingPlugin(BatteryStateV1ProfileConfiguration.SOURCE_ID).takeIf { withBattery },
@@ -114,7 +114,7 @@ class CollectorAutomationReferenceAssemblyTest {
         assertEquals(RuntimeCommandResult.Success, runtime.start())
         assembly.close()
         return plugins.associate { plugin ->
-            plugin.descriptor.id to plugin.contexts.map(CollectorContext::referencedByAutomation).single()
+            plugin.descriptor.id to plugin.contexts.map(CollectorContext::requiresPromptCommits).single()
         }
     }
 

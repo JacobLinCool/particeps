@@ -27,6 +27,18 @@ internal class CompiledPredicate(
 
 internal class CompiledMatcher(val predicates: List<CompiledPredicate>)
 
+/**
+ * The persisted reducer state keys below an automation's root key. [ReducerPlan] and
+ * [AutomationReducer] both build every nested condition path here, so the plan resolves exactly the
+ * paths the reducer evaluates.
+ */
+internal object ReducerStatePaths {
+    fun bindingCase(bindingId: String, caseIndex: Int) = "binding:$bindingId:case:$caseIndex"
+    fun heldChild(path: String) = "$path:child"
+    fun member(path: String, index: Int) = "$path:$index"
+    fun negated(path: String) = "$path:not"
+}
+
 /** The reducer state keys of one occurrence automation; they are persisted checkpoint keys. */
 internal class OccurrencePaths(automationId: String) {
     val root = "occurrence:$automationId"
@@ -42,8 +54,9 @@ internal class OccurrencePaths(automationId: String) {
  * Static reducer configuration, resolved once when a program compiles: the state keys of every
  * automation, condition-timer identities (two SHA-256 digests each), parsed study-local times,
  * decoded predicate literals, and numeric thresholds. Reduction reads them instead of re-deriving
- * them from signed configuration for every input. Each lookup falls back to the original
- * derivation, so the plan changes cost, never output.
+ * them from signed configuration for every input. The plan is authoritative: the compiler has
+ * validated every value it resolves, so resolution cannot fail, and a lookup the plan does not hold
+ * is an engine failure rather than a slower derivation of the same value.
  */
 internal class ReducerPlan(
     private val input: AutomationCompilerInput,
@@ -57,7 +70,7 @@ internal class ReducerPlan(
     /** Aligned with the program's occurrence automations. */
     val occurrencePaths: List<OccurrencePaths> = occurrences.map { OccurrencePaths(it.id) }
     private val casePathsById: Map<String, List<String>> = bindings.associate { binding ->
-        binding.id to List(binding.cases.size) { index -> "binding:${binding.id}:case:$index" }
+        binding.id to List(binding.cases.size) { index -> ReducerStatePaths.bindingCase(binding.id, index) }
     }
     @Volatile private var resolvedZone: ResolvedZone? = null
     private val localWindows = IdentityHashMap<StateCondition.StudyLocalWindow, LocalWindowCache>()
@@ -65,7 +78,7 @@ internal class ReducerPlan(
     private val localTimes = HashMap<String, LocalTime>()
     private val thresholds = HashMap<String, BigInteger>()
     // Keyed by the program's own matcher instances, which reduction passes back, so a lookup does
-    // not hash the matcher's predicates for every event; any other instance decodes per event.
+    // not hash the matcher's predicates for every event.
     private val matchers = IdentityHashMap<EventMatcher, CompiledMatcher>()
 
     init {
@@ -94,8 +107,7 @@ internal class ReducerPlan(
 
     /** The state key of each case of [binding], in case order. */
     fun casePaths(binding: ResourceBindingAutomation): List<String> =
-        casePathsById[binding.id]?.takeIf { it.size == binding.cases.size }
-            ?: List(binding.cases.size) { index -> "binding:${binding.id}:case:$index" }
+        planned(casePathsById[binding.id]?.takeIf { it.size == binding.cases.size }) { "binding ${binding.id}" }
 
     /**
      * The zone for [zoneId], resolved again only when the ID changes: every input of a study carries
@@ -106,7 +118,7 @@ internal class ReducerPlan(
 
     /**
      * [studyLocalWindow] for a compiled window condition, read from its dates' windows resolved once
-     * per study start and zone; any other condition instance is evaluated directly.
+     * per study start and zone.
      */
     fun studyLocalWindow(
         condition: StateCondition.StudyLocalWindow,
@@ -118,9 +130,7 @@ internal class ReducerPlan(
         val zone = zone(zoneId)
         val startTime = localTime(condition.startLocalTime)
         val endTime = localTime(condition.endLocalTime)
-        val cache = localWindows[condition] ?: return studyLocalWindow(
-            condition.firstDay, condition.lastDay, startTime, endTime, studyStartUtcMillis, nowUtcMillis, zone,
-        )
+        val cache = planned(localWindows[condition]) { "study-local window" }
         val table = cache.table?.takeIf { it.studyStartUtcMillis == studyStartUtcMillis && it.zone == zone }
             ?: StudyLocalWindowTable(condition.firstDay, condition.lastDay, startTime, endTime, studyStartUtcMillis, zone)
                 .also { cache.table = it }
@@ -128,22 +138,18 @@ internal class ReducerPlan(
     }
 
     fun conditionTimer(path: String, automationId: String): ConditionTimerIdentity =
-        conditionTimers[path]?.takeIf { it.automationId == automationId }
-            ?: deriveConditionTimer(path, automationId)
+        planned(conditionTimers[path]?.takeIf { it.automationId == automationId }) { "condition timer $path" }
 
     fun conditionProducerKey(path: String): String =
-        conditionTimers[path]?.producerKey ?: deriveConditionProducerKey(path)
+        planned(conditionTimers[path]) { "condition timer $path" }.producerKey
 
-    fun localTime(value: String): LocalTime = localTimes[value] ?: LocalTime.parse(value)
+    fun localTime(value: String): LocalTime = planned(localTimes[value]) { "local time $value" }
 
     fun threshold(comparison: NumericComparison): BigInteger =
-        thresholds[comparison.value] ?: comparison.value.toBigInteger()
+        planned(thresholds[comparison.value]) { "threshold ${comparison.value}" }
 
-    /** The matcher with its field contracts and literals resolved, or null to decode per event. */
-    fun matcher(matcher: EventMatcher): CompiledMatcher? = matchers[matcher]
-
-    /** Every precomputed condition producer key, for tests that prove the plan is complete. */
-    fun conditionProducerKeys(): Set<String> = conditionTimers.values.mapTo(hashSetOf()) { it.producerKey }
+    /** The matcher with its field contracts and literals resolved. */
+    fun matcher(matcher: EventMatcher): CompiledMatcher = planned(matchers[matcher]) { "matcher ${matcher.event}" }
 
     private fun visit(condition: StateCondition, path: String, automationId: String) {
         when (condition) {
@@ -152,7 +158,7 @@ internal class ReducerPlan(
             is StateCondition.KeyedPresence -> (condition.enterWhen + condition.exitWhen).forEach(::compile)
             is StateCondition.HeldFor -> {
                 registerTimer(path, automationId)
-                visit(condition.condition, "$path:child", automationId)
+                visit(condition.condition, ReducerStatePaths.heldChild(path), automationId)
             }
             is StateCondition.StudyLocalWindow -> {
                 registerTimer(path, automationId)
@@ -167,39 +173,37 @@ internal class ReducerPlan(
                 registerThreshold(condition.comparison)
             }
             is StateCondition.All -> condition.conditions.forEachIndexed { index, child ->
-                visit(child, "$path:$index", automationId)
+                visit(child, ReducerStatePaths.member(path, index), automationId)
             }
             is StateCondition.Any -> condition.conditions.forEachIndexed { index, child ->
-                visit(child, "$path:$index", automationId)
+                visit(child, ReducerStatePaths.member(path, index), automationId)
             }
-            is StateCondition.Not -> visit(condition.condition, "$path:not", automationId)
+            is StateCondition.Not -> visit(condition.condition, ReducerStatePaths.negated(path), automationId)
         }
     }
 
     private fun registerTimer(path: String, automationId: String) {
-        resolved { deriveConditionTimer(path, automationId) }?.let { conditionTimers[path] = it }
+        conditionTimers[path] = deriveConditionTimer(path, automationId)
     }
 
     private fun registerLocalTime(value: String) {
-        resolved { LocalTime.parse(value) }?.let { localTimes[value] = it }
+        localTimes[value] = LocalTime.parse(value)
     }
 
     private fun registerThreshold(comparison: NumericComparison) {
-        resolved { comparison.value.toBigInteger() }?.let { thresholds[comparison.value] = it }
+        thresholds[comparison.value] = comparison.value.toBigInteger()
     }
 
     private fun compile(matcher: EventMatcher) {
         if (matcher in matchers) return
-        val contract = contracts[matcher.event] ?: return
+        val contract = checkNotNull(contracts[matcher.event]) { "Compiled matcher has no contract" }
         val predicates = matcher.predicates.map { predicate ->
-            val field = contract.fields[predicate.field] ?: return
-            val literals = resolved {
-                if (predicate.operator == FieldOperator.IN) {
-                    predicate.values.orEmpty().map { TypedFieldDecoder.decodePredicateLiteral(field, it) }
-                } else {
-                    listOf(TypedFieldDecoder.decodePredicateLiteral(field, requireNotNull(predicate.value)))
-                }
-            } ?: return
+            val field = checkNotNull(contract.fields[predicate.field]) { "Compiled predicate has no field contract" }
+            val literals = if (predicate.operator == FieldOperator.IN) {
+                predicate.values.orEmpty().map { TypedFieldDecoder.decodePredicateLiteral(field, it) }
+            } else {
+                listOf(TypedFieldDecoder.decodePredicateLiteral(field, requireNotNull(predicate.value)))
+            }
             CompiledPredicate(predicate.field, field, predicate.operator, literals)
         }
         matchers[matcher] = CompiledMatcher(predicates)
@@ -214,15 +218,9 @@ internal class ReducerPlan(
         )
     }
 
-    /**
-     * A compiled program has already validated every value here, so resolution cannot fail. If it
-     * ever did, the entry is left out and the reducer derives it per input exactly as before.
-     */
-    private inline fun <T> resolved(block: () -> T): T? = try {
-        block()
-    } catch (_: RuntimeException) {
-        null
-    }
+    /** An entry the plan must hold for a compiled program; a missing one is an engine failure. */
+    private inline fun <T : Any> planned(value: T?, what: () -> String): T =
+        value ?: throw IllegalStateException("AUTOMATION_ENGINE_FAILURE: reducer plan has no ${what()}")
 }
 
 private class ResolvedZone(val id: String, val zone: ZoneId)

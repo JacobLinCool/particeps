@@ -503,6 +503,7 @@ class ResourceContainmentRuntimeTest {
         }
 
         override suspend fun appendCommit(commit: EngineCommit, successor: RuntimeDocument) {
+            require(pending == null) { "Only the containment path may append while input is staged" }
             commits += commit
             runtime = successor
         }
@@ -520,7 +521,8 @@ class ResourceContainmentRuntimeTest {
         override suspend fun loadPendingInput(): PendingEngineInput? = pending
 
         override suspend fun appendCommitConsumingPending(commit: EngineCommit, successor: RuntimeDocument) {
-            check(commit.consumedPendingInputSha256 == pending?.encodedSha256)
+            val input = requireNotNull(pending) { "No pending input is staged" }
+            require(commit.consumedPendingInputSha256 == input.encodedSha256) { "Commit does not consume the staged input" }
             commits += commit
             runtime = successor
             pending = null

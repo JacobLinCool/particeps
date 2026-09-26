@@ -16,7 +16,14 @@ not subscribe to one another and no component owns a parallel scheduler or condi
   failure contracts.
 - `core:automation` owns configuration compilation and a pure deterministic reducer.
 - `core:experiment-runtime` is the only coordinator of admission, storage commits, resources,
-  timers, action outbox delivery, and safety containment.
+  timers, action outbox delivery, and safety containment. Its `ExperimentRuntime` alone holds the
+  runtime mutex and the barrier and terminal-failure consumers; the lifecycle, admission, barrier,
+  clock-gap, timer, recovery, outbox, and commit code it delegates to runs under that mutex on the
+  caller's coroutine and is not a separate actor. The one exception is an open drain's input
+  buffer: a collector's offer to it runs on the collector's coroutine holding only the buffer's own
+  lock, not the runtime mutex, so the buffer touches only the admission gate, the store, and pure
+  validation, and no code holding the buffer's lock acquires the runtime mutex (see the lock order
+  in [system design](system-design.md#inside-coreexperiment-runtime)).
 - `core:storage` persists authenticated `EngineCommit` frames and encrypted snapshots.
 - `actuator:traffic-shaping` implements the generic resource contract; its Go data plane lives in
   `native:traffic-shaping`.

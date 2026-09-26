@@ -214,6 +214,9 @@ fun CollectorApp(
         confirmAction?.let { action ->
             ConfirmDialog(
                 action = action,
+                // Only a study imported under an earlier release, which uploaded from import, can
+                // have sent anything before Start.
+                setupAlreadySent = ((state as? StudyUiState.ActiveStudy)?.model?.uploadedThroughCommit ?: 0) > 0,
                 onDismiss = { confirmAction = null },
                 onConfirm = {
                     confirmAction = null
@@ -560,7 +563,7 @@ internal fun rememberWallClockMillis(): State<Long> {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
                 value = System.currentTimeMillis()
-                delay(TICK_MILLIS)
+                delay(WALL_CLOCK_TICK_MILLIS)
             }
         }
     }
@@ -1123,12 +1126,10 @@ private fun ExportStatus(state: ParticipantExportState, cancel: () -> Unit) {
                     LinearProgressIndicator(modifier = progressModifier)
                 } else {
                     LinearProgressIndicator(progress = { fraction }, modifier = progressModifier)
-                    val numbers = NumberFormat.getIntegerInstance()
                     Text(
                         stringResource(
                             R.string.export_phase_progress,
-                            numbers.format(state.completedBatches),
-                            numbers.format(state.totalBatches),
+                            percentLabel(state.completedBatches, checkNotNull(state.totalBatches)),
                         ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1235,8 +1236,9 @@ private fun CollectorGrid(study: StudyUiState.ActiveStudy) {
 }
 
 /**
- * Recorded events, and how much of that an endpoint has confirmed. A bar carries the ratio that two
- * sentences of running totals used to.
+ * Recorded events, and how much of that an endpoint has confirmed. Upload progress is shown only as
+ * a share of the recorded batches: the number of batches depends on the study's automation, which
+ * can differ between study arms, so a batch count is never shown.
  */
 @Composable
 private fun EventMeter(study: StudyUiState.ActiveStudy) {
@@ -1245,6 +1247,9 @@ private fun EventMeter(study: StudyUiState.ActiveStudy) {
     val delivered = study.model.uploadedThroughCommit
     val uploads = study.model.upload != null
     val numbers = remember { NumberFormat.getIntegerInstance() }
+    val deliveredFraction = if (durableCommits == 0L) 0.0 else {
+        (delivered.toDouble() / durableCommits).coerceIn(0.0, 1.0)
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
@@ -1258,7 +1263,7 @@ private fun EventMeter(study: StudyUiState.ActiveStudy) {
             )
             if (uploads && durableCommits > 0) {
                 Text(
-                    stringResource(R.string.meter_sent, numbers.format(delivered)),
+                    stringResource(R.string.meter_sent, percentLabel(delivered, durableCommits)),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -1272,11 +1277,7 @@ private fun EventMeter(study: StudyUiState.ActiveStudy) {
             ) {
                 Box(
                     Modifier
-                        .fillMaxWidth(
-                            fraction = if (durableCommits == 0L) 0f else {
-                                (delivered.toFloat() / durableCommits).coerceIn(0f, 1f)
-                            },
-                        )
+                        .fillMaxWidth(fraction = deliveredFraction.toFloat())
                         .height(6.dp)
                         .background(MaterialTheme.colorScheme.secondary, RoundedCornerShape(3.dp)),
                 )
@@ -1284,14 +1285,17 @@ private fun EventMeter(study: StudyUiState.ActiveStudy) {
         }
         if (study.model.retainedFromCommit > 1) {
             Text(
-                stringResource(
-                    R.string.meter_reclaimed,
-                    numbers.format(study.model.retainedFromCommit - 1),
-                ),
+                stringResource(R.string.meter_reclaimed),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
+}
+
+/** [part] of [whole] as a whole percentage rounded down, so an unfinished share never reads 100%. */
+private fun percentLabel(part: Long, whole: Long): String {
+    val percent = if (whole <= 0) 0L else (part.coerceIn(0, whole) * 100 / whole)
+    return NumberFormat.getPercentInstance().format(percent / 100.0)
 }
 
 @Composable
@@ -1349,6 +1353,7 @@ private fun LanguageDialog(onDismiss: () -> Unit) {
 @Composable
 private fun ConfirmDialog(
     action: ConfirmAction,
+    setupAlreadySent: Boolean,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
@@ -1356,7 +1361,11 @@ private fun ConfirmDialog(
     val (title, body) = when (action) {
         ConfirmAction.COMPLETE -> R.string.confirm_complete_title to R.string.confirm_complete_body
         ConfirmAction.WITHDRAW -> R.string.confirm_withdraw_title to R.string.confirm_withdraw_body
-        ConfirmAction.DECLINE -> R.string.confirm_decline_title to R.string.confirm_decline_body
+        ConfirmAction.DECLINE -> R.string.confirm_decline_title to if (setupAlreadySent) {
+            R.string.confirm_decline_body_setup_sent
+        } else {
+            R.string.confirm_decline_body
+        }
         ConfirmAction.DELETE -> R.string.confirm_delete_title to R.string.confirm_delete_body
         ConfirmAction.RESET -> R.string.confirm_reset_title to R.string.confirm_reset_body
     }
@@ -1500,5 +1509,6 @@ internal fun ExperimentState.labelRes(): Int = when (this) {
 
 private val TERMINAL_STATES = setOf(ExperimentState.COMPLETED, ExperimentState.WITHDRAWN)
 
-private const val TICK_MILLIS = 30_000L
+/** How often [rememberWallClockMillis] reads the wall clock while its Activity is started. */
+internal const val WALL_CLOCK_TICK_MILLIS = 30_000L
 private const val STARTUP_PATIENCE_MILLIS = 2_500L

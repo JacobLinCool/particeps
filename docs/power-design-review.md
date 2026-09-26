@@ -23,10 +23,11 @@
 - 批次在以下位置分割：barrier／stop 訊息（barrier 仍在所有先前事件處理完後才完成）、admission token 不相等、observed time 倒退或 boot session 改變，以及 min(4,096、registry 每批上限、⌊1 MiB ÷ 來源最大 encoded event bytes⌋) 筆，gyro 為 512 筆。
 - 合併批次被 admission gate 拒絕或違反事件契約時，以折半找出可接受的前綴；每次接受後重新提交整段剩餘事件，因為研究截止時間過後才開始的 drain 會放寬 admission。以此方式被接受的每個部分至少涵蓋剩餘可接受事件的一半，所以一批只產生 O(log n) 個被接受的 observation，限制 barrier pending slot 的重寫次數，offer 次數則為 O(log² n)。producer ordinal 只在接受時前進。單一事件被 gate 拒絕時，該事件及其後事件丟棄；單一事件違反契約時，它之前的有效事件已經記錄，collector 在該事件失效，其後事件丟棄。儲存失敗或品質缺口立即使 collector 失效。失效前已接受的部分仍保留。
 - runtime 發現合併批次在第一個事件之後才改變 desired resource 時，只把改變之前的事件記錄為一般 commit，並以 `Accepted.recordedEvents` 回報筆數；collector 以下一個 producer ordinal 提交其餘事件。因此 staged 的 causal observation 從造成改變的事件開始，它之前的 callback 與逐筆提交時一樣先 commit。有 coverage 的回溯批次一律整批處理。
-- 一個 commit 只記錄 reducer timer map 的淨變化：被移除或取代的舊 timer 各記一次 `TIMER_RETIRED`，使用它本身的 generation；新的或取代後的 timer 各記一次 `TIMER_SCHEDULED`，也只有這些變化交給 WorkManager。合併批次中每個事件都讓 window 滑動時，不會重複記錄基準 generation 的退休，也不會為中間的 generation 排程多餘的喚醒。Python 驗證器採用相同規則。
+- 一個 commit 依 reducer 的原順序記錄 timer intent，但只保留屬於 timer map 淨變化的 intent，每個一次：退休先前 map 所持 generation、且該 timer 在結果中已被移除或取代者，記為 `TIMER_RETIRED`；排程結果 map 所持 timer、且先前 map 沒有該 timer 者，記為 `TIMER_SCHEDULED`；也只有這些 intent 交給 WorkManager。單一輸入的 intent 全部保留。合併批次中每個事件都讓 window 滑動時，不會重複記錄基準 generation 的退休，也不會為中間的 generation 排程多餘的喚醒；從 `RUNNING` 復原時，quality gap 的重設會在暫停前重新排程每個條件 timer，這個 generation 同樣不記錄也不喚醒。Python 驗證器採用相同規則。
+- runtime 以 stale 拒絕的 timer 喚醒（runtime 持有該 timer 的較新 generation）直接結束，不再重試。RC13 以每次多 10 秒的 backoff 重試，第一天約 130 次，直到該 timer 下次被移除（例如下一次暫停）；RC13 每次從 `RUNNING` 復原都會為重新排程的條件 timer 留下這種喚醒。
 - `LocationCollector` 將每個 `LocationResult` 以 `captureAll` 排入一則訊息，每個 fix 保留各自的 observed time。
 
-量測是原始碼路徑的工作量，不是耗電量測；量測程式與模擬器量測修補都是暫時性的，未納入 repository。
+量測是原始碼路徑的工作量，不是耗電量測。以下數字是 2026-09-25 的一次性快照：以 commit `4010b55` 加上本分支尚未提交的工作目錄為基底，設定如各項所列。量測程式與模擬器計數修補沒有納入 repository，無法從 repository 重跑；之後的 collector 或 storage 變更可能使這些數字過時，重新評估時須重新量測。
 
 - JVM：真實 `SerializedCallbackCollector` 與 `ExperimentRuntime`，記憶體內 StudyStore。每次喚醒時已排入 50 筆：每 1,000 筆事件的 commit 從 1,000 降為 20；consumer 在 `Dispatchers.Default` 自然排程時，三次執行分別為 23、24、28。觸發事件先單獨提交、其後 49 筆排在它之後時，barrier pending slot 的寫入從 50 次降為 2 次，累計重新編碼的事件從 1,275 筆降為 51 筆。
 - API 34 模擬器，P2 gyro 以 20 ms 抽樣、`maximum_report_latency_us = 0`，20 秒視窗，記憶體內 sink：sink 不延遲時，修改前後都是 1,000 筆事件對應 1,000 個 observation。每個 sample 單獨到達，佇列沒有累積，所以不會合併。
@@ -36,14 +37,14 @@
 
 對研究資料的影響：原始 sample、observed time、時間解析度、交付延遲、持久性與裝置資格不變，但可能改變介入暴露。reducer 仍依序處理每個事件，每個 observation 卻只 reconcile 一次 desired resources。同一合併 observation 內先成立又復原的條件不再切換資源或輪替 epoch；逐筆提交時，排在觸發事件之後的復原事件會以 pre-drain 輸入先於觸發事件被 reduce，資源仍會切換。合併在觸發事件之前的 callback 先以一般 commit 記錄，與逐筆提交相同；觸發事件與排在其後的 callback 組成 causal observation，在 barrier 的 pre-drain 輸入之後才被 reduce。事件記錄與 condition-epoch 歸屬不變；在合併的 causal observation 內，事件序號依 capture 順序。
 
-驗證：`SerializedCallbackCollectorTest` 涵蓋不等待的合併、barrier 不跨越且在先前事件處理後才完成、數量／位元組上限、token 不相等、時間倒退與 boot 變更、被拒批次的前綴與連續 ordinal、admission 在拒絕後放寬時仍提交剩餘事件、契約違規前的有效事件先記錄且 collector 在違規事件失效、只記錄前段時以下一個 ordinal 提交其餘事件，以及 `captureAll`；`EventAdmissionGateTest` 涵蓋 token 相等性；`AutomationReducerTest` 涵蓋第一個改變資源的輸入；`ExperimentRuntimeTest` 涵蓋合併批次中段的觸發從觸發事件開始 staged、其前事件先 commit 且與逐筆提交有相同的 epoch 歸屬、drain 期間的輸入不使 rising edge 重複觸發、同一批內先成立又復原不輪替 epoch，以及合併的 window 滑動只記錄 timer 淨變化且不排程中間 generation；particeps-analysis 的 `test_engine.py` 涵蓋驗證器的 timer 淨變化規則。
+驗證：`SerializedCallbackCollectorTest` 涵蓋不等待的合併、barrier 不跨越且在先前事件處理後才完成、數量／位元組上限、token 不相等、時間倒退與 boot 變更、被拒批次的前綴與連續 ordinal、admission 在拒絕後放寬時仍提交剩餘事件、契約違規前的有效事件先記錄且 collector 在違規事件失效、只記錄前段時以下一個 ordinal 提交其餘事件，以及 `captureAll`；`EventAdmissionGateTest` 涵蓋 token 相等性；`AutomationReducerTest` 涵蓋第一個改變資源的輸入；`ExperimentRuntimeTest` 涵蓋合併批次中段的觸發從觸發事件開始 staged、其前事件先 commit 且與逐筆提交有相同的 epoch 歸屬、drain 期間的輸入不使 rising edge 重複觸發、同一批內先成立又復原不輪替 epoch、合併的 window 滑動只記錄 timer 淨變化且不排程中間 generation、同一批內先啟動又取消的 timer 不留下記錄或喚醒、Start 的單一輸入 commit 依 reducer 順序記錄每個 timer intent，以及從 `RUNNING` 復原時每個條件 timer 只記錄一次退休且不喚醒重新排程的 generation；`CommittedTimerIntentsTest` 涵蓋保留規則本身；`StudySessionManagerTest` 涵蓋 stale 的 timer 喚醒結束而不重試；particeps-analysis 的 `test_engine.py` 涵蓋驗證器的相同規則。
 
 ## 第 2 項後續（2026-09-25）：陀螺儀與加速度計的 5 秒提交窗口
 
 使用者核准的取捨：程序被終止時，最多約 5 秒尚未提交的 sample 可能遺失，而且遺失必須落在恢復時記錄的品質缺口內，不能無聲發生。安全暫停與時間變更會先關閉 admission，不在這項取捨內：開啟的窗口在這些路徑上被丟棄，沒有指名該 sensor 的品質缺口（見下方「不經品質缺口記錄的遺失」）。時間變更路徑是否改為先 drain live 來源會改變 discard commit 的內容，尚待決定。本次仍沒有實作第 3 節的 wake-up gyro、FIFO flush 或暫停前排空；gyro 的 wake lock、抽樣頻率與回報延遲設定不變。
 
 - 範圍：只有 `gyroscope.v1` 與 `accelerometer.v1` 傳入 `CallbackCommitWindow.SAMPLED_SENSOR`（5 秒，即 `MAXIMUM_CALLBACK_COMMIT_WINDOW`）。ambient light、proximity、screen、network、keyboard、location、app lifecycle、battery 等 on-change／事件來源不傳窗口，行為不變。
-- 前提：簽署研究的 automation 沒有任何 matcher 引用該 sensor 的事件，而且整份研究沒有任何 sequence 或 window 狀態。`EventDrivenRuntimeAssemblyFactory` 依編譯後的 `CompiledAutomationProgram.referencesSource` 與 `CompiledAutomationProgram.retainsEventTimeOrderedState` 設定 `CollectorContext.referencedByAutomation`；這是程序內的組裝狀態，不簽署、不儲存、不匯出。編譯器並不禁止引用這兩個 sensor：event_match trigger 與 event_latch 條件可以引用；sequence 與 window 因為 `PLATFORM_ONLY` 速率沒有強制上限，以 `UNBOUNDED_SOURCE` 拒絕（`AutomationCompiler.kt:482`、`GeneratedEventContractRegistry.kt:109`）。被引用的 sensor 不開窗口，每個 sample 照舊提交。研究只要在 trigger、guard 或 resource binding 的任何位置有 sequence、window-threshold trigger 或 window-threshold 條件，不論選的是哪個來源，兩個 sensor 都不開窗口：reducer 要求每筆事件（任何來源、不論是否被 matcher 引用）都不早於最新保留的 sequence partial 或 window entry（`AutomationReducer.kt:880`、`:932`）。開窗口的 sample 會在其他來源較晚觀測、立即提交的事件之後才提交，reducer 因此會拋出例外，collector 以 `STORAGE_WRITE_FAILED` 失效並遺失該批，研究接著安全暫停；reducer 的這項檢查不變。
+- 前提：簽署研究的 automation 沒有任何 matcher 引用該 sensor 的事件，而且整份研究沒有任何 sequence 或 window 狀態。`EventDrivenRuntimeAssemblyFactory` 依編譯後的 `CompiledAutomationProgram.requiresPromptCommits`（即 `referencesSource` 或 `retainsEventTimeOrderedState`）設定 `CollectorContext.requiresPromptCommits`；這是程序內的組裝狀態，不簽署、不儲存、不匯出。編譯器並不禁止引用這兩個 sensor：event_match trigger 與 event_latch 條件可以引用；sequence 與 window 因為 `PLATFORM_ONLY` 速率沒有強制上限，以 `UNBOUNDED_SOURCE` 拒絕（`AutomationCompiler.kt` 的 `validateRetainedBound`；產生的 registry 只對 `HARD` 速率設定 `rateBound`）。被引用的 sensor 不開窗口，每個 sample 照舊提交。研究只要在 trigger、guard 或 resource binding 的任何位置有 sequence、window-threshold trigger 或 window-threshold 條件，不論選的是哪個來源，兩個 sensor 都不開窗口：reducer 要求每筆事件（任何來源、不論是否被 matcher 引用）都不早於最新保留的 sequence partial 或 window entry（reducer 的 "Sequence source time moved backward" 與 "Window source time moved backward" 檢查）。開窗口的 sample 會在其他來源較晚觀測、立即提交的事件之後才提交，reducer 因此會拋出例外，collector 以 `STORAGE_WRITE_FAILED` 失效並遺失該批，研究接著安全暫停；reducer 的這項檢查不變。
 - 機制：consumer 取得批次的第一個 callback 後持續收集，直到自該 callback 擷取起經過 5 秒 consumer dispatcher 的 monotonic 時間（Android 上是清醒時間）。barrier 或 stop 到達時立即提交已收集的批次，再照舊處理，所以暫停、完成、撤回、資源 barrier 與截止時的停止都不等待窗口。token 不相等、observed time 倒退、boot 變更與每批 512 筆上限仍立即結束批次。窗口是 consumer dispatcher 上的 `select` 與 `onTimeout`，沒有新增 WorkManager 工作、alarm、`Handler` 或 wake lock。CPU 在窗口內 suspend 時（沒有 wake lock 的加速度計可能發生），窗口一併暫停，批次在下次喚醒並經過剩餘時間後提交；gyro 持有 wake lock，窗口按實際時間經過。
 - 被 admission gate 拒絕的窗口批次，連同已排隊的同 token callback，保留到下一個 barrier、stop 或其他 token 的 callback 前再提交一次；該次仍被拒絕就丟棄。研究截止後、截止 drain 開始前關閉的窗口，因此仍由截止 drain 收入截止前觀測到的 sample。gate 拒絕某個 token 後不再發出相等的 token，所以保留量最多是一批加上佇列容量；超過時 collector 以 `CALLBACK_QUEUE_FULL` 失效。窗口期間 consumer 持續把 callback 從佇列移入批次，記憶體上限為一個最多 512 筆的開啟批次加上 2,048 則的佇列。
 
@@ -56,7 +57,7 @@
 - epoch 歸屬不變：token 在 callback 時擷取；drain 前擷取的 sample 以 pre-drain 輸入收入舊 epoch；force-close 後不收任何 sample。
 - 介入暴露：時間型條件（例如 17:00 的 `study_local_window` 邊界）仍以 durable timer 為準。WorkManager 喚醒延遲時，邊界之後的第一個 commit 會讓 reducer 看到轉換；開窗口來源的 commit 比逐筆提交最多晚一個窗口，舊條件（例如限速）因此最多延長 5 秒，直到該 commit、其他來源的 commit 或延遲的 timer，以先到者為準。
 
-量測是原始碼路徑的工作量，不是耗電量測；量測程式放在 scratchpad，未納入 repository。
+量測是原始碼路徑的工作量，不是耗電量測。以下數字與上一節相同，是 2026-09-25 的一次性快照：以 commit `4010b55` 加上本分支尚未提交的工作目錄為基底，設定如各項所列。JVM 量測程式與模擬器上的檔案系統及 frame 寫入計數注入（`EncryptedExperimentStore` 的 internal 建構子可注入這兩者）沒有納入 repository，無法從 repository 重跑；之後的 collector 或 storage 變更可能使這些數字過時，重新評估這項取捨時須重新量測。
 
 - JVM（虛擬時間 60 秒，真實 `SerializedCallbackCollector` 與 `ExperimentRuntime`，記憶體內 StudyStore）：1 Hz 從 60 次 commit 降為 10 次（每批 6 筆，換算每小時 3,600 → 600）；50 Hz 從 3,000 次降為 12 次（每批最多 251 筆，每小時 180,000 → 720）。automation 引用該來源時與修改前完全相同。
 - API 34 模擬器（真實 gyroscope collector、`ExperimentRuntime` 與 `EncryptedExperimentStore`，60 秒，含結束時的 flush；store 的可注入檔案系統與 frame 寫入函式計數）：
@@ -72,9 +73,9 @@
 
 fsync 包含每個 frame 一次、快照與 pending slot 的檔案及目錄同步；Keystore 加密包含 frame、快照與 pending 文件。修改前每 64 次 commit 寫一次快照（50 Hz 時 47 次，每次 2 個檔案同步與 3 個目錄同步）；開窗口後 frame 變大，快照改由 1 MiB 條件觸發（50 Hz 時 60 秒 1 次）。由 50 Hz 的兩組 frame bytes 推得，每個 sample 約佔 455 bytes，每個 commit 另有約 2.4 KB 與 sample 數無關的內容；開窗口後後者分攤到約 250 筆 sample，所以每 1,000 sample 的寫入量下降。以每小時換算：50 Hz 時 commit 約 180,000 → 720，fsync 約 194,100 → 1,020，Keystore 加密約 182,820 → 780。
 
-五天範本的 gyro 以 1 Hz 在每天 12:00–17:00 收集，名目上共 25 小時、90,000 筆 sample；逐筆提交約 90,000 次 commit，開窗口後約 18,000 次。這是名目推算，不是實測；實際 sample 頻率由平台決定。gyro 的 partial wake lock 仍在，CPU 仍會在收集期間保持喚醒，這部分仍需第 3 節。
+五天範本的 gyro 以 1 Hz 在每天 12:00–17:00 收集，名目上共 25 小時、90,000 筆 sample；逐筆提交約 90,000 次 commit，開窗口後約 15,000 次（依上方 JVM 量得的每批 6 筆，即每小時 600 次）。這是名目推算，不是實測；實際 sample 頻率由平台決定。gyro 的 partial wake lock 仍在，CPU 仍會在收集期間保持喚醒，這部分仍需第 3 節。
 
-驗證：`SerializedCallbackCollectorTest` 涵蓋窗口在第一次擷取後 5 秒關閉、窗口以擷取時間而非 consumer 取得時間計算、barrier／stop 在窗口內立即提交且不等待、大小上限與 token 不相等及時間倒退／boot 變更仍立即結束批次、被 automation 引用時不開窗口、取消時開啟批次不會延後提交、被拒絕批次保留到下一個 barrier、最終拒絕時丟棄且 ordinal 連續、佇列滿時仍以 `CALLBACK_QUEUE_FULL` 失效、保留量上限與窗口長度上限；`ExperimentRuntimeTest` 以真實 runtime 驗證跨資源 barrier 的 epoch 歸屬與不開窗口時相同（開窗口時 sample 由 barrier 以 pre-drain 收入）、force-close 後不收、研究進行中的時間變更拒絕開啟的窗口且只記錄 `timer.v1` 缺口、截止後才觀察到的時間變更拒絕開啟的窗口、截止完成時先收入開啟的窗口、截止後才關閉的窗口由截止 drain 收入、timer 未送達時時間型轉換要等開窗口的批次提交才被 reducer 看到，以及其他來源的 window 狀態下組裝規則讓 gyro 逐筆提交而保持 `ACTIVE`（只依 matcher 開窗口時 collector 會以 `STORAGE_WRITE_FAILED` 失效）；`SensorAutomationReferenceTest` 以產生的 registry 驗證哪些 automation 會引用 sensor，以及哪些 program 保有依事件時間排序的 sequence／window 狀態；`CollectorAutomationReferenceAssemblyTest` 與 `CollectorResourceActuatorTest` 驗證組裝時的旗標，包括有 window 狀態時每個來源都標為引用；`P2CollectorEmulatorTest` 在模擬器上驗證只有 gyro 的 observation 跨越時間。
+驗證：`SerializedCallbackCollectorTest` 涵蓋窗口在第一次擷取後 5 秒關閉、窗口以擷取時間而非 consumer 取得時間計算、barrier／stop 在窗口內立即提交且不等待、大小上限與 token 不相等及時間倒退／boot 變更仍立即結束批次、被 automation 引用時不開窗口、取消時開啟批次不會延後提交、被拒絕批次保留到下一個 barrier、最終拒絕時丟棄且 ordinal 連續、佇列滿時仍以 `CALLBACK_QUEUE_FULL` 失效、保留量上限與窗口長度上限；`ExperimentRuntimeTest` 以真實 runtime 驗證跨資源 barrier 的 epoch 歸屬與不開窗口時相同（開窗口時 sample 由 barrier 以 pre-drain 收入）、force-close 後不收、研究進行中的時間變更拒絕開啟的窗口且只記錄 `timer.v1` 缺口、截止後才觀察到的時間變更拒絕開啟的窗口、截止完成時先收入開啟的窗口、截止後才關閉的窗口由截止 drain 收入、timer 未送達時時間型轉換要等開窗口的批次提交才被 reducer 看到，以及其他來源的 window 狀態下組裝規則讓 gyro 逐筆提交而保持 `ACTIVE`（只依 matcher 開窗口時 collector 會以 `STORAGE_WRITE_FAILED` 失效）；`SensorAutomationReferenceTest` 以產生的 registry 驗證哪些 automation 會引用 sensor，以及哪些 program 保有依事件時間排序的 sequence／window 狀態；`CollectorAutomationReferenceAssemblyTest` 與 `CollectorResourceActuatorTest` 驗證組裝時的 `requiresPromptCommits` 旗標，包括有 window 狀態時每個來源都要求逐筆提交；`P2CollectorEmulatorTest` 在模擬器上驗證只有 gyro 的 observation 跨越時間。
 
 ## 結論
 
@@ -134,7 +135,7 @@ fsync 包含每個 frame 一次、快照與 pending slot 的檔案及目錄同�
 
 ## 3. 陀螺儀長時間持有 partial wake lock
 
-`GyroscopeCollector.kt:49` 固定 `keepCpuAwake = true`；`AndroidSensorCollector.kt:70` 註冊時取得 wake lock，直到暫停、停止或回滾才釋放。五天範本的 `maximum_report_latency_us` 為零。
+`GyroscopeCollector` 固定 `keepCpuAwake = true`；`AndroidSensorCollector` 在註冊時以 `wakeLock?.acquire()` 取得 wake lock，直到暫停、停止或回滾才釋放。五天範本的 `maximum_report_latency_us` 為零。
 
 這個設計是為了讓一般 non-wake-up gyro 在熄屏時持續交付資料，但會阻止一般 CPU suspend 路徑。降低 gyro 抽樣頻率不會解除這個 wake lock。Android 官方也指出 non-wake-up sensor 在 AP suspend 時可能失去事件；不能直接移除鎖再聲稱完整收集。參見 [SensorManager 契約](https://developer.android.com/reference/android/hardware/SensorManager)。
 
@@ -167,7 +168,7 @@ Android 說明：non-wake-up FIFO 在 suspend 時可能覆寫舊事件，`max_re
 
 UsageEvents 查詢間隔與事件 timestamp 精度是不同概念；較慢查詢主要增加交付延遲，但不能假定 Android 永遠提供無缺漏歷史。批次大小、查詢區間、鎖屏、權限失效與 collector 契約必須一併驗證。throughput 間隔變大則確實降低速率時間解析度，因此這兩項仍是研究設定決策，尚未套用到原範本。
 
-runtime 等候 mutex 時另有 1 ms 重試（`ExperimentRuntime.kt:1022,4025`）。在儲存壅塞下可能放大排程成本；應改為可取消的鎖／drain 通知等待，且保留 gate 與 barrier 的競態保證。先消除歷史重播與寫入壅塞，再依 trace 決定此項順位。
+修改前基線的 `ExperimentRuntime` 在等候 mutex 時以 1 ms 重試輪詢，在儲存壅塞下可能放大排程成本。**已完成（2026-09-07）：**見本文開頭「本次實作結果」；現在的 `AdmissionLock.kt` `withLockUntilDrain` 先 `tryLock`，否則以 `select` 等待 drain 訊號或鎖取得，沒有輪詢或計時器，取消與鎖交接會清理自身所有權，並保留 gate 與 barrier 的競態保證。
 
 ## 5. 全 App VPN 是固定的處理成本
 
@@ -194,7 +195,7 @@ runtime 等候 mutex 時另有 1 ms 重試（`ExperimentRuntime.kt:1022,4025`）
 | A | 分離正常狀態投影與磁碟恢復；量測歷史量增加時的讀檔／CPU | 可保留目前資料與排程語義，優先做 |
 | B | 降低快照更新頻率、改善配額統計；保持 commit 的持久性 | 可保留已回覆資料的耐久性；驗證重啟成本 |
 | C | 硬體能力契約、gyro FIFO flush、批次提交與 epoch 邊界 | 保留原始 sample，但改變交付延遲；須實機驗證 |
-| D | 共用非緊急工作節奏、移除 1 ms lock 重試、調整顯示更新 | 保留控制邊界與撤銷處理時限 |
+| D | 共用非緊急工作節奏、調整顯示更新（1 ms lock 重試已於 2026-09-07 移除） | 保留控制邊界與撤銷處理時限 |
 | E | 依 trace 優化 VPN packet path；評估 30／60 秒研究輪詢設定 | 輪詢時間解析度及 VPN 暴露條件須明訂 |
 
 先使用相同機型、網路、亮度、電量／溫度區間與可重現負載，分別量測：裝置閒置、現行完整研究、只做 A、A+B、經驗證的 C，以及 baseline／limited VPN 的 idle 和固定流量。各條件重複且交錯順序，避免溫度與電池狀態偏差。測試應涵蓋熄屏與亮屏，並與網路限速處置分層比較。

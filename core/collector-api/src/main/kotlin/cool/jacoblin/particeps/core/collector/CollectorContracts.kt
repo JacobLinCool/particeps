@@ -469,13 +469,15 @@ fun interface StudyScopedTokenEncoder {
 }
 
 /**
- * [referencedByAutomation] is true when the study's compiled automation program reads this source's
- * events: a matcher (in a trigger, a guard, or a resource-binding condition) names one of its events,
- * or the program keeps sequence or window state, which reads the time of every event of every
- * source and requires it to be no older than that state's newest entry. Such a source's
- * observations can change automation state or must reach it in time order, so its collector commits
- * them without an added [CallbackCommitWindow]. It is process-local assembly state derived from the
- * signed configuration, never part of it.
+ * [requiresPromptCommits] is true when this source's observations must commit without an added
+ * [CallbackCommitWindow]. The study application sets it from the compiled automation program
+ * (`CompiledAutomationProgram.requiresPromptCommits`): when a matcher (in a trigger, a guard, or a
+ * resource-binding condition) names one of the source's events, so its observations can change
+ * automation state, and for every source when the program keeps sequence or window state, which
+ * reads the time of every event of every source and requires it to be no older than that state's
+ * newest entry. It says nothing else about the source: in the second case it is true for sources
+ * that no automation names. It is process-local assembly state derived from the signed
+ * configuration, never part of it.
  */
 data class CollectorContext(
     val scope: CoroutineScope,
@@ -484,7 +486,7 @@ data class CollectorContext(
     val sourceContract: RegistrySourceContract,
     val resourceGeneration: Long,
     val tokenEncoder: StudyScopedTokenEncoder,
-    val referencedByAutomation: Boolean,
+    val requiresPromptCommits: Boolean,
 ) {
     init {
         require(sourceContract.sourceKind == RegistrySourceKind.COLLECTOR) {

@@ -31,7 +31,7 @@ import kotlinx.coroutines.selects.select
  * when callbacks queue up behind a slow commit or arrive together.
  *
  * A collector of a continuously sampled source may pass a [commitWindow]. It applies only when the
- * study's automation does not read the source's events ([CollectorContext.referencedByAutomation]).
+ * source does not require prompt commits ([CollectorContext.requiresPromptCommits]).
  * The consumer then keeps a batch open for later callbacks until the window has elapsed since the
  * batch's first callback was captured, a barrier or stop arrives, or a merge rule ends the batch.
  * The window adds delivery latency and, until the batch commits, holds admitted samples only in
@@ -45,7 +45,7 @@ abstract class SerializedCallbackCollector(
 ) : Collector {
     private val messages = Channel<Message>(queueCapacity)
     private val batchEventLimit = callbackBatchEventLimit(context.sourceContract)
-    private val window = commitWindow?.takeUnless { context.referencedByAutomation }
+    private val window = commitWindow?.takeUnless { context.requiresPromptCommits }
 
     // After the gate refuses a windowed batch, no callback is admitted under that token again, so
     // what the consumer holds for the next barrier is one batch plus what was already queued.
@@ -423,7 +423,7 @@ abstract class SerializedCallbackCollector(
  * after the batch's first callback was captured, at most [MAXIMUM_CALLBACK_COMMIT_WINDOW].
  *
  * Only a continuously sampled source whose samples no automation needs promptly opts in; the
- * collector ignores the window when [CollectorContext.referencedByAutomation] is true. Events keep
+ * collector ignores the window when [CollectorContext.requiresPromptCommits] is true. Events keep
  * their capture-time observed time and admission token, so the window changes when a sample is
  * committed, never what it records or which condition epoch it belongs to. Until the batch commits
  * its samples exist only in process memory: process death loses them, inside the quality gap that

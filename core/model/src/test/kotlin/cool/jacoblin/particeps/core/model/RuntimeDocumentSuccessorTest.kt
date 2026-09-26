@@ -81,6 +81,32 @@ class RuntimeDocumentSuccessorTest {
             exact.copy(activityTokenKeyBase64Url = "B".repeat(43)),
             exact.copy(configurationSha256 = "b".repeat(64)),
             exact.copy(sourceCheckpoints = mapOf(EventSourceId("battery_state.v1") to SourceCheckpoint(EventSourceId("battery_state.v1"), 1, 1, null, null))),
+            exact.copy(experimentId = "experiment-two"),
+            exact.copy(configurationId = "configuration-two"),
+            exact.copy(revision = 2, nextCommitSequence = 3),
+            exact.copy(nextObservationSequence = 7),
+            exact.copy(nextEventSequence = 7),
+            exact.copy(
+                clockCheckpoint = StudyClockCheckpoint(
+                    calendarElapsedNanos = 1,
+                    activeRunningElapsedNanos = 1,
+                    anchor = ResearchTime(1_000, 2_000, "boot-a"),
+                    deadlineUtcMillis = 5_000,
+                    deadlineUtcTrusted = false,
+                    zoneId = "UTC",
+                ),
+            ),
+            exact.copy(
+                activeConditionEpoch = ConditionEpoch(
+                    ConditionEpochId("123e4567-e89b-42d3-a456-426614174010"),
+                    "a".repeat(64),
+                    "b".repeat(64),
+                    ResearchTime(1_000, 2_000, "boot-a"),
+                ),
+            ),
+            exact.copy(uploadedThroughCommit = 1),
+            exact.copy(evaluatedThroughCommit = 0),
+            exact.copy(uploadedThroughCommit = 1, retainedFromCommit = 2),
         ).forEach { candidate -> assertAgrees(candidate, expected = false) }
     }
 

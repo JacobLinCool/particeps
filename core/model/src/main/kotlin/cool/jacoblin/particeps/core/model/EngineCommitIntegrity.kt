@@ -254,26 +254,3 @@ fun PendingEngineInput.withComputedDigest(): PendingEngineInput {
     val digest = EngineCommitIntegrity.calculate(this)
     return copy(encodedSha256 = digest).also { it.contentSha256 = digest }
 }
-
-/** The map in ascending key order: itself when it already iterates that way, else a sorted copy. */
-private fun Map<String, String>.inKeyOrder(): Map<String, String> {
-    var previous: String? = null
-    keys.forEach { key ->
-        if (previous != null && previous >= key) return toSortedMap()
-        previous = key
-    }
-    return this
-}
-
-private val LOWER_HEX = "0123456789abcdef".toCharArray()
-
-/** Lowercase hexadecimal, byte for byte the same text as `"%02x"` per byte. */
-internal fun ByteArray.toLowerHex(): String {
-    val characters = CharArray(size * 2)
-    forEachIndexed { index, byte ->
-        val value = byte.toInt() and 0xff
-        characters[index * 2] = LOWER_HEX[value ushr 4]
-        characters[index * 2 + 1] = LOWER_HEX[value and 0x0f]
-    }
-    return String(characters)
-}

@@ -179,7 +179,7 @@ export const en: ParticipantCopy = {
     lead: 'Before you agree, the app lists the ones your study switched on — in the app’s own words, not the research team’s.',
     moreLink: 'Read the participant guide for the full category descriptions and your controls.',
     name: {
-      appLifecycle: 'App activity',
+      appLifecycle: 'Particeps app activity',
       accelerometer: 'Motion',
       batteryState: 'Battery state',
       temporalContext: 'Time context',
@@ -196,7 +196,7 @@ export const en: ParticipantCopy = {
       keyboardTouch: 'Keyboard touch'
     },
     detail: {
-      appLifecycle: 'When this app itself is opened and closed',
+      appLifecycle: 'When Particeps’ own screens open and close',
       accelerometer: 'Movement measured by the phone’s motion sensor',
       batteryState: 'Battery percentage, charging source, and power-save state',
       temporalContext: 'Time zone, UTC offset, daylight-saving state, and clock changes',
@@ -232,7 +232,7 @@ export const en: ParticipantCopy = {
       sampleCadence: 'About every 6 hours',
       sampleNetwork: 'Wi-Fi only',
       code: 'The encrypted content includes a randomly generated installation code so the research team can tell participants apart after decrypting it. It contains no name and no account.',
-      mandatory: 'Automatic sending is part of the study and cannot be switched off on its own. Pausing or withdrawing stops new collection, but data already collected and not yet sent still goes to the research team.',
+      mandatory: 'Automatic sending is part of the study and cannot be switched off on its own. Pausing or withdrawing stops new collection, but data already collected and not yet sent can still be sent to the research team.',
       caption: 'The same phone. Your export, and a second arrow that repeats on a schedule.',
       metadata:
         'The receiving server sees when a delivery arrived and how large it was, plus bundle, configuration, digest, and claimed range metadata. It cannot see your installation code or collected content.'
@@ -308,7 +308,7 @@ export const zhTW: ParticipantCopy = {
     lead: '取得你的同意前，App 會列出這項研究啟用的資料來源。這些說明由 App 提供，研究團隊無法修改。',
     moreLink: '參與者指南會進一步說明這些資料類別與你可使用的控制。',
     name: {
-      appLifecycle: 'App 使用狀況',
+      appLifecycle: 'Particeps 本身的使用狀況',
       accelerometer: '手機移動',
       batteryState: '電池狀態',
       temporalContext: '時間脈絡',
@@ -325,7 +325,7 @@ export const zhTW: ParticipantCopy = {
       keyboardTouch: '鍵盤觸控'
     },
     detail: {
-      appLifecycle: '這個 App 本身開啟與關閉的時間',
+      appLifecycle: 'Particeps 自己的畫面何時開啟與關閉',
       accelerometer: '手機動作感測器量到的移動狀況',
       batteryState: '電量百分比、充電來源與省電模式狀態',
       temporalContext: '時區、UTC 偏移、日光節約時間狀態與系統時間變更',
@@ -360,7 +360,7 @@ export const zhTW: ParticipantCopy = {
       sampleCadence: '約每 6 小時',
       sampleNetwork: '只用 Wi-Fi',
       code: '加密內容包含一組隨機產生的安裝代碼，研究團隊解密後可用它區分不同的 App 安裝。代碼不含你的姓名或帳號。',
-      mandatory: '自動傳送是這個研究的一部分，無法單獨關閉。暫停或退出研究會停止收集新資料，但已收集且尚未傳送的資料仍會傳送給研究團隊。',
+      mandatory: '自動傳送是這個研究的一部分，無法單獨關閉。暫停或退出研究會停止收集新資料，但已收集且尚未傳送的資料仍可能傳送給研究團隊。',
       caption: '一個箭頭代表你自行匯出，另一個代表 App 依排程自動傳送。',
       metadata:
         '接收伺服器會看到傳送抵達的時間與大小，以及 bundle、設定摘要、內容摘要和宣告的資料範圍；它看不到安裝代碼或收集內容。'

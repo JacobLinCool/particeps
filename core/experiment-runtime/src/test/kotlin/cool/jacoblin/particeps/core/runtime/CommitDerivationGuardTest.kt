@@ -85,11 +85,17 @@ class CommitDerivationGuardTest {
     fun everyCommitEqualsItsStraightforwardDerivation() = runTest {
         val fixture = fixture(backgroundScope)
         val runtime = fixture.runtime
+        val clocks = fixture.clocks
         assertTrue(runtime.initialize() is RuntimeInitializationResult.Ready)
+        clocks.step()
         assertEquals(RuntimeCommandResult.Success, runtime.markConfigurationVerified())
+        clocks.step()
         assertEquals(RuntimeCommandResult.Success, runtime.beginConsentReview())
+        clocks.step()
         assertEquals(RuntimeCommandResult.Success, runtime.acceptConsent())
+        clocks.step()
         assertEquals(RuntimeCommandResult.Success, runtime.markReady())
+        clocks.step()
         assertEquals(RuntimeCommandResult.Success, runtime.start())
 
         fixture.emitGyro(1)
@@ -112,19 +118,23 @@ class CommitDerivationGuardTest {
         val evening = fixture.wakeups.scheduled.last { timer ->
             (timer.target as? TimerTarget.CalendarUtc)?.utcMillis == EVENING_OPENS_UTC_MILLIS
         }
-        fixture.clocks.advanceToWallMillis(EVENING_OPENS_UTC_MILLIS)
+        clocks.advanceToWallMillis(EVENING_OPENS_UTC_MILLIS)
         assertEquals(RuntimeCommandResult.Success, runtime.onTimerDue(evening.id, evening.generation))
         runCurrent()
         fixture.emitGyro(2)
         val committed = fixture.store.commits.last().commitSequence
+        clocks.step()
         assertEquals(
             RuntimeCommandResult.Success,
             runtime.acknowledgeUpload("123e4567-e89b-42d3-a456-426614174099", 1, committed, "b".repeat(64)),
         )
+        clocks.step()
         assertEquals(RuntimeCommandResult.Success, runtime.pause())
+        clocks.step()
         assertEquals(RuntimeCommandResult.Success, runtime.resume())
         runCurrent()
         fixture.emitGyro(4)
+        clocks.step()
         assertEquals(RuntimeCommandResult.Success, runtime.complete())
         assertEquals(ExperimentState.COMPLETED, runtime.snapshot.value.state)
 
@@ -165,7 +175,18 @@ class CommitDerivationGuardTest {
             assertEquals(plainPendingDigest(input), input.encodedSha256)
             assertEquals(input.encodedSha256, EngineCommitIntegrity.calculate(input.copy()))
         }
+
+        // Pins the scenario's exact output. Each commit chains its predecessor's digest, so the last
+        // digest pins every commit; the wakeup log pins every schedule and retirement in call order.
+        assertEquals(PINNED_COMMIT_COUNT, commits.size)
+        assertEquals(PINNED_LAST_COMMIT_SHA256, commits.last().commitSha256)
+        assertEquals(PINNED_PENDING_INPUT_SHA256S, fixture.store.pendingInputs.map { it.encodedSha256 })
+        assertEquals(PINNED_WAKEUP_CALLS, fixture.wakeups.log.size)
+        assertEquals(PINNED_WAKEUP_LOG_SHA256, sha256(fixture.wakeups.log.joinToString(separator = "\n")))
     }
+
+    private fun sha256(value: String): String =
+        MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
     /** Applies a commit with a fresh hash map, independent of the runtime's sorted-copy advance. */
     private fun plainAdvance(document: RuntimeDocument, commit: EngineCommit): RuntimeDocument {
@@ -439,6 +460,7 @@ class CommitDerivationGuardTest {
             val ordinal = if (priorGeneration == generation) priorOrdinal + 1 else 0L
             ordinals[source] = generation to ordinal
             val drafts = fields.map { values ->
+                clocks.step()
                 val now = clocks.now()
                 EventDraft(
                     type,
@@ -624,13 +646,21 @@ class CommitDerivationGuardTest {
         }
     }
 
+    /**
+     * A clock that moves only when the scenario says so: [step] before each input, or
+     * [advanceToWallMillis]. Reading it never advances it, so the pinned output depends on the
+     * scenario, not on how many times the runtime happens to read the clock.
+     */
     private class GuardClocks(private val wallBaseMillis: Long) : ResearchClocks {
         private var nanos = 1_000_000_000L
 
-        override fun now(): ResearchTime =
-            ResearchTime(wallBaseMillis + nanos / 1_000_000L, nanos, "boot-guard").also { nanos += 1_000_000L }
+        override fun now(): ResearchTime = ResearchTime(wallBaseMillis + nanos / 1_000_000L, nanos, "boot-guard")
 
         override fun trustedUtcMillis(): Long = now().wallTimeUtcMillis
+
+        fun step() {
+            nanos += 1_000_000L
+        }
 
         fun advanceToWallMillis(target: Long) {
             val current = wallBaseMillis + nanos / 1_000_000L
@@ -650,10 +680,15 @@ class CommitDerivationGuardTest {
 
     private class RecordingWakeups : TimerWakeupAdapter {
         val scheduled = mutableListOf<DurableTimer>()
+        /** Every schedule and retirement, in call order. */
+        val log = mutableListOf<String>()
         override suspend fun schedule(timer: DurableTimer) {
             scheduled += timer
+            log += "schedule:${timer.id}:${timer.generation}"
         }
-        override suspend fun retire(timerId: String, generation: ULong) = Unit
+        override suspend fun retire(timerId: String, generation: ULong) {
+            log += "retire:$timerId:$generation"
+        }
     }
 
     private class GuardActuator(override val key: ResourceKey) : StatefulResourceActuator {
@@ -732,6 +767,14 @@ class CommitDerivationGuardTest {
     }
 
     private companion object {
+        const val PINNED_COMMIT_COUNT = 30
+        const val PINNED_LAST_COMMIT_SHA256 = "6e5693019362c1adfadfadeceaf72920ce8c5b17438d05558787345ac227bb3a"
+        val PINNED_PENDING_INPUT_SHA256S = listOf(
+            "7c1168d6b1db159623333bc071090930c19e91237e68b910b5ca78afb4f0cf08",
+            "4527a7b88aa2133d5840f6237771099b66cd5055dab824e83eda2ff08d3b9788",
+        )
+        const val PINNED_WAKEUP_CALLS = 18
+        const val PINNED_WAKEUP_LOG_SHA256 = "90e5713eef7869d85d3b1d89936f452fcbcd53892ba5a31a5c90a9e3cb02d06c"
         const val CONFIG_DIGEST = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         const val DURATION_SECONDS = 7L * 24 * 3_600
         val EVENING_OPENS_UTC_MILLIS = Instant.parse("2026-09-07T10:00:00Z").toEpochMilli()

@@ -7,6 +7,153 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
+## Unreleased
+
+Changes on top of `v1.0.0-rc.13` that no release build includes yet. Nothing below has a signed
+APK, a version code, or release-gate evidence.
+
+- Participants who have started a study get one **Study and my data** entry, identical in every
+  study arm, on the collection panel and on the access panel shown while required access is
+  repaired. It restates the study, researcher contact, consent text and version, signing-key
+  fingerprint, installation code and any assigned code, what each data category records and does
+  not record with the Android access it uses, the upload terms, the fixed VPN paragraph for a study
+  that may adjust transfer speed, and what Pause, Resume, Withdraw, and Delete local data do. It
+  also shows the state, study day, planned end once the phone's clock is verified, collecting and
+  paused time, the size and event count of an export made since Particeps last started, and local
+  storage measured when the page opens. It has no lifecycle control. The Details toggle is gone,
+  and the signed configuration ID, which differs between study arms, is no longer shown anywhere.
+- Every setup step, from import through Ready, offers **Decline and remove this study**. After a
+  confirmation it removes the study and setup progress through the local deletion path; Android
+  access granted during setup stays on.
+- The paused-since time and an ended study's length come from the commit that entered that state,
+  so later commits in the same state, such as upload acknowledgements, no longer move them.
+- Intervention notifications carry a fixed public version: the app name and "A research activity
+  is available. Unlock your phone to see it." Android shows it in place of the researcher's title
+  and message only when the lock screen is set to hide sensitive content; Android's default shows
+  all content.
+- Data-category copy states what each category records and does not record and no longer quotes
+  profile settings, such as sampling rates or poll intervals, that can differ between arms. The app
+  category is "Particeps app activity". The fixed traffic-shaping paragraph is reworded to be true
+  for both selected-app and all-app targets, the consent checkbox reads "data collection and
+  sharing", and the consent upload sentence and the public participant page say that unsent data
+  "can still be sent" after pausing or withdrawing.
+- Upload progress on the running screen and export phase progress are whole percentages. Batch
+  counts are no longer shown, because how many commits a study makes depends on its automation.
+- Automatic upload begins at Start. Nothing is staged, scheduled, or sent during setup, and the
+  first bundle begins at commit 1 and carries the setup commits with the first collection. If
+  scheduling the upload chain fails after Start, Start keeps its result and the next Resume or
+  access reconciliation retries it.
+- Gyroscope and accelerometer samples commit in batches through a window of up to 5 s of awake
+  time when no automation in the signed study matches that sensor's events and the study has no
+  `sequence` trigger or `window_threshold` trigger or condition. Otherwise every sample commits
+  without waiting, as before. Observed time, values, sampling rate, and condition-epoch attribution
+  are unchanged; `committed_at` can trail capture by up to 5 s, and for the accelerometer, which
+  holds no wake lock, by any CPU suspend while a batch is open. Process death loses the samples
+  since the sensor's last recorded one, inside the `PROCESS_RECOVERY` quality gap that recovery
+  records. A safety pause, a phone clock or time-zone change while the study runs, and a clock
+  change first seen after the deadline each drop up to 5 s of open-batch samples with no quality
+  gap that names the sensor. The researcher guide and data dictionary give the analysis rules.
+- Callback collectors merge callbacks that are already queued into one observation and, without a
+  window, never wait for more. When a desired resource would change only after a live batch's first
+  event, the runtime records the events before it and the collector offers the rest under the next
+  producer ordinal. A commit records each of the reducer's condition-timer intents in the
+  reducer's order, as RC13 did, except those for a timer generation that the same commit armed
+  and then retired or replaced, and only the recorded intents reach WorkManager. A merged batch
+  that slides a window once per event therefore retires the prior timer once and schedules only
+  the final one, and recovery of a running study, whose quality-gap reset re-arms each condition
+  timer before the safety pause retires it, records one retirement per timer and leaves no
+  wakeup for the re-armed generation.
+- A timer wakeup that the runtime rejects as stale, because it holds that timer at a later
+  generation, now ends. RC13 retried it with a backoff that grows by 10 s per attempt, about 130
+  attempts in the first day, until the timer was next removed, such as at the next pause.
+- Collector API: `EmitBatchResult.Accepted` gains `recordedEvents`, and `CollectorContext` gains
+  `requiresPromptCommits`. `SerializedCallbackCollector` handles both; a collector that implements
+  `Collector` directly and emits multi-event live batches must offer `events.drop(recordedEvents)`
+  again under the next producer ordinal.
+- Cold start authenticates the retained commit log once. The encrypted store caches its engine key
+  and commit-log byte totals, the runtime reuses per-commit digests and precomputes reducer state
+  keys, timer identities, local times, literals, and thresholds, and the participant UI state is
+  built only while the Activity is started.
+- A recovery reset now deletes the study's Android Keystore engine key. RC13's reset matched an
+  alias prefix no key used and left the key in place.
+- A commit the store has made durable is always applied to the runtime's memory, even when the
+  caller is cancelled during the append. Before, such a cancellation could leave every later commit
+  rejected, with the study still shown as running, until the process restarted.
+- The researcher site's participant preview shows only the upload destination host, as the app
+  does, and its fixed VPN paragraph is checked against the app's string resources.
+
+**Application update from `v1.0.0-rc.13`:** install a signed build of this tree over the existing
+app without uninstalling or clearing its data; it does not change the application ID.
+
+**Local studies and exported data:** there is no local-store migration, mandatory reset,
+event-source-registry change, or bundle-format change from RC13: the runtime document layout and
+the `PTCRUN03`, `PTCPND03`, and `PTCENG03` frames are unchanged. Existing signed configurations stay
+valid and do not need to be re-signed. Reopen the app after updating, complete normal recovery and
+access checks, and explicitly Resume the study.
+
+- A study already started keeps its upload chain, re-armed at every process start as before. RC13
+  armed automatic upload at import and could stage and send setup commits before Start. For a study
+  still in setup when the phone updates, a leftover RC13 upload job now ends without sending, a
+  bundle RC13 staged waits and is sent after Start under its original bundle ID, and setup commits
+  RC13 already delivered stay delivered. When the phone holds an acknowledgement for them, the
+  decline confirmation says that setup records were already sent and that declining does not take
+  them back.
+- The update keeps the existing notification channels and any settings the participant changed. It
+  does not change a channel's lock-screen setting; the fixed public version applies to each
+  intervention notification this build posts.
+- The 5 s window applies to an existing signed configuration that meets its conditions as soon as
+  the updated app runs it, including a study already under way. From then on, those sensors'
+  `committed_at` values and the losses described above follow the windowed rules. A configuration
+  whose automation matches the sensor, or that has any sequence or window state, keeps per-sample
+  commits.
+- Participants who consented under RC13 read RC13's consent-screen wording; the new wording appears
+  on the consent screen and on *Study and my data* after the update.
+- Collector code outside this repository that constructs `EmitBatchResult.Accepted` or
+  `CollectorContext` must pass the new `recordedEvents` or `requiresPromptCommits` argument before
+  it compiles against this tree.
+- Verify and materialize bundles from this build with this tree's `particeps-analysis`. For the same
+  reduced inputs, both builds record the same condition-timer events for every commit in which no
+  timer generation is armed and then retired or replaced before the commit ends. That includes every
+  commit that reduces a single input, such as Start, Resume, or a one-event observation. Only a
+  commit that reduces several inputs can differ: an observation or barrier whose events change a
+  `window_threshold` or `held_for` timer more than once; a pause, completion, or withdrawal whose
+  flushed events re-armed a timer that the stop then retires; recovery of a study left `ACTIVATING`
+  or `RUNNING`, as after an app update, process death, or reboot while it runs, whose quality-gap
+  reset re-arms each condition timer its still-active conditions need and whose safety pause retires
+  it in the same commit; or a phone clock or time-zone change first seen after the deadline, which
+  does the same before completing. For such a commit RC13 recorded a `TIMER_SCHEDULED` for every
+  generation it armed and, when the timer existed before the commit, repeated its `TIMER_RETIRED`
+  for each retired generation; this build records that prior timer's retirement once and the
+  resulting timer's schedule once. RC13's verifier already rejected RC13's version of these commits
+  except when the timer did not exist before the commit and still existed after it. This tree's
+  verifier also rejects that remaining RC13 version, and RC13's verifier rejects this build's
+  version of all of them. For a chain started under RC13 and continued on this build, this tree's
+  `particeps-analysis` timer-event checks therefore accept every commit unless its RC13 part
+  contains such a commit; other checks can still reject the chain. The
+  five-day pilot's automation uses only `study_local_window` and `study_session_active` conditions,
+  so its RC13 commits can differ only at such a stop, recovery, or late clock change. Every RC13
+  recovery of the running pilot is such a commit, because its resource bindings keep a window timer
+  armed throughout the study. There the timer existed before the commit, so RC13's verifier already
+  rejects the commit. An RC13-only bundle that contains the remaining RC13 version verifies only
+  with RC13's `particeps-analysis`. This build also groups inputs differently: it merges queued
+  callbacks into one observation and splits a live batch at its first resource-changing event, so
+  for automation that matches collector events the two builds need not make the same commits from
+  the same callbacks.
+- Each RC13 recovery of a running study left a WorkManager wakeup for every condition timer it
+  re-armed and retired. One whose target passes while the study runs retries until the next pause
+  under RC13; after the update it ends at its next attempt.
+
+**Fresh install:** install a signed build of this tree, then scan a research-team QR code or import
+its signed study file. Review the study and data collection, provide consent, complete required
+access setup, and explicitly Start.
+
+**Verification so far:** on the working tree only, `./gradlew test testDebugUnitTest`,
+`./gradlew lintDebug assembleDebug`, the Kotlin protocol and automation-reducer conformance tests,
+the Web unit tests and type check, the `particeps-analysis` unit tests, and the app and storage
+instrumentation tests on an API 34 emulator passed locally. Six instrumentation tests that need the
+host harness or its local TCP test server were skipped. No release gate, API 37 lane, or
+physical-device measurement has run.
+
 ## v1.0.0-rc.13 — 2026-09-14
 
 - Manual encrypted export reads each retained commit once, using a scoped read snapshot instead of

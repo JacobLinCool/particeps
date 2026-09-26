@@ -284,16 +284,18 @@ private fun YourParticipation(
         participation.pausedMillisAt(now)?.let { paused ->
             FactLine(stringResource(R.string.participation_paused), elapsedLabel(paused))
         }
-        FactLine(
-            stringResource(R.string.details_last_export),
-            study.lastExport?.let {
+        // The export summary lives only in this process, so after Android restarts Particeps the
+        // row is absent rather than claiming that nothing was exported.
+        study.lastExport?.let {
+            FactLine(
+                stringResource(R.string.details_last_export),
                 stringResource(
                     R.string.details_last_export_value,
                     Formatter.formatShortFileSize(context, it.byteCount),
                     numbers.format(it.eventCount),
-                )
-            } ?: stringResource(R.string.participation_no_export),
-        )
+                ),
+            )
+        }
         FactLine(
             stringResource(R.string.participation_storage),
             when (val reading = storage) {

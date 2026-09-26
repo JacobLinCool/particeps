@@ -21,6 +21,11 @@ export interface ParticipantStudyUiModel {
   purpose: string;
   data_category_ids: CollectorId[];
   shows_traffic_disclosure: boolean;
+  /**
+   * The upload endpoint's host, the only part of it the App shows: its path and query stay out.
+   * Null without automatic upload, and while the draft's endpoint is not yet a URL.
+   */
+  upload_destination_host: string | null;
 }
 
 export function participantStudyUiModel(configuration: StudyConfiguration): ParticipantStudyUiModel {
@@ -28,6 +33,15 @@ export function participantStudyUiModel(configuration: StudyConfiguration): Part
     title: configuration.title,
     purpose: configuration.purpose,
     data_category_ids: configuration.collectors.map((collector) => collector.id),
-    shows_traffic_disclosure: trafficShapingEnabled(configuration.traffic_shaping)
+    shows_traffic_disclosure: trafficShapingEnabled(configuration.traffic_shaping),
+    upload_destination_host: configuration.upload ? endpointHost(configuration.upload.endpoint) : null
   };
+}
+
+function endpointHost(endpoint: string): string | null {
+  try {
+    return new URL(endpoint).hostname || null;
+  } catch {
+    return null;
+  }
 }

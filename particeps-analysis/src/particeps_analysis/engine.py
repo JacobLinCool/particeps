@@ -29,6 +29,7 @@ from .automation_model import (
     ReducerClock,
     ReducerInput,
     ResourceKey,
+    TimerIntent,
     TimerTarget,
 )
 from .automation_model import (
@@ -1997,27 +1998,39 @@ class EngineReplayVerifier:
             and not event.wire_fields["producer_key"].startswith("resource-audit:")
             and event.wire_fields["producer_key"] != "study-deadline"
         ]
-        # A commit records the net change of the reducer timer map, not every intent: a
-        # multi-input reduction's intents also name each generation it armed and replaced on the
-        # way. Each prior timer removed or replaced retires once with its own generation, and each
-        # resulting timer that is new or replaced is scheduled once, ordered by timer ID with the
-        # retirement first. For a single-input reduction this equals its intents.
+        # A commit records the reducer's timer intents that are part of the net change of its
+        # timer map, in their original order, each once. A retirement is kept when the prior map
+        # holds that timer at that generation and the result no longer holds it unchanged; a
+        # schedule is kept when the result holds exactly that timer and the prior map did not.
+        # Every intent of a reduction of one runtime input is kept. A multi-input reduction also
+        # names each generation it armed and then retired or replaced, and those are dropped.
         prior_timers = self.authoritative_checkpoint.timers
         result_timers = result.checkpoint.timers
+        committed_intents: list[TimerIntent] = []
         expected_timers: list[tuple[str, tuple[str, str, str | None, str, str, str, str]]] = []
-        for timer_id in sorted(prior_timers.keys() | result_timers.keys()):
-            prior = prior_timers.get(timer_id)
-            successor = result_timers.get(timer_id)
-            if prior == successor:
+        for item in result.timer_intents:
+            if item in committed_intents:
                 continue
-            if prior is not None:
-                expected_timers.append(
-                    ("RETIRE", _timer_output_evidence(prior, include_cause=False))
-                )
-            if successor is not None:
-                expected_timers.append(
-                    ("SCHEDULE", _timer_output_evidence(successor, include_cause=True))
-                )
+            if item.type == "RETIRE":
+                prior = prior_timers.get(item.timer_id or "")
+                if (
+                    prior is None
+                    or prior.generation != item.generation
+                    or result_timers.get(prior.id) == prior
+                ):
+                    continue
+                evidence = ("RETIRE", _timer_output_evidence(prior, include_cause=False))
+            else:
+                timer = item.timer
+                if (
+                    timer is None
+                    or result_timers.get(timer.id) != timer
+                    or prior_timers.get(timer.id) == timer
+                ):
+                    continue
+                evidence = ("SCHEDULE", _timer_output_evidence(timer, include_cause=True))
+            committed_intents.append(item)
+            expected_timers.append(evidence)
         actual_timers = [
             (
                 "SCHEDULE" if event.event_type == "TIMER_SCHEDULED" else "RETIRE",

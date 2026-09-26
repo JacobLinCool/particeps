@@ -568,6 +568,60 @@ class StudySessionManagerTest {
     }
 
     @Test
+    fun automaticUploadMaySendOnlyOnceTheStudyHasStarted() = runTest {
+        val fixture = fixture(studyConfiguration = configuration(withUpload = true))
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        runCurrent()
+        assertFalse(fixture.manager.automaticUploadStarted())
+        fixture.manager.reviewStudy()
+        fixture.manager.acceptConsent()
+        fixture.manager.completeAccessSetup()
+        runCurrent()
+        assertEquals(ExperimentState.READY, fixture.manager.snapshot.value.runtime.state)
+        assertFalse(fixture.manager.automaticUploadStarted())
+
+        assertEquals(StudyCommandResult.Success, fixture.manager.start())
+        runCurrent()
+        assertTrue(fixture.manager.automaticUploadStarted())
+        assertEquals(StudyCommandResult.Success, fixture.manager.withdraw())
+        runCurrent()
+        assertTrue(fixture.manager.automaticUploadStarted())
+        fixture.manager.shutdownProcess()
+    }
+
+    @Test
+    fun aStartWhoseUploadChainCannotBeArmedKeepsItsResultAndArmsLater() = runTest {
+        val fixture = fixture(studyConfiguration = configuration(withUpload = true))
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        fixture.manager.reviewStudy()
+        fixture.manager.acceptConsent()
+        fixture.manager.completeAccessSetup()
+        fixture.uploadScheduler.failures = 2
+
+        // Start is durable before the chain is armed, so a scheduling failure keeps its result.
+        assertEquals(StudyCommandResult.Success, fixture.manager.start())
+        runCurrent()
+        assertEquals(ExperimentState.RUNNING, fixture.manager.snapshot.value.runtime.state)
+        assertTrue(fixture.uploadScheduler.scheduled.isEmpty())
+
+        // The running foreground service reconciles access periodically, and each pass retries.
+        fixture.manager.reconcileAccess()
+        assertTrue(fixture.uploadScheduler.scheduled.isEmpty())
+        assertEquals(StudyCommandResult.Success, fixture.manager.pause())
+
+        // Resume retries too, and once armed neither reconciliation nor Resume arms it again.
+        assertEquals(StudyCommandResult.Success, fixture.manager.resume())
+        assertEquals(1, fixture.uploadScheduler.scheduled.size)
+        fixture.manager.reconcileAccess()
+        assertEquals(StudyCommandResult.Success, fixture.manager.pause())
+        assertEquals(StudyCommandResult.Success, fixture.manager.resume())
+        assertEquals(1, fixture.uploadScheduler.scheduled.size)
+        fixture.manager.shutdownProcess()
+    }
+
+    @Test
     fun aStudyDeclinedDuringSetupNeverArmedAutomaticUpload() = runTest {
         val fixture = fixture(studyConfiguration = configuration(withUpload = true))
         fixture.manager.initialize()
@@ -607,6 +661,39 @@ class StudySessionManagerTest {
     }
 
     @Test
+    fun aTimerWakeForAGenerationTheRuntimeNoLongerHoldsEndsInsteadOfRetrying() = runTest {
+        val fixture = fixture()
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        fixture.manager.reviewStudy()
+        fixture.manager.acceptConsent()
+        fixture.manager.completeAccessSetup()
+        fixture.manager.start()
+        val deadline = fixture.manager.pendingTimers().single { it.producerKey == "study-deadline" }
+        fixture.manager.shutdownProcess()
+
+        // Recovery after a reboot re-arms the deadline at the next generation.
+        fixture.clocks.reboot("boot-two")
+        val restarted = fixture.newManager()
+        restarted.initialize()
+        runCurrent()
+        assertEquals(ExperimentState.PAUSED, restarted.snapshot.value.runtime.state)
+        val rearmed = restarted.pendingTimers().single { it.producerKey == "study-deadline" }
+        assertEquals(deadline.id, rearmed.id)
+        assertEquals(deadline.generation + 1uL, rearmed.generation)
+        val commits = fixture.store.commits.size
+
+        // The worker ends a wake reported as Success; the stale one commits nothing.
+        assertEquals(StudyCommandResult.Success, restarted.onTimerDue(deadline.id, deadline.generation))
+        assertEquals(commits, fixture.store.commits.size)
+        assertEquals(ExperimentState.PAUSED, restarted.snapshot.value.runtime.state)
+        // The current generation is not due yet, so its wake is still retried.
+        assertEquals(StudyCommandResult.InvalidState, restarted.onTimerDue(rearmed.id, rearmed.generation))
+        assertEquals(commits, fixture.store.commits.size)
+        restarted.shutdownProcess()
+    }
+
+    @Test
     fun platformAccessLossSafetyPausesWithoutExposingAPlatformReason() = runTest {
         val fixture = fixture()
         fixture.manager.initialize()
@@ -629,10 +716,11 @@ class StudySessionManagerTest {
         val verified = verified(studyConfiguration)
         val active = FakeActiveStudyStore(activeRecord)
         val store = FakeStudyStore()
+        val clocks = IncrementingClocks()
         val runtimeFactory = CapturingRuntimeFactory(
             EventDrivenRuntimeAssemblyFactory(
                 collectorRegistry = CollectorRegistry(emptyList()),
-                clocks = IncrementingClocks(),
+                clocks = clocks,
                 scope = this,
                 zoneId = { "UTC" },
             ),
@@ -645,6 +733,7 @@ class StudySessionManagerTest {
             runtimeFactory = runtimeFactory,
             uploadCoordinator = FakeUploadCoordinator(),
             uploadScheduler = FakeUploadScheduler(),
+            clocks = clocks,
         )
         fixture.manager = fixture.newManager()
         return fixture
@@ -658,6 +747,7 @@ class StudySessionManagerTest {
         val runtimeFactory: CapturingRuntimeFactory,
         val uploadCoordinator: FakeUploadCoordinator,
         val uploadScheduler: FakeUploadScheduler,
+        val clocks: IncrementingClocks,
     ) {
         var acceptedFailure: Throwable? = null
         lateinit var manager: StudySessionManager
@@ -695,12 +785,21 @@ class StudySessionManagerTest {
 
     private class IncrementingClocks : ResearchClocks {
         private var tick = 0L
+        private var bootTick = 0L
+        private var bootSessionId = "boot-one"
+
+        /** Restarts elapsed realtime in a new boot session; wall time keeps advancing. */
+        fun reboot(bootSessionId: String) {
+            this.bootSessionId = bootSessionId
+            bootTick = tick
+        }
+
         override fun now(): ResearchTime {
             tick++
             return ResearchTime(
                 wallTimeUtcMillis = 1_800_000_000_000L + tick,
-                elapsedRealtimeNanos = tick * 1_000_000L,
-                bootSessionId = "boot-one",
+                elapsedRealtimeNanos = (tick - bootTick) * 1_000_000L,
+                bootSessionId = bootSessionId,
             )
         }
 
@@ -741,8 +840,13 @@ class StudySessionManagerTest {
 
     private class FakeUploadScheduler : StudyUploadScheduler {
         val scheduled = mutableListOf<StudyUploadPlan>()
+        var failures = 0
 
         override suspend fun ensureScheduled(plan: StudyUploadPlan) {
+            if (failures > 0) {
+                failures--
+                throw IllegalStateException("WorkManager did not acknowledge a scheduled mutation")
+            }
             scheduled += plan
         }
 

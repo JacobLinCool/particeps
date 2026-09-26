@@ -15,6 +15,7 @@ import cool.jacoblin.particeps.core.model.StudyReadSnapshot
 import cool.jacoblin.particeps.core.model.StudyStore
 import cool.jacoblin.particeps.core.model.StudyStoreRecoveryException
 import cool.jacoblin.particeps.core.model.StudyStoreRecoveryFailure
+import cool.jacoblin.particeps.core.model.toLowerHex
 import java.io.BufferedInputStream
 import java.io.DataInputStream
 import java.io.EOFException
@@ -72,7 +73,7 @@ class EncryptedExperimentStore internal constructor(
 
     private val mutex = Mutex()
     private val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-    private val opaqueId = sha256(experimentId.toByteArray()).toHex()
+    private val opaqueId = sha256(experimentId.toByteArray()).toLowerHex()
     private val opaqueIdBytes = opaqueId.toByteArray(Charsets.US_ASCII)
     private val keyAlias = "$ENGINE_KEY_ALIAS_PREFIX$opaqueId"
     private val rootDirectory = context.noBackupFilesDir.resolve(STORAGE_DIRECTORY)
@@ -752,7 +753,7 @@ class EncryptedExperimentStore internal constructor(
                     }
                     previousSequence = sequence
                     val commit = sealed?.let { frame ->
-                        val digestHex = frame.digest.toHex()
+                        val digestHex = frame.digest.toLowerHex()
                         val plaintext = decryptCommit(frame.iv, frame.ciphertext, sequence, frame.digest, key)
                         EngineDataJsonCodec.decodeCommit(plaintext).also { decoded ->
                             require(decoded.commitSequence == sequence && decoded.commitSha256 == digestHex) {
@@ -1104,7 +1105,6 @@ class EncryptedExperimentStore internal constructor(
         val SEGMENT_REPLACEMENT_PATTERN = Regex("\\.commits-([0-9]{8})\\.ptcs\\.replacement")
         val SEGMENT_HEADER_BYTES = SEGMENT_HEADER.size + Int.SIZE_BYTES
         val FRAME_FIXED_BYTES = Long.SIZE_BYTES + Int.SIZE_BYTES + IV_BYTES + COMMIT_DIGEST_BYTES
-        val HEX_DIGITS = "0123456789abcdef".toCharArray()
 
         fun appendFrameDurably(file: File, frame: ByteArray) {
             RandomAccessFile(file, "rw").use { output ->
@@ -1115,15 +1115,5 @@ class EncryptedExperimentStore internal constructor(
         }
 
         fun sha256(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
-        /** Lowercase hex from a digit table; per-byte string formatting would dominate a long scan. */
-        fun ByteArray.toHex(): String {
-            val digits = CharArray(size * 2)
-            forEachIndexed { index, byte ->
-                val value = byte.toInt() and 0xff
-                digits[index * 2] = HEX_DIGITS[value ushr 4]
-                digits[index * 2 + 1] = HEX_DIGITS[value and 0x0f]
-            }
-            return String(digits)
-        }
     }
 }

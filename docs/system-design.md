@@ -74,6 +74,55 @@ core:export / core:storage consume core:model contracts
 Platform-independent modules contain no `android.*` references. `app` assembles adapters; it does
 not reimplement domain state.
 
+### Inside `core:experiment-runtime`
+
+`ExperimentRuntime` is the coordinator. It alone holds the runtime mutex, the active coordinated
+barrier, the capacity-one barrier channel and the unlimited terminal-failure channel with one
+consumer coroutine each, and the coroutine scope; it also creates the admission gate that it and its
+collaborators drive. Every command, including the
+terminal-failure consumer's safety pause, waits until no coordinated barrier is active, takes the
+mutex, and fails closed when it fails: admission closes and, unless the study is already paused or
+terminal, the runtime safety-pauses with `STORAGE_FAILURE`. A required-action failure is the
+exception, because its own safety pause is already durable. `claimAction` enters the same way and
+returns `null` where a command returns a failure. Unlike a command, a claim does not contain its own
+cancellation: a claim cancelled during the wait, or after it holds the mutex, neither closes
+admission nor pauses the study. No cancellation interrupts a commit append: `CommitAssembler`
+appends to the store and advances `RuntimeMemory` and the snapshot in one `NonCancellable` step,
+because a store append can be durable and still report cancellation on return. A cancelled caller
+therefore waits for an append already under way, memory never trails the store's chain, and a
+claim cancelled then either returns its claim or propagates the cancellation; one cancelled during
+the wait propagates it having committed nothing. Live batches pass the gate and then take either the mutex or the open drain's
+buffer. The read-only queries take only the mutex.
+
+The work itself runs in internal collaborators. None is a concurrent actor: apart from the drain
+buffer described below, each runs on the caller's coroutine while the caller holds the mutex. None
+takes the mutex or launches a coroutine, and each reads the in-memory projection of the commit chain
+(`RuntimeMemory`) where it uses it rather than keeping a copy.
+
+| File | Responsibility |
+|---|---|
+| `LifecycleCoordinator.kt` | Setup transitions, start/resume, pause/complete/withdraw, deadline completion, and the two-commit safety pause |
+| `AdmissionFrontDoor.kt` | An admitted live batch: commit it, stage a resource-changing one for the barrier, or commit a quality gap |
+| `ResourceBarrierCoordinator.kt` | Opening, closing, and aborting a drain, the drain's input buffer, and the barrier's commits, vector apply, and new epoch |
+| `ClockDiscontinuityHandler.kt` | TIME_SET/TIMEZONE_CHANGE rotation or paused re-anchor, and the paused re-anchor after a reboot |
+| `TimerCoordinator.kt` | Due deadline, resource-audit, and automation timers, and the durable timer set that wakeups re-arm |
+| `RuntimeRecovery.kt` | Cold-start load and component restore, and fail-closed recovery that consumes staged input |
+| `ActionOutbox.kt`, `PostCommitEffectRunner.kt` | Action claims, results, and survey transitions; post-commit wakeups, display, retraction, and timer materialization |
+| `CommitAssembler.kt` | Building and appending every `EngineCommit`, then advancing `RuntimeMemory` and the snapshot |
+| `ResourceVectorController.kt`, `ResourceAuditTrail.kt` | Actuator calls in fixed key order, and periodic resource audits |
+| `SourcePreparation.kt`, `RuntimeClockPolicy.kt`, `SourceValidation.kt`, `RuntimeRules.kt`, `RuntimeEncoding.kt`, `RuntimeTypes.kt` | Observation preparation, clock and deadline rules, validation, digests, mutation builders, and value types |
+
+A collaborator calls back up only through one port, `RuntimeContainment` (safety pause, fail-closed
+recovery, and completion of a paused study at its deadline); the admission front door also hands a
+barrier to the coordinator's single enqueue. Opening a drain publishes its buffer before the gate
+starts draining, because a submitter the drain wakes offers its batch to that buffer at once. A
+collector thread can offer to the buffer holding only the buffer's own lock, not the runtime mutex,
+so the buffer touches only the gate, the store, and pure validation. Locks are taken in one order:
+the application's session mutex, when held, before the runtime mutex; the runtime mutex before the
+drain buffer's lock, the store's mutex, the gate monitor, and the Android action display gate; and
+the drain buffer's lock before the gate monitor and the store's mutex. No code holding the drain
+buffer's lock, the store's mutex, the gate monitor, or the display gate acquires the runtime mutex.
+
 ## Event-source registry and code generation
 
 `protocol/v1/event-source-registry.json` discriminates `COLLECTOR` and `SYSTEM` sources. Each event
@@ -193,26 +242,31 @@ A collector may also pass a `CallbackCommitWindow`, at most `MAXIMUM_CALLBACK_CO
 including ambient light, proximity, screen, network, keyboard, location, app lifecycle, and battery,
 passes none and keeps the merge-only consumer above.
 
-The window applies only when `CollectorContext.referencedByAutomation` is false.
-`EventDrivenRuntimeAssemblyFactory` sets that flag for each collector from the compiled program:
-`CompiledAutomationProgram.referencesSource` is true when any matcher names an event of the source.
+The window applies only when `CollectorContext.requiresPromptCommits` is false.
+`EventDrivenRuntimeAssemblyFactory` sets that flag for each collector from
+`CompiledAutomationProgram.requiresPromptCommits`, which is true when either of two conditions
+holds. First, `CompiledAutomationProgram.referencesSource` is true when any matcher names an event
+of the source.
 A matcher can be an event-match or sequence trigger, a window selector, or an event-latch or
 keyed-presence condition, in a trigger, a guard, or a resource-binding case. The compiler records
-the event of every matcher it validates (`AutomationCompiler.kt:382`), and a program exists only
+the event of every matcher it validates (`validateMatcher` in `AutomationCompiler.kt`), and a program exists only
 when all of them validate. The compiler does not forbid references to the two sensors. Their events
 are `RESEARCHER`-scoped with `event_match`, `sequence_step`, `window_count`, and `window_sum`.
-Sequences and windows over them are rejected as `UNBOUNDED_SOURCE` (`AutomationCompiler.kt:482`),
-because their `PLATFORM_ONLY` rate gets no enforced bound (`GeneratedEventContractRegistry.kt:109`).
+Sequences and windows over them are rejected as `UNBOUNDED_SOURCE` (`validateRetainedBound` in
+`AutomationCompiler.kt`), because their `PLATFORM_ONLY` rate gets no enforced bound (the generated
+registry sets `rateBound` only for a `HARD` rate).
 Event-match triggers and event latches over them compile. Such a source must then be required and
-continuously active (`AutomationCompiler.kt:582`, `:586`), and its collector commits every sample
+continuously active (`TRIGGER_SOURCE_NOT_REQUIRED` and `TRIGGER_SOURCE_NOT_LIVE` in
+`validateReferencesAndGraph`), and its collector commits every sample
 without a window. The flag is process-local assembly state; it is never signed, stored, or exported.
 
-The factory also sets the flag for every collector when
+Second, the flag is true for every collector, including those no matcher names, when
 `CompiledAutomationProgram.retainsEventTimeOrderedState` is true: the program has a sequence or
 window-threshold trigger, or a window-threshold condition anywhere in a trigger, a guard, or a
 resource-binding case. Sequence partials and window entries retain the time of the event that made
 them, and the reducer requires every later event, from any source and whether or not a matcher
-names it, to be no older than the newest one (`AutomationReducer.kt:880`, `:932`). A windowed
+names it, to be no older than the newest one (the reducer's "Sequence source time moved backward"
+and "Window source time moved backward" checks). A windowed
 sample commits up to one window after events that other sources observed later and committed at
 once, so it would fail that check. The reducer would throw, the collector would fail with
 `STORAGE_WRITE_FAILED` and lose the batch, and its terminal failure would safety-pause the study; a
@@ -448,17 +502,28 @@ or call the resource recursively.
 
 Timer state stores one stable clock-domain target: calendar UTC, accumulated active-running
 elapsed, or same-boot monotonic. `TIMER_SCHEDULED` commits before WorkManager is asked to wake.
-A commit records the net change of the reducer's timer map rather than every timer intent: each
-prior timer the reduction removed or replaced gets one `TIMER_RETIRED` with its own generation, each
-resulting timer that is new or replaced gets one `TIMER_SCHEDULED`, ordered by timer ID with the
-retirement first, and only those changes reach WorkManager. A multi-input reduction, such as a
-merged callback batch that slides a window once per event or a barrier's combined input, therefore
-never records or wakes a generation that it armed and replaced within itself. For a single input
-the net change is exactly the reducer's intents, and Python replay verifies the same rule.
+A commit records the reducer's timer intents in the reducer's order, which sorts them by timer ID
+with a retirement before a schedule, and keeps only the intents in the net change of the timer map,
+each once. A retirement is kept when the prior map holds that timer at that generation and the
+resulting map no longer holds it unchanged, and becomes `TIMER_RETIRED` with that generation; a
+schedule is kept when the resulting map holds exactly that timer and the prior map did not, and
+becomes `TIMER_SCHEDULED`. Only the kept intents reach WorkManager. For one runtime input the
+reducer retires only the prior timer and schedules only the resulting one, because the runtime drops
+a stale timer wake before reducing it, so a single-input commit records every intent. A multi-input
+reduction, such as a merged callback batch that slides a window once per event, a barrier's
+combined input, a stop that reduces flushed events before its lifecycle input, fail-closed recovery
+of an `ACTIVATING` or `RUNNING` runtime (a quality gap, whose reset re-arms each condition timer the
+still-active conditions need, followed by `PAUSING` and `PAUSED`), or a clock discontinuity first
+seen after the deadline followed by `PAUSING`, can also name generations it armed and then retired
+or replaced; the commit never records or wakes those. Python replay verifies the same rule.
 WorkManager carries only timer ID and generation and calls `onTimerDue`; the runtime resolves the
 authenticated target from its durable timer component and never accepts a deadline from worker
-input or rebuilds a schedule from configuration. Timer audit events use the same immutable
-clock-domain coordinate for schedule, due, and retirement: calendar targets are
+input or rebuilds a schedule from configuration. It rejects a wake as stale when it holds that
+timer at another generation, which it checks for an automation timer while `RUNNING`. The session
+reports a stale wake complete, so WorkManager does not retry it: each generation's wakeup is
+scheduled only after the commit that arms it, so a stale one can never become due. Timer audit
+events use the same immutable clock-domain coordinate for schedule, due, and retirement: calendar
+targets are
 `{wall_time_utc_millis = target UTC, elapsed_realtime_nanos = 0, boot_session_id =
 "calendar-time"}`; active-running targets are `{wall_time_utc_millis = 0,
 elapsed_realtime_nanos = target active elapsed, boot_session_id = "active-running-time"}`; and
@@ -604,10 +669,14 @@ Compose receives `ParticipantStudyUiModel`, a whitelist projection. It contains 
 identity/consent, profile-independent data categories, ordinary access status, participant controls,
 safe state/count/time/export summaries, and one shaping-disclosure flag. It cannot carry target
 packages, resource profiles, caps, automation, timers, epochs, digests, owner UID, health, or typed
-failure reasons. A reflection test pins the field names of the participant projection types and
-every type reachable from them. A Compose semantics sentinel test renders a configuration fixture
-carrying sentinel values in every non-displayed field through the real projection and checks that
-neither the running screen nor *Study and my data* exposes them; notification sentinel tests cover
+failure reasons. Reflection tests pin the exact field names of each participant projection type,
+reject names containing prohibited identifiers, and pin every type reachable from them. A Compose
+semantics sentinel test renders a configuration fixture through the real projection with sentinel
+values in the hidden fields the threat model lists (identifiers, caps, numeric profile parameters,
+schedule times, availability, survey and notification text, keys, upload path, and quota) and checks
+that neither the running screen nor *Study and my data* exposes them; hidden fields with ordinary
+fixture values, such as window study days and the activation cap, are not covered. Notification
+sentinel tests cover
 the shared foreground notification and the lock-screen public version of intervention notifications.
 
 Participant disclosure is a researcher decision with blinding as the default. The platform floor
@@ -634,9 +703,14 @@ the phone's clock and the network-time start or deadline, so a skewed or changed
 neither invents nor hides paused time. An ended study's length is the calendar time at the commit
 that ended it. Every total stops at the signed duration, which also covers a deadline processed
 late after the phone was off. The study day is 24-hour periods of that study length, ending at the
-planned end; the planned end is shown only while the deadline is trusted. The screen also shows the
-last export size and local storage, which `StudySessionManager` measures only when the screen
-opens. The signed `configuration_id` is not part of the projection: it differs between study arms
+planned end; the planned end is shown only while the deadline is trusted. The screen also shows
+local storage, which `StudySessionManager` measures only when the screen opens, and the size and
+event count of the last export made since the process started. That export summary lives only in
+the process's session snapshot, so after a process restart the row is absent until the next export
+rather than claiming that nothing was exported. Both byte figures depend on how many commits the
+study makes, and so on its automation (the gyroscope and accelerometer commit window); the threat
+model lists them as residual side channels. For the same reason the running screen shows upload
+progress, and export shows phase progress, only as whole-percent shares, never as commit counts. The signed `configuration_id` is not part of the projection: it differs between study arms
 and, from the Web tool, carries a digest of the whole configuration. Each state offers
 only the exit its command accepts: setup states offer "Decline and remove this study" (the local
 deletion path, since Withdraw is a runtime command only from `RUNNING` or `PAUSED`), started studies
@@ -656,9 +730,12 @@ completion, Start, and Resume need the VPN and local-network prerequisites first
 
 Under the default policy, Particeps-generated/derived UI never reveals treatment control. Researcher-authored study title,
 purpose, researcher name/contact, consent, notification, and survey strings remain verbatim. These
-signed free-text fields are the explicit exception to the generated-UI blinding boundary; Web
-requires a blinding/ethics acknowledgement before signing because Android runtime cannot
-semantically police them.
+signed free-text fields are the explicit exception to the generated-UI blinding boundary; neither
+the Android runtime nor Web checks what they say, so their review is the researcher's. For a
+configuration with an occurrence automation or a treatment-changing resource binding
+(`requiresBlindingConfirmation`), Web blocks signing until the researcher confirms that
+Particeps-generated participant UI does not reveal treatment, trigger conditions, or adjustment
+timing; that confirmation covers the generated UI, not the free text, and is not recorded.
 
 Release logs and participant messages are generic. Debug builds may retain bounded non-sensitive
 diagnostics for development, never packet/destination/DNS or collected payload values.
@@ -691,11 +768,21 @@ and cleanup; preparation includes lock waits and the scoped snapshot capture.
 
 Automatic upload stages immutable ciphertext before HTTP. Headers and receipts name complete commit
 ranges and aggregate event count; participant identity stays encrypted. Exact replay reuses bytes.
-Nothing is staged or scheduled before Start: `StudySessionManager` arms the upload chain when Start
-leaves setup (including a start that fails closed to `PAUSED`) and on each process start of a
-started study, and refuses to stage while the runtime is in a setup state. A participant who
-declines during setup has therefore sent nothing; for one who starts, the first bundle begins at
-commit 1 and carries the setup commits with the first collection.
+Nothing is staged, scheduled, or sent before Start: `StudySessionManager` arms the upload chain
+when Start leaves setup (including a start that fails closed to `PAUSED`) and on each process start
+of a started study, refuses to stage while the runtime is in a setup state, and
+`AndroidStudyUploadPlatform.uploadOnce` sends nothing, not even an already staged bundle, until
+`automaticUploadStarted()` is true. A participant who declines during setup has therefore sent
+nothing; for one who starts, the first bundle begins at commit 1 and carries the setup commits with
+the first collection. Arming the chain follows the durable Start commit, so a scheduling failure
+does not replace Start's result: the session keeps an arming-pending flag and retries on the next
+Resume or access reconciliation, which the running foreground service repeats.
+
+RC13 and earlier armed the chain at import and staged setup commits before Start. For a study
+carried over from such a release while still in setup, a leftover upload job now ends without
+sending, a bundle it had staged waits until Start and is then sent under its original bundle ID,
+and setup commits it had already delivered are acknowledged in `uploaded_through_commit`. The
+decline confirmation then states that setup records were already sent.
 The receiver validates bounds/digest/identity/range and stores ciphertext atomically without keys.
 
 Python inventory copies ciphertext into a content-addressed workspace. Materialization verifies each

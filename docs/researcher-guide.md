@@ -530,13 +530,23 @@ strings are shown verbatim. These signed free-text fields are the explicit excep
 generated-UI blinding boundary. Notification title and message can also appear on a locked phone:
 Android replaces them with fixed Particeps copy only when the participant's lock-screen setting
 hides sensitive content, and its default shows everything, so write them to be safe for a bystander
-to read. Before signing, the Web tool requires the researcher to acknowledge
-that every one of them follows the study’s blinding and ethics plan. Runtime cannot semantically
-guarantee that arbitrary free text omits treatment information.
+to read. Neither the runtime nor the Web tool checks what this free text says, so review every one
+of these strings against the study’s blinding and ethics plan yourself.
 
-Use the participant preview before signing. It intentionally receives a whitelist projection rather
-than the full configuration. The blinding confirmation is held only in the browser session; keep
-your own record of the review for the ethics file.
+When the configuration has an `occurrence` automation, or a resource binding that can change
+treatment (any binding that selects an actuator profile, or a collector binding other than the
+generated continuous one), the Web tool shows a toggle before signing: “I confirm that
+Particeps-generated participant UI does not reveal treatment, trigger conditions, or adjustment
+timing.” Signing is blocked until it is on, and any change to the canonical configuration turns it
+off again. It concerns the Particeps-generated UI, not the signed free text above, and it is not
+shown for a configuration without such automation. The confirmation is held only in the browser
+session; keep your own record of the review, including the free-text review, for the ethics file.
+
+Use the participant preview before signing. Its Particeps-generated content (title, purpose, data
+categories, the upload destination host, and the fixed shaping paragraph) comes from a whitelist
+projection of the configuration. The researcher name and contact, duration, consent, survey, and
+notification text are read from the draft, because the App shows them verbatim, as is each data
+category's required or optional flag.
 
 ## 11. Simulation and testing a study
 

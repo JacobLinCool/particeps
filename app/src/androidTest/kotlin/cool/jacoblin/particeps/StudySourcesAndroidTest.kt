@@ -35,7 +35,7 @@ class StudySourcesAndroidTest {
         val collectors = fixtures.map { (plugin, profile) ->
             plugin.create(profile, CollectorContext(scope, sink, AndroidResearchClocks(androidContext, "study-sources-test"),
                 plugin.descriptor.sourceContract, 1, StudyScopedTokenEncoder { _, _ -> "a".repeat(64) },
-                referencedByAutomation = false))
+                requiresPromptCommits = false))
         }
         try {
             collectors.forEach { collector ->

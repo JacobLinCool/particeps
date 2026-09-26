@@ -60,6 +60,14 @@ class CompiledAutomationProgram internal constructor(
                     is Trigger.EventMatch, is Trigger.Schedule -> false
                 }
         } || resourceBindings.any { binding -> binding.cases.any { it.condition.retainsEventTimeOrderedState() } }
+
+    /**
+     * True when [sourceId]'s observations must commit without an added callback commit window: a
+     * matcher names one of its events ([referencesSource]), or the program keeps event-time-ordered
+     * state ([retainsEventTimeOrderedState]), which every source's events must reach in time order.
+     */
+    fun requiresPromptCommits(sourceId: EventSourceId): Boolean =
+        referencesSource(sourceId) || retainsEventTimeOrderedState
 }
 
 private fun StateCondition.retainsEventTimeOrderedState(): Boolean = when (this) {

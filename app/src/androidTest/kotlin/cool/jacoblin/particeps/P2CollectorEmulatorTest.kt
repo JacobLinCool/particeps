@@ -66,7 +66,7 @@ class P2CollectorEmulatorTest {
                     sourceContract = plugin.descriptor.sourceContract,
                     resourceGeneration = RESOURCE_GENERATION,
                     tokenEncoder = StudyScopedTokenEncoder { domain, value -> "$domain:$value" },
-                    referencedByAutomation = false,
+                    requiresPromptCommits = false,
                 ),
             )
         }

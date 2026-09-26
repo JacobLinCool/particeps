@@ -304,8 +304,12 @@
         <item quantity="one">%1$s event</item>
         <item quantity="other">%1$s events</item>
     </plurals>
-    <string name="meter_sent">%1$s data batches sent</string>
-    <string name="meter_reclaimed">The first %1$s data batches have been sent and removed from this phone. A later export will not include them.</string>
+    <!--
+      Upload progress is a share, never a count: how many batches a study records depends on its
+      automation, so a count could tell study arms apart. %1$s is a locale-formatted percentage.
+    -->
+    <string name="meter_sent">%1$s of data batches sent</string>
+    <string name="meter_reclaimed">Some data that was already sent has been removed from this phone. A later export will not include it.</string>
 
     <!--
       Study and my data: one secondary screen behind one labeled entry that is the same for every
@@ -334,7 +338,6 @@
     <string name="details_last_export">Last export</string>
     <!-- %1$s is a file size such as "2.4 MB"; %2$s is a locale-formatted event count. -->
     <string name="details_last_export_value">%1$s · %2$s events</string>
-    <string name="participation_no_export">Not exported yet</string>
     <string name="participation_storage">Stored on this phone</string>
     <string name="participation_storage_checking">Checking…</string>
     <string name="participation_storage_unavailable">Not available</string>
@@ -357,6 +360,8 @@
     <string name="confirm_withdraw_body">All collection stops permanently. You can still export what was already collected, until you delete it.</string>
     <string name="confirm_decline_title">Decline this study?</string>
     <string name="confirm_decline_body">Collection has not started, so none of the data this study asks for has been collected, and no study data has been sent to the research team. Declining removes the study and your setup progress from this phone. This cannot be undone. Android access you granted during setup stays on until you turn it off in Android Settings or uninstall Particeps.</string>
+    <!-- Shown instead when an earlier release already sent this study's setup records before Start. -->
+    <string name="confirm_decline_body_setup_sent">Collection has not started, so none of the data this study asks for has been collected. An earlier version of Particeps already sent records of your setup steps, such as when you accepted the consent, and your installation code to the research team; declining does not take them back. Declining removes the study and your setup progress from this phone. This cannot be undone. Android access you granted during setup stays on until you turn it off in Android Settings or uninstall Particeps.</string>
     <string name="confirm_delete_title">Delete local data permanently?</string>
     <string name="confirm_delete_body">Encrypted events, study state, and the configuration are all removed, including the researcher’s contact details and your installation code. If you may later ask the research team about data already sent or exported, write both down from Study and my data first. This cannot be undone.</string>
 
@@ -387,7 +392,8 @@
     <string name="export_reading">Reading collected data…</string>
     <string name="export_encrypting">Encrypting collected data…</string>
     <string name="export_finishing">Finishing export…</string>
-    <string name="export_phase_progress">This step: %1$s of %2$s data batches</string>
+    <!-- %1$s is a locale-formatted percentage of this export step, never a batch count. -->
+    <string name="export_phase_progress">This step: %1$s</string>
     <string name="action_cancel_export">Cancel export</string>
     <string name="export_cancelling">Cancelling export…</string>
     <string name="export_cancelling_detail">Stopping the export and removing the unfinished file. This may take a moment.</string>

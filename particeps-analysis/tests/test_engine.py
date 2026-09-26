@@ -58,6 +58,7 @@ from particeps_analysis.registry import EventSourceRegistry
 
 EPOCH_ID = "2f7720d8-e530-45de-868b-15b282abbce2"
 VPN_GENERATION_ID = "6745758f-9575-4ea8-bca8-d2e49b7647e1"
+TIMER_TEST_AUTOMATION = "scheduled-action"
 TRAFFIC_PROFILE = {"downlink_kbps": 1024, "id": "slow", "uplink_kbps": 256}
 TRAFFIC_PROFILE_SHA256 = hashlib.sha256(canonicalize(TRAFFIC_PROFILE)).hexdigest()
 
@@ -191,6 +192,12 @@ def resource_audit_timer_id(*, target: int, causal_sequence: int = 3) -> str:
                 str(target),
             )
         ).encode()
+    ).hexdigest()
+
+
+def _condition_timer_id(producer_key: str) -> str:
+    return hashlib.sha256(
+        f"particeps-timer-v1\0{CONFIGURATION_SHA256}\0{TIMER_TEST_AUTOMATION}\0{producer_key}".encode()
     ).hexdigest()
 
 
@@ -1645,99 +1652,158 @@ class EngineTest(unittest.TestCase):
                 self.registry, scheduled_action_configuration(), CONFIGURATION_SHA256
             ).accept(self.parser.parse(document))
 
-    def test_multi_input_timer_audit_is_the_net_timer_change(self) -> None:
-        # A window that slides once per merged sample replaces its expiry timer three times in one
-        # reduction. The commit records the net change: the prior generation retires once and only
-        # the final generation is scheduled, which the stateful timer replay also accepts.
-        automation_id = "scheduled-action"
-        producer_key = "condition:window"
-        timer_id = hashlib.sha256(
-            f"particeps-timer-v1\0{CONFIGURATION_SHA256}\0{automation_id}\0{producer_key}".encode()
-        ).hexdigest()
+    def _condition_timer(self, producer_key: str, generation: int) -> DurableTimer:
+        return DurableTimer(
+            id=_condition_timer_id(producer_key),
+            automation_id=TIMER_TEST_AUTOMATION,
+            generation=generation,
+            causal_sequence=10 + generation,
+            producer_key=producer_key,
+            target=TimerTarget(
+                "SAME_BOOT_MONOTONIC",
+                boot_session_id="boot-one",
+                elapsed_realtime_nanos=1_000 * generation,
+            ),
+            logical_deadline_utc_millis=None,
+            expires_at_utc_millis=None,
+        )
 
-        def timer(generation: int) -> DurableTimer:
-            return DurableTimer(
-                id=timer_id,
-                automation_id=automation_id,
-                generation=generation,
-                causal_sequence=10 + generation,
-                producer_key=producer_key,
-                target=TimerTarget(
-                    "SAME_BOOT_MONOTONIC",
-                    boot_session_id="boot-one",
-                    elapsed_realtime_nanos=1_000 * generation,
-                ),
-                logical_deadline_utc_millis=None,
-                expires_at_utc_millis=None,
-            )
-
-        def audit(sequence: int, event_type: str, item: DurableTimer) -> RecordedEvent:
+    def _timer_audits(self, entries: list[tuple[str, DurableTimer]]) -> list[RecordedEvent]:
+        events = []
+        for sequence, (event_type, item) in enumerate(entries, start=1):
             fields = {
-                "automation_id": automation_id,
+                "automation_id": TIMER_TEST_AUTOMATION,
                 "clock": "SAME_BOOT_MONOTONIC",
                 "generation": str(item.generation),
                 "logical_due_research_time": embedded_time(0, 1_000 * item.generation),
-                "producer_key": producer_key,
-                "timer_id": timer_id,
+                "producer_key": item.producer_key,
+                "timer_id": item.id,
             }
             if event_type == "TIMER_SCHEDULED":
                 fields["causal_sequence"] = str(item.causal_sequence)
             else:
                 fields["retirement_reason"] = "CANCELLED"
-            return self.parser._event(
-                event_document(
-                    sequence, "timer.v1", event_type, fields, epoch_id=EPOCH_ID, wall=5_000, monotonic=50
+            events.append(
+                self.parser._event(
+                    event_document(
+                        sequence, "timer.v1", event_type, fields,
+                        epoch_id=EPOCH_ID, wall=5_000, monotonic=50,
+                    )
                 )
             )
+        return events
 
-        def commit(events: list[RecordedEvent]) -> SimpleNamespace:
-            return SimpleNamespace(
-                events=events,
-                input_kind="SOURCE_OBSERVATION",
-                successor_projection={"clock_checkpoint": {"anchor": ResearchTime(5_000, 50, "boot-one")}},
-            )
-
+    def _verify_timer_outputs(
+        self,
+        prior: dict[str, DurableTimer],
+        result_timers: dict[str, DurableTimer],
+        intents: tuple[TimerIntent, ...],
+        events: list[RecordedEvent],
+    ) -> EngineReplayVerifier:
+        verifier = EngineReplayVerifier(
+            self.registry, scheduled_action_configuration(), CONFIGURATION_SHA256
+        )
+        verifier.authoritative_checkpoint = AutomationCheckpoint(timers=prior)
         result = ReductionResult(
-            checkpoint=AutomationCheckpoint(timers={timer_id: timer(4)}),
+            checkpoint=AutomationCheckpoint(timers=result_timers),
             action_requests=(),
-            timer_intents=(
-                TimerIntent("RETIRE", timer_id=timer_id, generation=1),
-                TimerIntent("RETIRE", timer_id=timer_id, generation=2),
-                TimerIntent("RETIRE", timer_id=timer_id, generation=3),
-                TimerIntent("SCHEDULE", timer=timer(2)),
-                TimerIntent("SCHEDULE", timer=timer(3)),
-                TimerIntent("SCHEDULE", timer=timer(4)),
-            ),
+            timer_intents=intents,
             timer_production_requests=(),
             resource_changes={},
             audits=(),
         )
-        net = [audit(1, "TIMER_RETIRED", timer(1)), audit(2, "TIMER_SCHEDULED", timer(4))]
-        per_intent = [
-            audit(1, "TIMER_RETIRED", timer(1)),
-            audit(2, "TIMER_RETIRED", timer(1)),
-            audit(3, "TIMER_RETIRED", timer(1)),
-            audit(4, "TIMER_SCHEDULED", timer(2)),
-            audit(5, "TIMER_SCHEDULED", timer(3)),
-            audit(6, "TIMER_SCHEDULED", timer(4)),
-        ]
-        verifier = EngineReplayVerifier(
-            self.registry, scheduled_action_configuration(), CONFIGURATION_SHA256
+        commit = SimpleNamespace(
+            events=events,
+            input_kind="SOURCE_OBSERVATION",
+            successor_projection={"clock_checkpoint": {"anchor": ResearchTime(5_000, 50, "boot-one")}},
         )
-        verifier.authoritative_checkpoint = AutomationCheckpoint(timers={timer_id: timer(1)})
+        verifier._verify_reduction_outputs(commit, {}, result)
+        return verifier
 
-        verifier._verify_reduction_outputs(commit(net), {}, result)
+    def test_single_input_timer_audit_is_every_intent_in_intent_order(self) -> None:
+        # One input arms two new timers, fires a third and re-arms it. Every intent is part of
+        # the net change, so the commit records each one in the reducer's order, whatever the
+        # timer IDs' order, which is the output of a build that records every intent.
+        keys = ["condition:a", "condition:b", "condition:c"]
+        keys.sort(key=_condition_timer_id, reverse=True)
+        first, second, rearmed = keys
+        fired = self._condition_timer(rearmed, 1)
+        successor = self._condition_timer(rearmed, 2)
+        prior = {fired.id: fired}
+        result = {
+            timer.id: timer
+            for timer in (self._condition_timer(first, 1), self._condition_timer(second, 1), successor)
+        }
+        intents = (
+            TimerIntent("SCHEDULE", timer=self._condition_timer(first, 1)),
+            TimerIntent("SCHEDULE", timer=self._condition_timer(second, 1)),
+            TimerIntent("RETIRE", timer_id=fired.id, generation=1),
+            TimerIntent("SCHEDULE", timer=successor),
+        )
+        in_intent_order = [
+            ("TIMER_SCHEDULED", self._condition_timer(first, 1)),
+            ("TIMER_SCHEDULED", self._condition_timer(second, 1)),
+            ("TIMER_RETIRED", fired),
+            ("TIMER_SCHEDULED", successor),
+        ]
+
+        self._verify_timer_outputs(prior, result, intents, self._timer_audits(in_intent_order))
+        in_timer_id_order = sorted(
+            in_intent_order, key=lambda entry: (entry[1].id, entry[0] == "TIMER_SCHEDULED")
+        )
+        self.assertNotEqual(in_intent_order, in_timer_id_order)
         with self.assertRaisesRegex(ValidationError, "timer audit events diverge"):
-            verifier._verify_reduction_outputs(commit(per_intent), {}, result)
+            self._verify_timer_outputs(prior, result, intents, self._timer_audits(in_timer_id_order))
 
-        verifier.timers[timer_id] = (automation_id, 1)
+    def test_merged_timer_replacements_retire_the_base_once_and_schedule_the_final(self) -> None:
+        # A window that slides once per merged sample replaces its expiry timer three times in one
+        # reduction. The prior generation retires once and only the final generation is scheduled,
+        # which the stateful timer replay also accepts.
+        producer_key = "condition:window"
+        timer_id = _condition_timer_id(producer_key)
+
+        def timer(generation: int) -> DurableTimer:
+            return self._condition_timer(producer_key, generation)
+
+        intents = (
+            TimerIntent("RETIRE", timer_id=timer_id, generation=1),
+            TimerIntent("RETIRE", timer_id=timer_id, generation=2),
+            TimerIntent("RETIRE", timer_id=timer_id, generation=3),
+            TimerIntent("SCHEDULE", timer=timer(2)),
+            TimerIntent("SCHEDULE", timer=timer(3)),
+            TimerIntent("SCHEDULE", timer=timer(4)),
+        )
+        net = self._timer_audits([("TIMER_RETIRED", timer(1)), ("TIMER_SCHEDULED", timer(4))])
+        per_intent = self._timer_audits(
+            [("TIMER_RETIRED", timer(1))] * 3
+            + [("TIMER_SCHEDULED", timer(generation)) for generation in (2, 3, 4)]
+        )
+        prior = {timer_id: timer(1)}
+        result = {timer_id: timer(4)}
+
+        verifier = self._verify_timer_outputs(prior, result, intents, net)
+        with self.assertRaisesRegex(ValidationError, "timer audit events diverge"):
+            self._verify_timer_outputs(prior, result, intents, per_intent)
+
+        verifier.timers[timer_id] = (TIMER_TEST_AUTOMATION, 1)
         for event in net:
             verifier._timer_event(event)
-        self.assertEqual((automation_id, 4), verifier.timers[timer_id])
-        verifier.timers[timer_id] = (automation_id, 1)
+        self.assertEqual((TIMER_TEST_AUTOMATION, 4), verifier.timers[timer_id])
+        verifier.timers[timer_id] = (TIMER_TEST_AUTOMATION, 1)
         with self.assertRaisesRegex(ValidationError, "stale or orphaned"):
             for event in per_intent:
                 verifier._timer_event(event)
+
+    def test_merged_timer_armed_then_cancelled_records_nothing(self) -> None:
+        timer = self._condition_timer("condition:window", 1)
+        intents = (
+            TimerIntent("RETIRE", timer_id=timer.id, generation=1),
+            TimerIntent("SCHEDULE", timer=timer),
+        )
+
+        self._verify_timer_outputs({}, {}, intents, [])
+        with self.assertRaisesRegex(ValidationError, "timer audit events diverge"):
+            self._verify_timer_outputs({}, {}, intents, self._timer_audits([("TIMER_SCHEDULED", timer)]))
 
     def test_action_request_requires_match_and_durable_outbox_provenance(self) -> None:
         _, condition_sha256 = checkpoint_component(

@@ -78,7 +78,7 @@ class WallClockLifecycleTest {
     private companion object {
         const val CLOCK = "clock"
         const val REAL_CLOCK_STEP_MILLIS = 5L
-        const val ONE_TICK_MILLIS = 31_000L
-        const val TEN_TICKS_MILLIS = 310_000L
+        const val ONE_TICK_MILLIS = WALL_CLOCK_TICK_MILLIS + 1_000L
+        const val TEN_TICKS_MILLIS = 10 * WALL_CLOCK_TICK_MILLIS + 10_000L
     }
 }

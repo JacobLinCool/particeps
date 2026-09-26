@@ -27,7 +27,8 @@ the displayed researcher details and signer fingerprint with information you rec
 trusted channel.
 
 Importing a configuration does not start collection. Nothing is collected, and nothing is sent to
-the research team, until you finish setup and press **Start study**.
+the research team, until you finish setup and press **Start study** (for a study imported with an
+earlier release, see the note on declining below).
 
 Only one study can be present in the app at a time. A new import is refused while another study or
 its deletion is still present.
@@ -51,6 +52,12 @@ before **Start study**, so after you confirm, declining removes the study and yo
 from the phone and the app returns to its starting screen. Android access you granted during setup
 stays on until you turn it off in Android Settings or uninstall Particeps. To take part later,
 import the study again before its configuration expires.
+
+Particeps 1.0.0-rc.13 and some earlier releases began automatic upload when a study was imported,
+so a study you imported with one of them may already have sent records of your setup steps and your
+installation code. The current app sends nothing more before **Start study**. If the phone has a
+confirmation that such records were delivered, the decline confirmation says so; declining does not
+take them back.
 
 Particeps-generated setup text does not describe when a study activity happens or how a study may
 change its behaviour. Researcher-authored consent, notification, and survey text is shown exactly
@@ -174,7 +181,9 @@ screen. It has four parts:
 - **Your participation** — the current state; the study day, where day 1 is the first 24 hours
   after **Start study** and the last day ends at the planned end; the planned end time, once
   Particeps can verify the phone’s clock; time spent collecting and time paused; the size of your
-  last export; and how much space the study uses on this phone, measured when you open the page.
+  last export, if you exported since Particeps last started (Particeps does not keep it after
+  Android closes the app); and how much space the study uses on this phone, measured when you open
+  the page.
 - **Your rights** — what **Pause** and **Resume**, **Withdraw**, and **Delete local data** do,
   including what happens to data that has not been sent yet.
 

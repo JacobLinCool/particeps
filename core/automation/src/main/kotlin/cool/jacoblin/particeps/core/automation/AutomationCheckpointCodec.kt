@@ -1,12 +1,12 @@
 package cool.jacoblin.particeps.core.automation
 
+import cool.jacoblin.particeps.core.model.inKeyOrder
 import cool.jacoblin.particeps.core.resource.ResourceGeneration
 import cool.jacoblin.particeps.core.resource.ResourceKey
 import java.io.ByteArrayInputStream
 import java.io.DataInputStream
 import java.math.BigInteger
 import java.util.Base64
-import java.util.SortedMap
 
 /** Exact public wire codec for the reducer checkpoint persisted in EngineCommit mutations. */
 object AutomationCheckpointCodec {
@@ -295,10 +295,3 @@ object AutomationCheckpointCodec {
     private const val MAX_COMPONENT_BYTES = 512 * 1_024
     private const val MAX_COLLECTION_SIZE = 4_096
 }
-
-/**
- * The map in ascending natural key order: itself when it is already naturally sorted, as every
- * reducer-built checkpoint map is, otherwise a sorted copy. Both iterate exactly as `toSortedMap()`.
- */
-internal fun <K : Comparable<K>, V> Map<K, V>.inKeyOrder(): Map<K, V> =
-    if (this is SortedMap<K, V> && comparator() == null) this else toSortedMap()

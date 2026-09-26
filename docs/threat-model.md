@@ -351,9 +351,11 @@ three layers:
   digests, owner UID, typed internal failure reasons, and participant-specific random instants.
 
 Compose receives a whitelist participant projection rather than the full signed/runtime model.
-The *Study and my data* screen restates only floor information and coarse participation facts
-(study day, deadline, active and paused time, last export size, and local storage measured when the
-screen opens); its entry is identical in every study arm so its presence cannot reveal assignment.
+The *Study and my data* screen restates only floor information and participation facts (study
+day, deadline, active and paused time, the size and event count of an export made since Particeps
+last started, and local storage measured when the screen opens); its entry is identical in every
+study arm so its presence cannot reveal assignment. Its two byte figures are not arm-independent;
+see the residual side channels below.
 It does not show the signed `configuration_id`, which differs between arms and, when the Web tool
 derives it, ends in a 30-bit tag of the canonical configuration: two participants comparing it
 could tell their arms apart, and someone holding a template could test a guessed cap or window
@@ -364,22 +366,29 @@ explicit-package and all-app targets, so its text does not reveal which applies.
 Access step plus Android’s mandatory permission/VPN system surfaces; it adds no second ongoing
 notification.
 
-A reflection test pins the field names of the participant projection types and requires every type
-reachable from the projection to be one of them. A Compose semantics sentinel test decodes a
-configuration fixture with sentinel values in every field the participant UI must not show (target
-package, traffic profile identifiers and caps, collector profile identifiers and parameters,
-automation identifiers, schedule times, availability, survey and notification text, export key,
-upload path, and storage quota), passes it through the real participant projection, and asserts
-that the semantics tree of neither the running screen nor *Study and my data* contains any of them
-while the floor information is present. Notification sentinel tests assert that sensitive fixture
+Reflection tests pin the exact field names of each participant projection type, reject field
+names that contain prohibited identifiers, and require every type reachable from the projection to
+be one of the pinned types. A Compose semantics sentinel test decodes a configuration fixture with
+sentinel values in these hidden fields: the experiment and configuration IDs, target package,
+traffic profile identifiers and caps, collector profile identifiers and their numeric sampling and
+polling parameters, automation, survey, and intervention identifiers, schedule times,
+availability, survey and notification text, signer and export keys, upload path, and storage
+quota. It passes the fixture through the real participant projection and asserts that the
+semantics tree of neither the running screen nor *Study and my data* contains any of them while the
+floor information is present. Hidden fields with ordinary values in the fixture, such as the
+window's study days, the activation cap, issue and expiry times, the minimum client version, and
+boolean profile settings, are not checked by it. Notification sentinel tests assert that sensitive fixture
 values never reach the shared foreground notification and that an intervention notification's
 lock-screen version carries none of its researcher text.
 These protect against accidental derived UI leakage, not malicious researcher-authored text: study
 title, purpose, researcher name/contact, consent, notifications, and surveys are rendered verbatim.
 Those signed free-text fields are the explicit blinding exception, and they can disclose a
-schedule or condition the policy keeps hidden. Web asks the researcher to confirm their
-blinding/ethics responsibility before signing, but that confirmation lives only in the browser
-session and is not recorded; ethics review remains responsible for the content.
+schedule or condition the policy keeps hidden. Neither the runtime nor Web checks that text. For a
+configuration with an occurrence automation or a treatment-changing resource binding, Web blocks
+signing until the researcher confirms that Particeps-generated participant UI does not reveal
+treatment, trigger conditions, or adjustment timing; that confirmation covers the generated UI, not
+the free text, lives only in the browser session, and is not recorded. Ethics review remains
+responsible for the content.
 
 Blinding controls what Particeps presents, not what a participant can obtain. A `.partcfg` is the
 signed plaintext canonical configuration, so anyone holding the file or its join link can read
@@ -387,7 +396,20 @@ every traffic profile, target, and automation window. A blinded study should dis
 `.partcfg` through its recruitment channel and not publish the readable `study.json` beside it.
 
 The running screen's live event count is a residual side channel: when a collector runs only in a
-scheduled window, the count's rate of increase can reveal that window. Lock-screen observers can
+scheduled window, the count's rate of increase can reveal that window. The local-storage and
+last-export byte figures on *Study and my data* are residual side channels too. Every commit
+carries fixed overhead (several SHA-256 digests, the successor projection, the commit time, and
+AEAD framing), and how many commits a study makes depends on its automation: a gyroscope or
+accelerometer commits through a 5 s window only when no automation matches it and the program keeps
+no sequence or window state, and otherwise commits without waiting, merging only callbacks that
+are already queued. Two arms with the same collectors
+can therefore store very different bytes per event, and a participant who compares phones, or who
+knows the expected ratio, can learn whether their arm's automation reads motion or keeps sequence or
+window state. For the same reason the participant UI never shows a commit ("data batch") count:
+upload progress and export progress appear only as whole-percent shares, and the projection's
+commit fields are used only for those shares, for whether any sent data has been removed, and for
+whether an earlier release already delivered setup records before Start (which changes the decline
+confirmation). Lock-screen observers can
 learn that Particeps is running and Android can show a VPN icon. Neutral notification copy omits
 study/treatment identity but cannot hide app/VPN presence from the OS or a person inspecting device
 settings.

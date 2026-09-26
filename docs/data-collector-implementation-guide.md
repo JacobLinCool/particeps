@@ -180,9 +180,10 @@ A continuously sampled source may pass `commitWindow = CallbackCommitWindow.SAMP
 the maximum `CallbackCommitWindow` accepts); `AndroidSensorCollector` forwards the parameter.
 Today only the gyroscope and accelerometer do. Do not pass one for an on-change or event source
 (ambient light, proximity, screen, network, keyboard, location, app lifecycle, battery, and the
-like). The base class ignores the window when `CollectorContext.referencedByAutomation` is true,
-which the study application sets when the signed automation matches any of the source's events,
-and for every source when the automation keeps sequence or window state.
+like). The base class ignores the window when `CollectorContext.requiresPromptCommits` is true,
+which the study application sets from `CompiledAutomationProgram.requiresPromptCommits`: when the
+signed automation matches any of the source's events, and for every source when the automation
+keeps sequence or window state.
 With a window, the consumer offers a batch once the window has elapsed since the capture of its
 first callback, at once at a barrier or stop, and at every merge rule. It holds a batch the gate
 refused until its next barrier, stop, or callback under another token, and bounds what it holds
@@ -255,9 +256,19 @@ event count and contiguous sequence range, optional coverage, and SHA-256 of the
 observation. The events do not duplicate this batch provenance. A zero-event `CoverageAdvance`
 becomes a zero-event manifest with coverage and no event range.
 
-`Accepted` returns only the stable observation sequence. Event sequence ranges become authoritative
-in the durable manifest because a resource barrier cannot know the final pre-drain/flush population
-when its causal emitter unwinds.
+`Accepted` returns the stable observation sequence and `recordedEvents`, the number of the batch's
+leading events that observation holds. Event sequence ranges become authoritative in the durable
+manifest because a resource barrier cannot know the final pre-drain/flush population when its
+causal emitter unwinds.
+
+A live batch, one without coverage, may be recorded only in part. When a desired resource would
+change only after the batch's first event, the runtime records the events before that one as an
+ordinary commit and returns `Accepted` with `recordedEvents` smaller than the batch. The source must
+then offer `events.drop(recordedEvents)` as a new batch under the next producer ordinal; that batch
+starts with the event that causes the change and is staged for the barrier. A batch with coverage
+is always recorded whole, and a coverage advance records no events. `SerializedCallbackCollector`
+does this itself; a source that implements `Collector` directly and emits multi-event live batches
+must do it too, or it silently drops the unrecorded tail.
 
 The manifest and its events are committed together. The enclosing `EngineCommit` binds them to
 typed runtime mutations, the successor projection, the reducer checkpoint digest, and the previous
@@ -267,7 +278,7 @@ commit digest. A manifest is therefore not an unauthenticated side index.
 
 | Result | Source behavior |
 | --- | --- |
-| `Accepted` | Advance the producer ordinal and continue. |
+| `Accepted` | Advance the producer ordinal. If `recordedEvents` is smaller than a live batch, offer the unrecorded events again as the next batch under the new ordinal; otherwise continue. |
 | `RejectedByAdmissionGate` | Drop the submission. Pause, barrier, terminal state, stale token, and exact study deadline all close admission by design. |
 | `ContractViolation` | Mark the source failed with a fixed reason code. Retrying the same invalid batch is forbidden. |
 | `SourceQualityGap` | Mark the source failed or let the runtime perform the registry-declared containment. Never fill or infer the missing interval. |

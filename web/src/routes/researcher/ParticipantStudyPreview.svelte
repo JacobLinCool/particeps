@@ -1,5 +1,9 @@
 <script lang="ts">
-  /** Whitelist projection of researcher state into participant-visible preview content. */
+  /**
+   * Participant-visible preview content. Particeps-generated content comes only from the whitelist
+   * projection; researcher-authored signed text (researcher, consent, surveys, notification copy)
+   * is read from the draft because the App shows it verbatim.
+   */
   import SurveyPreview from './SurveyPreview.svelte';
   import Note from '$lib/ui/Note.svelte';
   import ToggleField from '$lib/ui/ToggleField.svelte';
@@ -25,7 +29,7 @@
     <dt>{zh ? '參與時長' : 'Participation duration'}</dt><dd>{draft.configuration.duration_hours} {zh ? '小時' : 'hours'}</dd>
     <dt>{zh ? '知情同意' : 'Consent'} · {draft.configuration.consent.document_version}</dt>
     <dd class="authored">{draft.configuration.consent.summary}</dd>
-    {#if draft.configuration.upload}<dt>{zh ? '自動傳送目的地' : 'Automatic delivery destination'}</dt><dd>{draft.configuration.upload.endpoint}</dd>{/if}
+    {#if model.upload_destination_host}<dt>{zh ? '自動傳送目的地' : 'Automatic delivery destination'}</dt><dd>{model.upload_destination_host}</dd>{/if}
   </dl>
   <div class="preview__sources">
     <span class="micro faint">{zh ? '可能收集的資料類別' : 'Data categories this study may collect'}</span>

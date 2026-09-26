@@ -298,6 +298,29 @@ class AccessCardTest {
     }
 
     @Test
+    fun declineSaysSoWhenAnEarlierReleaseAlreadySentSetupRecords() {
+        // Only a study imported under an earlier release, which uploaded from import, can have an
+        // acknowledged upload before Start.
+        composeRule.setContent {
+            CollectorApp(
+                state = StudyUiState.ActiveStudy(
+                    model = participantModel(emptyList(), ExperimentState.READY).copy(uploadedThroughCommit = 4),
+                    export = ParticipantExportState.Idle,
+                    message = null,
+                    busy = false,
+                    recoveryStatus = null,
+                ),
+                actions = actions().copy(decline = {}),
+            )
+        }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+
+        composeRule.onNodeWithTag(UiTags.DECLINE).performScrollTo().performClick()
+        composeRule.onNodeWithText(context.getString(R.string.confirm_decline_body_setup_sent)).assertExists()
+        composeRule.onNodeWithText(context.getString(R.string.confirm_decline_body)).assertDoesNotExist()
+    }
+
+    @Test
     fun endedStudyOffersDeleteWithoutAWithdrawThatCannotSucceed() {
         val state = mutableStateOf(ExperimentState.COMPLETED)
         composeRule.setContent {

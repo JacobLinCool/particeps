@@ -348,8 +348,7 @@ data class RuntimeDocument(
     )
 
     fun advance(commit: EngineCommit): RuntimeDocument {
-        require(commit.commitSequence == nextCommitSequence) { "Commit sequence does not follow runtime" }
-        require(commit.previousCommitSha256 == lastCommitSha256) { "Commit chain does not follow runtime" }
+        requireFollows(commit)
         // Copying a sorted component map is linear; only the commit's few mutations are sorted in.
         val nextComponents = TreeMap(components)
         commit.mutations.forEach { mutation ->
@@ -359,6 +358,33 @@ data class RuntimeDocument(
                 RuntimeMutationOperation.REMOVE -> nextComponents.remove(mutation.key)
             }
         }
+        return successorWith(commit, nextComponents)
+    }
+
+    /**
+     * Exactly `successor == advance(commit)`, decided without building the successor's components
+     * again: a store checks every append this way after the runtime has advanced once. Every field
+     * but the components is compared through data-class equality with [successorWith], the same
+     * derivation [advance] uses, so a field added to this document is compared without further
+     * change here. The components are compared with these components under the commit's mutations.
+     * A commit that does not follow this runtime is rejected as [advance] rejects it.
+     */
+    fun advancesTo(commit: EngineCommit, successor: RuntimeDocument): Boolean {
+        requireFollows(commit)
+        return successorWith(commit, successor.components) == successor &&
+            componentsAdvanceTo(commit.mutations, successor.components)
+    }
+
+    private fun requireFollows(commit: EngineCommit) {
+        require(commit.commitSequence == nextCommitSequence) { "Commit sequence does not follow runtime" }
+        require(commit.previousCommitSha256 == lastCommitSha256) { "Commit chain does not follow runtime" }
+    }
+
+    /** The successor of [commit] with [components]: this identity plus the commit's projection. */
+    private fun successorWith(
+        commit: EngineCommit,
+        components: Map<RuntimeComponentKey, String>,
+    ): RuntimeDocument {
         val projection = commit.successorProjection
         return copy(
             state = projection.state,
@@ -370,46 +396,12 @@ data class RuntimeDocument(
             sourceCheckpoints = projection.sourceCheckpoints,
             clockCheckpoint = projection.clockCheckpoint,
             activeConditionEpoch = projection.activeConditionEpoch,
-            components = nextComponents,
+            components = components,
             lifetimeDataEventCount = projection.lifetimeDataEventCount,
             uploadedThroughCommit = projection.uploadedThroughCommit,
             evaluatedThroughCommit = projection.evaluatedThroughCommit,
             retainedFromCommit = projection.retainedFromCommit,
         )
-    }
-
-    /**
-     * Exactly `successor == advance(commit)`, decided without building that document again: a store
-     * checks every append this way after the runtime has advanced once. It compares each field with
-     * this document's identity or the commit's successor projection, and the components with these
-     * components under the commit's mutations, and rejects a commit that does not follow this runtime
-     * as [advance] does.
-     */
-    fun advancesTo(commit: EngineCommit, successor: RuntimeDocument): Boolean {
-        require(commit.commitSequence == nextCommitSequence) { "Commit sequence does not follow runtime" }
-        require(commit.previousCommitSha256 == lastCommitSha256) { "Commit chain does not follow runtime" }
-        val projection = commit.successorProjection
-        return successor.layoutVersion == layoutVersion &&
-            successor.experimentId == experimentId &&
-            successor.configurationId == configurationId &&
-            successor.configurationSha256 == configurationSha256 &&
-            successor.participantInstanceId == participantInstanceId &&
-            successor.assignedParticipantId == assignedParticipantId &&
-            successor.state == projection.state &&
-            successor.revision == projection.revision &&
-            successor.nextCommitSequence == projection.nextCommitSequence &&
-            successor.nextObservationSequence == projection.nextObservationSequence &&
-            successor.nextEventSequence == projection.nextEventSequence &&
-            successor.lastCommitSha256 == commit.commitSha256 &&
-            successor.sourceCheckpoints == projection.sourceCheckpoints &&
-            successor.clockCheckpoint == projection.clockCheckpoint &&
-            successor.activeConditionEpoch == projection.activeConditionEpoch &&
-            successor.lifetimeDataEventCount == projection.lifetimeDataEventCount &&
-            successor.uploadedThroughCommit == projection.uploadedThroughCommit &&
-            successor.evaluatedThroughCommit == projection.evaluatedThroughCommit &&
-            successor.retainedFromCommit == projection.retainedFromCommit &&
-            successor.activityTokenKeyBase64Url == activityTokenKeyBase64Url &&
-            componentsAdvanceTo(commit.mutations, successor.components)
     }
 
     /**

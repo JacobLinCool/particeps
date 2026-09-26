@@ -52,7 +52,7 @@ class CollectorResourceActuatorTest {
         )
         listOf(true, false).forEach { referenced ->
             val plugin = FakeCollectorPlugin()
-            val actuator = actuator(declaration, plugin, referencedByAutomation = referenced)
+            val actuator = actuator(declaration, plugin, requiresPromptCommits = referenced)
             val first = desired(declaration, "continuous", 1uL)
             actuator.prepare(first, "initial")
             actuator.apply(first)
@@ -61,7 +61,7 @@ class CollectorResourceActuatorTest {
             actuator.apply(second)
 
             assertEquals(2, plugin.contexts.size)
-            assertTrue(plugin.contexts.all { it.referencedByAutomation == referenced })
+            assertTrue(plugin.contexts.all { it.requiresPromptCommits == referenced })
             actuator.release(second)
         }
     }
@@ -237,7 +237,7 @@ class CollectorResourceActuatorTest {
     private fun TestScope.actuator(
         declaration: CollectorResourceConfiguration,
         plugin: FakeCollectorPlugin,
-        referencedByAutomation: Boolean = false,
+        requiresPromptCommits: Boolean = false,
     ) = CollectorResourceActuator(
         declaration = declaration,
         plugin = plugin,
@@ -249,7 +249,7 @@ class CollectorResourceActuatorTest {
         tokenEncoder = BindableStudyScopedTokenEncoder().apply {
             bindBase64Url(Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32) { 1 }))
         },
-        referencedByAutomation = referencedByAutomation,
+        requiresPromptCommits = requiresPromptCommits,
     )
 
     private fun desired(

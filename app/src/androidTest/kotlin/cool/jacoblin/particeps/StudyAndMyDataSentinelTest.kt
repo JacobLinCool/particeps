@@ -30,11 +30,14 @@ import org.junit.runner.RunWith
  * Renders a signed-configuration fixture through the real participant projection and asserts on
  * the Compose semantics tree, which is also what accessibility services read.
  *
- * Every field the participant UI must not show carries a sentinel: the word "sentinel" in every
- * identifier and in researcher text that has no participant surface here (surveys, notification
- * copy), plus distinctive numbers for traffic caps, sensor and polling profiles, schedule times,
- * availability, and the storage quota. The configuration ID is one of them, since it differs
- * between study arms. Only platform-floor fields carry recognisable floor values.
+ * Hidden fields carry sentinels: the word "sentinel" in every identifier and in researcher text
+ * that has no participant surface here (surveys, notification copy), plus distinctive numbers for
+ * traffic caps, numeric sensor and polling parameters, schedule times, availability, and the
+ * storage quota. The configuration ID is one of them, since it differs between study arms. Hidden
+ * fields whose valid values cannot be told apart from ordinary UI text (a window's study days, the
+ * activation cap, issue and expiry times, the minimum client version, boolean profile settings)
+ * carry ordinary values and are not checked here. Platform-floor fields carry recognisable floor
+ * values.
  */
 @RunWith(AndroidJUnit4::class)
 class StudyAndMyDataSentinelTest {

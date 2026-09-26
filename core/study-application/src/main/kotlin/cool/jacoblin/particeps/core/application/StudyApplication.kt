@@ -58,6 +58,7 @@ import cool.jacoblin.particeps.core.runtime.ExperimentRuntime
 import cool.jacoblin.particeps.core.runtime.GeneratedEventContractRegistry
 import cool.jacoblin.particeps.core.runtime.NoOpActionOutboxNotifier
 import cool.jacoblin.particeps.core.runtime.NoOpTimerWakeupAdapter
+import cool.jacoblin.particeps.core.runtime.RuntimeCommandRejection
 import cool.jacoblin.particeps.core.runtime.RuntimeCommandResult
 import cool.jacoblin.particeps.core.runtime.RuntimeEntropySource
 import cool.jacoblin.particeps.core.runtime.RuntimeInitializationResult
@@ -188,11 +189,7 @@ class EventDrivenRuntimeAssemblyFactory(
                 eventSink = eventSink,
                 clocks = clocks,
                 tokenEncoder = tokenEncoder,
-                // A source the signed automation references never commits through a window, and
-                // neither does any source of a program whose sequence or window state orders every
-                // event by its time.
-                referencedByAutomation = program.referencesSource(EventSourceId(declaration.id)) ||
-                    program.retainsEventTimeOrderedState,
+                requiresPromptCommits = program.requiresPromptCommits(EventSourceId(declaration.id)),
             )
             val decorated = collectorActuatorDecorator.decorate(signed, declaration, collectorActuator)
             require(decorated.key == declaration.resourceKey) { "Collector decorator changed the resource key" }
@@ -563,6 +560,12 @@ class StudySessionManager(
     private var runtimeObservation: Job? = null
     private var activeEnvelopeBytes: ByteArray? = null
 
+    /**
+     * A started study whose upload chain could not be armed. Start keeps its own result, and the
+     * next Resume or access reconciliation, which the running foreground service repeats, arms it.
+     */
+    private var uploadArmingPending = false
+
     suspend fun initialize() = sessionMutex.withLock {
         check(!mutableSnapshot.value.initialized && mutableSnapshot.value.startupStage == null) {
             "Study session is already initialized"
@@ -707,6 +710,9 @@ class StudySessionManager(
     }
 
     suspend fun reconcileAccess(): List<StudyAccessStatus> = sessionMutex.withLock {
+        if (uploadArmingPending && assembly?.runtime?.snapshot?.value?.state in STARTED_STATES) {
+            armAutomaticUploadLocked()
+        }
         val access = refreshAccessLocked()
         if (
             access.any { it.required && !it.granted } &&
@@ -755,7 +761,13 @@ class StudySessionManager(
         generation: ULong,
     ): StudyCommandResult = sessionMutex.withLock {
         val current = runtimeOrInvalid() ?: return@withLock StudyCommandResult.InvalidState
-        mapCommand(current.onTimerDue(timerId, generation))
+        when (val result = current.onTimerDue(timerId, generation)) {
+            // Each generation has its own wakeup, scheduled only after the commit that arms it, so a
+            // wake for a generation the runtime does not hold can never become due. It ends here
+            // instead of retrying until the timer is next removed.
+            RuntimeCommandResult.Rejected(RuntimeCommandRejection.STALE_GENERATION) -> StudyCommandResult.Success
+            else -> mapCommand(result)
+        }
     }
 
     suspend fun onClockDiscontinuity(): StudyCommandResult = sessionMutex.withLock {
@@ -868,8 +880,17 @@ class StudySessionManager(
     }
 
     /**
+     * Whether automatic upload may send now: only once the study has been started. A caller checks
+     * it before sending anything, including a bundle an earlier release staged before Start, so a
+     * study still in setup sends nothing; its upload chain is armed at Start.
+     */
+    fun automaticUploadStarted(): Boolean = mutableSnapshot.value.runtime.state in STARTED_STATES
+
+    /**
      * Encrypts one durable automatic-upload stage. The caller owns atomic staging and retries.
-     * Nothing is staged before Start: a participant who declines during setup has sent nothing.
+     * Nothing is staged before Start, and [automaticUploadStarted] keeps an already staged bundle
+     * from being sent before it. Only a study imported under an earlier release, which uploaded
+     * from import, can have sent setup commits before Start.
      */
     suspend fun prepareAutomaticUpload(
         destination: OutputStream,
@@ -1027,6 +1048,7 @@ class StudySessionManager(
                         StudyRecoveryStatus.NONE
                     },
                 )
+                uploadArmingPending = false
                 configuration.uploadPlan()?.let { plan ->
                     uploadCoordinator.reconcile(
                         UploadReconciliation(plan, document.uploadedThroughCommit),
@@ -1048,10 +1070,26 @@ class StudySessionManager(
         val result = mapCommand(if (resume) current.resume() else current.start())
         // Start is where automatic upload begins, including a start that failed closed to PAUSED;
         // the first bundle then begins at commit 1 and carries setup together with collection.
-        if (!resume && current.snapshot.value.state in STARTED_STATES) {
-            verified?.uploadPlan()?.let { uploadScheduler.ensureScheduled(it) }
+        if ((!resume || uploadArmingPending) && current.snapshot.value.state in STARTED_STATES) {
+            armAutomaticUploadLocked()
         }
         result
+    }
+
+    /**
+     * Arms the upload chain of a started study. The lifecycle command it follows is already durable,
+     * so a scheduling failure does not replace that command's result: it leaves
+     * [uploadArmingPending] set for the next Resume or access reconciliation to retry.
+     */
+    private suspend fun armAutomaticUploadLocked() {
+        val plan = verified?.uploadPlan() ?: return
+        uploadArmingPending = true
+        try {
+            uploadScheduler.ensureScheduled(plan)
+            uploadArmingPending = false
+        } catch (failure: Exception) {
+            failure.rethrowCancellation()
+        }
     }
 
     private suspend fun runtimeCommand(
@@ -1196,6 +1234,7 @@ class StudySessionManager(
 
     private fun clearSessionFieldsLocked() {
         closeAssemblyLocked()
+        uploadArmingPending = false
         verified = null
         store = null
         activeEnvelopeBytes?.fill(0)

@@ -434,6 +434,9 @@ class AndroidStudyUploadPlatform(
         // deliberately non-reentrant. The uploader has its own serialization/cancellation lock;
         // this lock protects only the currently verified plan map.
         val plan = mutex.withLock { plans[experimentId] } ?: return UploadAttempt.Stale
+        // Nothing leaves before Start, not even a bundle an earlier release staged during setup.
+        // The chain ends here; Start arms a new one.
+        if (!session.automaticUploadStarted()) return UploadAttempt.Stale
         val staged = uploader.recover(plan, session.snapshot.value.runtime.uploadedThroughCommit)
             ?: uploader.stage(session, plan)
             ?: return UploadAttempt.NothingToUpload(plan)

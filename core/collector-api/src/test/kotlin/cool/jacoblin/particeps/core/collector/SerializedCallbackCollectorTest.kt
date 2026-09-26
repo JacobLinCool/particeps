@@ -623,10 +623,10 @@ class SerializedCallbackCollectorTest {
     }
 
     @Test
-    fun sourceReferencedByAutomationIgnoresItsWindow() = runTest {
+    fun sourceRequiringPromptCommitsIgnoresItsWindow() = runTest {
         val sink = timedSink()
         val collector = TestCollector(
-            context(sink, referencedByAutomation = true),
+            context(sink, requiresPromptCommits = true),
             queueCapacity = 8,
             consumer(),
             window(),
@@ -816,7 +816,7 @@ class SerializedCallbackCollectorTest {
         sink: FakeSink,
         clocks: ResearchClocks = FixedClocks,
         contract: RegistrySourceContract = requireNotNull(ProtocolEventSourceRegistry["app_lifecycle.v1"]),
-        referencedByAutomation: Boolean = false,
+        requiresPromptCommits: Boolean = false,
         scope: CoroutineScope = backgroundScope,
     ) = CollectorContext(
         scope = scope,
@@ -825,7 +825,7 @@ class SerializedCallbackCollectorTest {
         sourceContract = contract,
         resourceGeneration = 3,
         tokenEncoder = StudyScopedTokenEncoder { _, _ -> "0".repeat(64) },
-        referencedByAutomation = referencedByAutomation,
+        requiresPromptCommits = requiresPromptCommits,
     )
 
     private object FixedClocks : ResearchClocks {

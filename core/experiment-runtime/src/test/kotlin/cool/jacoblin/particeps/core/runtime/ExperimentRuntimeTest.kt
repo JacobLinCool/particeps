@@ -1,6 +1,8 @@
 package cool.jacoblin.particeps.core.runtime
 
+import cool.jacoblin.particeps.core.automation.AutomationCheckpointCodec
 import cool.jacoblin.particeps.core.automation.AutomationCompiler
+import cool.jacoblin.particeps.core.automation.AutomationReducer
 import cool.jacoblin.particeps.core.automation.CompilationResult
 import cool.jacoblin.particeps.core.automation.CompiledAutomationProgram
 import cool.jacoblin.particeps.core.automation.DeliveryMode
@@ -13,7 +15,10 @@ import cool.jacoblin.particeps.core.automation.EventRateBound
 import cool.jacoblin.particeps.core.automation.EventSourceKind
 import cool.jacoblin.particeps.core.automation.EventTypeContract
 import cool.jacoblin.particeps.core.automation.FieldContract
+import cool.jacoblin.particeps.core.automation.ReducerInput
 import cool.jacoblin.particeps.core.automation.ScalarType
+import cool.jacoblin.particeps.core.automation.StudySessionState
+import cool.jacoblin.particeps.core.automation.TimerIntent
 import cool.jacoblin.particeps.core.automation.TimerProductionResult
 import cool.jacoblin.particeps.core.automation.TimerTarget
 import cool.jacoblin.particeps.core.automation.TriggerScope
@@ -59,6 +64,7 @@ import cool.jacoblin.particeps.core.model.PendingSourceSubmission
 import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.core.model.RuntimeComponentKind
 import cool.jacoblin.particeps.core.model.RuntimeDocument
+import cool.jacoblin.particeps.core.model.RuntimeMutationOperation
 import cool.jacoblin.particeps.core.model.SafetyPauseReason
 import cool.jacoblin.particeps.core.model.SourceCoverage
 import cool.jacoblin.particeps.core.model.SourceClockBasis
@@ -94,7 +100,13 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -409,7 +421,7 @@ class ExperimentRuntimeTest {
                 sourceContract = requireNotNull(ProtocolEventSourceRegistry[BATTERY_SOURCE.value]),
                 resourceGeneration = 1,
                 tokenEncoder = StudyScopedTokenEncoder { _, _ -> "0".repeat(64) },
-                referencedByAutomation = true,
+                requiresPromptCommits = true,
             ),
             consumerDispatcher = StandardTestDispatcher(testScheduler),
         )
@@ -616,6 +628,163 @@ class ExperimentRuntimeTest {
     }
 
     @Test
+    fun startRecordsEveryTimerIntentOfItsSingleInputReductionInTheReducersOrder() = runTest {
+        // Three study-local windows each arm a condition timer when the study starts.
+        val windows = StateCondition.All(
+            listOf(
+                StateCondition.StudyLocalWindow(1, 5, "12:00", "17:00"),
+                StateCondition.StudyLocalWindow(1, 5, "18:00", "20:00"),
+                StateCondition.StudyLocalWindow(2, 5, "08:00", "09:00"),
+            ),
+        )
+        val fixture = fixture(backgroundScope, trafficCondition = windows)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        val beforeStart = requireNotNull(fixture.store.runtime)
+        val committedBeforeStart = fixture.store.commits.size
+        fixture.runtime.start()
+
+        val activating = fixture.store.commits[committedBeforeStart]
+        assertTrue(activating.events.any { it.type.eventType == "STUDY_STARTED" })
+        val checkpoint = AutomationCheckpointCodec.decode(
+            beforeStart.components
+                .filterKeys { it.kind == RuntimeComponentKind.AUTOMATION_CHECKPOINT && it.id.startsWith("main") }
+                .toSortedMap()
+                .values
+                .joinToString(separator = ""),
+        )
+        val reduction = AutomationReducer().reduceBatch(
+            fixture.program,
+            checkpoint,
+            listOf(
+                ReducerInput.Lifecycle(
+                    checkpoint.evaluatedThroughSequence + 1,
+                    reducerClock(requireNotNull(activating.successorProjection.clockCheckpoint)),
+                    StudySessionState.ACTIVATING,
+                ),
+            ),
+        )
+        assertEquals(activating.resultingCheckpointSha256, reduction.checkpoint.digest())
+        // One event per intent, as RC13 recorded: each schedule, and each retirement of a prior timer.
+        val perIntent = reduction.timerIntents.mapNotNull { intent ->
+            when (intent) {
+                is TimerIntent.Schedule -> Triple("TIMER_SCHEDULED", intent.timer.id, intent.timer.generation)
+                is TimerIntent.Retire -> checkpoint.timers[intent.timerId]?.let {
+                    Triple("TIMER_RETIRED", it.id, it.generation)
+                }
+            }
+        }
+        assertEquals(3, perIntent.size)
+        val recorded = activating.events
+            .filter { it.type.sourceId.value == "timer.v1" && it.fields.getValue("producer_key").startsWith("condition:") }
+            .map { Triple(it.type.eventType, it.fields.getValue("timer_id"), it.fields.getValue("generation").toULong()) }
+        assertEquals(perIntent, recorded)
+        assertEquals(
+            perIntent.map { it.second to it.third },
+            fixture.timerWakeups.scheduled.filter { it.producerKey.startsWith("condition:") }.map { it.id to it.generation },
+        )
+    }
+
+    @Test
+    fun mergedBatchThatArmsAndCancelsAWindowTimerRecordsAndWakesNothingForIt() = runTest {
+        // Only a 50 % sample enters the window, so a later sample of another value empties it.
+        val window = StateCondition.WindowThreshold(
+            EventMatcher(BATTERY_EVENT, listOf(FieldPredicate("percentage", FieldOperator.EQ, value = "50"))),
+            windowSeconds = 1,
+            EvaluationClock.OBSERVED_RESEARCH_TIME,
+            Aggregate.Count,
+            NumericComparison(FieldOperator.GTE, "100"),
+        )
+        val fixture = fixture(backgroundScope, trafficCondition = window)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val token = requireNotNull(fixture.runtime.captureToken())
+        val scheduledBefore = fixture.timerWakeups.scheduled.size
+        val retiredBefore = fixture.timerWakeups.retiredGenerations.size
+
+        val entering = batteryBatch(fixture.clock.now(), 50).events.single()
+        fixture.clock.advanceMillis(1_100)
+        val leaving = batteryBatch(fixture.clock.now(), 51).events.single()
+        val merged = batteryBatch(fixture.clock.now()).copy(events = listOf(entering, leaving))
+        assertEquals(2, (fixture.runtime.emitBatch(token, merged) as EmitBatchResult.Accepted).recordedEvents)
+        runCurrent()
+
+        // The reducer armed the window timer and retired it within the batch.
+        val commit = fixture.store.commits.last()
+        assertEquals(2, commit.sourceObservations.single().eventCount)
+        assertTrue(
+            commit.events.none {
+                it.type.sourceId.value == "timer.v1" && it.fields.getValue("producer_key").startsWith("condition:")
+            },
+        )
+        assertTrue(commit.mutations.none { it.key.kind == RuntimeComponentKind.TIMER })
+        assertEquals(scheduledBefore, fixture.timerWakeups.scheduled.size)
+        assertEquals(retiredBefore, fixture.timerWakeups.retiredGenerations.size)
+    }
+
+    @Test
+    fun recoveryFromRunningRetiresEachWindowTimerOnceAndWakesNoIntermediateGeneration() = runTest {
+        // Recovery reduces a quality gap, whose reset re-arms the window timer while the study
+        // still runs, and then PAUSING, which retires that re-armed generation in the same commit.
+        val window = StateCondition.StudyLocalWindow(1, 5, "12:00", "17:00")
+        val store = InMemoryStudyStore()
+        val first = fixture(backgroundScope, store, trafficCondition = window)
+        first.runtime.initialize()
+        completeSetup(first.runtime)
+        first.runtime.start()
+        val armed = first.runtime.pendingTimers().single { it.producerKey.startsWith("condition:") }
+        val beforeRecovery = requireNotNull(store.runtime)
+        first.runtime.close()
+
+        val recovered = fixture(backgroundScope, store, trafficCondition = window)
+        val result = recovered.runtime.initialize()
+
+        assertTrue(result is RuntimeInitializationResult.Ready && result.recoveredFailClosed)
+        val recovery = store.commits.single { it.inputKind == EngineInputKind.RECOVERY }
+        val checkpoint = AutomationCheckpointCodec.decode(
+            beforeRecovery.components
+                .filterKeys { it.kind == RuntimeComponentKind.AUTOMATION_CHECKPOINT && it.id.startsWith("main") }
+                .toSortedMap()
+                .values
+                .joinToString(separator = ""),
+        )
+        val clock = reducerClock(requireNotNull(recovery.successorProjection.clockCheckpoint))
+        val reduction = AutomationReducer().reduceBatch(
+            recovered.program,
+            checkpoint,
+            listOf(
+                ReducerInput.QualityGap(checkpoint.evaluatedThroughSequence + 1, clock, EventSourceId("study_runtime.v1")),
+                ReducerInput.Lifecycle(checkpoint.evaluatedThroughSequence + 2, clock, StudySessionState.PAUSING),
+                ReducerInput.Lifecycle(checkpoint.evaluatedThroughSequence + 3, clock, StudySessionState.PAUSED),
+            ),
+        )
+        assertEquals(recovery.resultingCheckpointSha256, reduction.checkpoint.digest())
+        val rearm = reduction.timerIntents.filterIsInstance<TimerIntent.Schedule>().single()
+        assertEquals(armed.id, rearm.timer.id)
+        assertEquals(armed.generation + 1uL, rearm.timer.generation)
+        assertEquals(
+            listOf(TimerIntent.Retire(armed.id, armed.generation), TimerIntent.Retire(armed.id, rearm.timer.generation), rearm),
+            reduction.timerIntents,
+        )
+
+        // The commit records only the retirement of the timer it began with, and wakes nothing new.
+        val timerEvents = recovery.events.filter {
+            it.type.sourceId.value == "timer.v1" && it.fields.getValue("producer_key").startsWith("condition:")
+        }
+        assertEquals(listOf("TIMER_RETIRED"), timerEvents.map { it.type.eventType })
+        assertEquals(armed.id, timerEvents.single().fields.getValue("timer_id"))
+        assertEquals(armed.generation.toString(), timerEvents.single().fields.getValue("generation"))
+        assertEquals("QUALITY_GAP_RESET", timerEvents.single().fields.getValue("retirement_reason"))
+        assertTrue(recovery.mutations.none { it.key.kind == RuntimeComponentKind.TIMER && it.operation == RuntimeMutationOperation.UPSERT })
+        assertEquals(
+            listOf(armed.id to armed.generation),
+            recovered.timerWakeups.retiredGenerations.filter { it.first == armed.id },
+        )
+        assertTrue(recovered.timerWakeups.scheduled.none { it.id == armed.id })
+    }
+
+    @Test
     fun stagedCausalCallbackUnwindsBeforeBarrierDrainsItsQueuedLiveEvent() = runTest {
         val fixture = fixture(backgroundScope)
         fixture.runtime.initialize()
@@ -631,7 +800,7 @@ class ExperimentRuntimeTest {
                 sourceContract = requireNotNull(ProtocolEventSourceRegistry[BATTERY_SOURCE.value]),
                 resourceGeneration = 1,
                 tokenEncoder = StudyScopedTokenEncoder { _, _ -> "0".repeat(64) },
-                referencedByAutomation = true,
+                requiresPromptCommits = true,
             ),
         )
         val barrierAdmissionOpened = CompletableDeferred<Unit>()
@@ -788,6 +957,230 @@ class ExperimentRuntimeTest {
         assertTrue(fixture.store.commits.flatMap(EngineCommit::events).any {
             it.type.eventType == "ACTION_SUCCEEDED"
         })
+    }
+
+    @Test
+    fun claimQueuedBehindAStagedSourceBarrierWaitsForItAndClaimsOnce() = runTest {
+        val store = InMemoryStudyStore()
+        val fixture = fixture(backgroundScope, store)
+        val (ready, token) = requestPromptThroughFirstBarrier(fixture)
+        val readyAttempts = fixture.actionNotifier.readyAttempts.toList()
+        val releaseStage = CompletableDeferred<Unit>()
+        store.afterPendingStaged = { releaseStage.await() }
+
+        // 43 resets the latch. Its emitter holds the runtime mutex while the input is staged, so the
+        // claim queues on the mutex before the second barrier is enqueued.
+        val emission = async {
+            fixture.runtime.emitBatch(token, batteryBatch(fixture.clock.now(), 43).copy(producerOrdinal = 1))
+        }
+        runCurrent()
+        assertNotNull(store.pending)
+        val claim = async { fixture.runtime.claimAction(ready.actionId) }
+        runCurrent()
+        assertFalse(claim.isCompleted)
+        releaseStage.complete(Unit)
+        advanceUntilIdle()
+
+        assertTrue(emission.await() is EmitBatchResult.Accepted)
+        val claimed = claim.await()
+        assertEquals(ready.copy(state = RuntimeActionState.CLAIMED), claimed)
+        assertEquals(ExperimentState.RUNNING, fixture.runtime.snapshot.value.state)
+        assertNull(store.pending)
+        val consuming = store.commits.indexOfLast { it.consumedPendingInputSha256 != null }
+        assertEquals(
+            listOf(EngineInputKind.RESOURCE_RESULT, EngineInputKind.ACTION_RESULT),
+            store.commits.drop(consuming + 1).map(EngineCommit::inputKind),
+        )
+        assertTrue(store.commits.flatMap(EngineCommit::events).none { it.type.eventType == "STUDY_SAFETY_PAUSED" })
+        val revision = fixture.runtime.snapshot.value.revision
+        assertEquals(claimed, fixture.runtime.claimAction(ready.actionId))
+        assertEquals(revision, fixture.runtime.snapshot.value.revision)
+        assertEquals(readyAttempts, fixture.actionNotifier.readyAttempts)
+        assertEquals(
+            RuntimeCommandResult.Success,
+            fixture.runtime.recordActionResult(ready.actionId, succeeded = true),
+        )
+    }
+
+    @Test
+    fun claimQueuedBehindAStagedBarrierThatFailsClosedReturnsNull() = runTest {
+        val store = InMemoryStudyStore()
+        val fixture = fixture(backgroundScope, store)
+        val (ready, token) = requestPromptThroughFirstBarrier(fixture)
+        val releaseStage = CompletableDeferred<Unit>()
+        store.afterPendingStaged = { releaseStage.await() }
+
+        val emission = async {
+            fixture.runtime.emitBatch(token, batteryBatch(fixture.clock.now(), 43).copy(producerOrdinal = 1))
+        }
+        runCurrent()
+        val claim = async { fixture.runtime.claimAction(ready.actionId) }
+        runCurrent()
+        // The second barrier's apply fails verification, so the barrier safety-pauses the study.
+        fixture.traffic.failNextVerification = true
+        releaseStage.complete(Unit)
+        advanceUntilIdle()
+
+        assertTrue(emission.await() is EmitBatchResult.Accepted)
+        assertNull(claim.await())
+        assertEquals(ExperimentState.PAUSED, fixture.runtime.snapshot.value.state)
+        val paused = store.commits.flatMap(EngineCommit::events).last { it.type.eventType == "STUDY_SAFETY_PAUSED" }
+        assertEquals(
+            SafetyPauseReason.REQUIRED_RESOURCE_FAILURE.transitionReason.name,
+            paused.fields["transition_reason"],
+        )
+        assertTrue(store.commits.none { it.inputKind == EngineInputKind.ACTION_RESULT })
+        assertEquals(RuntimeActionState.READY, fixture.runtime.pendingActions().single().state)
+        assertTrue(ready.actionId in fixture.actionNotifier.inactiveCalls.last())
+    }
+
+    @Test
+    fun claimCancelledWhileWaitingForABarrierLeavesAdmissionAndLifecycleUntouched() = runTest {
+        val store = InMemoryStudyStore()
+        val fixture = fixture(backgroundScope, store)
+        val (ready, token) = requestPromptThroughFirstBarrier(fixture)
+        // Observed before the second barrier's boundary, and submitted only while it drains.
+        val late = batteryBatch(fixture.clock.now(), 44).copy(producerOrdinal = 2)
+        val suspendEntered = CompletableDeferred<Unit>()
+        val releaseSuspend = CompletableDeferred<Unit>()
+        fixture.traffic.suspendHook = {
+            suspendEntered.complete(Unit)
+            releaseSuspend.await()
+        }
+
+        // The barrier consumer holds the runtime mutex while it waits inside suspendAt.
+        assertTrue(
+            fixture.runtime.emitBatch(token, batteryBatch(fixture.clock.now(), 43).copy(producerOrdinal = 1))
+                is EmitBatchResult.Accepted,
+        )
+        runCurrent()
+        assertTrue(suspendEntered.isCompleted)
+        val claim = async { fixture.runtime.claimAction(ready.actionId) }
+        runCurrent()
+        claim.cancelAndJoin()
+
+        // A cancelled wait closed nothing, so the drain still takes the pre-boundary input.
+        assertTrue(fixture.runtime.emitBatch(token, late) is EmitBatchResult.Accepted)
+        releaseSuspend.complete(Unit)
+        advanceUntilIdle()
+        fixture.traffic.suspendHook = null
+
+        assertEquals(ExperimentState.RUNNING, fixture.runtime.snapshot.value.state)
+        assertTrue(fixture.runtime.snapshot.value.admissionOpen)
+        val events = store.commits.flatMap(EngineCommit::events)
+        assertTrue(events.none { it.type.eventType == "STUDY_SAFETY_PAUSED" })
+        assertTrue(store.commits.none { it.inputKind == EngineInputKind.ACTION_RESULT })
+        assertEquals(RuntimeActionState.READY, fixture.runtime.pendingActions().single().state)
+        // The drained input is reduced before the staged trigger it was observed before.
+        val barrier = store.commits.last { it.consumedPendingInputSha256 != null }
+        assertEquals(
+            listOf("44", "43"),
+            barrier.events.filter { it.type == BATTERY_EVENT }.map { it.fields.getValue("percentage") },
+        )
+    }
+
+    @Test
+    fun claimCancelledDuringItsAppendWaitsForItAndIsNotContained() = runTest {
+        val store = InMemoryStudyStore()
+        val fixture = fixture(backgroundScope, store)
+        val (ready, _) = requestPromptThroughFirstBarrier(fixture)
+        val suspendsBefore = fixture.traffic.suspendCount
+        val appendEntered = CompletableDeferred<Unit>()
+        val appendMayFinish = CompletableDeferred<Unit>()
+        store.beforeAppendCommit = { commit ->
+            if (commit.inputKind == EngineInputKind.ACTION_RESULT) {
+                appendEntered.complete(Unit)
+                appendMayFinish.await()
+            }
+        }
+
+        var outcome: Result<DurableActionInvocation?>? = null
+        val claim = launch { outcome = runCatching { fixture.runtime.claimAction(ready.actionId) } }
+        runCurrent()
+        assertTrue(appendEntered.isCompleted)
+        claim.cancel()
+        runCurrent()
+        // The append is not cancellable, so the claim waits for it instead of leaving memory behind.
+        assertFalse(claim.isCompleted)
+        appendMayFinish.complete(Unit)
+        claim.join()
+        store.beforeAppendCommit = {}
+
+        assertClaimLandedWithoutContainment(fixture, store, ready, suspendsBefore, checkNotNull(outcome))
+    }
+
+    @Test
+    fun claimCancelledAfterItsAppendIsDurableLeavesTheRuntimeOnTheStoresChain() = runTest {
+        val store = InMemoryStudyStore()
+        val fixture = fixture(backgroundScope, store)
+        val (ready, _) = requestPromptThroughFirstBarrier(fixture)
+        val suspendsBefore = fixture.traffic.suspendCount
+        lateinit var claim: Job
+        // As EncryptedExperimentStore's withContext(Dispatchers.IO) does: the frame is durable, and
+        // a cancellation that arrived meanwhile is reported on return.
+        store.afterAppendCommit = { commit ->
+            if (commit.inputKind == EngineInputKind.ACTION_RESULT) {
+                claim.cancel()
+                currentCoroutineContext().ensureActive()
+            }
+        }
+
+        var outcome: Result<DurableActionInvocation?>? = null
+        claim = launch { outcome = runCatching { fixture.runtime.claimAction(ready.actionId) } }
+        runCurrent()
+        claim.join()
+        store.afterAppendCommit = {}
+
+        assertClaimLandedWithoutContainment(fixture, store, ready, suspendsBefore, checkNotNull(outcome))
+    }
+
+    /**
+     * A cancelled claim either returned its claim or propagated the cancellation. Either way the
+     * claim is durable exactly once, memory agrees with the store, nothing was contained, and a
+     * retried claim and a later pause commit on the store's chain.
+     */
+    private suspend fun assertClaimLandedWithoutContainment(
+        fixture: Fixture,
+        store: InMemoryStudyStore,
+        ready: DurableActionInvocation,
+        suspendsBefore: Int,
+        outcome: Result<DurableActionInvocation?>,
+    ) {
+        val claimed = ready.copy(state = RuntimeActionState.CLAIMED)
+        assertTrue("$outcome", outcome.exceptionOrNull() is CancellationException || outcome.getOrNull() == claimed)
+        assertEquals(ExperimentState.RUNNING, fixture.runtime.snapshot.value.state)
+        assertTrue(fixture.runtime.snapshot.value.admissionOpen)
+        assertNotNull(fixture.runtime.captureToken())
+        assertEquals(suspendsBefore, fixture.traffic.suspendCount)
+        assertTrue(store.commits.flatMap(EngineCommit::events).none { it.type.eventType == "STUDY_SAFETY_PAUSED" })
+        assertEquals(1, store.commits.count { it.inputKind == EngineInputKind.ACTION_RESULT })
+        assertEquals(store.commits.last().commitSequence, fixture.runtime.snapshot.value.revision)
+
+        val appended = store.commits.size
+        assertEquals(claimed, fixture.runtime.claimAction(ready.actionId))
+        assertEquals(appended, store.commits.size)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.pause())
+        assertEquals(ExperimentState.PAUSED, fixture.runtime.snapshot.value.state)
+        assertEquals((1L..store.commits.size).toList(), store.commits.map(EngineCommit::commitSequence))
+    }
+
+    /**
+     * Starts the study and emits 42, which sets the latch through a first resource barrier whose
+     * commit requests the prompt. Returns the READY prompt and a token for the rotated epoch.
+     */
+    private suspend fun TestScope.requestPromptThroughFirstBarrier(
+        fixture: Fixture,
+    ): Pair<DurableActionInvocation, AdmissionToken> {
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val first = requireNotNull(fixture.runtime.captureToken())
+        assertTrue(fixture.runtime.emitBatch(first, batteryBatch(fixture.clock.now(), 42)) is EmitBatchResult.Accepted)
+        runCurrent()
+        assertEquals("slow", fixture.traffic.lastDesired?.profile?.id)
+        val ready = fixture.runtime.pendingActions().single()
+        assertEquals(RuntimeActionState.READY, ready.state)
+        return ready to requireNotNull(fixture.runtime.captureToken())
     }
 
     @Test
@@ -2222,7 +2615,7 @@ class ExperimentRuntimeTest {
         )
 
         /** The gyroscope's health and recorded samples after a battery event commits inside its window. */
-        suspend fun afterABatteryEvent(referencedByAutomation: (CompiledAutomationProgram) -> Boolean): Pair<CollectorHealth, List<String>> {
+        suspend fun afterABatteryEvent(requiresPromptCommits: (CompiledAutomationProgram) -> Boolean): Pair<CollectorHealth, List<String>> {
             val fixture = fixture(backgroundScope, withGyroscope = true, notifyTrigger = batteryWindow)
             fixture.runtime.initialize()
             completeSetup(fixture.runtime)
@@ -2230,7 +2623,7 @@ class ExperimentRuntimeTest {
             val gyroscope = gyroscopeCollector(
                 fixture,
                 CallbackCommitWindow(5.seconds, testScheduler.timeSource),
-                referencedByAutomation = referencedByAutomation(fixture.program),
+                requiresPromptCommits = requiresPromptCommits(fixture.program),
             )
             gyroscope.sample(1f)
             runCurrent()
@@ -2367,7 +2760,7 @@ class ExperimentRuntimeTest {
         fixture: Fixture,
         window: CallbackCommitWindow?,
         results: MutableList<EmitBatchResult> = mutableListOf(),
-        referencedByAutomation: Boolean = false,
+        requiresPromptCommits: Boolean = false,
     ): RuntimeGyroscopeCollector {
         val sink = object : EventSink by fixture.runtime {
             override suspend fun emitBatch(token: AdmissionToken, batch: SourceEventBatch): EmitBatchResult =
@@ -2381,7 +2774,7 @@ class ExperimentRuntimeTest {
                 sourceContract = requireNotNull(ProtocolEventSourceRegistry[GYROSCOPE_SOURCE.value]),
                 resourceGeneration = 1,
                 tokenEncoder = StudyScopedTokenEncoder { _, _ -> "0".repeat(64) },
-                referencedByAutomation = referencedByAutomation,
+                requiresPromptCommits = requiresPromptCommits,
             ),
             StandardTestDispatcher(testScheduler),
             window,
@@ -3229,6 +3622,8 @@ class ExperimentRuntimeTest {
         val pendingStaged = CompletableDeferred<Unit>()
         var failPendingConsumption = false
         var afterPendingStaged: suspend () -> Unit = {}
+        var beforeAppendCommit: suspend (EngineCommit) -> Unit = {}
+        var afterAppendCommit: suspend (EngineCommit) -> Unit = {}
 
         override suspend fun loadRuntime(observeRetained: (EngineCommit) -> Unit): RuntimeDocument? =
             runtime?.also { current ->
@@ -3239,8 +3634,11 @@ class ExperimentRuntimeTest {
             this.runtime = runtime
         }
         override suspend fun appendCommit(commit: EngineCommit, successor: RuntimeDocument) {
+            beforeAppendCommit(commit)
+            require(pending == null) { "Only the containment path may append while input is staged" }
             commits += commit
             runtime = successor
+            afterAppendCommit(commit)
         }
         override suspend fun stagePendingInput(input: PendingEngineInput) {
             check(pending == null)
@@ -3256,7 +3654,8 @@ class ExperimentRuntimeTest {
         override suspend fun loadPendingInput(): PendingEngineInput? = pending
         override suspend fun appendCommitConsumingPending(commit: EngineCommit, successor: RuntimeDocument) {
             if (failPendingConsumption) throw IOException("simulated process death before pending consume")
-            check(commit.consumedPendingInputSha256 == pending?.encodedSha256)
+            val input = requireNotNull(pending) { "No pending input is staged" }
+            require(commit.consumedPendingInputSha256 == input.encodedSha256) { "Commit does not consume the staged input" }
             commits += commit
             runtime = successor
             pending = null

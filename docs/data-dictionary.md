@@ -70,7 +70,7 @@ sequence_number)`. Never use last-write-wins for either conflict.
 | `commit_sha256` | Digest over the complete canonical binary commit preimage. |
 | `input_kind` | The external fact reduced by this transaction: source observation, lifecycle command, timer wake, random selection, action/upload/resource result, safety failure, or recovery. |
 | `consumed_pending_input_sha256` | Digest of a staged causal observation consumed by a resource barrier, otherwise null. |
-| `committed_at` | Coordinator observation time. |
+| `committed_at` | Coordinator observation time: when the runtime admitted the input, not when its events were captured. A windowed gyroscope or accelerometer batch (see [Windowed sensor commits](#windowed-sensor-commits)) commits up to 5 s of awake time after its first sample, and an accelerometer batch can commit later still across a CPU suspend; use each event's observed time for capture time. |
 | `source_observations` | Provenance and coverage for collector batches consumed by this commit. |
 | `events` | Ordered collector and system events produced by the transaction. |
 | `mutations` | Typed durable timer, action, resource, upload-ack, and reducer-checkpoint changes. A random-selection input materializes through timer and reducer-checkpoint mutations; it is not a component kind. |
@@ -172,8 +172,9 @@ polls are retrospective: their source/coverage timestamps, not batch observation
 attribution.
 
 Wall-clock discontinuity, reboot, or an interval that cannot be assigned safely produces an
-explicit quality gap and resets affected state. Analysis never guesses, interpolates, or divides an
-unattributable interval across conditions.
+explicit quality gap and resets affected state; the windowed-sensor losses below are the documented
+exceptions that no gap names. Analysis never guesses, interpolates, or divides an unattributable
+interval across conditions.
 
 For a wall-clock gap, every retrospective source cursor is discarded and no crossed backlog is
 emitted. Session latches, keyed presence, windows, and sequences reset; a running study rotates its
@@ -183,6 +184,36 @@ Resume, while Complete and Withdraw remain available without reopening admission
 The signed duration is enforced independently of collector activity. Its authenticated
 `STUDY_DEADLINE_TIMER` same-boot target is an exclusive admission boundary, and the durable due wake
 automatically completes the study even when the wakeup adapter runs late.
+
+### Windowed sensor commits
+
+When the signed automation matches no event of `gyroscope.v1` or `accelerometer.v1` and keeps no
+sequence or window state, each of those sensors commits its samples in batches through a callback
+commit window of up to 5 s of the consumer's awake monotonic time. A sensor that an automation
+matches, and both sensors in a study with any `sequence` or `window_threshold` state, commit every
+sample without a window. The window changes when a sample commits, never what it records: observed
+time and `source_elapsed_realtime_nanos` remain capture time, and condition-epoch attribution is
+unchanged. It changes interpretation in three ways:
+
+- **Commit latency.** `committed_at` of a windowed batch can trail its first sample by up to 5 s.
+  The accelerometer holds no wake lock, so its window pauses while the CPU is suspended and the
+  batch commits after the next wake, which can be hours later.
+- **Process death.** Samples captured since the sensor's last recorded event are lost. When the
+  durable state was `ACTIVATING`, `RUNNING`, or `PAUSING`, recovery records `SOURCE_QUALITY_GAP`
+  with `PROCESS_RECOVERY`. For a windowed sensor the unobserved
+  interval begins at that sensor's last recorded event, which can precede the chain's previous
+  commit (made by another source, a timer, or a command). Do not bound it by the previous commit or
+  by 5 s: for the accelerometer it can include every CPU suspend since that event.
+- **Losses that no gap names.** Three admission closures refuse the open batch and record no
+  `SOURCE_QUALITY_GAP` for the sensor: a safety pause (up to 5 s of samples before
+  `STUDY_SAFETY_PAUSE_REQUESTED`); a TIME_SET or TIMEZONE_CHANGE while the study runs (up to 5 s
+  before the change; the only record is the `timer.v1` gap with `WALL_CLOCK_CHANGED`, so treat each
+  windowed sensor as unobserved from its last recorded event before that gap until the new epoch's
+  activation); and a clock change first observed after the deadline, which completes the study
+  without a drain and drops the open batch's samples captured before the deadline.
+
+The [researcher guide](researcher-guide.md#batched-commits-for-the-gyroscope-and-accelerometer)
+states the same conditions for study design.
 
 ## Condition epochs
 
@@ -208,7 +239,7 @@ the source is and is not:
 | Source | Interpretation boundary |
 | --- | --- |
 | `app_lifecycle.v1` | Lifecycle of Particeps activities only; not another app’s lifecycle. |
-| `accelerometer.v1`, `gyroscope.v1` | Raw platform sensor samples with declared accuracy/source clock; no filtering or activity inference. |
+| `accelerometer.v1`, `gyroscope.v1` | Raw platform sensor samples with declared accuracy/source clock; no filtering or activity inference. Unless automation matches the sensor or keeps sequence/window state, samples commit through a window of up to 5 s: see [Windowed sensor commits](#windowed-sensor-commits) for commit latency, where a `PROCESS_RECOVERY` interval begins, and the losses no quality gap names. |
 | `ambient_light.v1`, `proximity.v1` | Platform sensor values after the signed collector threshold/cadence; no image or nearby-device data. |
 | `battery_state.v1` | Battery percentage, charging source/state, and power-save state; no battery identity. |
 | `temporal_context.v1` | Time-zone/offset/context snapshots; do not infer location from them. |
