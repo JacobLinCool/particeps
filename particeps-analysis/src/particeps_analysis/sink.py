@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import tempfile
@@ -25,6 +26,47 @@ from .summary import BoundedExamples
 
 PARQUET_BATCH_MAX_ROWS = 65_536
 PARQUET_BATCH_MAX_ESTIMATED_BYTES = 16 * 1024 * 1024
+
+_LEADING_PROVENANCE_FIELDS = (
+    pa.field("participant_instance_id", pa.string(), nullable=False),
+    pa.field("assigned_participant_id", pa.string(), nullable=True),
+    pa.field("sequence_number", pa.int64(), nullable=False),
+    pa.field("condition_epoch_id", pa.string(), nullable=True),
+    pa.field("source_condition_epoch_id", pa.string(), nullable=True),
+    pa.field("observed_wall_time_utc_millis", pa.int64(), nullable=False),
+    pa.field("observed_monotonic_time_nanos", pa.int64(), nullable=False),
+    pa.field("observed_boot_session_id", pa.string(), nullable=False),
+)
+_TRAILING_PROVENANCE_FIELDS = (
+    pa.field("source_ciphertext_sha256", pa.string(), nullable=False),
+    pa.field("source_bundle_id", pa.string(), nullable=False),
+    pa.field("source_configuration_sha256", pa.string(), nullable=False),
+    pa.field("source_object", pa.string(), nullable=False),
+    pa.field("source_commit_sequence", pa.int64(), nullable=False),
+    pa.field("source_observation_sequence", pa.int64(), nullable=True),
+    pa.field("parser_version", pa.string(), nullable=False),
+)
+_PARTITION_COLUMNS = (
+    "experiment_id",
+    "configuration_id",
+    "source_id",
+    "schema_version",
+    "event_type",
+)
+# Dataset provenance and Hive partition columns. A payload field with one of these names is
+# written as `payload_<name>`, and its field metadata records the registry field name.
+RESERVED_PROVENANCE_COLUMNS = frozenset(
+    [field.name for field in _LEADING_PROVENANCE_FIELDS]
+    + [field.name for field in _TRAILING_PROVENANCE_FIELDS]
+    + list(_PARTITION_COLUMNS)
+)
+PAYLOAD_COLUMN_PREFIX = "payload_"
+
+
+def payload_column_name(name: str) -> str:
+    """Return the Parquet column that holds registry payload field `name`."""
+
+    return f"{PAYLOAD_COLUMN_PREFIX}{name}" if name in RESERVED_PROVENANCE_COLUMNS else name
 
 
 class DatasetSink(Protocol):
@@ -174,36 +216,17 @@ class ParquetSink:
 
 
 def _arrow_schema(schema: EventSchema) -> pa.Schema:
-    fields = [
-        pa.field("participant_instance_id", pa.string(), nullable=False),
-        pa.field("assigned_participant_id", pa.string(), nullable=True),
-        pa.field("sequence_number", pa.int64(), nullable=False),
-        pa.field("condition_epoch_id", pa.string(), nullable=True),
-        pa.field("source_condition_epoch_id", pa.string(), nullable=True),
-        pa.field("observed_wall_time_utc_millis", pa.int64(), nullable=False),
-        pa.field("observed_monotonic_time_nanos", pa.int64(), nullable=False),
-        pa.field("observed_boot_session_id", pa.string(), nullable=False),
-    ]
-    reserved = {field.name for field in fields} | {
-        "experiment_id",
-        "configuration_id",
-        "source_id",
-        "schema_version",
-        "event_type",
-        "source_ciphertext_sha256",
-        "source_bundle_id",
-        "source_configuration_sha256",
-        "source_object",
-        "source_commit_sequence",
-        "source_observation_sequence",
-        "parser_version",
-    }
+    fields = list(_LEADING_PROVENANCE_FIELDS)
+    columns = set(RESERVED_PROVENANCE_COLUMNS)
     for name, descriptor in sorted(schema.fields.items()):
-        if name in reserved:
+        column = payload_column_name(name)
+        if column in columns:
             raise ValidationError(
                 f"payload field collides with dataset provenance: {name}"
             )
+        columns.add(column)
         metadata = {
+            b"particeps.payload_field": name.encode(),
             b"particeps.meaning": str(descriptor["meaning"]).encode(),
             b"particeps.type": descriptor["wire_type"].encode(),
             b"particeps.unit": str(descriptor.get("unit", "none")).encode(),
@@ -212,23 +235,13 @@ def _arrow_schema(schema: EventSchema) -> pa.Schema:
             metadata[b"particeps.clock_basis"] = str(descriptor["clock_basis"]).encode()
         fields.append(
             pa.field(
-                name,
+                column,
                 _arrow_type(descriptor["wire_type"]),
                 nullable=not descriptor["required"],
                 metadata=metadata,
             )
         )
-    fields.extend(
-        [
-            pa.field("source_ciphertext_sha256", pa.string(), nullable=False),
-            pa.field("source_bundle_id", pa.string(), nullable=False),
-            pa.field("source_configuration_sha256", pa.string(), nullable=False),
-            pa.field("source_object", pa.string(), nullable=False),
-            pa.field("source_commit_sequence", pa.int64(), nullable=False),
-            pa.field("source_observation_sequence", pa.int64(), nullable=True),
-            pa.field("parser_version", pa.string(), nullable=False),
-        ]
-    )
+    fields.extend(_TRAILING_PROVENANCE_FIELDS)
     return pa.schema(
         fields,
         metadata={
@@ -272,8 +285,16 @@ def _row(event: VerifiedEvent, schema: EventSchema) -> dict[str, Any]:
         "source_observation_sequence": event.provenance.source_observation_sequence,
         "parser_version": __version__,
     }
-    for name in schema.fields:
-        row[name] = event.fields.get(name)
+    wire_fields: Mapping[str, str] | None = None
+    for name, descriptor in schema.fields.items():
+        if descriptor["wire_type"] == "json_string":
+            # A json_string column holds the authenticated wire text, not the parsed value.
+            if wire_fields is None:
+                wire_fields = json.loads(event.canonical_bytes)["fields"]
+            value = wire_fields.get(name)
+        else:
+            value = event.fields.get(name)
+        row[payload_column_name(name)] = value
     return row
 
 
@@ -292,10 +313,15 @@ def _write_rows(
     rows: list[dict[str, Any]],
     schema: pa.Schema,
 ) -> int:
-    writer.write_table(
-        pa.Table.from_pylist(rows, schema=schema),
-        row_group_size=len(rows),
-    )
+    try:
+        table = pa.Table.from_pylist(rows, schema=schema)
+    except (pa.ArrowException, OverflowError) as error:
+        raise ValidationError(
+            "verified event does not match its typed dataset schema: "
+            f"{schema.metadata[b'particeps.source_id'].decode()}/"
+            f"{schema.metadata[b'particeps.event_type'].decode()}: {error}"
+        ) from error
+    writer.write_table(table, row_group_size=len(rows))
     return len(rows)
 
 

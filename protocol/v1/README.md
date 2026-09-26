@@ -299,6 +299,12 @@ side-effect evidence, not implicit inputs):
 `STUDY_RUNNING`—record the result of lifecycle reduction. They do not themselves reconstruct an
 event input and cannot create a second transition or automation match.
 
+A lifecycle event names the transition from its `previous_state` to its `current_state`. A
+`STUDY_SAFETY_PAUSE_REQUESTED` whose `previous_state` and `current_state` are both `PAUSING` names
+none. Only a `SAFETY_FAILURE` or `RECOVERY` commit of a study whose reducer lifecycle is already
+`PAUSING` records it: a safety pause after the stop's resource release failed, or the recovery of a
+process that died while `PAUSING`. That commit reduces only the `PAUSED` transition that follows.
+
 - `SOURCE_OBSERVATION` carries an ordered collector-event batch, a single quality-gap input with
   no collector event, or an empty post-commit barrier/coverage batch;
 - `LIFECYCLE_COMMAND` is side-effect-only and empty, or carries an optional collector-event prefix
@@ -365,6 +371,19 @@ MUST NOT be inserted into that checkpoint map. The canonical values are durable 
 inputs/state, not UI state; a reader that cannot decode the current component codec MUST reject
 instead of skipping it.
 
+Every commit upserts its complete `AUTOMATION_CHECKPOINT`. Its evaluated-through sequence counts
+reducer inputs, not commits. A commit advances it by exactly the number of reducer inputs
+reconstructed from that commit, so it never decreases, advances by at most the commit's event
+count, and never exceeds `next_event_sequence - 1`. It is unrelated to the projection's
+`evaluated_through_commit`, which equals the commit sequence. Commit 1 starts from 0. Commits
+whose successor is a setup state (`IMPORTED` through `READY`) precede the first reducer input and
+carry the empty checkpoint: evaluated-through 0, lifecycle `READY`, no study start, zero clocks,
+and no latch, presence, held, prior, window, sequence, activation, cooldown, desired-resource,
+timer, timer-generation, or materialization entry. Every other commit has a positive
+evaluated-through sequence and exactly one desired-resource entry per signed stateful resource. A
+reader that does not replay the reducer MUST still check these bounds, and that the sequence is 0
+exactly in setup states.
+
 `STUDY_DEADLINE_TIMER` has the single component ID `study-duration` and the
 `durable-timer-v1:` codec. Its timer ID is the lowercase SHA-256 of the NUL-separated sequence
 `particeps-study-deadline-timer-v1`, configuration SHA-256, `study-duration`, and
@@ -372,7 +391,30 @@ instead of skipping it.
 it has a `SAME_BOOT_MONOTONIC` target, the signed-duration UTC deadline as logical wall evidence,
 and no expiry. The initial generation is 1 and each trustworthy boot or wall-clock re-anchor
 increments it. A started nonterminal study with remaining signed duration MUST retain exactly one
-such component; terminal state MUST retain none.
+such component, with one exception. The commit that records `STUDY_COMPLETE_REQUESTED` or
+`STUDY_WITHDRAW_REQUESTED` from `RUNNING` and enters `PAUSING` retires it: `LIFECYCLE_ENDED` for a
+participant command, `FIRED` for the deadline. The study then holds none while it stays `PAUSING`
+or `PAUSED`, until its terminal commit or the next commit that re-anchors the study clock: a
+`RECOVERY`, a Start or Resume commit that enters `ACTIVATING`, or a commit that records a
+`WALL_CLOCK_CHANGED` gap while paused. That commit re-arms it. A stop that does not finish, as
+after a failed resource release, therefore leaves the study `PAUSED` without a deadline until such
+a commit. With no deadline to replace, the re-armed timer has generation 1 under the same timer ID,
+so its identity and generation can repeat those of the retired timer. A reader binds deadline
+events to the durable component before and after each commit, never to generations seen earlier in
+the chain. Terminal state MUST retain none.
+
+The study-deadline timer events of a commit carry that commit's envelope epoch, like every other
+event of the commit (see generic condition epochs below). Its `TIMER_RETIRED` reason is the first
+of these that applies:
+
+- `FIRED` in the commit that records its `TIMER_DUE`, including the `TIMER_WAKE` commit in which the
+  deadline is first seen across a wall-clock change and that therefore also records a
+  `SOURCE_QUALITY_GAP`;
+- `QUALITY_GAP_RESET` in a `RECOVERY` commit or in any other commit that records a
+  `SOURCE_QUALITY_GAP`;
+- `LIFECYCLE_ENDED` in a `LIFECYCLE_COMMAND`.
+
+It retires in no other commit.
 
 `RESOURCE_CLEANUP` is the bounded ledger for an applied or attempted resource state that the
 runtime could not yet prove inactive during fail-closed containment. Its component ID is the
@@ -407,6 +449,24 @@ commit; a system time-zone change is represented by a durable clock-discontinuit
 never inferred from a timer selection. A non-null `active_condition_epoch` is exact
 `{activated_at, applied_resource_vector_sha256, configuration_sha256, id}`.
 
+Within a commit, a source checkpoint's `resource_generation` is that of the source's last
+observation, and its `next_producer_ordinal` is one more than that observation's
+`producer_ordinal`. Its `coverage` is that observation's coverage, or the prior coverage when the
+observation has none. A source with no observation carries its checkpoint unchanged. `cursor` is
+the retrospective collector's opaque resume token, `null` or at most 4,096 characters, which
+readers MUST NOT interpret. It changes only in a commit that carries that source's
+`BARRIER_FLUSH` observation, where it is the value the completed flush returned; otherwise it
+carries over. A `BARRIER_FLUSH` observation belongs to a retrospective source
+(a collector with at least one `POLL`-delivered event), carries coverage, occurs at most once per
+source in a commit, follows every `NORMAL` observation in ascending source-ID order, and occurs
+only in a commit that records `CONDITION_EPOCH_DEACTIVATED` for its epoch.
+
+A `RECOVERY` commit records exactly one `SOURCE_QUALITY_GAP`, whose reason is `PROCESS_RECOVERY`,
+and no other commit kind records that reason. A commit that records a gap with reason
+`PROCESS_RECOVERY` or `WALL_CLOCK_CHANGED` removes every retrospective source's checkpoint from its
+successor projection, restarting that source's coverage and cursor. It carries no retrospective
+observation, except the observations of a staged pending input that a `RECOVERY` commit consumes.
+
 `TIMER_SCHEDULED`, `TIMER_DUE`, and `TIMER_RETIRED` all repeat the timer's immutable clock-domain
 target, not the time at which a worker happened to run. `CALENDAR_TIME` is encoded as
 `ResearchTime(target_utc_millis, 0, "calendar-time")`; `ACTIVE_RUNNING_TIME` as
@@ -414,6 +474,39 @@ target, not the time at which a worker happened to run. `CALENDAR_TIME` is encod
 `SAME_BOOT_MONOTONIC` as the recorded logical wall deadline, target elapsed-realtime nanos, and
 target boot-session ID. WorkManager carries only timer ID and generation; after waking, the runtime
 resolves and verifies the durable timer target before producing `TIMER_DUE`.
+
+`TIMER_RETIRED.retirement_reason` is fixed by the commit. For an automation-reducer timer it is the
+first of these that applies:
+
+- `QUALITY_GAP_RESET` in a `RECOVERY` commit;
+- `LIFECYCLE_ENDED` in a `SAFETY_FAILURE` commit, or in any commit whose reducer inputs include the
+  `PAUSING` lifecycle transition, that is, a commit with a `study_runtime.v1` lifecycle event whose
+  `current_state` is `PAUSING` and whose `previous_state` is not (a stop from `RUNNING`, the
+  deadline stop, or the deadline first seen across a wall-clock change);
+- `QUALITY_GAP_RESET` in any other commit that records a `SOURCE_QUALITY_GAP`;
+- `FIRED` in a `TIMER_WAKE` commit that carries an automation `TIMER_DUE` and closes no epoch;
+- `CANCELLED` otherwise. This includes the commit that opens a resource barrier, whose due timer
+  therefore retires `CANCELLED`, as well as activation, a terminal command from `PAUSED`, a random
+  selection, and a source observation.
+
+The study-deadline reasons are defined with its component above.
+
+The automation-timer `TIMER_SCHEDULED` and `TIMER_RETIRED` events of a commit render the timer
+intents of its reducer batch. The reducer removes duplicate intents and orders them by timer ID,
+retirements before schedules, otherwise in the order produced. A commit records exactly one of two
+renderings, in that order:
+
+- **Complete:** every intent. A retirement is written as the prior durable timer under its ID, and
+  omitted when the prior map holds none. A schedule is written as its timer.
+- **Net:** only a retirement of the prior durable timer at that generation that the resulting map
+  no longer holds unchanged, and a schedule of a timer that the resulting map holds and the prior
+  map did not.
+
+The two coincide for a single-input batch. A `TIMER_DUE` or `TIMER_RETIRED` names the prior
+durable timer under its ID, and a `TIMER_SCHEDULED` generation exceeds the prior generation under
+its ID. A commit without reducer input records no automation-timer schedule or retirement. A
+reader that replays the reducer MUST reject any other rendering, including a mixture of the two.
+The `TIMER` components still equal the resulting checkpoint map.
 
 The admission gate independently enforces the `STUDY_DEADLINE_TIMER` target as an exclusive
 same-boot boundary: an observation at or after that elapsed-realtime nanosecond is rejected even
@@ -490,11 +583,44 @@ for each event in order:
 ```
 
 Generic condition epochs are opened and closed only by `study_condition.v1` activation and
-deactivation events. Both event envelopes carry the same UUID as their `condition_epoch_id` field;
-the deactivation event is the last event bound to the old epoch, not a null-epoch event. Epochs MUST
-NOT overlap. Every collector event and SourceObservation belongs to the currently active epoch;
-its projection ID, signed-configuration digest, and complete applied-resource-vector digest MUST
-agree with the audit events. Missing, orphan, overlapping, or digest-divergent epochs fail closed.
+deactivation events. Both event envelopes carry the same UUID as their `condition_epoch_id` field.
+A commit records at most one of the two events. All of its events carry one envelope epoch: the
+epoch it activates when it records `CONDITION_EPOCH_ACTIVATED`, and otherwise the epoch active in
+its predecessor's projection, or `null` when there is none. Every event of the commit that closes
+an epoch therefore carries that epoch, including lifecycle, timer, and study-deadline events
+recorded after `CONDITION_EPOCH_DEACTIVATED`, while its successor projection has no active epoch.
+Epochs MUST NOT overlap. Every collector event and SourceObservation belongs to the currently
+active epoch; its projection ID, signed-configuration digest, and complete applied-resource-vector
+digest MUST agree with the audit events. Missing, orphan, overlapping, or digest-divergent epochs
+fail closed.
+
+An epoch event's `boundary_research_time` equals its `observed_time`. A deactivation boundary lies
+in the activation's boot session, except that a `RECOVERY` commit that closes an epoch with
+`PROCESS_RECOVERY_UNPROVEN` closes it at the recovery instant: the observed time of that commit's
+`PROCESS_RECOVERY` gap, which may lie in a later boot session. The commit's `committed_at` is the
+reducer clock's anchor and can differ from the recovery instant: when the study clock cannot be
+advanced across a reboot, as when no trusted UTC reading is available, it keeps the prior boot's
+anchor. An epoch closed by recovery in a later boot has no monotonic upper bound, and its
+wall-clock upper bound is the recovery instant, which is not before the activation.
+
+An epoch's source interval runs from its preparation bound to its deactivation boundary. The
+preparation bound is the later of the preceding epoch's deactivation boundary and the
+`committed_at` of the latest commit that entered `ACTIVATING`, and it is never after `activated_at`.
+Collectors start, or resume across a resource barrier, before the activation commit. Retrospective
+coverage attributed to an epoch may therefore begin at the preparation bound, never earlier, and
+never ends after the deactivation boundary. Coverage never runs backwards, and it is empty only in
+one shape: a zero-event `BARRIER_FLUSH` whose `SOURCE_WALL_TIME` coverage is `[t, t)`, where `t` is
+the wall time of the commit's deactivation boundary. A retrospective collector writes it when the
+barrier falls on its query start, as when a pause lands in the same millisecond as its last poll;
+the flush still stores the collector's cursor.
+
+An `interventions.v1` event names its occurrence by `occurrence_id`, the invocation ID of an
+`ACTION_REQUESTED`. It repeats that request's automation (`trigger_id`), intervention, and
+logical-time wall (`scheduled_for_utc_millis`). It belongs to the epoch in whose envelope that
+`ACTION_REQUESTED` was recorded, even when it is admitted under a later epoch or under none; an
+`ACTION_REQUESTED` always has a non-null envelope. Its scheduled time is the occurrence's logical
+time and need not lie inside that epoch: a timer that falls due during a pause and fires after
+Resume keeps its logical deadline.
 
 For the Protocol v1 traffic actuator, the runtime maintains exactly one
 `RESOURCE_AUDIT_TIMER` while `actuator:traffic-shaping.v1` is applied in an active epoch. Its
@@ -524,8 +650,25 @@ Activation ordering is `CONDITION_EPOCH_ACTIVATED`,
 successor `TIMER_SCHEDULED`. An epoch boundary orders the exact counter snapshot with reason
 `EPOCH_BOUNDARY`, `TRAFFIC_SHAPING_PROFILE_REMOVED`, `TIMER_RETIRED`, then
 `CONDITION_EPOCH_DEACTIVATED`. The snapshot and removal carry the same resource generation,
-profile, VPN generation, counters, and epoch evidence. Recovery may retire a resource-audit timer
-but MUST NOT recreate one or open an epoch; a participant must resume explicitly.
+profile, VPN generation, counters, and epoch evidence.
+
+Two containment closes are the exceptions to this ordering. Each records no `traffic_shaping.v1`
+event, retires the resource-audit timer before `CONDITION_EPOCH_DEACTIVATED`, upserts the
+`APPLIED` traffic `RESOURCE` receipt unchanged as cleanup-pending truth, and ends `PAUSED` with no
+active epoch. A later cleanup-finalization `RESOURCE_RESULT` commit records every signed resource
+`INACTIVE`.
+
+- A `RECOVERY` commit that closes an epoch deactivates it with `PROCESS_RECOVERY_UNPROVEN` and
+  retires the timer with `QUALITY_GAP_RESET`, because the recovering process cannot audit a
+  profile applied by the process that died. It upserts every `RESOURCE` receipt unchanged. No
+  `RECOVERY` commit records a `traffic_shaping.v1` event.
+- A `SAFETY_FAILURE` commit whose boundary audit could not read verified counters, as after the
+  VPN was revoked or replaced while `RUNNING`, deactivates the epoch with `SAFETY_PAUSED` and
+  retires the timer with `LIFECYCLE_ENDED`. A `SAFETY_FAILURE` whose audit succeeds follows the
+  epoch-boundary ordering above.
+
+Recovery MUST NOT recreate a resource-audit timer or open an epoch; a participant must resume
+explicitly.
 
 The reader verifies, in order: framing and bounds; HPKE; content AEAD; JCS bytes; repeated outer
 identities; embedded configuration digest and Ed25519 signature; registry digest;
@@ -627,6 +770,46 @@ Collector identity: the `ADCCFG01` and `ADCEXP01` magics, the `research-bundle-v
 and the `adc://join/v1` scheme. The two legacy classes are named separately because an
 implementation can reject one while accepting the other. Absence of a vector is not permission to
 accept an unspecified encoding.
+
+Real runtime output is part of the valid corpus.
+[`particeps-analysis/tests/fixtures/runtime-bundles/`](../../particeps-analysis/tests/fixtures/runtime-bundles/)
+holds byte-for-byte `PTCEXP01` exports written by the v1.0.0-rc.13 pilot build (4010b55) and by
+the current runtime, encrypted to the public INSECURE demonstration HPKE key. Some come from the
+RC13 app on an emulator; the others come from the RC13 runtime on the JVM with scripted platform
+doubles, including runs that inject the platform failures RC13 contains: a revoked VPN whose
+counters cannot be read, a failed resource release, process death while `PAUSING`, and a reboot
+without trusted UTC. Its `manifest.json` pins each file's digest and expected contents, and
+`PROVENANCE.md` records how each was produced. Every reader MUST accept all of them.
+
+The Kotlin `ResearchBundleVerifier` and the TypeScript browser reader do not replay the reducer.
+They enforce the rules above that need no replay: the reducer cursor's bounds and the setup
+checkpoint; the complete `AUTOMATION_CHECKPOINT` upsert; one envelope epoch and at most one epoch
+transition per commit; an epoch event's boundary at its observed time, the recovery close as
+unproven `PAUSED` containment at the recovery instant, and only that close in another boot; no
+traffic event in a `RECOVERY` commit; the barrier-flush shape and the opaque cursor; the single
+`PROCESS_RECOVERY` gap and the retrospective checkpoints it removes; and coverage that never runs
+backwards and is empty only as the barrier flush at the close. `particeps-analysis` enforces every
+rule in this document, including those that need reducer replay or whole-chain state: the
+reducer's checkpoint, timer renderings, and retirement reasons; the study-deadline component and
+its re-arm; lifecycle transitions such as the `PAUSING` safety request; epoch source intervals from
+the preparation bound; intervention binding to its request; and traffic audit ordering with its
+containment exceptions. A bundle that a non-replaying reader verifies can therefore still be
+quarantined by the analyzer, which names the failing rule.
+
+The Python analyzer inventories and materializes each fixture to Parquet in
+`test_runtime_bundle_fixtures.py`, and `test_runtime_bundle_mutations.py` requires one-shape
+mutations of them to fail with the message of the rule that owns the mutated shape. The Kotlin
+`ResearchBundleVerifier` verifies each one in `researcher-tools`' `RuntimeBundleFixtureTest`,
+together with each retained range that starts at a recovery or a condition-epoch boundary, and
+`ResearchBundleVerifierRulesTest` in `core/export` rejects one shape at a time for each rule it
+enforces. The TypeScript browser reader opens the same bundles and retained ranges in
+[`runtime-bundles.spec.ts`](../../tools/conformance/typescript/runtime-bundles.spec.ts), which also
+requires one-shape mutations of the cursor, barrier-flush, recovery-gap, envelope-epoch,
+epoch-boundary, recovery-close, checkpoint-part, and empty-coverage shapes to fail. CI also runs
+the current runtime through a pilot-shaped week (`RealRuntimeBundleInteropTest` in
+`core/study-application`) and requires both the Kotlin verifier and the Python analyzer to accept
+every export it writes. The rules those fixtures exercise are verification rules, not wire rules;
+they change no conformance-vector bytes and need no regeneration of the deterministic corpus.
 
 The join-link corpus is consumed by Kotlin and TypeScript, the two implementations that create or
 open join links. Python analysis has no join-link entrypoint and never parses a join link.

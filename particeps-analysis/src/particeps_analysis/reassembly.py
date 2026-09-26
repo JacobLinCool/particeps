@@ -8,7 +8,7 @@ from itertools import groupby
 from pathlib import Path
 from typing import Any
 
-from .engine import GENESIS_DIGEST, EngineCommit, EngineReplayVerifier
+from .engine import GENESIS_DIGEST, EngineCommit, EngineReplayVerifier, ResearchTime
 from .errors import ValidationError
 from .event_store import DiskEventCollection, EventDatabase
 from .jcs import canonicalize
@@ -38,7 +38,7 @@ class Reassembler:
         database = EventDatabase(self.staging_directory)
         collection: DiskEventCollection | None = None
         commit_duplicates = 0
-        participant_records: list[dict[str, str]] = []
+        participant_records: list[dict[str, Any]] = []
         try:
             for identity, group in groupby(ordered, key=_bundle_participant):
                 participant_bundles = tuple(group)
@@ -85,7 +85,7 @@ class Reassembler:
         identity: tuple[str, str, str],
         bundles: tuple[VerifiedBundle, ...],
         database: EventDatabase,
-    ) -> tuple[int, dict[str, str]]:
+    ) -> tuple[int, dict[str, Any]]:
         first = bundles[0]
         configuration_bytes = canonicalize(first.configuration)
         for bundle in bundles:
@@ -163,12 +163,40 @@ class Reassembler:
         ):
             raise ValidationError("latest participant snapshot diverges from replayed commit head")
         return duplicate_count, {
+            "condition_epochs": _condition_epochs(verifier),
             "configuration_id": identity[1],
             "durable_through_commit": str(latest.durable_through_commit),
             "experiment_id": identity[0],
             "participant_instance_id": identity[2],
             "replayed_event_count": str(len(replayed)),
         }
+
+
+def _condition_epochs(verifier: EngineReplayVerifier) -> list[dict[str, Any]]:
+    """Each epoch's verified source interval, in activation order.
+
+    Retrospective coverage, and so collector rows, may begin at the preparation bound: the later of
+    the preceding deactivation and the latest entry into ACTIVATING, before any condition resource
+    was confirmed. Rows whose source time precedes `activated_at` fall in that preparation slice.
+    """
+
+    def time(value: ResearchTime) -> dict[str, str]:
+        return {
+            "boot_session_id": value.boot_session_id,
+            "elapsed_realtime_nanos": str(value.elapsed_realtime_nanos),
+            "wall_time_utc_millis": str(value.wall_time_utc_millis),
+        }
+
+    records = []
+    for epoch_id, epoch in verifier.known_epochs.items():
+        closed = verifier.closed_epochs.get(epoch_id)
+        records.append({
+            "activated_at": time(epoch.activated_at),
+            "condition_epoch_id": epoch_id,
+            "deactivated_at": None if closed is None else time(closed[1]),
+            "preparation_bound": time(verifier.epoch_preparation_bounds[epoch_id]),
+        })
+    return records
 
 
 def _bundle_order(bundle: VerifiedBundle) -> tuple:

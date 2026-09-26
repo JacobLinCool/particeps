@@ -280,9 +280,10 @@ class BundleVerifier:
             for observation in commit.source_observations:
                 if observation.source_id not in configured:
                     raise ValidationError("observation source was not signed into study")
-                source = self.registry.source(observation.source_id, observation.schema_version)
-                retrospective = all(
-                    event["delivery"]["kind"] == "POLL" for event in source["events"]
+                self.registry.source(observation.source_id, observation.schema_version)
+                # A collector is retrospective when any of its events is delivered by POLL.
+                retrospective = (
+                    observation.source_id in self.registry.retrospective_collector_source_ids
                 )
                 if (observation.coverage is not None) != retrospective:
                     raise ValidationError("observation coverage disagrees with delivery contract")

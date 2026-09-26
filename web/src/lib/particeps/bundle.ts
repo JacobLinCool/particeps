@@ -15,7 +15,7 @@ import {
   parseCanonicalJson
 } from './canonical';
 import { decodeBase64Url, encodeBase64Url, verify } from './crypto';
-import { ID_PATTERN, type StudyConfiguration } from './types';
+import { ID_PATTERN, trafficShapingEnabled, type StudyConfiguration } from './types';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { expand, extract } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -68,6 +68,21 @@ const EXPERIMENT_STATES = new Set([
   'IMPORTED', 'CONFIG_VERIFIED', 'CONSENT_PENDING', 'ACCESS_SETUP', 'READY', 'ACTIVATING',
   'RUNNING', 'PAUSING', 'PAUSED', 'COMPLETED', 'WITHDRAWN'
 ]);
+// Setup states precede the first reducer input, so their commits carry the empty checkpoint.
+const SETUP_STATES = new Set([
+  'IMPORTED', 'CONFIG_VERIFIED', 'CONSENT_PENDING', 'ACCESS_SETUP', 'READY'
+]);
+const TRAFFIC_SHAPING_RESOURCE_ID = 'traffic-shaping.v1';
+const CONDITION_SOURCE_ID = 'study_condition.v1';
+const CONDITION_ACTIVATED = 'CONDITION_EPOCH_ACTIVATED';
+const CONDITION_DEACTIVATED = 'CONDITION_EPOCH_DEACTIVATED';
+const RUNTIME_SOURCE_ID = 'study_runtime.v1';
+const SOURCE_QUALITY_GAP = 'SOURCE_QUALITY_GAP';
+const PROCESS_RECOVERY_GAP = 'PROCESS_RECOVERY';
+const RETROSPECTIVE_RESET_GAPS = new Set([PROCESS_RECOVERY_GAP, 'WALL_CLOCK_CHANGED']);
+const TRAFFIC_SOURCE_ID = 'traffic_shaping.v1';
+const UNSIGNED_DECIMAL = /^(?:0|[1-9][0-9]*)$/;
+const EMBEDDED_TIME_MEMBERS = 'boot_session_id,monotonic_time_nanos,wall_time_utc_millis';
 const INPUT_KINDS = new Set([
   'SOURCE_OBSERVATION', 'LIFECYCLE_COMMAND', 'TIMER_WAKE', 'RANDOM_SELECTION', 'ACTION_RESULT',
   'UPLOAD_ACKNOWLEDGEMENT', 'RESOURCE_RESULT', 'SAFETY_FAILURE', 'RECOVERY'
@@ -571,9 +586,29 @@ function readExperiment(
     known: first === 1n,
     seen: new Set()
   };
+  const resources = signedResourceKeys(configuration);
+  let priorReducerCursor: bigint | null = null;
+  let priorCheckpointParts: Set<string> | null = null;
   for (let index = 0; index < source.commits.length; index += 1) {
     const commit = readCommit(source.commits[index], configuration);
     if (!commit || BigInt(commit.commit_sequence) !== first + BigInt(index)) return null;
+    // The reducer cursor counts reducer inputs, never commits. Before genesis it is 0; the first
+    // commit of a retained partial range has an unknown predecessor cursor.
+    const reducerCursor = verifyAutomationCheckpoint(commit, resources);
+    if (reducerCursor === null) return null;
+    const knownPriorCursor = index > 0 ? priorReducerCursor : first === 1n ? 0n : null;
+    if (
+      knownPriorCursor !== null &&
+      (reducerCursor < knownPriorCursor ||
+        reducerCursor - knownPriorCursor > BigInt(commit.events.length))
+    ) return null;
+    priorReducerCursor = reducerCursor;
+    const checkpointParts = verifyCompleteCheckpointUpsert(
+      commit,
+      index > 0 ? priorCheckpointParts : first === 1n ? new Set() : null
+    );
+    if (checkpointParts === null) return null;
+    priorCheckpointParts = checkpointParts;
     if (index === 0) {
       if (first === 1n && commit.previous_commit_sha256 !== GENESIS_DIGEST) return null;
     } else if (commit.previous_commit_sha256 !== previous?.commit_sha256) return null;
@@ -692,8 +727,7 @@ function readCommit(
     !isContiguous(commit.events.map((event) => BigInt(event.sequence_number))) ||
     !isContiguous(commit.source_observations.map((item) => BigInt(item.observation_sequence))) ||
     !isStrictlyMutationOrdered(commit.mutations) ||
-    calculateCommitDigest(commit) !== commit.commit_sha256 ||
-    !verifyAutomationCheckpoint(commit)
+    calculateCommitDigest(commit) !== commit.commit_sha256
   ) return null;
   return commit;
 }
@@ -746,8 +780,7 @@ function readObservation(
     contract.schema_version !== source.schema_version ||
     !configuration.collectors.some((collector) => collector.id === source.source_id)
   ) return null;
-  const retrospective = contract.events.every((event) => event.delivery.kind === 'POLL');
-  if (retrospective !== (coverage !== null)) return null;
+  if (isRetrospective(source.source_id) !== (coverage !== null)) return null;
   return {
     admission_kind: source.admission_kind,
     condition_epoch_id: source.condition_epoch_id,
@@ -1214,6 +1247,8 @@ function verifyCommitSemantics(
   if (!verifySourceObservationEventOrder(observations, commit.consumed_pending_input_sha256)) {
     return null;
   }
+  if (!verifyCommitEnvelopeEpoch(commit, previous)) return null;
+  if (!verifyConditionBoundaries(commit, previous)) return null;
 
   for (const event of events) {
     const signedDigest = event.fields.signed_configuration_sha256;
@@ -1244,9 +1279,14 @@ function verifyCommitSemantics(
       epoch.known = true;
       epoch.seen.add(id);
     } else if (event.event_type === 'CONDITION_EPOCH_DEACTIVATED') {
+      // A partial range can learn its first epoch from an observation, which names the epoch but
+      // not its applied resource vector.
       if (
         event.condition_epoch_id !== id ||
-        (epoch.known && (epoch.activeId !== id || epoch.activeDigest !== appliedDigest))
+        (epoch.known && (
+          epoch.activeId !== id ||
+          (epoch.activeDigest !== null && epoch.activeDigest !== appliedDigest)
+        ))
       ) return null;
       epoch.activeId = null;
       epoch.activeDigest = null;
@@ -1281,16 +1321,229 @@ function verifyCommitSemantics(
   return verifySourceCheckpoints(commit, previous) ? collectorEvents.length : null;
 }
 
+/**
+ * Every event of a commit carries one envelope epoch: the epoch it activates, otherwise the epoch
+ * active in its predecessor, or none. A commit that closes an epoch therefore records all of its
+ * events under the closed epoch. A commit records at most one epoch transition.
+ */
+function verifyCommitEnvelopeEpoch(
+  commit: EngineCommit,
+  previous: RuntimeProjection | null
+): boolean {
+  const transitions = commit.events.filter((event) =>
+    event.source_id === CONDITION_SOURCE_ID &&
+    (event.event_type === CONDITION_ACTIVATED || event.event_type === CONDITION_DEACTIVATED)
+  );
+  if (transitions.length > 1) return false;
+  if (commit.events.length === 0) return true;
+  const envelope = commit.events[0].condition_epoch_id;
+  if (commit.events.some((event) => event.condition_epoch_id !== envelope)) return false;
+  if (transitions.length === 1) {
+    return envelope !== null && envelope === transitions[0].fields.condition_epoch_id;
+  }
+  if (previous !== null || commit.commit_sequence === '1') {
+    return envelope === (previous?.active_condition_epoch?.id ?? null);
+  }
+  return true;
+}
+
+/**
+ * Every commit upserts its complete automation checkpoint: the parts it upserts are exactly the
+ * parts the component map holds after it. Returns those parts, or null when the commit leaves a
+ * stale part or removes an unknown one. The first commit of a retained partial range has unknown
+ * prior parts (`prior` null).
+ */
+function verifyCompleteCheckpointUpsert(
+  commit: EngineCommit,
+  prior: ReadonlySet<string> | null
+): Set<string> | null {
+  const upserted = new Set<string>();
+  const removed = new Set<string>();
+  for (const mutation of commit.mutations) {
+    if (mutation.component_kind !== 'AUTOMATION_CHECKPOINT') continue;
+    (mutation.operation === 'UPSERT' ? upserted : removed).add(mutation.component_id);
+  }
+  if (prior !== null) {
+    for (const part of removed) if (!prior.has(part)) return null;
+    for (const part of prior) if (!removed.has(part) && !upserted.has(part)) return null;
+  }
+  return upserted;
+}
+
+/**
+ * The condition-epoch rules a reader checks without replay. An epoch event's boundary is its
+ * observed time. A RECOVERY commit records no traffic_shaping.v1 event, and one that closes an
+ * epoch is unproven containment: PROCESS_RECOVERY_UNPROVEN at the recovery instant, the time of
+ * its process-recovery gap, ending PAUSED with no epoch. Only that close may lie in a boot session
+ * other than the activation's.
+ */
+function verifyConditionBoundaries(
+  commit: EngineCommit,
+  previous: RuntimeProjection | null
+): boolean {
+  const recovery = commit.input_kind === 'RECOVERY';
+  if (recovery && commit.events.some((event) => event.source_id === TRAFFIC_SOURCE_ID)) {
+    return false;
+  }
+  for (const event of commit.events) {
+    if (
+      event.source_id !== CONDITION_SOURCE_ID ||
+      (event.event_type !== CONDITION_ACTIVATED && event.event_type !== CONDITION_DEACTIVATED)
+    ) continue;
+    const boundary = embeddedResearchTime(event.fields.boundary_research_time);
+    if (boundary === null || !sameResearchTime(boundary, event.observed_time)) return false;
+    if (event.event_type !== CONDITION_DEACTIVATED) continue;
+    if (recovery) {
+      if (
+        event.fields.deactivation_reason !== 'PROCESS_RECOVERY_UNPROVEN' ||
+        commit.successor_projection.state !== 'PAUSED' ||
+        commit.successor_projection.active_condition_epoch !== null ||
+        commit.events.some((gap) =>
+          gap.source_id === RUNTIME_SOURCE_ID && gap.event_type === SOURCE_QUALITY_GAP &&
+          !sameResearchTime(gap.observed_time, boundary)
+        )
+      ) return false;
+    } else {
+      const activated = previous?.active_condition_epoch?.activated_at;
+      if (activated && activated.boot_session_id !== boundary.boot_session_id) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Coverage is a half-open interval that never runs backwards. It is empty only for the zero-event
+ * barrier flush whose wall-clock boundary equals the collector's query start, which is the closing
+ * commit's deactivation boundary.
+ */
+function verifyCoverageIntervals(commit: EngineCommit): boolean {
+  const closing = commit.events.find((event) =>
+    event.source_id === CONDITION_SOURCE_ID && event.event_type === CONDITION_DEACTIVATED
+  );
+  for (const observation of commit.source_observations) {
+    const coverage = observation.coverage;
+    if (coverage === null) continue;
+    let start: bigint;
+    let end: bigint;
+    if (coverage.clock_basis === 'OBSERVED_RESEARCH_TIME') {
+      const startTime = embeddedResearchTime(coverage.start_inclusive);
+      const endTime = embeddedResearchTime(coverage.end_exclusive);
+      if (!startTime || !endTime || startTime.boot_session_id !== endTime.boot_session_id) {
+        return false;
+      }
+      start = BigInt(startTime.elapsed_realtime_nanos);
+      end = BigInt(endTime.elapsed_realtime_nanos);
+    } else {
+      if (
+        !UNSIGNED_DECIMAL.test(coverage.start_inclusive) ||
+        !UNSIGNED_DECIMAL.test(coverage.end_exclusive)
+      ) return false;
+      start = BigInt(coverage.start_inclusive);
+      end = BigInt(coverage.end_exclusive);
+    }
+    if (start > end) return false;
+    if (
+      start === end && !(
+        observation.admission_kind === 'BARRIER_FLUSH' && observation.event_count === 0 &&
+        coverage.clock_basis === 'SOURCE_WALL_TIME' && closing !== undefined &&
+        end === BigInt(closing.observed_time.wall_time_utc_millis)
+      )
+    ) return false;
+  }
+  return true;
+}
+
+/** Parses a canonical embedded ResearchTime field, as `boundary_research_time` carries. */
+function embeddedResearchTime(text: string | undefined): ResearchTime | null {
+  if (text === undefined) return null;
+  try {
+    const value: unknown = JSON.parse(text);
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (Object.keys(record).sort().join(',') !== EMBEDDED_TIME_MEMBERS) return null;
+    const boot = record.boot_session_id;
+    const elapsed = record.monotonic_time_nanos;
+    const wall = record.wall_time_utc_millis;
+    if (
+      typeof boot !== 'string' || typeof elapsed !== 'string' || typeof wall !== 'string' ||
+      !UNSIGNED_DECIMAL.test(elapsed) || !UNSIGNED_DECIMAL.test(wall)
+    ) return null;
+    return { boot_session_id: boot, elapsed_realtime_nanos: elapsed, wall_time_utc_millis: wall };
+  } catch {
+    return null;
+  }
+}
+
+function sameResearchTime(left: ResearchTime, right: ResearchTime): boolean {
+  return left.boot_session_id === right.boot_session_id &&
+    BigInt(left.elapsed_realtime_nanos) === BigInt(right.elapsed_realtime_nanos) &&
+    BigInt(left.wall_time_utc_millis) === BigInt(right.wall_time_utc_millis);
+}
+
+/**
+ * Returns the sources whose resource-barrier flush completed in the commit, or null when the flush
+ * is malformed. A flush is one retrospective coverage observation per source, after every NORMAL
+ * observation, in ascending source order, and only in the commit that closes the flushed epoch.
+ */
+function verifyBarrierFlushes(commit: EngineCommit): Set<string> | null {
+  const observations = commit.source_observations;
+  const firstFlush = observations.findIndex(
+    (observation) => observation.admission_kind === 'BARRIER_FLUSH'
+  );
+  if (firstFlush < 0) return new Set();
+  const flushes = observations.slice(firstFlush);
+  const deactivations = commit.events.filter((event) =>
+    event.source_id === CONDITION_SOURCE_ID && event.event_type === CONDITION_DEACTIVATED
+  );
+  const closedEpoch = deactivations.length === 1
+    ? deactivations[0].fields.condition_epoch_id
+    : undefined;
+  if (
+    closedEpoch === undefined ||
+    flushes.some((flush, index) =>
+      flush.admission_kind !== 'BARRIER_FLUSH' || !isRetrospective(flush.source_id) ||
+      flush.coverage === null || flush.condition_epoch_id !== closedEpoch ||
+      (index > 0 && flushes[index - 1].source_id >= flush.source_id)
+    )
+  ) return null;
+  return new Set(flushes.map((flush) => flush.source_id));
+}
+
+/**
+ * A source checkpoint follows the source's last observation in the commit. Its opaque cursor
+ * changes only with that source's completed barrier flush. A process-recovery or wall-clock
+ * quality gap removes every retrospective checkpoint, restarting its coverage.
+ */
 function verifySourceCheckpoints(
   commit: EngineCommit,
   previous: RuntimeProjection | null
 ): boolean {
+  const gapReasons: string[] = [];
+  for (const event of commit.events) {
+    if (event.source_id !== RUNTIME_SOURCE_ID || event.event_type !== SOURCE_QUALITY_GAP) continue;
+    const reason = event.fields.reason;
+    if (reason === undefined) return false;
+    gapReasons.push(reason);
+  }
+  if (commit.input_kind === 'RECOVERY') {
+    if (gapReasons.length !== 1 || gapReasons[0] !== PROCESS_RECOVERY_GAP) return false;
+  } else if (gapReasons.includes(PROCESS_RECOVERY_GAP)) {
+    return false;
+  }
+  const discardRetrospective = gapReasons.some((reason) => RETROSPECTIVE_RESET_GAPS.has(reason));
+  const stagedRecoveryObservations =
+    gapReasons.includes(PROCESS_RECOVERY_GAP) && commit.consumed_pending_input_sha256 !== null;
+  const flushed = verifyBarrierFlushes(commit);
+  if (flushed === null || !verifyCoverageIntervals(commit)) return false;
   const expected = new Map<string, SourceCheckpoint>(
     Object.entries(previous?.source_checkpoints ?? {}).map(([key, value]) => [key, { ...value }])
   );
   const historyKnown = previous !== null || commit.commit_sequence === '1';
   const unanchored = new Set<string>();
   for (const observation of commit.source_observations) {
+    if (
+      discardRetrospective && !stagedRecoveryObservations && isRetrospective(observation.source_id)
+    ) return false;
     const prior = expected.get(observation.source_id);
     const unknownPredecessor = !historyKnown && !prior && !unanchored.has(observation.source_id);
     unanchored.add(observation.source_id);
@@ -1315,19 +1568,43 @@ function verifySourceCheckpoints(
     });
   }
   const actual = commit.successor_projection.source_checkpoints;
+  const successorCheckpoint = (sourceId: string) =>
+    Object.hasOwn(actual, sourceId) ? actual[sourceId] : undefined;
+  for (const sourceId of flushed) {
+    const flushedCheckpoint = successorCheckpoint(sourceId);
+    const wanted = expected.get(sourceId);
+    if (flushedCheckpoint === undefined) continue;
+    if (wanted === undefined) return false;
+    expected.set(sourceId, { ...wanted, cursor: flushedCheckpoint.cursor });
+  }
+  if (discardRetrospective) {
+    for (const sourceId of [...expected.keys()]) {
+      if (isRetrospective(sourceId)) expected.delete(sourceId);
+    }
+  }
   if (historyKnown) return sameCheckpointMap(actual, expected);
+  if (discardRetrospective && Object.keys(actual).some(isRetrospective)) return false;
   for (const [sourceId, observations] of groupObservations(commit.source_observations)) {
+    if (discardRetrospective && isRetrospective(sourceId)) continue;
     const last = observations.at(-1)!;
-    const checkpoint = actual[sourceId];
+    const checkpoint = successorCheckpoint(sourceId);
     if (
       !checkpoint || checkpoint.resource_generation !== last.resource_generation ||
-      BigInt(checkpoint.next_producer_ordinal) !== BigInt(last.producer_ordinal) + 1n
+      BigInt(checkpoint.next_producer_ordinal) !== BigInt(last.producer_ordinal) + 1n ||
+      (last.coverage !== null && !sameCoverage(checkpoint.coverage, last.coverage))
     ) return false;
   }
   return true;
 }
 
-function calculateObservationDigest(
+/** A collector is retrospective when any of its events is delivered by POLL. */
+function isRetrospective(sourceId: string): boolean {
+  return EVENT_CONTRACTS.get(sourceId)?.events.some((event) => event.delivery.kind === 'POLL') ===
+    true;
+}
+
+/** Protocol conformance hook: the SourceObservation digest that `encoded_sha256` must equal. */
+export function calculateObservationDigest(
   observation: SourceObservation,
   events: ResearchEvent[]
 ): string {
@@ -1352,7 +1629,8 @@ function calculateObservationDigest(
   return hex(sha256(writer.bytes()));
 }
 
-function calculateCommitDigest(commit: EngineCommit): string {
+/** Protocol conformance hook: the EngineCommit digest that `commit_sha256` must equal. */
+export function calculateCommitDigest(commit: EngineCommit): string {
   const writer = new CanonicalBinaryWriter();
   writer.string('particeps-engine-commit-v1');
   writer.long(commit.commit_sequence);
@@ -1586,7 +1864,16 @@ interface DecodedTimer {
   expiresAt: bigint | null;
 }
 
-function verifyAutomationCheckpoint(commit: EngineCommit): boolean {
+/**
+ * Returns the successor reducer cursor, or null when the checkpoint is invalid. The cursor counts
+ * reducer inputs, not commits. Setup commits precede the first reducer input and carry the empty
+ * checkpoint; every later commit has evaluated at least one input and holds one desired-resource
+ * entry per signed stateful resource.
+ */
+function verifyAutomationCheckpoint(
+  commit: EngineCommit,
+  resources: ReadonlySet<string>
+): bigint | null {
   try {
     const mutations = commit.mutations.filter(
       (mutation) => mutation.component_kind === 'AUTOMATION_CHECKPOINT'
@@ -1594,26 +1881,50 @@ function verifyAutomationCheckpoint(commit: EngineCommit): boolean {
     if (
       mutations.length === 0 ||
       mutations.some((mutation) => !CHECKPOINT_COMPONENT_ID.test(mutation.component_id))
-    ) return false;
+    ) return null;
     const parts = mutations.filter((mutation) => mutation.operation === 'UPSERT');
-    if (parts.length === 0) return false;
+    if (parts.length === 0) return null;
     for (let index = 0; index < parts.length; index += 1) {
       const expected = index === 0 ? 'main' : `main/${index.toString().padStart(4, '0')}`;
-      if (parts[index].component_id !== expected) return false;
+      if (parts[index].component_id !== expected) return null;
     }
     const encoded = parts.map((part) => part.canonical_value!).join('');
     const checkpoint = decodeAutomationCheckpoint(encoded);
-    return checkpoint.evaluated === BigInt(commit.commit_sequence) &&
-      deterministicDigest('particeps-automation-checkpoint-v1', checkpoint.components) ===
-        commit.resulting_checkpoint_sha256;
+    if (
+      deterministicDigest('particeps-automation-checkpoint-v1', checkpoint.components) !==
+        commit.resulting_checkpoint_sha256
+    ) return null;
+    const cursor = checkpoint.evaluated;
+    if (cursor > BigInt(commit.successor_projection.next_event_sequence) - 1n) return null;
+    if (SETUP_STATES.has(commit.successor_projection.state)) {
+      return checkpoint.empty ? cursor : null;
+    }
+    if (
+      cursor <= 0n || checkpoint.desiredResources.length !== resources.size ||
+      checkpoint.desiredResources.some((key) => !resources.has(key))
+    ) return null;
+    return cursor;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** Signed stateful resources as `KIND\0id`: every collector, and traffic shaping when enabled. */
+function signedResourceKeys(configuration: StudyConfiguration): ReadonlySet<string> {
+  const keys = new Set(configuration.collectors.map((collector) => `COLLECTOR\u0000${collector.id}`));
+  if (trafficShapingEnabled(configuration.traffic_shaping)) {
+    keys.add(`ACTUATOR\u0000${TRAFFIC_SHAPING_RESOURCE_ID}`);
+  }
+  return keys;
 }
 
 function decodeAutomationCheckpoint(encoded: string): {
   evaluated: bigint;
   components: string[];
+  /** Equal to the reducer's initial checkpoint: zero cursor and clocks, READY, no entries. */
+  empty: boolean;
+  /** Desired-resource map keys as `KIND\0id`. */
+  desiredResources: string[];
 } {
   if (!encoded.startsWith(CHECKPOINT_PREFIX)) throw new Error('checkpoint_prefix');
   const payload = decodeBase64Url(encoded.slice(CHECKPOINT_PREFIX.length));
@@ -1631,6 +1942,8 @@ function decodeAutomationCheckpoint(encoded: string): {
     (start !== null && start < 0n) || (lifecycle !== 'READY' && start === null) ||
     active < 0n || calendar < active
   ) throw new Error('checkpoint_header');
+  let entries = 0;
+  const desiredResources: string[] = [];
   const components = [
     `evaluated=${evaluated}`,
     `lifecycle=${lifecycle}`,
@@ -1639,11 +1952,11 @@ function decodeAutomationCheckpoint(encoded: string): {
     `calendar=${calendar}`
   ];
 
-  readSortedMap(reader, () => reader.string(), (key) => {
+  entries += readSortedMap(reader, () => reader.string(), (key) => {
     stateKey(key);
     components.push(`latch:${escapeComponent(key)}=${reader.boolean()}`);
   });
-  readSortedMap(reader, () => reader.string(), (key) => {
+  entries += readSortedMap(reader, () => reader.string(), (key) => {
     stateKey(key);
     const values = reader.list(() => reader.string());
     if (values.length > 256 || !strictlySorted(values)) throw new Error('checkpoint_presence');
@@ -1651,17 +1964,17 @@ function decodeAutomationCheckpoint(encoded: string): {
       `presence:${escapeComponent(key)}:${escapeComponent(value)}`
     );
   });
-  readSortedMap(reader, () => reader.string(), (key) => {
+  entries += readSortedMap(reader, () => reader.string(), (key) => {
     stateKey(key);
     const value = reader.long();
     if (value < 0n) throw new Error('checkpoint_held');
     components.push(`held:${escapeComponent(key)}=${value}`);
   });
-  readSortedMap(reader, () => reader.string(), (key) => {
+  entries += readSortedMap(reader, () => reader.string(), (key) => {
     stateKey(key);
     components.push(`prior:${escapeComponent(key)}=${reader.boolean()}`);
   });
-  readSortedMap(reader, () => reader.string(), (key) => {
+  entries += readSortedMap(reader, () => reader.string(), (key) => {
     stateKey(key);
     const entries = reader.list(() => ({
       sequence: reader.long(),
@@ -1682,7 +1995,7 @@ function decodeAutomationCheckpoint(encoded: string): {
       );
     }
   });
-  readSortedMap(reader, () => reader.string(), (key) => {
+  entries += readSortedMap(reader, () => reader.string(), (key) => {
     stateKey(key);
     const partials = reader.list(() => ({
       nextStep: reader.int(),
@@ -1703,7 +2016,7 @@ function decodeAutomationCheckpoint(encoded: string): {
     }
   });
   let activationTotal = 0;
-  readSortedMap(reader, () => reader.string(), (key) => {
+  entries += readSortedMap(reader, () => reader.string(), (key) => {
     if (!AUTOMATION_ID.test(key)) throw new Error('checkpoint_automation');
     const value = reader.int();
     if (value < 0 || value > 512) throw new Error('checkpoint_activation');
@@ -1711,7 +2024,7 @@ function decodeAutomationCheckpoint(encoded: string): {
     components.push(`activation:${escapeComponent(key)}=${value}`);
   });
   if (activationTotal > 512) throw new Error('checkpoint_activation_total');
-  readSortedMap(reader, () => reader.string(), (key) => {
+  entries += readSortedMap(reader, () => reader.string(), (key) => {
     if (!AUTOMATION_ID.test(key)) throw new Error('checkpoint_automation');
     const activeMark = reader.long();
     const calendarMark = reader.long();
@@ -1720,7 +2033,7 @@ function decodeAutomationCheckpoint(encoded: string): {
       `cooldown:${escapeComponent(key)}:${activeMark}:${calendarMark}`
     );
   });
-  readSortedMap(
+  entries += readSortedMap(
     reader,
     () => {
       const kind = reader.string();
@@ -1734,6 +2047,7 @@ function decodeAutomationCheckpoint(encoded: string): {
       const generation = reader.ulong();
       const profile = reader.nullableString();
       if (generation === 0n) throw new Error('checkpoint_resource_generation');
+      desiredResources.push(`${key.kind}\u0000${key.id}`);
       components.push(
         `resource:${key.kind}:${escapeComponent(key.id)}:${generation}:` +
         escapeComponent(profile ?? '')
@@ -1741,19 +2055,19 @@ function decodeAutomationCheckpoint(encoded: string): {
     },
     (key) => key.sort
   );
-  readSortedMap(reader, () => reader.string(), (key) => {
+  entries += readSortedMap(reader, () => reader.string(), (key) => {
     const timer = readCheckpointTimer(reader);
     if (key !== timer.id) throw new Error('checkpoint_timer_key');
     components.push(timerComponent(timer));
   });
-  readSortedMap(reader, () => reader.string(), (key) => {
+  entries += readSortedMap(reader, () => reader.string(), (key) => {
     stateKey(key);
     const generation = reader.ulong();
     if (generation === 0n) throw new Error('checkpoint_timer_generation');
     components.push(`timer-generation:${escapeComponent(key)}:${generation}`);
   });
   let materializedTotal = 0;
-  readSortedMap(reader, () => reader.string(), (key) => {
+  entries += readSortedMap(reader, () => reader.string(), (key) => {
     if (!AUTOMATION_ID.test(key)) throw new Error('checkpoint_automation');
     const summaries = reader.list(() => ({
       producerKey: reader.string(),
@@ -1778,7 +2092,13 @@ function decodeAutomationCheckpoint(encoded: string): {
   const encodedBytes = UTF8.encode('particeps-automation-checkpoint-v1').length +
     components.reduce((sum, component) => sum + UTF8.encode(component).length + 1, 0);
   if (encodedBytes > MAXIMUM_COMPONENT_BYTES) throw new Error('checkpoint_semantic_size');
-  return { evaluated, components };
+  return {
+    evaluated,
+    components,
+    empty: evaluated === 0n && lifecycle === 'READY' && start === null && active === 0n &&
+      calendar === 0n && entries === 0,
+    desiredResources
+  };
 }
 
 function readCheckpointTimer(reader: CheckpointBinaryReader): DecodedTimer {
@@ -1849,7 +2169,7 @@ function readSortedMap<K>(
   readKey: () => K,
   readValue: (key: K) => void,
   sortKey: (key: K) => string = (key) => String(key)
-): void {
+): number {
   const count = reader.collectionSize();
   let previous: string | null = null;
   for (let index = 0; index < count; index += 1) {
@@ -1859,6 +2179,7 @@ function readSortedMap<K>(
     previous = sort;
     readValue(key);
   }
+  return count;
 }
 
 function strictlySorted(values: string[]): boolean {

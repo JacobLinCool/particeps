@@ -1,8 +1,10 @@
 package cool.jacoblin.particeps.core.export
 
+import com.google.gson.JsonParser
 import com.google.gson.Strictness
 import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonToken
+import cool.jacoblin.particeps.core.automation.AutomationCheckpoint
 import cool.jacoblin.particeps.core.automation.AutomationCheckpointCodec
 import cool.jacoblin.particeps.core.collector.ProtocolEventSourceRegistry
 import cool.jacoblin.particeps.core.collector.RegistrySourceKind
@@ -11,6 +13,7 @@ import cool.jacoblin.particeps.core.definition.ProtocolBase64Url
 import cool.jacoblin.particeps.core.definition.StudyConfiguration
 import cool.jacoblin.particeps.core.definition.StudyConfigurationCodec
 import cool.jacoblin.particeps.core.definition.TrafficShapingConfiguration
+import cool.jacoblin.particeps.core.definition.resourceKey
 import cool.jacoblin.particeps.core.model.ConditionEpoch
 import cool.jacoblin.particeps.core.model.ConditionEpochId
 import cool.jacoblin.particeps.core.model.EngineCommit
@@ -39,6 +42,7 @@ import cool.jacoblin.particeps.core.protocol.ConfigurationVerifier
 import cool.jacoblin.particeps.core.protocol.SignedConfigurationCodec
 import cool.jacoblin.particeps.core.protocol.SignedConfigurationEnvelope
 import cool.jacoblin.particeps.core.protocol.VerifiedConfiguration
+import cool.jacoblin.particeps.core.resource.ResourceKey
 import java.io.ByteArrayOutputStream
 import java.io.ByteArrayInputStream
 import java.io.DataOutputStream
@@ -125,6 +129,10 @@ object ResearchBundleVerifier {
         private val expectedConfigurationBytes = StudyConfigurationCodec.encode(expectedConfiguration)
         private val configuredCollectors = expectedConfiguration.collectors.mapTo(hashSetOf()) { it.id }
         private val shapingEnabled = expectedConfiguration.trafficShaping is TrafficShapingConfiguration.Enabled
+        private val signedResourceKeys: Set<ResourceKey> = buildSet {
+            expectedConfiguration.collectors.forEach { add(it.resourceKey) }
+            if (shapingEnabled) add(expectedConfiguration.trafficShaping.resourceKey)
+        }
 
         fun parse(): VerifiedResearchBundle {
             require(expectedConfigurationBytes.sha256Hex() == header.configurationSha256) {
@@ -318,9 +326,32 @@ object ResearchBundleVerifier {
             var firstPreviousSha256: String? = null
             var lastSha256: String? = null
             var priorProjection: RuntimeProjection? = null
+            var priorReducerCursor: Long? = null
+            var priorCheckpointParts: Set<String>? = null
             while (reader.hasNext()) {
                 require(count < declaredCount) { "Bundle contains more commits than declared" }
                 val commit = commit()
+                // The reducer cursor counts reducer inputs, never commits. Before genesis it is 0;
+                // the first commit of a retained partial range has an unknown predecessor cursor.
+                val reducerCursor = verifyAutomationCheckpoint(commit)
+                priorCheckpointParts = verifyCompleteCheckpointUpsert(
+                    commit,
+                    when {
+                        firstSequence != null -> priorCheckpointParts
+                        commit.commitSequence == 1L -> emptySet()
+                        else -> null
+                    },
+                )
+                val knownPriorCursor = when {
+                    firstSequence != null -> priorReducerCursor
+                    commit.commitSequence == 1L -> 0L
+                    else -> null
+                }
+                knownPriorCursor?.let { prior ->
+                    require(reducerCursor - prior in 0L..commit.events.size.toLong()) {
+                        "Automation reducer cursor is not causally bounded by the commit"
+                    }
+                }
                 if (firstSequence == null) {
                     firstSequence = commit.commitSequence
                     firstPreviousSha256 = commit.previousCommitSha256
@@ -341,6 +372,7 @@ object ResearchBundleVerifier {
                 lastSequence = commit.commitSequence
                 lastSha256 = commit.commitSha256
                 priorProjection = commit.successorProjection
+                priorReducerCursor = reducerCursor
             }
             endArray()
             return CommitSummary(
@@ -400,11 +432,33 @@ object ResearchBundleVerifier {
             require(commit.mutations.zipWithNext().all { (left, right) -> left.key < right.key }) {
                 "Runtime mutations are not canonically ordered"
             }
-            verifyAutomationCheckpoint(commit)
             return commit
         }
 
-        private fun verifyAutomationCheckpoint(commit: EngineCommit) {
+        /**
+         * Every commit upserts its complete automation checkpoint: the parts it upserts are
+         * exactly the parts the component map holds after it. Returns those parts. The first
+         * commit of a retained partial range has unknown prior parts ([priorParts] null).
+         */
+        private fun verifyCompleteCheckpointUpsert(commit: EngineCommit, priorParts: Set<String>?): Set<String> {
+            val mutations = commit.mutations.filter { it.key.kind == RuntimeComponentKind.AUTOMATION_CHECKPOINT }
+            val upserted = mutations.filter { it.operation == RuntimeMutationOperation.UPSERT }.mapTo(hashSetOf()) { it.key.id }
+            val removed = mutations.filter { it.operation == RuntimeMutationOperation.REMOVE }.mapTo(hashSetOf()) { it.key.id }
+            priorParts?.let { prior ->
+                require(prior.containsAll(removed)) { "Runtime mutation removes an unknown automation checkpoint part" }
+                require(upserted.containsAll(prior - removed)) {
+                    "Commit does not upsert its complete automation checkpoint"
+                }
+            }
+            return upserted
+        }
+
+        /**
+         * Returns the successor reducer cursor. Setup commits precede the first reducer input and
+         * carry the empty checkpoint; every later commit has evaluated at least one input and
+         * holds one desired-resource entry per signed stateful resource.
+         */
+        private fun verifyAutomationCheckpoint(commit: EngineCommit): Long {
             val mutations = commit.mutations.filter { it.key.kind == RuntimeComponentKind.AUTOMATION_CHECKPOINT }
             require(mutations.isNotEmpty()) { "Commit has no automation checkpoint mutation" }
             require(mutations.all { CHECKPOINT_COMPONENT_ID.matches(it.key.id) }) {
@@ -418,12 +472,24 @@ object ResearchBundleVerifier {
             }
             val encoded = parts.joinToString(separator = "") { requireNotNull(it.canonicalValue) }
             val checkpoint = AutomationCheckpointCodec.decode(encoded)
-            require(checkpoint.evaluatedThroughSequence == commit.commitSequence) {
-                "Automation checkpoint reducer cursor diverges from commit"
-            }
             require(checkpoint.digest() == commit.resultingCheckpointSha256) {
                 "Automation checkpoint digest diverges from commit"
             }
+            val cursor = checkpoint.evaluatedThroughSequence
+            require(cursor <= commit.successorProjection.nextEventSequence - 1) {
+                "Automation checkpoint evaluated beyond durable events"
+            }
+            if (commit.successorProjection.state in SETUP_STATES) {
+                require(checkpoint == EMPTY_AUTOMATION_CHECKPOINT) {
+                    "Setup commit does not carry the empty automation checkpoint"
+                }
+            } else {
+                require(cursor > 0) { "Started study has an unevaluated automation checkpoint" }
+                require(checkpoint.desiredResources.keys == signedResourceKeys) {
+                    "Automation checkpoint has an incomplete desired resource vector"
+                }
+            }
+            return cursor
         }
 
         private fun events(): List<RecordedEvent> {
@@ -818,6 +884,8 @@ object ResearchBundleVerifier {
                 commit.sourceObservations,
                 commit.consumedPendingInputSha256,
             )
+            verifyCommitEnvelopeEpoch(commit, previous)
+            verifyConditionBoundaries(commit, previous)
 
             var activeEpochId = previous?.activeConditionEpoch?.id
             var activeAppliedDigest = previous?.activeConditionEpoch?.appliedResourceVectorSha256
@@ -861,9 +929,12 @@ object ResearchBundleVerifier {
                             val id = ConditionEpochId(requireNotNull(event.fields["condition_epoch_id"]))
                             val digest = requireNotNull(event.fields["applied_resource_vector_sha256"])
                             if (epochKnown) {
-                                require(activeEpochId == id && activeAppliedDigest == digest) {
-                                    "Condition epoch deactivation does not match the active epoch"
-                                }
+                                // A partial bundle can learn its first epoch from an observation,
+                                // which names the epoch but not its applied resource vector.
+                                require(
+                                    activeEpochId == id &&
+                                        (activeAppliedDigest == null || activeAppliedDigest == digest),
+                                ) { "Condition epoch deactivation does not match the active epoch" }
                             }
                             activeEpochId = null
                             activeAppliedDigest = null
@@ -897,11 +968,194 @@ object ResearchBundleVerifier {
             return CommitSemantics(collectorEvents.size.toLong())
         }
 
+        /**
+         * Every event of a commit carries one envelope epoch: the epoch it activates, otherwise the
+         * epoch active in its predecessor, or none. A commit that closes an epoch therefore records
+         * all of its events under the closed epoch. A commit records at most one epoch transition.
+         */
+        private fun verifyCommitEnvelopeEpoch(commit: EngineCommit, previous: RuntimeProjection?) {
+            val transitions = commit.events.filter { event ->
+                event.type.sourceId.value == CONDITION_SOURCE_ID && event.type.eventType in CONDITION_TRANSITIONS
+            }
+            require(transitions.size <= 1) { "Commit records more than one condition epoch transition" }
+            if (commit.events.isEmpty()) return
+            val envelope = commit.events.first().conditionEpochId
+            require(commit.events.all { it.conditionEpochId == envelope }) {
+                "Commit events do not share one condition epoch envelope"
+            }
+            val transition = transitions.singleOrNull()
+            if (transition != null) {
+                require(envelope?.value == transition.fields["condition_epoch_id"]) {
+                    "Condition epoch transition is not recorded under its own epoch"
+                }
+            } else if (previous != null || commit.commitSequence == 1L) {
+                require(envelope == previous?.activeConditionEpoch?.id) {
+                    "Commit events do not carry the predecessor's condition epoch"
+                }
+            }
+        }
+
+        /**
+         * The condition-epoch rules a reader checks without replay. An epoch event's boundary is
+         * its observed time. A RECOVERY commit records no traffic_shaping.v1 event, and one that
+         * closes an epoch is unproven containment: PROCESS_RECOVERY_UNPROVEN at the recovery
+         * instant, the time of its process-recovery gap, ending PAUSED with no epoch. Only that
+         * close may lie in a boot session other than the activation's.
+         */
+        private fun verifyConditionBoundaries(commit: EngineCommit, previous: RuntimeProjection?) {
+            val recovery = commit.inputKind == EngineInputKind.RECOVERY
+            if (recovery) {
+                require(commit.events.none { it.type.sourceId.value == TRAFFIC_SOURCE_ID }) {
+                    "Recovery commit cannot audit a traffic profile"
+                }
+            }
+            commit.events.filter { event ->
+                event.type.sourceId.value == CONDITION_SOURCE_ID && event.type.eventType in CONDITION_TRANSITIONS
+            }.forEach { event ->
+                val boundary = embeddedResearchTime(requireNotNull(event.fields["boundary_research_time"]))
+                require(boundary == event.observedTime) { "Condition epoch boundary differs from its event time" }
+                if (event.type.eventType != CONDITION_DEACTIVATED) return@forEach
+                if (recovery) {
+                    require(
+                        event.fields["deactivation_reason"] == "PROCESS_RECOVERY_UNPROVEN" &&
+                            commit.successorProjection.state == ExperimentState.PAUSED &&
+                            commit.successorProjection.activeConditionEpoch == null,
+                    ) { "Recovery close is not unproven PAUSED containment" }
+                    require(
+                        commit.events.none { gap ->
+                            gap.type.sourceId.value == RUNTIME_SOURCE_ID &&
+                                gap.type.eventType == SOURCE_QUALITY_GAP &&
+                                gap.observedTime != boundary
+                        },
+                    ) { "Recovery close is not at the recovery instant" }
+                } else {
+                    previous?.activeConditionEpoch?.let { epoch ->
+                        require(boundary.bootSessionId == epoch.activatedAt.bootSessionId) {
+                            "Condition epoch cannot span a reboot"
+                        }
+                    }
+                }
+            }
+        }
+
+        /**
+         * Coverage is a half-open interval that never runs backwards. It is empty only for the
+         * zero-event barrier flush whose wall-clock boundary equals the collector's query start,
+         * which is the closing commit's deactivation boundary.
+         */
+        private fun verifyCoverageIntervals(commit: EngineCommit) {
+            val closingWall = commit.events.singleOrNull { event ->
+                event.type.sourceId.value == CONDITION_SOURCE_ID && event.type.eventType == CONDITION_DEACTIVATED
+            }?.observedTime?.wallTimeUtcMillis
+            commit.sourceObservations.forEach { observation ->
+                val coverage = observation.coverage ?: return@forEach
+                val (start, end) = when (coverage.clockBasis) {
+                    SourceClockBasis.SOURCE_WALL_TIME, SourceClockBasis.SOURCE_MONOTONIC_TIME ->
+                        coverageCoordinate(coverage.startInclusive) to coverageCoordinate(coverage.endExclusive)
+                    SourceClockBasis.OBSERVED_RESEARCH_TIME -> {
+                        val startTime = embeddedResearchTime(coverage.startInclusive)
+                        val endTime = embeddedResearchTime(coverage.endExclusive)
+                        require(startTime.bootSessionId == endTime.bootSessionId) {
+                            "Coverage cannot be assigned across reboot"
+                        }
+                        startTime.elapsedRealtimeNanos to endTime.elapsedRealtimeNanos
+                    }
+                }
+                require(start <= end) { "Retrospective coverage runs backwards" }
+                require(
+                    start < end || (
+                        observation.admissionKind == ObservationAdmissionKind.BARRIER_FLUSH &&
+                            observation.eventCount == 0 &&
+                            coverage.clockBasis == SourceClockBasis.SOURCE_WALL_TIME &&
+                            end == closingWall
+                        ),
+                ) { "Retrospective coverage is empty outside a boundary flush" }
+            }
+        }
+
+        private fun coverageCoordinate(value: String): Long {
+            require(UNSIGNED_DECIMAL.matches(value)) { "Invalid coverage coordinate" }
+            return requireNotNull(value.toLongOrNull()) { "Invalid coverage coordinate" }
+        }
+
+        /** Parses a canonical embedded ResearchTime field, as `boundary_research_time` carries. */
+        private fun embeddedResearchTime(text: String): ResearchTime {
+            val root = runCatching { JsonParser.parseString(text) }.getOrNull()
+            require(root != null && root.isJsonObject) { "Invalid embedded research time" }
+            val members = root.asJsonObject
+            require(members.keySet() == EMBEDDED_TIME_MEMBERS) { "Invalid embedded research time" }
+            fun member(name: String): String {
+                val value = members.get(name)
+                require(value.isJsonPrimitive && value.asJsonPrimitive.isString) { "Invalid embedded research time" }
+                return value.asString
+            }
+            val elapsed = member("monotonic_time_nanos")
+            val wall = member("wall_time_utc_millis")
+            require(UNSIGNED_DECIMAL.matches(elapsed) && UNSIGNED_DECIMAL.matches(wall)) {
+                "Invalid embedded research time"
+            }
+            return runCatching {
+                ResearchTime(wall.toLong(), elapsed.toLong(), member("boot_session_id"))
+            }.getOrElse { throw IllegalArgumentException("Invalid embedded research time") }
+        }
+
+        /**
+         * Returns the sources whose resource-barrier flush completed in [commit]. A flush is one
+         * retrospective coverage observation per source, after every NORMAL observation, in
+         * ascending source order, and only in the commit that closes the flushed epoch.
+         */
+        private fun verifyBarrierFlushes(commit: EngineCommit): Set<EventSourceId> {
+            val firstFlush = commit.sourceObservations.indexOfFirst {
+                it.admissionKind == ObservationAdmissionKind.BARRIER_FLUSH
+            }
+            if (firstFlush < 0) return emptySet()
+            val flushes = commit.sourceObservations.subList(firstFlush, commit.sourceObservations.size)
+            val closedEpoch = commit.events.singleOrNull { event ->
+                event.type.sourceId.value == CONDITION_SOURCE_ID && event.type.eventType == CONDITION_DEACTIVATED
+            }?.fields?.get("condition_epoch_id")
+            require(
+                closedEpoch != null &&
+                    flushes.all { flush ->
+                        flush.admissionKind == ObservationAdmissionKind.BARRIER_FLUSH &&
+                            isRetrospective(flush.sourceId) &&
+                            flush.coverage != null &&
+                            flush.conditionEpochId.value == closedEpoch
+                    } &&
+                    flushes.zipWithNext().all { (left, right) -> left.sourceId.value < right.sourceId.value },
+            ) { "Barrier flush is not one retrospective coverage observation" }
+            return flushes.mapTo(hashSetOf(), SourceObservation::sourceId)
+        }
+
+        /**
+         * A source checkpoint follows the source's last observation in the commit. Its opaque
+         * cursor changes only with that source's completed barrier flush. A process-recovery or
+         * wall-clock quality gap removes every retrospective checkpoint, restarting its coverage.
+         */
         private fun verifySourceCheckpoints(commit: EngineCommit, previous: RuntimeProjection?) {
+            val gapReasons = commit.events
+                .filter { it.type.sourceId.value == RUNTIME_SOURCE_ID && it.type.eventType == SOURCE_QUALITY_GAP }
+                .map { requireNotNull(it.fields["reason"]) { "Source quality gap has no reason" } }
+            if (commit.inputKind == EngineInputKind.RECOVERY) {
+                require(gapReasons == listOf(PROCESS_RECOVERY_GAP)) {
+                    "Recovery commit does not record exactly one process-recovery quality gap"
+                }
+            } else {
+                require(PROCESS_RECOVERY_GAP !in gapReasons) {
+                    "Process-recovery quality gap requires RECOVERY input"
+                }
+            }
+            val discardRetrospective = gapReasons.any { it in RETROSPECTIVE_RESET_GAPS }
+            val stagedRecoveryObservations =
+                PROCESS_RECOVERY_GAP in gapReasons && commit.consumedPendingInputSha256 != null
+            val flushed = verifyBarrierFlushes(commit)
+            verifyCoverageIntervals(commit)
             val expected = previous?.sourceCheckpoints?.toMutableMap() ?: mutableMapOf()
             val historyKnown = previous != null || commit.commitSequence == 1L
             val firstUnanchoredObservation = hashSetOf<EventSourceId>()
             commit.sourceObservations.forEach { observation ->
+                require(!discardRetrospective || stagedRecoveryObservations || !isRetrospective(observation.sourceId)) {
+                    "Clock-gap commit cannot backfill a retrospective source"
+                }
                 val prior = expected[observation.sourceId]
                 val hasUnknownPredecessor = !historyKnown && prior == null &&
                     firstUnanchoredObservation.add(observation.sourceId)
@@ -932,27 +1186,42 @@ object ResearchBundleVerifier {
                     cursor = prior?.cursor,
                 )
             }
+            val successor = commit.successorProjection.sourceCheckpoints
+            flushed.forEach { sourceId ->
+                successor[sourceId]?.let { flushedCheckpoint ->
+                    expected[sourceId] = requireNotNull(expected[sourceId]).copy(cursor = flushedCheckpoint.cursor)
+                }
+            }
+            if (discardRetrospective) expected.keys.removeAll(::isRetrospective)
             if (historyKnown) {
                 expected.forEach { (sourceId, checkpoint) ->
-                    require(commit.successorProjection.sourceCheckpoints[sourceId] == checkpoint) {
+                    require(successor[sourceId] == checkpoint) {
                         "Successor source checkpoint diverges from observation provenance"
                     }
                 }
-                require(commit.successorProjection.sourceCheckpoints.keys == expected.keys) {
+                require(successor.keys == expected.keys) {
                     "Successor projection introduced an unproven source checkpoint"
                 }
             } else {
+                require(!discardRetrospective || successor.keys.none(::isRetrospective)) {
+                    "Quality-gap commit retained a retrospective source checkpoint"
+                }
                 commit.sourceObservations.groupBy(SourceObservation::sourceId).forEach { (sourceId, observations) ->
+                    if (discardRetrospective && isRetrospective(sourceId)) return@forEach
                     val last = observations.last()
-                    val checkpoint = requireNotNull(commit.successorProjection.sourceCheckpoints[sourceId]) {
+                    val checkpoint = requireNotNull(successor[sourceId]) {
                         "Source observation has no successor checkpoint"
                     }
                     require(checkpoint.resourceGeneration == last.resourceGeneration &&
-                        checkpoint.nextProducerOrdinal == last.producerOrdinal + 1
+                        checkpoint.nextProducerOrdinal == last.producerOrdinal + 1 &&
+                        (last.coverage == null || checkpoint.coverage == last.coverage)
                     ) { "Successor source checkpoint diverges from observation provenance" }
                 }
             }
         }
+
+        private fun isRetrospective(sourceId: EventSourceId): Boolean =
+            ProtocolEventSourceRegistry[sourceId.value]?.isRetrospective == true
 
         private fun fields(): Map<String, String> {
             beginObject()
@@ -1206,7 +1475,21 @@ object ResearchBundleVerifier {
     private const val CONDITION_SOURCE_ID = "study_condition.v1"
     private const val CONDITION_ACTIVATED = "CONDITION_EPOCH_ACTIVATED"
     private const val CONDITION_DEACTIVATED = "CONDITION_EPOCH_DEACTIVATED"
+    private val CONDITION_TRANSITIONS = setOf(CONDITION_ACTIVATED, CONDITION_DEACTIVATED)
     private const val TRAFFIC_SOURCE_ID = "traffic_shaping.v1"
+    private const val RUNTIME_SOURCE_ID = "study_runtime.v1"
+    private const val SOURCE_QUALITY_GAP = "SOURCE_QUALITY_GAP"
+    private const val PROCESS_RECOVERY_GAP = "PROCESS_RECOVERY"
+    private val RETROSPECTIVE_RESET_GAPS = setOf(PROCESS_RECOVERY_GAP, "WALL_CLOCK_CHANGED")
+    private val SETUP_STATES = setOf(
+        ExperimentState.IMPORTED,
+        ExperimentState.CONFIG_VERIFIED,
+        ExperimentState.CONSENT_PENDING,
+        ExperimentState.ACCESS_SETUP,
+        ExperimentState.READY,
+    )
+    private val EMPTY_AUTOMATION_CHECKPOINT = AutomationCheckpoint()
+    private val EMBEDDED_TIME_MEMBERS = setOf("boot_session_id", "monotonic_time_nanos", "wall_time_utc_millis")
     private val CHECKPOINT_COMPONENT_ID = Regex("main(?:/[0-9]{4})?")
     private val UNSIGNED_DECIMAL = Regex("0|[1-9][0-9]*")
     private val PARTICIPANT_INSTANCE_ID = Regex("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")

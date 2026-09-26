@@ -101,11 +101,34 @@ every event. It binds:
 
 One batch contains 1–4,096 events from exactly one source/schema/generation. A successful
 retrospective poll or boundary flush that emits no event is represented by a zero-event coverage
-advance, so source cursor and coverage can move without inventing a placeholder event.
+advance, so coverage can move without inventing a placeholder event; a zero-event barrier flush
+also stores the source cursor.
 
 Producer ordinals and coverage must be contiguous for the retained chain. The current source cursor
 and next ordinal appear in `successor_projection.source_checkpoints`. Coverage overlap, an event not
 covered by exactly one observation, or a checkpoint that diverges from observations fails closed.
+
+The cursor is the retrospective collector's opaque resume token; analysis never interprets it. It
+changes only in the commit that carries that source's `BARRIER_FLUSH` observation, and stores the
+value the completed flush returned. A barrier flush belongs to a retrospective (`POLL`) source,
+carries coverage, appears once per source after every `NORMAL` observation in source-ID order, and
+appears only in the commit that closes the epoch. A `RECOVERY` commit records exactly one
+`PROCESS_RECOVERY` quality gap; that commit, and one that records a `WALL_CLOCK_CHANGED` gap, drops
+every retrospective checkpoint, so the source restarts its coverage and cursor.
+
+Retrospective coverage attributed to an epoch may begin at the epoch's preparation bound, the later
+of the previous epoch's deactivation boundary and the latest commit that entered `ACTIVATING`,
+because collectors start or resume before the activation commit. In the RC13 exports examined for
+this rule, usage coverage started 1–62 ms before activation. Coverage never begins earlier than
+that bound and never ends after the deactivation boundary. The interval between the preparation
+bound and `activated_at` precedes the confirmed application of the epoch's resources, and nothing
+bounds its length. `quality-summary.json` therefore lists, for each participant, every epoch's
+`preparation_bound`, `activated_at`, and `deactivated_at`; exclude rows whose source time precedes
+`activated_at` when the analysis needs only time under the applied condition.
+
+Coverage never runs backwards. It is empty, `[t, t)`, only in a zero-event barrier flush whose `t`
+is the deactivation boundary's wall time: a pause or barrier that lands in the same millisecond as
+the collector's last poll. Such a flush adds no time to the epoch.
 
 ## Event envelope
 
@@ -139,6 +162,11 @@ Every collector and system event uses the same exact envelope:
 
 An unknown source, event, schema version, member, field, enum, or invalid typed wire value rejects the
 whole bundle. There is no generic-event fallback.
+
+Every event of one commit carries the same envelope epoch: the epoch the commit activates, and
+otherwise the epoch active before the commit, or `null` when there is none. The commit that closes
+an epoch therefore stamps that epoch on every event it records, including the lifecycle, timer,
+and study-deadline events that follow `CONDITION_EPOCH_DEACTIVATED`.
 
 ### Typed wire field strings
 
@@ -228,6 +256,27 @@ boundary, ends the old epoch, applies and verifies the complete new vector, then
 epoch before reopening admission. An orphan/missing/overlapping epoch, mixed coverage, or vector
 digest divergence makes the dataset unpublishable.
 
+A process death or reboot closes the running epoch in the `RECOVERY` commit with
+`PROCESS_RECOVERY_UNPROVEN` at the recovery instant, the time of that commit's `PROCESS_RECOVERY`
+gap, which may be in the new boot. The commit's `committed_at` can instead keep the previous boot's
+clock anchor when the study clock cannot advance across the reboot without trusted UTC; use the
+deactivation boundary, not `committed_at`, as the epoch's end. That commit has no traffic-shaping
+audit: the recovering process cannot read the counters of a profile the dead process applied, so
+the epoch's last traffic evidence is the last periodic snapshot before the death.
+
+A safety pause can also close an epoch without a traffic-shaping audit. When the VPN is revoked or
+replaced while the study runs, the native engine stops and the boundary audit cannot read verified
+counters, so the `SAFETY_FAILURE` commit records `SAFETY_PAUSED` with no final snapshot or
+`TRAFFIC_SHAPING_PROFILE_REMOVED` row. Again the last periodic snapshot is the epoch's last traffic
+evidence, and it can be up to 60 seconds old.
+
+An `interventions.v1` event belongs to the epoch in which its `ACTION_REQUESTED` was recorded, and
+is bound to that request by `occurrence_id`, `trigger_id`, `intervention_id`, and
+`scheduled_for_utc_millis`. A survey requested in the commit that closes an epoch at a barrier is
+opened and answered under the next epoch, or while paused, but its `source_condition_epoch_id` is
+the request epoch. Its scheduled time is the occurrence's logical time and may lie before that
+epoch began, for example when a timer that fell due during a pause fires after Resume.
+
 `condition_epoch_id` is experimental provenance, not proof that Android delivered every possible
 source event. Registry completeness and explicit quality gaps still apply.
 
@@ -270,6 +319,25 @@ System events are emitted only by the runtime authority and cannot be configured
 | `study_condition.v1` | Generic applied-resource condition epoch lifecycle. |
 | `traffic_shaping.v1` | Verified traffic profile application/removal and 60-second/final aggregate counter snapshots for shaping studies only. |
 
+A commit that reduces several inputs records its automation-timer schedules and retirements in one
+of two renderings. The net rendering, which the current runtime writes, retires only a durable
+timer that the commit removes or replaces and schedules only a timer that the commit leaves in the
+durable map. The complete rendering, which RC13 writes, records every intent of the batch: a
+`TIMER_SCHEDULED` row need not name a timer the durable map ever holds, and a `TIMER_RETIRED` row
+can repeat one timer generation. Rows of one commit are ordered by timer ID, retirements first,
+not in the order the reducer produced the intents. Every RC13 `RECOVERY` commit of a running pilot
+study is such a commit: it schedules condition timers that its own safety pause retires, and it
+leaves no condition timer. Timer rows are therefore audit evidence of intents, not a ledger of
+durable timers. Do not count `TIMER_SCHEDULED` or `TIMER_RETIRED` rows as timers or reconstruct
+pending timers from them; the analyzer verifies the durable timer map from each commit's `TIMER`
+components, which the dataset does not publish.
+
+The study deadline (`producer_key` `study-deadline`) is retired by the commit that requests
+Complete or Withdraw from `RUNNING`. When that stop does not finish, as after a failed resource
+release or a process death while `PAUSING`, the next Resume or recovery re-arms the deadline at
+generation 1 under the same timer ID. A `TIMER_SCHEDULED` row can therefore repeat the identity and
+generation of an earlier `TIMER_RETIRED` row.
+
 Audit/output-only system events are not automation inputs. This prevents an action’s own audit event
 from feeding back into the rule that produced it. In particular, `STUDY_STARTED`, `STUDY_RESUMED`,
 and `STUDY_RUNNING` describe lifecycle results but cannot be referenced by `event_match`, sequence,
@@ -299,6 +367,18 @@ commit chains, replays reducer semantics independently, checks timer/action caus
 coverage, and verifies condition/resource digests before writing Parquet. Partition keys are
 `experiment_id/configuration_id/source_id/schema_version/event_type`. Each row carries
 `condition_epoch_id` and derived `source_condition_epoch_id`.
+
+Registry payload fields become columns under their own names, with two exceptions:
+
+- A payload field named like a provenance or partition column is written as `payload_<name>`. Its
+  field metadata `particeps.payload_field` records the registry name. Six fields are renamed:
+  `condition_epoch_id` in `study_condition.v1` `CONDITION_EPOCH_ACTIVATED` and
+  `CONDITION_EPOCH_DEACTIVATED` and in `traffic_shaping.v1` `TRAFFIC_SHAPING_PROFILE_APPLIED`,
+  `TRAFFIC_SHAPING_SNAPSHOT`, and `TRAFFIC_SHAPING_PROFILE_REMOVED`, and `source_id` in
+  `study_runtime.v1` `SOURCE_QUALITY_GAP`. The envelope column `condition_epoch_id` and the
+  partition column `source_id` keep their provenance meaning.
+- A `json_string` column holds the authenticated wire text of the field, exactly as recorded, not a
+  re-serialized value. Parse it with a JSON reader to use its members.
 
 The following are dataset-level failures, not warnings to average away: partial/torn commit,
 conflicting duplicate, missing source observation, source coverage overlap, illegal producer

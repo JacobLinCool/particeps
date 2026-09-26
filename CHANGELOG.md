@@ -87,6 +87,73 @@ APK, a version code, or release-gate evidence.
 - The researcher site's participant preview shows only the upload destination host, as the app
   does, and its fixed VPN paragraph is checked against the app's string resources.
 
+**Analysis tools (no app change):**
+
+- Before this change, no export from RC13 could be verified or analyzed, including the running
+  five-day pilot's, with either RC13's or this tree's offline tools. Decryption succeeded and the
+  files are intact, but verification stopped at commit 1. `researcher-tools decrypt` failed with
+  "Automation checkpoint reducer cursor diverges from commit" and wrote no output,
+  `particeps-analysis` failed with "automation checkpoint has an incomplete desired resource
+  vector", and the researcher site's Read step reported the bundle unreadable. Past commit 1, the
+  tools also rejected shapes that RC13 writes in normal use:
+  - the usage-events cursor stored at a barrier flush;
+  - the usage-events checkpoint that recovery drops;
+  - the `CANCELLED` and `LIFECYCLE_ENDED` timer retirements at a window barrier and at the deadline
+    stop;
+  - a recovery that closes the epoch without a traffic-shaping audit, or in the new boot after a
+    reboot;
+  - deadline-timer events that carry the epoch being closed;
+  - the deadline that a Complete or Withdraw from `RUNNING` retires;
+  - usage-events coverage that starts a few milliseconds before its epoch;
+  - a survey requested at the 17:00 barrier and answered in the next epoch;
+  - the timer events of RC13's recovery commits.
+
+  A chain that passed verification still could not be written: the Parquet sink failed on
+  `json_string` fields and on payload fields named `condition_epoch_id` or `source_id`.
+- `protocol/v1/README.md` now specifies what RC13 writes, with no branching on the producer's
+  client version, and the same rules accept this build's exports. Each rule is relaxed only as far
+  as the observed shapes require. `particeps-analysis` enforces every rule. The Kotlin verifier and
+  the researcher site's bundle reader do not replay the reducer and enforce the subset that needs no
+  replay, which the protocol's Conformance section lists: for example the reducer cursor's bounds,
+  the complete checkpoint upsert, one `PROCESS_RECOVERY` gap per recovery, and a recovery close at
+  the recovery instant. A bundle that `researcher-tools decrypt` verifies can therefore still be
+  quarantined by the analyzer, which names the rule, for example for a timer rendering or a
+  deadline that only a replay can check.
+- The rules also accept RC13 shapes that come from platform failures and that no pilot export is
+  known to contain yet: a pause or barrier in the same millisecond as a usage-events poll, whose
+  flush covers the empty interval `[t, t)`; a safety pause after the VPN is revoked or replaced,
+  whose boundary audit cannot read the traffic counters and so records none; a stop whose resource
+  release fails, which safety-pauses the `PAUSING` study and leaves it `PAUSED` without a deadline
+  until Resume re-arms it; a process death while `PAUSING`, whose recovery re-arms the deadline; and
+  a reboot without trusted UTC, whose recovery commit keeps the previous boot's clock anchor as
+  `committed_at`. Each is reproduced by a checked-in RC13 export.
+- The recovery close is bound exactly. An epoch event's boundary must equal its observed time, and
+  a recovery close must lie at the recovery instant, the time of its `PROCESS_RECOVERY` gap. Only
+  that close may lie in a boot other than the activation's.
+- Parquet output renames six payload fields that share a name with a provenance or partition
+  column to `payload_<name>`, as the data dictionary lists, and each `json_string` column holds the
+  authenticated wire text.
+- An `interventions.v1` row's `source_condition_epoch_id` is now the epoch in which its
+  `ACTION_REQUESTED` was recorded, bound by the occurrence identity, instead of the epoch that
+  contains its scheduled time. A survey requested at the 17:00 barrier therefore belongs to the
+  closing epoch, not to the next one in which it is answered.
+- `quality-summary.json` lists each participant's condition epochs with their preparation bound,
+  activation, and deactivation. Usage-events rows may begin at the preparation bound, before the
+  epoch's resources were confirmed; exclude rows before `activated_at` to keep only time under the
+  applied condition.
+- Eleven real exports are checked in under `particeps-analysis/tests/fixtures/runtime-bundles/`:
+  ten from RC13 and one from this build, all encrypted to the public demonstration key. The Kotlin
+  verifier and the site's reader must accept every one and each retained range that starts at a
+  recovery or an epoch boundary, and `particeps-analysis` must also materialize each to Parquet.
+  CI also runs this tree's runtime through a pilot-shaped week and passes its exports to both. That
+  week includes barriers, pauses, a survey, process death, a reboot, clock changes, and the
+  deadline stop. A change to the published pilot configuration now also runs the Android CI
+  workflow, whose real-runtime test reads it.
+- The app needs no update. The runtime, event-source registry, bundle format, and reducer are
+  unchanged, and existing RC13 exports verify as they are. Keep the original `.partexp` files and
+  analyze them with this tree's `particeps-analysis` and `researcher-tools`. Keep the pilot phones
+  on RC13 until the pilot ends: the fix is in the offline tools only.
+
 **Application update from `v1.0.0-rc.13`:** install a signed build of this tree over the existing
 app without uninstalling or clearing its data; it does not change the application ID.
 
@@ -116,34 +183,30 @@ access checks, and explicitly Resume the study.
 - Collector code outside this repository that constructs `EmitBatchResult.Accepted` or
   `CollectorContext` must pass the new `recordedEvents` or `requiresPromptCommits` argument before
   it compiles against this tree.
-- Verify and materialize bundles from this build with this tree's `particeps-analysis`. For the same
-  reduced inputs, both builds record the same condition-timer events for every commit in which no
-  timer generation is armed and then retired or replaced before the commit ends. That includes every
-  commit that reduces a single input, such as Start, Resume, or a one-event observation. Only a
-  commit that reduces several inputs can differ: an observation or barrier whose events change a
-  `window_threshold` or `held_for` timer more than once; a pause, completion, or withdrawal whose
-  flushed events re-armed a timer that the stop then retires; recovery of a study left `ACTIVATING`
-  or `RUNNING`, as after an app update, process death, or reboot while it runs, whose quality-gap
-  reset re-arms each condition timer its still-active conditions need and whose safety pause retires
-  it in the same commit; or a phone clock or time-zone change first seen after the deadline, which
-  does the same before completing. For such a commit RC13 recorded a `TIMER_SCHEDULED` for every
-  generation it armed and, when the timer existed before the commit, repeated its `TIMER_RETIRED`
-  for each retired generation; this build records that prior timer's retirement once and the
-  resulting timer's schedule once. RC13's verifier already rejected RC13's version of these commits
-  except when the timer did not exist before the commit and still existed after it. This tree's
-  verifier also rejects that remaining RC13 version, and RC13's verifier rejects this build's
-  version of all of them. For a chain started under RC13 and continued on this build, this tree's
-  `particeps-analysis` timer-event checks therefore accept every commit unless its RC13 part
-  contains such a commit; other checks can still reject the chain. The
+- Verify and materialize bundles from this build, and from RC13, with this tree's
+  `particeps-analysis` and `researcher-tools`. For the same reduced inputs, both builds record the
+  same condition-timer events for every commit in which no timer generation is armed and then
+  retired or replaced before the commit ends. That includes every commit that reduces a single
+  input, such as Start, Resume, or a one-event observation. Only a commit that reduces several
+  inputs can differ: an observation or barrier whose events change a `window_threshold` or
+  `held_for` timer more than once; a pause, completion, or withdrawal whose flushed events re-armed
+  a timer that the stop then retires; recovery of a study left `ACTIVATING` or `RUNNING`, as after
+  an app update, process death, or reboot while it runs, whose quality-gap reset re-arms each
+  condition timer its still-active conditions need and whose safety pause retires it in the same
+  commit; or a phone clock or time-zone change first seen after the deadline, which does the same
+  before completing. For such a commit RC13 records every intent, the complete rendering: a
+  `TIMER_SCHEDULED` for every generation it armed and, when the timer existed before the commit, a
+  repeated `TIMER_RETIRED` for each retired generation. This build records the net rendering: that
+  prior timer's retirement once and the resulting timer's schedule once. Protocol v1 admits exactly
+  these two renderings for each commit and rejects a mixture, so this tree's tools accept RC13
+  chains, chains from this build, and a chain started under RC13 and continued on this build. The
   five-day pilot's automation uses only `study_local_window` and `study_session_active` conditions,
-  so its RC13 commits can differ only at such a stop, recovery, or late clock change. Every RC13
+  so its RC13 commits can differ only at such a stop, recovery, or late clock change; every RC13
   recovery of the running pilot is such a commit, because its resource bindings keep a window timer
-  armed throughout the study. There the timer existed before the commit, so RC13's verifier already
-  rejects the commit. An RC13-only bundle that contains the remaining RC13 version verifies only
-  with RC13's `particeps-analysis`. This build also groups inputs differently: it merges queued
-  callbacks into one observation and splits a live batch at its first resource-changing event, so
-  for automation that matches collector events the two builds need not make the same commits from
-  the same callbacks.
+  armed throughout the study. This build also groups inputs differently: it merges queued callbacks
+  into one observation and splits a live batch at its first resource-changing event, so for
+  automation that matches collector events the two builds need not make the same commits from the
+  same callbacks.
 - Each RC13 recovery of a running study left a WorkManager wakeup for every condition timer it
   re-armed and retired. One whose target passes while the study runs retries until the next pause
   under RC13; after the update it ends at its next attempt.
@@ -158,6 +221,17 @@ the Web unit tests and type check, the `particeps-analysis` unit tests, and the 
 instrumentation tests on an API 34 emulator passed locally. Six instrumentation tests that need the
 host harness or its local TCP test server were skipped. No release gate, API 37 lane, or
 physical-device measurement has run.
+
+**Verification of the analysis-tool change:** on the working tree only,
+`./gradlew test testDebugUnitTest`, the Kotlin protocol and automation-reducer conformance tests,
+the Protocol v1, registry, retired-identity, and collector-assurance checks, the
+`particeps-analysis` suite, including the real-runtime interop test in Kotlin and Python, and the
+Web unit, type-check, and TypeScript conformance suites passed locally. `researcher-tools
+decrypt` and `particeps-analysis` accepted all 31 exports examined, and the analyzer materialized
+each to Parquet: 10 from the RC13 app on an emulator, 13 from the RC13 and current runtimes on the
+JVM, and 8 from the JVM containment scenarios, each run on RC13 and on this tree's runtime. The
+researcher site's reader opened 30 of them; the 31st, a 66 MB export, exceeds the reader's 32 MiB
+browser limit, which is unchanged.
 
 ## v1.0.0-rc.13 — 2026-09-14
 

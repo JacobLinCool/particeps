@@ -23,8 +23,17 @@ tasks.named<JavaExec>("run") {
     workingDir(rootProject.projectDir)
 }
 
+// Real runtime bundle fixtures default to particeps-analysis/tests/fixtures/runtime-bundles;
+// -Pparticeps.runtimeBundleFixtures=DIR[:DIR...] points RuntimeBundleFixtureTest elsewhere.
+val runtimeBundleFixtures = providers.gradleProperty("particeps.runtimeBundleFixtures")
+val runtimeBundleFixtureRoots = runtimeBundleFixtures.orNull?.split(File.pathSeparator)
+    ?: listOf(rootProject.file("particeps-analysis/tests/fixtures/runtime-bundles").path)
 tasks.withType<Test>().configureEach {
     systemProperty("particeps.repository.root", rootProject.projectDir.absolutePath)
+    runtimeBundleFixtures.orNull?.let { systemProperty("particeps.runtime.bundle.fixtures", it) }
+    inputs.files(runtimeBundleFixtureRoots.map { rootProject.fileTree(it) })
+        .withPropertyName("runtimeBundleFixtures")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 dependencies {

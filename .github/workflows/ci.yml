@@ -1,27 +1,33 @@
 name: Android CI
 
-# The paths below cannot change what Gradle builds, so a commit touching only those skips a
-# seven-minute Android build. This is a denylist rather than an allowlist on purpose: a path
-# nobody anticipated still runs this workflow, which is the safe direction to be wrong in.
+# The excluded paths below cannot change what Gradle builds, so a commit touching only those skips
+# a seven-minute Android build. The list starts from every path and removes only those, rather
+# than naming what to build: a path nobody anticipated still runs this workflow, which is the safe
+# direction to be wrong in. Later patterns override earlier ones. The published study
+# configurations are included again because RealRuntimeBundleInteropTest reads the pilot's.
 on:
   push:
     branches:
       - main
-    paths-ignore:
-      - "web/**"
-      - "docs/**"
-      - "**.md"
-      - ".github/workflows/pages.yml"
-      - "CITATION.cff"
-      - "LICENSE"
+    paths:
+      - "**"
+      - "!web/**"
+      - "web/static/studies/**"
+      - "!docs/**"
+      - "!**.md"
+      - "!.github/workflows/pages.yml"
+      - "!CITATION.cff"
+      - "!LICENSE"
   pull_request:
-    paths-ignore:
-      - "web/**"
-      - "docs/**"
-      - "**.md"
-      - ".github/workflows/pages.yml"
-      - "CITATION.cff"
-      - "LICENSE"
+    paths:
+      - "**"
+      - "!web/**"
+      - "web/static/studies/**"
+      - "!docs/**"
+      - "!**.md"
+      - "!.github/workflows/pages.yml"
+      - "!CITATION.cff"
+      - "!LICENSE"
   workflow_dispatch:
 
 permissions:
@@ -41,6 +47,7 @@ jobs:
       ANDROID_BUILD_TOOLS_PACKAGE: build-tools;37.0.0
       ANDROID_NDK_PACKAGE: ndk;30.0.14904198
       PARTICEPS_KOTLIN_EXPORT_INTEROP_DIR: ${{ github.workspace }}/build/protocol-interop/kotlin-export
+      PARTICEPS_REAL_RUNTIME_INTEROP_DIR: ${{ github.workspace }}/build/protocol-interop/real-runtime
       PARTICEPS_REGISTRY_MERGE_BASE: ${{ github.event.pull_request.base.sha || '' }}
       GOTOOLCHAIN: local
       GOPROXY: https://proxy.golang.org
@@ -138,6 +145,17 @@ jobs:
           :core:export:test
           --tests cool.jacoblin.particeps.core.export.ResearchExportTest.kotlinExporterWritesEncryptedPythonInteropFixtureWhenExplicitlyRequested
 
+      # The hand-built chain above cannot show what the runtime actually writes. This test runs the
+      # production session manager and runtime through a pilot-shaped week, verifies its exports
+      # with the Kotlin bundle verifier, and writes them for the Python analyzer. The test step above
+      # already ran it with the same directory; like the Kotlin export step, this names the producer
+      # of the files the Python step reads, for about ten seconds.
+      - name: Produce real-runtime bundles for cross-language replay
+        run: >-
+          ./gradlew --no-daemon
+          :core:study-application:test
+          --tests cool.jacoblin.particeps.core.application.RealRuntimeBundleInteropTest
+
       - name: Set up locked Python analysis environment
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -152,6 +170,10 @@ jobs:
         run: |
           uv sync --locked
           uv run --frozen python -m unittest discover -s tests -p test_bundle_contract.py -v
+
+      - name: Materialize the real-runtime bundles through Python
+        working-directory: particeps-analysis
+        run: uv run --frozen python -m unittest discover -s tests -p test_real_runtime_interop.py -v
 
       - name: Consume shared Protocol v1 vectors in Kotlin
         run: >-

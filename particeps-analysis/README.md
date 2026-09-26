@@ -36,12 +36,27 @@ An authenticated `EngineCommit` is the atomic unit. Analysis independently verif
 - contiguous commit, event, observation, producer-ordinal, and manifest ranges;
 - commit hashes, observation hashes, reducer checkpoint hashes, and predecessor linkage;
 - exact event contracts and canonical typed field values from the generated registry;
-- source coverage continuity and condition-epoch boundaries;
-- durable timer generations, action outbox transitions, and causal automation audit events;
+- the reducer cursor, which counts reducer inputs and is 0 exactly in the setup states whose
+  commits carry the empty automation checkpoint;
+- source coverage continuity, barrier flushes, opaque collector cursors that change only with
+  their source's flush, and condition-epoch boundaries from each epoch's preparation bound;
+- one envelope epoch per commit, and each intervention event's binding to its `ACTION_REQUESTED`;
+- durable timer generations, the complete or net rendering of each batch's timer intents,
+  retirement reasons fixed by the commit, action outbox transitions, and causal automation audit
+  events;
 - the runtime-owned study deadline identity, target, generation, signed-duration projection, due
-  lifecycle, and terminal retirement;
+  lifecycle, and retirement, including by a Complete or Withdraw request from `RUNNING` and its
+  re-arm when that stop does not finish;
+- lifecycle transitions, where a safety pause of a study already `PAUSING` reduces only `PAUSED`;
+- recovery containment, which closes the epoch at the recovery instant without a traffic audit and
+  keeps every resource receipt unchanged, and the safety pause whose boundary audit could not read
+  the traffic counters;
+- coverage that never runs backwards and is empty only as the barrier flush at the close;
 - signed resource profiles, applied resource-vector digests, and condition epoch ordering;
 - runtime projection cursors, watermarks, lifecycle, and collector event totals.
+
+`../protocol/v1/README.md` is normative for every one of these rules; the analyzer applies one
+rule set to every export and does not branch on the producer's client version.
 
 Every participant chain must be present from commit 1 through its authenticated durable head.
 Missing commits, partial observation batches, orphan or overlapping epochs, cross-epoch coverage,
@@ -116,15 +131,65 @@ Each row contains typed registry fields plus:
 
 - participant identity and global event sequence;
 - `condition_epoch_id` from the admitted event envelope;
-- derived `source_condition_epoch_id` after source-clock and coverage attribution;
+- derived `source_condition_epoch_id`: the observation's epoch for collector events, the request
+  epoch for intervention events, and otherwise the epoch from source-clock attribution;
 - observed wall, monotonic, and boot-session time;
 - source bundle, ciphertext, configuration, commit, and observation provenance;
 - analyzer version.
 
+A registry field named like one of these provenance columns or a partition key is written as
+`payload_<name>`, and its column metadata `particeps.payload_field` names the registry field. Six
+fields are renamed: `condition_epoch_id` in the two `study_condition.v1` epoch events and the three
+`traffic_shaping.v1` events, and `source_id` in `study_runtime.v1` `SOURCE_QUALITY_GAP`. A
+`json_string` field's column holds the authenticated wire text exactly as recorded. A schema or
+row that still does not fit its Arrow schema stops publication with a validation error.
+
 `dataset-manifest.json` binds the dataset to the generated registry digest and complete source
 commit ranges. `quality-summary.json` records verified participant heads, identical commit
-duplicates, boot sessions, source-clock sampling summaries, and survey lifecycle counts. These
+duplicates, boot sessions, source-clock sampling summaries, and survey lifecycle counts. For each
+participant it also lists every condition epoch's `preparation_bound`, `activated_at`, and
+`deactivated_at`: retrospective rows may begin at the preparation bound, before the epoch's
+resources were confirmed, so rows whose source time precedes `activated_at` can be excluded. These
 artifacts describe evidence quality; they do not infer missing participant behavior.
+
+## Real runtime fixtures
+
+`tests/fixtures/runtime-bundles/` holds encrypted exports written by the v1.0.0-rc.13 pilot build
+and by the current runtime, encrypted to the public INSECURE demonstration key; `PROVENANCE.md`
+there describes each run. `test_runtime_bundle_fixtures.py` inventories and materializes each one
+through the CLI and checks the published partitions, row counts, epoch columns, and payload
+columns against `manifest.json`; a replay of each chain checks which timer rendering its recovery
+commit records. `test_runtime_bundle_mutations.py` changes one accepted shape at a time in those
+chains and requires the owning rule to reject it.
+
+Most RC13 fixtures come from normal use. Five come from the RC13 runtime on the JVM with scripted
+platform doubles that inject the failures RC13 contains, so the rules for those shapes are tested
+against runtime output rather than hand-built chains: a pause in the same millisecond as a
+usage-events poll, whose flush covers the empty interval `[t, t)`; a VPN revoked while running,
+whose safety pause cannot read the traffic counters; a failed resource release after Complete;
+process death while `PAUSING`; and a reboot without trusted UTC. `PROVENANCE.md` there lists
+which run produced each file. The three pilot-scenario runs, two from RC13 and one from this
+branch, share one participant instance ID, so materialize them one at a time.
+
+`test_real_runtime_interop.py` consumes exports that the current runtime writes during the build.
+`RealRuntimeBundleInteropTest` in `core/study-application` runs the production session manager and
+runtime on deterministic platform doubles, with the five-day pilot configuration re-signed with
+test-only keys. The run covers setup and Start, collector events and usage-events barrier flushes,
+the noon and 17:00 window barriers, and pauses. It also covers a survey requested at the 17:00
+barrier, process death and a reboot with their recoveries, a clock change while running and
+another while paused, and the deadline stop, plus Complete from `RUNNING` on a second phone. The
+Kotlin test verifies every export with `ResearchBundleVerifier`. With
+`PARTICEPS_REAL_RUNTIME_INTEROP_DIR` set, it also writes the exports, the test-only key, and
+`expected.json` to that directory. The Python test then inventories and materializes them through
+the CLI and checks each export's counts, columns, and shapes. It skips when the variable is unset.
+CI runs both. These exports come from this tree's runtime; the RC13 evidence is the frozen fixtures
+above. From the repository root:
+
+```sh
+export PARTICEPS_REAL_RUNTIME_INTEROP_DIR="$PWD/build/protocol-interop/real-runtime"
+./gradlew :core:study-application:test --tests cool.jacoblin.particeps.core.application.RealRuntimeBundleInteropTest
+(cd particeps-analysis && uv run python -m unittest discover -s tests -p test_real_runtime_interop.py -v)
+```
 
 ## Verification commands
 

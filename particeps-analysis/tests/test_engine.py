@@ -1527,7 +1527,7 @@ class EngineTest(unittest.TestCase):
         )
         for document in first:
             verifier.accept(self.parser.parse(document))
-        with self.assertRaisesRegex(ValidationError, "active condition epoch"):
+        with self.assertRaisesRegex(ValidationError, "commit's condition epoch"):
             verifier.accept(self.parser.parse(resign_commit(orphan)))
 
     def test_checkpoint_digest_divergence_is_rejected(self) -> None:
@@ -1604,12 +1604,12 @@ class EngineTest(unittest.TestCase):
             next_event_sequence=2,
             next_observation_sequence=1,
             lifetime_data_event_count=0,
-            checkpoint_evaluated=1,
+            checkpoint_evaluated=0,
             checkpoint_lifecycle="READY",
             checkpoint_start=None,
             input_kind="TIMER_WAKE",
         )
-        with self.assertRaisesRegex(ValidationError, "checkpoint changed without a reducer input"):
+        with self.assertRaisesRegex(ValidationError, "automation timer audit has no reducer input"):
             EngineReplayVerifier(
                 self.registry, scheduled_action_configuration(), CONFIGURATION_SHA256
             ).accept(self.parser.parse(document))
@@ -1755,10 +1755,12 @@ class EngineTest(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "timer audit events diverge"):
             self._verify_timer_outputs(prior, result, intents, self._timer_audits(in_timer_id_order))
 
-    def test_merged_timer_replacements_retire_the_base_once_and_schedule_the_final(self) -> None:
+    def test_merged_timer_replacements_accept_the_complete_or_the_net_rendering(self) -> None:
         # A window that slides once per merged sample replaces its expiry timer three times in one
-        # reduction. The prior generation retires once and only the final generation is scheduled,
-        # which the stateful timer replay also accepts.
+        # reduction. RC13 writes the complete rendering: every intent, each retirement as the
+        # prior durable timer under that ID. This branch writes the net rendering: the prior
+        # generation retires once and only the final generation is scheduled. A mixture of the
+        # two is written by neither runtime and is rejected.
         producer_key = "condition:window"
         timer_id = _condition_timer_id(producer_key)
 
@@ -1774,27 +1776,42 @@ class EngineTest(unittest.TestCase):
             TimerIntent("SCHEDULE", timer=timer(4)),
         )
         net = self._timer_audits([("TIMER_RETIRED", timer(1)), ("TIMER_SCHEDULED", timer(4))])
-        per_intent = self._timer_audits(
+        complete = self._timer_audits(
             [("TIMER_RETIRED", timer(1))] * 3
             + [("TIMER_SCHEDULED", timer(generation)) for generation in (2, 3, 4)]
         )
         prior = {timer_id: timer(1)}
         result = {timer_id: timer(4)}
 
-        verifier = self._verify_timer_outputs(prior, result, intents, net)
-        with self.assertRaisesRegex(ValidationError, "timer audit events diverge"):
-            self._verify_timer_outputs(prior, result, intents, per_intent)
-
-        verifier.timers[timer_id] = (TIMER_TEST_AUTOMATION, 1)
-        for event in net:
-            verifier._timer_event(event)
-        self.assertEqual((TIMER_TEST_AUTOMATION, 4), verifier.timers[timer_id])
-        verifier.timers[timer_id] = (TIMER_TEST_AUTOMATION, 1)
-        with self.assertRaisesRegex(ValidationError, "stale or orphaned"):
-            for event in per_intent:
+        for rendering in (net, complete):
+            verifier = self._verify_timer_outputs(prior, result, intents, rendering)
+            for event in rendering:
                 verifier._timer_event(event)
 
-    def test_merged_timer_armed_then_cancelled_records_nothing(self) -> None:
+        mixtures = {
+            "one duplicate retirement removed": [("TIMER_RETIRED", timer(1))] * 2
+            + [("TIMER_SCHEDULED", timer(generation)) for generation in (2, 3, 4)],
+            "net plus an extra retirement": [("TIMER_RETIRED", timer(1))] * 2
+            + [("TIMER_SCHEDULED", timer(4))],
+            "an intermediate schedule dropped": [("TIMER_RETIRED", timer(1))] * 3
+            + [("TIMER_SCHEDULED", timer(generation)) for generation in (2, 4)],
+            "net in the wrong order": [("TIMER_SCHEDULED", timer(4)), ("TIMER_RETIRED", timer(1))],
+        }
+        for name, entries in mixtures.items():
+            with self.subTest(name), self.assertRaisesRegex(
+                ValidationError, "timer audit events diverge"
+            ):
+                self._verify_timer_outputs(prior, result, intents, self._timer_audits(entries))
+
+        verifier = self._verify_timer_outputs(prior, result, intents, net)
+        with self.assertRaisesRegex(ValidationError, "stale or orphaned"):
+            verifier._timer_event(self._timer_audits([("TIMER_RETIRED", timer(2))])[0])
+        with self.assertRaisesRegex(ValidationError, "generation did not advance"):
+            verifier._timer_event(self._timer_audits([("TIMER_SCHEDULED", timer(1))])[0])
+
+    def test_merged_timer_armed_then_cancelled_records_its_schedule_or_nothing(self) -> None:
+        # With no prior timer, the complete rendering omits the retirement and keeps the
+        # schedule; the net rendering records nothing.
         timer = self._condition_timer("condition:window", 1)
         intents = (
             TimerIntent("RETIRE", timer_id=timer.id, generation=1),
@@ -1802,8 +1819,16 @@ class EngineTest(unittest.TestCase):
         )
 
         self._verify_timer_outputs({}, {}, intents, [])
-        with self.assertRaisesRegex(ValidationError, "timer audit events diverge"):
-            self._verify_timer_outputs({}, {}, intents, self._timer_audits([("TIMER_SCHEDULED", timer)]))
+        self._verify_timer_outputs({}, {}, intents, self._timer_audits([("TIMER_SCHEDULED", timer)]))
+        for entries in (
+            [("TIMER_RETIRED", timer)],
+            [("TIMER_SCHEDULED", timer), ("TIMER_SCHEDULED", timer)],
+            [("TIMER_SCHEDULED", timer), ("TIMER_RETIRED", timer)],
+        ):
+            with self.subTest(entries=[entry[0] for entry in entries]), self.assertRaisesRegex(
+                ValidationError, "timer audit events diverge"
+            ):
+                self._verify_timer_outputs({}, {}, intents, self._timer_audits(entries))
 
     def test_action_request_requires_match_and_durable_outbox_provenance(self) -> None:
         _, condition_sha256 = checkpoint_component(
@@ -1852,7 +1877,7 @@ class EngineTest(unittest.TestCase):
             next_event_sequence=3,
             next_observation_sequence=1,
             lifetime_data_event_count=0,
-            checkpoint_evaluated=2,
+            checkpoint_evaluated=0,
             checkpoint_lifecycle="READY",
             checkpoint_start=None,
             input_kind="ACTION_RESULT",
@@ -2072,7 +2097,7 @@ class EngineTest(unittest.TestCase):
     def test_recovery_cannot_revive_a_resource_audit_timer(self) -> None:
         activation, _, _ = traffic_activation_commit()
         activation[-1]["input_kind"] = "RECOVERY"
-        with self.assertRaisesRegex(ValidationError, "RECOVERY commit cannot carry"):
+        with self.assertRaisesRegex(ValidationError, "recovery commit cannot audit a traffic profile"):
             EngineReplayVerifier(
                 self.registry, traffic_configuration(), CONFIGURATION_SHA256
             ).replay(self.parser.parse(resign_commit(item)) for item in activation)

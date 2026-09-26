@@ -64,6 +64,12 @@ _ACTION_STATES = {"READY", "CLAIMED", "OPENED", "SUCCEEDED", "FAILED"}
 _SESSION_STATES = {
     "READY", "ACTIVATING", "RUNNING", "PAUSING", "PAUSED", "COMPLETED", "WITHDRAWN",
 }
+# Setup states precede the first reducer input, so their commits carry the empty checkpoint.
+_SETUP_STATES = frozenset({
+    "IMPORTED", "CONFIG_VERIFIED", "CONSENT_PENDING", "ACCESS_SETUP", "READY",
+})
+_TERMINAL_REQUEST_EVENTS = frozenset({"STUDY_COMPLETE_REQUESTED", "STUDY_WITHDRAW_REQUESTED"})
+_TRAFFIC_RESOURCE_KEY = ("RESOURCE", "actuator:traffic-shaping.v1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -412,7 +418,8 @@ class EngineReplayVerifier:
         }
         self.match_audits: set[tuple[str, int, int, str]] = set()
         self.requested_actions: dict[str, tuple[str, str, str]] = {}
-        self.timers: dict[str, tuple[str, int]] = {}
+        # Invocation ID -> (automation ID, intervention ID, logical-time wall, request epoch).
+        self.action_occurrences: dict[str, tuple[str, str, str, str]] = {}
         self.checkpoint: Mapping[str, Any] | None = None
         self.previous_projection: Mapping[str, Any] | None = None
         self.previous_commit_sha256: str | None = None
@@ -434,6 +441,14 @@ class EngineReplayVerifier:
             if item["type"] == "resource_binding"
         }
         self.traffic_audits: dict[str, TrafficAuditState] = {}
+        self.current_commit: EngineCommit | None = None
+        # Preparation-bound evidence: the latest commit that entered ACTIVATING and the latest
+        # deactivation boundary. Each epoch's source interval starts at the later of the two.
+        self.last_activating_entry: ResearchTime | None = None
+        self.last_deactivation_boundary: ResearchTime | None = None
+        self.epoch_preparation_bounds: dict[str, ResearchTime] = {}
+        # Set by the PAUSING commit of a terminal request that retired the study deadline.
+        self.deadline_retired_by_terminal_request = False
 
     def replay(self, commits: Iterable[EngineCommit]) -> tuple[RecordedEvent, ...]:
         output: list[RecordedEvent] = []
@@ -510,6 +525,12 @@ class EngineReplayVerifier:
             raise ValidationError("event sequence has a gap across commits")
         if self.expected_observation_sequence is not None and commit.source_observations and commit.source_observations[0].observation_sequence != self.expected_observation_sequence:
             raise ValidationError("observation sequence has a gap across commits")
+        self._verify_commit_envelope_epoch(commit)
+        if commit.input_kind == "RECOVERY" and any(
+            event.source_id == "traffic_shaping.v1" for event in commit.events
+        ):
+            # The recovering process cannot audit a profile applied by the process that died.
+            raise ValidationError("recovery commit cannot audit a traffic profile")
         prospective = dict(self.components)
         for mutation in commit.mutations:
             key = (mutation.component_kind, mutation.component_id)
@@ -519,23 +540,47 @@ class EngineReplayVerifier:
                 if key not in prospective:
                     raise ValidationError("runtime mutation removes an unknown component")
                 prospective.pop(key)
+        if {
+            mutation.component_id
+            for mutation in commit.mutations
+            if mutation.component_kind == "AUTOMATION_CHECKPOINT"
+            and mutation.operation == "UPSERT"
+        } != {
+            component_id
+            for kind, component_id in prospective
+            if kind == "AUTOMATION_CHECKPOINT"
+        }:
+            raise ValidationError("commit does not upsert its complete automation checkpoint")
         checkpoint = self._verify_checkpoint(commit, prospective)
         authoritative = self._verify_authoritative_reduction(commit, prospective)
         self.current_checkpoint_digest = commit.resulting_checkpoint_sha256
         self.pending_components = prospective
         self.pending_checkpoint = checkpoint
+        self.current_commit = commit
         self.current_due_timers = {}
         try:
             self._verify_observations(commit)
             derived_events = tuple(self._accept_event(event) for event in commit.events)
             self._verify_projection(commit, checkpoint)
-            self._verify_study_deadline_commit(commit, prospective)
+            deadline_retired_by_terminal_request = self._verify_study_deadline_commit(
+                commit, prospective
+            )
             self._verify_resource_audit_commit(commit, prospective)
             self._verify_component_state(commit, prospective, checkpoint)
         finally:
             self.pending_components = None
             self.pending_checkpoint = None
+            self.current_commit = None
             self.current_due_timers = {}
+        previous_state = (
+            None if self.previous_projection is None else self.previous_projection["state"]
+        )
+        if (
+            commit.successor_projection["state"] == "ACTIVATING"
+            and previous_state != "ACTIVATING"
+        ):
+            self.last_activating_entry = commit.committed_at
+        self.deadline_retired_by_terminal_request = deadline_retired_by_terminal_request
         self.components = prospective
         self.checkpoint = checkpoint
         self.authoritative_checkpoint = authoritative
@@ -546,6 +591,29 @@ class EngineReplayVerifier:
         self.expected_observation_sequence = commit.successor_projection["next_observation_sequence"]
         self.current_checkpoint_digest = None
         return derived_events
+
+    def _verify_commit_envelope_epoch(self, commit: EngineCommit) -> None:
+        """Every event of a commit carries the one epoch the commit is bound to."""
+
+        transitions = [
+            event
+            for event in commit.events
+            if event.source_id == "study_condition.v1"
+            and event.event_type
+            in {"CONDITION_EPOCH_ACTIVATED", "CONDITION_EPOCH_DEACTIVATED"}
+        ]
+        if len(transitions) > 1:
+            raise ValidationError("commit records more than one condition epoch transition")
+        if transitions and transitions[0].event_type == "CONDITION_EPOCH_ACTIVATED":
+            expected = _uuid4(
+                transitions[0].wire_fields["condition_epoch_id"], "condition audit epoch"
+            )
+        else:
+            # A commit that closes an epoch, like every other commit, is bound to the epoch
+            # active in its predecessor; its successor projection then has none.
+            expected = None if self.active_epoch is None else self.active_epoch.id
+        if any(event.condition_epoch_id != expected for event in commit.events):
+            raise ValidationError("commit events do not carry the commit's condition epoch")
 
     def _verify_observations(self, commit: EngineCommit) -> None:
         self._verify_observation_event_order(commit)
@@ -559,23 +627,55 @@ class EngineReplayVerifier:
                 else ()
             )
         }
-        gap_reasons = {
-            event.wire_fields["reason"]
+        gap_events = [
+            event
             for event in commit.events
             if event.source_id == "study_runtime.v1"
             and event.event_type == "SOURCE_QUALITY_GAP"
-        }
+        ]
+        gap_reasons = {event.wire_fields["reason"] for event in gap_events}
         discard_retrospective = bool(
             gap_reasons & {"WALL_CLOCK_CHANGED", "PROCESS_RECOVERY"}
         )
         process_recovery_gap = "PROCESS_RECOVERY" in gap_reasons
-        if process_recovery_gap and getattr(commit, "input_kind", None) != "RECOVERY":
+        input_kind = getattr(commit, "input_kind", None)
+        if process_recovery_gap and input_kind != "RECOVERY":
             raise ValidationError("process-recovery quality gap requires RECOVERY input")
+        if input_kind == "RECOVERY" and [
+            event.wire_fields["reason"] for event in gap_events
+        ] != ["PROCESS_RECOVERY"]:
+            raise ValidationError(
+                "recovery commit must record exactly one process-recovery quality gap"
+            )
         allow_staged_recovery_observations = (
             process_recovery_gap
             and getattr(commit, "consumed_pending_input_sha256", None) is not None
         )
+        closes_epoch = any(
+            event.source_id == "study_condition.v1"
+            and event.event_type == "CONDITION_EPOCH_DEACTIVATED"
+            for event in commit.events
+        )
+        flushed_sources: list[str] = []
         for observation in commit.source_observations:
+            # A resource barrier flushes each retrospective collector once, after every
+            # NORMAL observation and in source-ID order, in the commit that closes the epoch.
+            if observation.admission_kind == "BARRIER_FLUSH":
+                if (
+                    observation.source_id
+                    not in self.registry.retrospective_collector_source_ids
+                    or observation.coverage is None
+                    or not closes_epoch
+                    or (flushed_sources and observation.source_id <= flushed_sources[-1])
+                ):
+                    raise ValidationError(
+                        "barrier flush is not one retrospective coverage observation"
+                    )
+                flushed_sources.append(observation.source_id)
+            elif flushed_sources:
+                raise ValidationError(
+                    "barrier flush is not one retrospective coverage observation"
+                )
             if (
                 discard_retrospective
                 and observation.source_id in self.registry.retrospective_collector_source_ids
@@ -643,6 +743,12 @@ class EngineReplayVerifier:
             self.observations_by_epoch.setdefault(
                 observation.condition_epoch_id, []
             ).append(observation)
+        for source_id in flushed_sources:
+            # The cursor is the collector's opaque resume token. It changes only in the commit
+            # that carries that source's completed flush, which stores the value it returned.
+            successor = commit.successor_projection["source_checkpoints"].get(source_id)
+            if successor is not None:
+                expected_checkpoints[source_id]["cursor"] = successor["cursor"]
         if discard_retrospective:
             expected_checkpoints = {
                 source_id: checkpoint
@@ -743,6 +849,8 @@ class EngineReplayVerifier:
             raise ValidationError("applied resource vector digest divergence")
         resources = _resource_vector(vector_json)
         boundary = _embedded_time(fields["boundary_research_time"])
+        if boundary != event.observed_time:
+            raise ValidationError("condition epoch boundary differs from its event time")
         if event.event_type == "CONDITION_EPOCH_ACTIVATED":
             if self.active_epoch is not None or epoch_id in self.known_epochs:
                 raise ValidationError("condition epochs overlap or reuse an ID")
@@ -750,6 +858,22 @@ class EngineReplayVerifier:
                 raise ValidationError("activation event envelope has the wrong epoch")
             self._verify_applied_vector(resources, prospective=True)
             epoch = ConditionEpoch(epoch_id, configuration, vector, boundary)
+            # Collectors start, or resume across a resource barrier, before the activation
+            # commit. The epoch's source interval therefore starts at its preparation bound.
+            candidates = [
+                item
+                for item in (self.last_deactivation_boundary, self.last_activating_entry)
+                if item is not None
+            ]
+            if not candidates:
+                raise ValidationError("condition epoch has no preparation bound")
+            preparation_bound = candidates[0]
+            for item in candidates[1:]:
+                if _time_order(item, preparation_bound) > 0:
+                    preparation_bound = item
+            if _time_order(preparation_bound, boundary) > 0:
+                raise ValidationError("condition epoch preparation bound follows its activation")
+            self.epoch_preparation_bounds[epoch_id] = preparation_bound
             self.active_epoch = epoch
             self.active_epoch_resources = {resource.key: resource for resource in resources}
             self.known_epochs[epoch_id] = epoch
@@ -760,6 +884,27 @@ class EngineReplayVerifier:
                 raise ValidationError("condition epoch deactivation vector mismatch")
             if event.condition_epoch_id != epoch_id:
                 raise ValidationError("deactivation event envelope has the wrong epoch")
+            commit = self.current_commit
+            if commit is None:
+                raise ValidationError("condition deactivation was evaluated outside a commit")
+            recovery_close = commit.input_kind == "RECOVERY"
+            if recovery_close and not (
+                fields["deactivation_reason"] == "PROCESS_RECOVERY_UNPROVEN"
+                and commit.successor_projection["state"] == "PAUSED"
+                and commit.successor_projection["active_condition_epoch"] is None
+            ):
+                raise ValidationError(
+                    "recovery close is not unproven PAUSED containment"
+                )
+            if recovery_close and any(
+                item.source_id == "study_runtime.v1"
+                and item.event_type == "SOURCE_QUALITY_GAP"
+                and item.observed_time != boundary
+                for item in commit.events
+            ):
+                # The recovery instant is the time of the commit's process-recovery gap. When the
+                # clock cannot be advanced across a reboot, committed_at keeps the prior anchor.
+                raise ValidationError("recovery close is not at the recovery instant")
             traffic_resource = next(
                 (
                     item
@@ -771,18 +916,75 @@ class EngineReplayVerifier:
             )
             if traffic_resource is not None:
                 audit = self.traffic_audits.get(epoch_id)
-                if audit is None or not audit.removed:
+                if (audit is None or not audit.removed) and not (
+                    self._closes_without_traffic_audit(commit, fields, event)
+                ):
                     raise ValidationError(
                         "traffic profile was not removed before condition deactivation"
                     )
+            if recovery_close and (
+                self.pending_components is None
+                or any(
+                    self.pending_components.get(key) != self.components.get(key)
+                    for key in {*self.components, *self.pending_components}
+                    if key[0] == "RESOURCE"
+                )
+            ):
+                raise ValidationError("recovery close rewrote a trusted resource receipt")
             self._verify_applied_vector(resources, prospective=False)
-            if boundary.boot_session_id != self.active_epoch.activated_at.boot_session_id:
+            if (
+                boundary.boot_session_id != self.active_epoch.activated_at.boot_session_id
+                and not recovery_close
+            ):
+                # Only the recovery instant may lie in a later boot session.
                 raise ValidationError("condition epoch cannot span a reboot")
             if _time_order(boundary, self.active_epoch.activated_at) < 0:
                 raise ValidationError("condition epoch ends before it starts")
             self.closed_epochs[epoch_id] = (self.active_epoch, boundary)
+            self.last_deactivation_boundary = boundary
             self.active_epoch = None
             self.active_epoch_resources = {}
+
+    def _closes_without_traffic_audit(
+        self,
+        commit: EngineCommit,
+        fields: Mapping[str, str],
+        deactivation: RecordedEvent,
+    ) -> bool:
+        """Whether [commit] is one of the two containment closes that audit no traffic profile.
+
+        A RECOVERY cannot audit the profile that the process that died applied. A SAFETY_FAILURE
+        whose boundary audit could not read verified counters, as after the VPN was revoked or
+        replaced, records none either. Each records no traffic_shaping.v1 event, retires the
+        resource-audit timer before the deactivation, keeps the APPLIED traffic receipt
+        unchanged as cleanup-pending truth, and ends PAUSED with no active epoch.
+        """
+
+        if commit.input_kind == "RECOVERY":
+            reason, retirement_reason = "PROCESS_RECOVERY_UNPROVEN", "QUALITY_GAP_RESET"
+        elif commit.input_kind == "SAFETY_FAILURE":
+            reason, retirement_reason = "SAFETY_PAUSED", "LIFECYCLE_ENDED"
+        else:
+            return False
+        retirements = [
+            item
+            for item in commit.events
+            if item.source_id == "timer.v1"
+            and item.event_type == "TIMER_RETIRED"
+            and item.wire_fields["producer_key"] == "resource-audit:actuator:traffic-shaping.v1"
+        ]
+        return (
+            fields["deactivation_reason"] == reason
+            and commit.successor_projection["state"] == "PAUSED"
+            and commit.successor_projection["active_condition_epoch"] is None
+            and not any(item.source_id == "traffic_shaping.v1" for item in commit.events)
+            and self.pending_components is not None
+            and self.pending_components.get(_TRAFFIC_RESOURCE_KEY)
+            == self.components.get(_TRAFFIC_RESOURCE_KEY)
+            and len(retirements) == 1
+            and retirements[0].wire_fields["retirement_reason"] == retirement_reason
+            and retirements[0].sequence_number < deactivation.sequence_number
+        )
 
     def _verify_applied_vector(
         self, resources: tuple[AppliedResource, ...], *, prospective: bool
@@ -852,6 +1054,15 @@ class EngineReplayVerifier:
             if prior is not None and prior != identity:
                 raise ValidationError("action invocation ID was reused")
             self.requested_actions[invocation_id] = identity
+            if event.condition_epoch_id is None:
+                raise ValidationError("action request has no condition epoch")
+            # Every intervention event of this occurrence belongs to the request epoch.
+            self.action_occurrences[invocation_id] = (
+                automation_id,
+                intervention_id,
+                str(_embedded_time(fields["logical_time"]).wall_time_utc_millis),
+                event.condition_epoch_id,
+            )
             automation = self.occurrences.get(automation_id)
             if automation is None:
                 raise ValidationError("action request references non-occurrence automation")
@@ -892,8 +1103,6 @@ class EngineReplayVerifier:
         if fields["producer_key"] == "study-deadline":
             if fields["automation_id"] != "study-duration":
                 raise ValidationError("study deadline timer owner mismatch")
-            if event.condition_epoch_id is not None:
-                raise ValidationError("study deadline timer must not be epoch-scoped")
             return
         automation_id = fields["automation_id"]
         if automation_id not in self.automation_ids:
@@ -910,13 +1119,17 @@ class EngineReplayVerifier:
         if timer_id != expected:
             raise ValidationError("timer deterministic identity mismatch")
         generation = int(fields["generation"])
+        # Events are bound to the durable timer map before this commit. The rendering check
+        # binds each schedule and retirement to one reducer intent and to the resulting map.
+        prior = self.authoritative_checkpoint.timers.get(timer_id)
         if event.event_type == "TIMER_SCHEDULED":
-            prior = self.timers.get(timer_id)
-            if prior is not None and generation <= prior[1]:
+            if prior is not None and generation <= prior.generation:
                 raise ValidationError("timer generation did not advance")
-            self.timers[timer_id] = (automation_id, generation)
         else:
-            if self.timers.get(timer_id) != (automation_id, generation):
+            if prior is None or (prior.automation_id, prior.generation) != (
+                automation_id,
+                generation,
+            ):
                 raise ValidationError("timer due/retired event is stale or orphaned")
             if event.event_type == "TIMER_DUE":
                 logical = _embedded_time(fields["logical_due_research_time"])
@@ -925,8 +1138,6 @@ class EngineReplayVerifier:
                     fields["clock"],
                     str(logical.wall_time_utc_millis),
                 )
-            if event.event_type == "TIMER_RETIRED":
-                self.timers.pop(timer_id)
 
     def _traffic_event(self, event: RecordedEvent) -> None:
         fields = event.wire_fields
@@ -1041,7 +1252,9 @@ class EngineReplayVerifier:
         self,
         commit: EngineCommit,
         prospective: Mapping[tuple[str, str], str],
-    ) -> None:
+    ) -> bool:
+        """Verify the deadline component and events; return the terminal-request flag."""
+
         previous_components = {
             component_id: value
             for (kind, component_id), value in self.components.items()
@@ -1111,8 +1324,38 @@ class EngineReplayVerifier:
             0,
             duration_nanos - clock["calendar_elapsed_nanos"],
         )
+        # The PAUSING commit of a Complete or Withdraw request from RUNNING retires the deadline.
+        # The study then holds none while it stays PAUSING or PAUSED, as after a failed release,
+        # until its terminal commit. A commit that re-anchors the study clock re-arms it: a
+        # RECOVERY, a Start or Resume entering ACTIVATING, or a paused wall-clock change.
+        terminal_request = any(
+            event.source_id == "study_runtime.v1"
+            and event.event_type in _TERMINAL_REQUEST_EVENTS
+            and event.wire_fields.get("previous_state") == "RUNNING"
+            and event.wire_fields.get("current_state") == "PAUSING"
+            for event in commit.events
+        )
+        reanchors_deadline = (
+            commit.input_kind == "RECOVERY"
+            or state == "ACTIVATING"
+            or any(
+                event.source_id == "study_runtime.v1"
+                and event.event_type == "SOURCE_QUALITY_GAP"
+                and event.wire_fields["reason"] == "WALL_CLOCK_CHANGED"
+                for event in commit.events
+            )
+        )
+        retired_by_terminal_request = (
+            state in {"PAUSING", "PAUSED"}
+            and current_timer is None
+            and not reanchors_deadline
+            and (
+                self.deadline_retired_by_terminal_request
+                or (terminal_request and prior_timer is not None)
+            )
+        )
         if state in {"ACTIVATING", "RUNNING", "PAUSING", "PAUSED"} and remaining != 0:
-            if current_timer is None:
+            if current_timer is None and not retired_by_terminal_request:
                 raise ValidationError("started study is missing its durable deadline")
         elif state in {"COMPLETED", "WITHDRAWN"} and current_timer is not None:
             raise ValidationError("terminal study retained its deadline timer")
@@ -1153,9 +1396,10 @@ class EngineReplayVerifier:
             if (
                 event.event_type == "TIMER_RETIRED"
                 and event.wire_fields["retirement_reason"]
-                != _expected_timer_retirement_reason(commit)
+                != _expected_deadline_retirement_reason(commit)
             ):
                 raise ValidationError("study deadline retirement reason mismatch")
+        return retired_by_terminal_request
 
     def _verify_resource_audit_commit(
         self,
@@ -1438,6 +1682,8 @@ class EngineReplayVerifier:
         observation_epoch = self.observation_epoch_by_event.get(event.sequence_number)
         if observation_epoch is not None:
             return observation_epoch
+        if event.source_id == "interventions.v1":
+            return self._intervention_epoch(event)
         schema = self.registry.event(event.source_id, event.schema_version, event.event_type)
         field = schema.primary_source_time_field
         if field is None or event.condition_epoch_id is None:
@@ -1462,12 +1708,45 @@ class EngineReplayVerifier:
             raise ValidationError("source event lies outside its condition epoch")
         return epoch.id
 
+    def _intervention_epoch(self, event: RecordedEvent) -> str:
+        """Bind an intervention event to its ACTION_REQUESTED by identity, not by time.
+
+        The occurrence belongs to the epoch in whose envelope it was requested, even when the
+        event is admitted under a later epoch or none. Its scheduled time is the occurrence's
+        logical time, which the reducer replay already binds, and need not lie in that epoch.
+        """
+
+        fields = event.wire_fields
+        occurrence = self.action_occurrences.get(fields["occurrence_id"])
+        if occurrence is None or occurrence[:3] != (
+            fields["trigger_id"],
+            fields["intervention_id"],
+            fields["scheduled_for_utc_millis"],
+        ):
+            raise ValidationError("intervention event diverges from its action request")
+        return occurrence[3]
+
     def _verify_closed_observation_coverage(self) -> None:
         for epoch_id, observations in self.observations_by_epoch.items():
             epoch = self.known_epochs.get(epoch_id)
             if epoch is None:
                 raise ValidationError("source observation references an orphan epoch")
             closed = self.closed_epochs.get(epoch_id)
+            # Coverage may begin at the preparation bound, never earlier, and never ends after
+            # the deactivation boundary. A recovery close in a later boot has no monotonic
+            # upper bound; its wall upper bound is the recovery instant.
+            bound = self.epoch_preparation_bounds[epoch_id]
+            boot = epoch.activated_at.boot_session_id
+            monotonic_lower = (
+                bound.elapsed_realtime_nanos
+                if bound.boot_session_id == boot
+                else epoch.activated_at.elapsed_realtime_nanos
+            )
+            monotonic_upper = (
+                closed[1].elapsed_realtime_nanos
+                if closed is not None and closed[1].boot_session_id == boot
+                else None
+            )
             for observation in observations:
                 coverage = observation.coverage
                 if coverage is None:
@@ -1475,13 +1754,13 @@ class EngineReplayVerifier:
                 if coverage.clock_basis == "SOURCE_WALL_TIME":
                     start = _coverage_coordinate(coverage.start_inclusive)
                     end = _coverage_coordinate(coverage.end_exclusive)
-                    lower = epoch.activated_at.wall_time_utc_millis
+                    lower = bound.wall_time_utc_millis
                     upper = closed[1].wall_time_utc_millis if closed else None
                 elif coverage.clock_basis == "SOURCE_MONOTONIC_TIME":
                     start = _coverage_coordinate(coverage.start_inclusive)
                     end = _coverage_coordinate(coverage.end_exclusive)
-                    lower = epoch.activated_at.elapsed_realtime_nanos
-                    upper = closed[1].elapsed_realtime_nanos if closed else None
+                    lower = monotonic_lower
+                    upper = monotonic_upper
                 else:
                     start_time = _embedded_time(coverage.start_inclusive)
                     end_time = _embedded_time(coverage.end_exclusive)
@@ -1492,9 +1771,21 @@ class EngineReplayVerifier:
                         raise ValidationError("coverage cannot be assigned across reboot")
                     start = start_time.elapsed_realtime_nanos
                     end = end_time.elapsed_realtime_nanos
-                    lower = epoch.activated_at.elapsed_realtime_nanos
-                    upper = closed[1].elapsed_realtime_nanos if closed else None
-                if start >= end or start < lower or (upper is not None and end > upper):
+                    lower = monotonic_lower
+                    upper = monotonic_upper
+                if start == end and not (
+                    # A barrier whose boundary falls on the collector's query start flushes
+                    # the empty wall-clock interval [t, t) at the deactivation boundary.
+                    observation.admission_kind == "BARRIER_FLUSH"
+                    and observation.event_count == 0
+                    and coverage.clock_basis == "SOURCE_WALL_TIME"
+                    and closed is not None
+                    and end == closed[1].wall_time_utc_millis
+                ):
+                    raise ValidationError(
+                        "retrospective coverage is empty outside a boundary flush"
+                    )
+                if start > end or start < lower or (upper is not None and end > upper):
                     raise ValidationError(
                         "retrospective coverage crosses a condition epoch boundary"
                     )
@@ -1592,15 +1883,18 @@ class EngineReplayVerifier:
         digest = automation_checkpoint_digest(checkpoint)
         if digest != commit.resulting_checkpoint_sha256:
             raise ValidationError("automation checkpoint digest divergence")
-        if checkpoint["evaluated_through_sequence"] > commit.successor_projection["next_event_sequence"] - 1:
+        # The evaluated-through sequence counts reducer inputs, not commits. It is zero exactly
+        # while the successor is a setup state, and a commit advances it by the number of
+        # reducer inputs it carries.
+        evaluated = checkpoint["evaluated_through_sequence"]
+        if evaluated > commit.successor_projection["next_event_sequence"] - 1:
             raise ValidationError("automation checkpoint evaluated beyond durable events")
-        if self.checkpoint is not None:
-            delta = (
-                checkpoint["evaluated_through_sequence"]
-                - self.checkpoint["evaluated_through_sequence"]
-            )
-            if not 0 <= delta <= len(commit.events):
-                raise ValidationError("automation reducer cursor is not causally bounded")
+        if (evaluated == 0) != (commit.successor_projection["state"] in _SETUP_STATES):
+            raise ValidationError("automation checkpoint cursor contradicts the lifecycle state")
+        # Complete replay starts at genesis, whose prior cursor is 0.
+        prior = 0 if self.checkpoint is None else self.checkpoint["evaluated_through_sequence"]
+        if not 0 <= evaluated - prior <= len(commit.events):
+            raise ValidationError("automation reducer cursor is not causally bounded")
         return checkpoint
 
     def _verify_authoritative_reduction(
@@ -1624,6 +1918,13 @@ class EngineReplayVerifier:
             self._verify_reduction_outputs(commit, prospective, result)
         elif durable != self.authoritative_checkpoint:
             raise ValidationError("automation checkpoint changed without a reducer input")
+        elif any(
+            event.source_id == "timer.v1"
+            and event.event_type in {"TIMER_SCHEDULED", "TIMER_RETIRED"}
+            and _is_automation_timer_event(event)
+            for event in commit.events
+        ):
+            raise ValidationError("automation timer audit has no reducer input")
         return durable
 
     def _reconstruct_reducer_inputs(
@@ -1666,13 +1967,22 @@ class EngineReplayVerifier:
                     state = advertised
                 elif advertised != state:
                     raise ValidationError("lifecycle event does not identify its reducer transition")
+                if _is_pausing_safety_request(event) and (
+                    commit.input_kind not in {"SAFETY_FAILURE", "RECOVERY"}
+                    or self.authoritative_checkpoint.lifecycle != "PAUSING"
+                ):
+                    raise ValidationError("lifecycle event does not identify its reducer transition")
+                if _is_pausing_safety_request(event):
+                    # A study already PAUSING is safety-paused after its release failed, or by
+                    # the recovery of a process that died while PAUSING. The request records
+                    # PAUSING -> PAUSING and is no reducer transition; only PAUSED is reduced.
+                    continue
                 if not lifecycle_states or lifecycle_states[-1][1] != state:
                     lifecycle_states.append((event, state))
             elif (
                 event.source_id == "timer.v1"
                 and event.event_type == "TIMER_DUE"
-                and not event.wire_fields["producer_key"].startswith("resource-audit:")
-                and event.wire_fields["producer_key"] != "study-deadline"
+                and _is_automation_timer_event(event)
             ):
                 selected.append(("TIMER_DUE", event))
 
@@ -1995,42 +2305,13 @@ class EngineReplayVerifier:
             event for event in commit.events
             if event.source_id == "timer.v1"
             and event.event_type in {"TIMER_SCHEDULED", "TIMER_RETIRED"}
-            and not event.wire_fields["producer_key"].startswith("resource-audit:")
-            and event.wire_fields["producer_key"] != "study-deadline"
+            and _is_automation_timer_event(event)
         ]
-        # A commit records the reducer's timer intents that are part of the net change of its
-        # timer map, in their original order, each once. A retirement is kept when the prior map
-        # holds that timer at that generation and the result no longer holds it unchanged; a
-        # schedule is kept when the result holds exactly that timer and the prior map did not.
-        # Every intent of a reduction of one runtime input is kept. A multi-input reduction also
-        # names each generation it armed and then retired or replaced, and those are dropped.
-        prior_timers = self.authoritative_checkpoint.timers
-        result_timers = result.checkpoint.timers
-        committed_intents: list[TimerIntent] = []
-        expected_timers: list[tuple[str, tuple[str, str, str | None, str, str, str, str]]] = []
-        for item in result.timer_intents:
-            if item in committed_intents:
-                continue
-            if item.type == "RETIRE":
-                prior = prior_timers.get(item.timer_id or "")
-                if (
-                    prior is None
-                    or prior.generation != item.generation
-                    or result_timers.get(prior.id) == prior
-                ):
-                    continue
-                evidence = ("RETIRE", _timer_output_evidence(prior, include_cause=False))
-            else:
-                timer = item.timer
-                if (
-                    timer is None
-                    or result_timers.get(timer.id) != timer
-                    or prior_timers.get(timer.id) == timer
-                ):
-                    continue
-                evidence = ("SCHEDULE", _timer_output_evidence(timer, include_cause=True))
-            committed_intents.append(item)
-            expected_timers.append(evidence)
+        complete, net = _timer_intent_renderings(
+            result.timer_intents,
+            self.authoritative_checkpoint.timers,
+            result.checkpoint.timers,
+        )
         actual_timers = [
             (
                 "SCHEDULE" if event.event_type == "TIMER_SCHEDULED" else "RETIRE",
@@ -2038,13 +2319,14 @@ class EngineReplayVerifier:
             )
             for event in timer_events
         ]
+        # A commit records exactly one of the two deterministic renderings, never a mixture.
         if (
-            actual_timers != expected_timers
+            actual_timers not in (complete, net)
             or any(event.observed_time != observed for event in timer_events)
             or any(
                 event.event_type == "TIMER_RETIRED"
                 and event.wire_fields["retirement_reason"]
-                != _expected_timer_retirement_reason(commit)
+                != _expected_reducer_timer_retirement_reason(commit)
                 for event in timer_events
             )
         ):
@@ -2141,15 +2423,8 @@ class EngineReplayVerifier:
             cleanups,
         )
 
-        checkpoint_timers = checkpoint["timers"]
-        if component_timers != checkpoint_timers:
+        if component_timers != checkpoint["timers"]:
             raise ValidationError("timer components diverge from automation checkpoint")
-        checkpoint_timer_ids = {
-            timer_id: (timer[1], int(timer[2]))
-            for timer_id, timer in checkpoint_timers.items()
-        }
-        if self.timers != checkpoint_timer_ids:
-            raise ValidationError("timer audit lifecycle diverges from durable timer state")
 
         applied_traffic = any(
             kind == "RESOURCE"
@@ -2827,19 +3102,119 @@ def _timer_event_evidence(
     )
 
 
-def _expected_timer_retirement_reason(commit: EngineCommit) -> str:
-    quality_gap = any(
+def _is_automation_timer_event(event: RecordedEvent) -> bool:
+    producer_key = event.wire_fields["producer_key"]
+    return not producer_key.startswith("resource-audit:") and producer_key != "study-deadline"
+
+
+TimerEvidence = tuple[str, tuple[str, str, str | None, str, str, str, str]]
+
+
+def _timer_intent_renderings(
+    intents: Iterable[TimerIntent],
+    prior_timers: Mapping[str, DurableTimer],
+    result_timers: Mapping[str, DurableTimer],
+) -> tuple[list[TimerEvidence], list[TimerEvidence]]:
+    """Return the complete and the net rendering of one reducer batch's timer intents.
+
+    The reducer has already removed duplicate intents and ordered them by timer ID, retirements
+    before schedules. The complete rendering writes every intent: a retirement as the prior
+    durable timer under its ID, omitted when the prior map holds none. The net rendering keeps
+    only the retirement of the prior timer at that generation that the result no longer holds
+    unchanged, and the schedule of a timer that the result holds and the prior map did not.
+    """
+
+    complete: list[TimerEvidence] = []
+    net: list[TimerEvidence] = []
+    for item in intents:
+        if item.type == "RETIRE":
+            prior = prior_timers.get(item.timer_id or "")
+            if prior is None:
+                continue
+            evidence = ("RETIRE", _timer_output_evidence(prior, include_cause=False))
+            complete.append(evidence)
+            if prior.generation == item.generation and result_timers.get(prior.id) != prior:
+                net.append(evidence)
+        else:
+            timer = item.timer
+            evidence = ("SCHEDULE", _timer_output_evidence(timer, include_cause=True))
+            complete.append(evidence)
+            if (
+                timer is not None
+                and result_timers.get(timer.id) == timer
+                and prior_timers.get(timer.id) != timer
+            ):
+                net.append(evidence)
+    return complete, net
+
+
+def _is_pausing_safety_request(event: RecordedEvent) -> bool:
+    """A safety pause requested while already PAUSING, which is no lifecycle transition."""
+
+    return (
         event.source_id == "study_runtime.v1"
-        and event.event_type == "SOURCE_QUALITY_GAP"
+        and event.event_type == "STUDY_SAFETY_PAUSE_REQUESTED"
+        and event.wire_fields.get("previous_state") == "PAUSING"
+        and event.wire_fields.get("current_state") == "PAUSING"
+    )
+
+
+def _lifecycle_enters_pausing(commit: EngineCommit) -> bool:
+    return any(
+        event.source_id == "study_runtime.v1"
+        and event.wire_fields.get("current_state") == "PAUSING"
+        and not _is_pausing_safety_request(event)
         for event in commit.events
     )
-    if commit.input_kind == "RECOVERY" or quality_gap:
+
+
+def _records_event(commit: EngineCommit, source_id: str, event_type: str) -> bool:
+    return any(
+        event.source_id == source_id and event.event_type == event_type
+        for event in commit.events
+    )
+
+
+def _expected_reducer_timer_retirement_reason(commit: EngineCommit) -> str:
+    """Mirror the runtime call site that retires automation-reducer timers in this commit."""
+
+    if commit.input_kind == "RECOVERY":
         return "QUALITY_GAP_RESET"
-    if commit.input_kind in {"LIFECYCLE_COMMAND", "SAFETY_FAILURE"}:
+    if commit.input_kind == "SAFETY_FAILURE" or _lifecycle_enters_pausing(commit):
         return "LIFECYCLE_ENDED"
-    if commit.input_kind == "TIMER_WAKE":
+    if _records_event(commit, "study_runtime.v1", "SOURCE_QUALITY_GAP"):
+        return "QUALITY_GAP_RESET"
+    if (
+        commit.input_kind == "TIMER_WAKE"
+        and any(
+            event.source_id == "timer.v1"
+            and event.event_type == "TIMER_DUE"
+            and _is_automation_timer_event(event)
+            for event in commit.events
+        )
+        and not _records_event(commit, "study_condition.v1", "CONDITION_EPOCH_DEACTIVATED")
+    ):
         return "FIRED"
+    # Includes the commit that opens a resource barrier, whose due timer retires CANCELLED,
+    # activation, a terminal command from PAUSED, a random selection, and a source observation.
     return "CANCELLED"
+
+
+def _expected_deadline_retirement_reason(commit: EngineCommit) -> str:
+    if any(
+        event.source_id == "timer.v1"
+        and event.event_type == "TIMER_DUE"
+        and event.wire_fields["producer_key"] == "study-deadline"
+        for event in commit.events
+    ):
+        return "FIRED"
+    if commit.input_kind == "RECOVERY" or _records_event(
+        commit, "study_runtime.v1", "SOURCE_QUALITY_GAP"
+    ):
+        return "QUALITY_GAP_RESET"
+    if commit.input_kind == "LIFECYCLE_COMMAND":
+        return "LIFECYCLE_ENDED"
+    raise ValidationError("study deadline retired by an unexpected commit")
 
 
 def _decode_component(encoded: str, prefix: str) -> _ComponentReader:
@@ -3206,7 +3581,11 @@ def _validate_checkpoint(
     ):
         raise ValidationError("invalid cooldown checkpoint state")
     desired = checkpoint["desired_resources"]
-    if {(kind.lower(), source_id) for kind, source_id in desired} != set(
+    if checkpoint["evaluated_through_sequence"] == 0:
+        # Setup commits precede the first reducer input and carry the empty checkpoint.
+        if not _is_empty_checkpoint(checkpoint):
+            raise ValidationError("pre-start automation checkpoint is not the empty checkpoint")
+    elif {(kind.lower(), source_id) for kind, source_id in desired} != set(
         resource_profiles
     ):
         raise ValidationError("automation checkpoint has an incomplete desired resource vector")
@@ -3238,6 +3617,33 @@ def _validate_checkpoint(
             not 1 <= len(item[0]) <= 160 or item[1] < 0 for item in summaries
         ):
             raise ValidationError("invalid materialized timer summary")
+
+
+def _is_empty_checkpoint(checkpoint: Mapping[str, Any]) -> bool:
+    return (
+        checkpoint["evaluated_through_sequence"] == 0
+        and checkpoint["lifecycle"] == "READY"
+        and checkpoint["study_start_utc_millis"] is None
+        and checkpoint["last_active_elapsed_nanos"] == 0
+        and checkpoint["last_calendar_elapsed_nanos"] == 0
+        and not any(
+            checkpoint[name]
+            for name in (
+                "latch_values",
+                "presence_keys",
+                "held_since_nanos",
+                "prior_condition_values",
+                "windows",
+                "sequences",
+                "activation_counts",
+                "cooldown_marks",
+                "desired_resources",
+                "timers",
+                "timer_generations",
+                "materialized_timers",
+            )
+        )
+    )
 
 
 def _validate_timer(timer: tuple[Any, ...]) -> None:

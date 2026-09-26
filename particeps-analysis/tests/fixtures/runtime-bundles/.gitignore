@@ -1,0 +1,15 @@
+# These exports are encrypted to the public INSECURE demo HPKE key and carry no participant
+# data (see PROVENANCE.md). The repository ignores *.partexp everywhere so that real research
+# exports are never committed by accident; only the fixtures that manifest.json lists are
+# re-included here, by name, so an export copied into this directory stays ignored.
+!/branch-jvm-pilot-process-restart.partexp
+!/rc13-emulator-complete-from-running.partexp
+!/rc13-emulator-reboot-while-running.partexp
+!/rc13-jvm-death-while-pausing.partexp
+!/rc13-jvm-demo-barrier-flush-events.partexp
+!/rc13-jvm-empty-flush-and-vpn-revoked.partexp
+!/rc13-jvm-pilot-process-restart.partexp
+!/rc13-jvm-pilot-reboot.partexp
+!/rc13-jvm-reboot-without-trusted-time.partexp
+!/rc13-jvm-release-fails-then-resume.partexp
+!/rc13-jvm-survey-no-resources.partexp

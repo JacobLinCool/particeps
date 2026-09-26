@@ -458,8 +458,28 @@ with a partial required vector.
 Pause does not advance active-running time. Polling sources do not query/backfill the paused or
 unverified interval.
 
+Complete and Withdraw from `RUNNING` retire the study deadline in the first, `PAUSING` commit
+(`LIFECYCLE_ENDED`, or `FIRED` when the deadline itself stops the study); the study holds no
+deadline until the terminal commit that follows. When the stop does not finish, because the
+resource release fails or the process dies while `PAUSING`, the study is safety-paused or
+recovered from `PAUSING`: the request event of that commit records `PAUSING` to `PAUSING` and only
+`PAUSED` is reduced. A recovery re-arms the deadline in that commit. After a failed release the
+study stays `PAUSED` without a deadline until a commit that re-anchors its clock (a Resume, a
+recovery, or a paused wall-clock change) re-arms it. A re-armed deadline has generation 1.
+
 Process death/reboot with durable `ACTIVATING`, `RUNNING`, or `PAUSING` becomes `PAUSED` on recovery.
 The runtime records a quality gap, closes any epoch, and requires explicit participant Resume.
+That `RECOVERY` commit closes a running epoch with `PROCESS_RECOVERY_UNPROVEN` at the recovery
+instant, the time of its `PROCESS_RECOVERY` gap, which after a reboot lies in the new boot
+session. Its `committed_at` is the recovery clock's anchor, which keeps the previous boot's anchor
+when the clock cannot advance across the reboot without trusted UTC. It records no traffic-shaping
+audit, because the recovering process cannot read the counters of a profile that the process that
+died applied. It retires the resource-audit timer and keeps every `RESOURCE` receipt unchanged, an
+`APPLIED` traffic receipt included, as cleanup-pending truth until cleanup finalization records
+the complete vector `INACTIVE`. A safety pause whose boundary audit throws, as when the VPN was
+revoked and the native engine can no longer report counters, closes the epoch the same way with
+`SAFETY_PAUSED`: no traffic-shaping audit, the resource-audit timer retired `LIFECYCLE_ENDED`, and
+the traffic receipt kept for cleanup.
 If the persisted state was already `PAUSED`, a new boot still requires an explicit quality-gap
 commit and trusted UTC re-anchor before Resume. That commit removes every retrospective source
 cursor and replaces the same-boot deadline generation; it never queries the reboot interval.
@@ -515,7 +535,13 @@ combined input, a stop that reduces flushed events before its lifecycle input, f
 of an `ACTIVATING` or `RUNNING` runtime (a quality gap, whose reset re-arms each condition timer the
 still-active conditions need, followed by `PAUSING` and `PAUSED`), or a clock discontinuity first
 seen after the deadline followed by `PAUSING`, can also name generations it armed and then retired
-or replaced; the commit never records or wakes those. Python replay verifies the same rule.
+or replaced; the commit never records or wakes those. This is the net rendering of Protocol v1.
+v1.0.0-rc.13 writes the complete rendering instead: every intent in the same order, each
+retirement as the prior durable timer under its ID and omitted when there is none. In a
+multi-input batch it can therefore retire one prior generation more than once and schedule
+generations the resulting map never holds; its `RECOVERY` commits do. Protocol v1 admits exactly
+these two renderings, never a mixture, and Python replay verifies that each commit records one of
+them.
 WorkManager carries only timer ID and generation and calls `onTimerDue`; the runtime resolves the
 authenticated target from its durable timer component and never accepts a deadline from worker
 input or rebuilds a schedule from configuration. It rejects a wake as stale when it holds that
@@ -658,6 +684,13 @@ must carry the active UUID. System resource audit carries the same UUID in its t
 
 Traffic audit does not own a parallel epoch. `traffic_shaping.v1` binds profile/VPN/resource
 generation, package-list digest, caps, native digest, and counters to the generic epoch.
+
+Every event of one commit carries one envelope epoch: the epoch the commit activates, and otherwise
+the epoch active before it. The closing commit's lifecycle, timer, and deadline events therefore
+carry the epoch they close. An epoch's source interval starts at its preparation bound, the later
+of the previous deactivation boundary and the latest entry into `ACTIVATING`, because collectors
+start before the activation commit. Intervention events belong to the epoch of their
+`ACTION_REQUESTED`, bound by occurrence identity rather than by scheduled time.
 
 Kotlin export verification and Python analysis check activation/deactivation order, no overlap,
 event/observation attribution, vector/profile receipts, source coverage, reducer causality, and
