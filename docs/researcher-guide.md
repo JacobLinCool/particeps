@@ -431,6 +431,18 @@ Any collector or actuator change uses one global barrier:
 6. commit receipts, new epoch, and applied-vector digest;
 7. resume resources and reopen admission.
 
+Callback collectors submit callbacks that are already queued together as one observation; they
+never wait to fill a batch. Within that observation every event is recorded and reduced in capture
+order and keeps the condition epoch it would have had when submitted alone, but desired resources
+are reconciled once per observation. A condition that sets and resets inside one merged observation
+therefore changes no resource and rotates no epoch. When a merged observation does change a
+resource, the callbacks captured before the event that causes the change are committed first, as
+when each is submitted alone; that event and the callbacks queued behind it enter the barrier
+together and are reduced after the input the barrier drains. A reset that is queued only after its
+trigger was submitted still enters the barrier as pre-drain input, is reduced ahead of the trigger,
+and the change is applied. How many callbacks queue together depends on device load, so preregister
+resource bindings on callback conditions as best observed at observation granularity.
+
 Participant pause, complete, withdraw, or safety failure always overrides automation. A study
 recovered from process death/reboot while `ACTIVATING`, `RUNNING`, or `PAUSING` becomes `PAUSED`; it
 does not auto-resume or backfill the unverified interval.

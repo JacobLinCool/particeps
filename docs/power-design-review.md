@@ -15,6 +15,29 @@
 
 驗證包含：禁止加入研究後的投影呼叫 storage recovery、100 次 pause／resume 的同 revision 欄位一致性、沒有輪詢計時器的鎖等待與取消競態、快照額度／失敗重試、配額查核不讀密文，以及 Android Keystore 實際加密資料在未更新快照、尾端截斷、checkpoint 中斷及密文損壞時的恢復。這些驗證證明行為及工作量路徑已改變，不是電池節省百分比量測。 本次 119 項 JVM 測試及 API 34 模擬器 22 項儲存測試通過，Android lint 與 debug APK 建置成功。
 
+## 第 2 項實作狀態（2026-09-25）：只合併已排隊的 callback
+
+本次只實作第 2 節中不改變持久性語義的 collector 端合併，沒有實作第 3 節的 wake-up gyro、FIFO flush、`maxReportLatencyUs` 調整或暫停前排空；gyro 的 wake lock、抽樣頻率與回報延遲設定不變。
+
+- `SerializedCallbackCollector` 的 consumer 醒來時，把當下已在佇列中的 callback 合併成一筆 `SourceEventBatch`，不等待後續 callback。沒有新增計時器、wake lock 或交付延遲；每個被接受的 observation 仍先持久化（一般 `EngineCommit`，或 barrier 期間的 pending slot），再回覆 accepted。
+- 批次在以下位置分割：barrier／stop 訊息（barrier 仍在所有先前事件處理完後才完成）、admission token 不相等、observed time 倒退或 boot session 改變，以及 min(4,096、registry 每批上限、⌊1 MiB ÷ 來源最大 encoded event bytes⌋) 筆，gyro 為 512 筆。
+- 合併批次被 admission gate 拒絕或違反事件契約時，以折半找出可接受的前綴；每次接受後重新提交整段剩餘事件，因為研究截止時間過後才開始的 drain 會放寬 admission。以此方式被接受的每個部分至少涵蓋剩餘可接受事件的一半，所以一批只產生 O(log n) 個被接受的 observation，限制 barrier pending slot 的重寫次數，offer 次數則為 O(log² n)。producer ordinal 只在接受時前進。單一事件被 gate 拒絕時，該事件及其後事件丟棄；單一事件違反契約時，它之前的有效事件已經記錄，collector 在該事件失效，其後事件丟棄。儲存失敗或品質缺口立即使 collector 失效。失效前已接受的部分仍保留。
+- runtime 發現合併批次在第一個事件之後才改變 desired resource 時，只把改變之前的事件記錄為一般 commit，並以 `Accepted.recordedEvents` 回報筆數；collector 以下一個 producer ordinal 提交其餘事件。因此 staged 的 causal observation 從造成改變的事件開始，它之前的 callback 與逐筆提交時一樣先 commit。有 coverage 的回溯批次一律整批處理。
+- 一個 commit 只記錄 reducer timer map 的淨變化：被移除或取代的舊 timer 各記一次 `TIMER_RETIRED`，使用它本身的 generation；新的或取代後的 timer 各記一次 `TIMER_SCHEDULED`，也只有這些變化交給 WorkManager。合併批次中每個事件都讓 window 滑動時，不會重複記錄基準 generation 的退休，也不會為中間的 generation 排程多餘的喚醒。Python 驗證器採用相同規則。
+- `LocationCollector` 將每個 `LocationResult` 以 `captureAll` 排入一則訊息，每個 fix 保留各自的 observed time。
+
+量測是原始碼路徑的工作量，不是耗電量測；量測程式與模擬器量測修補都是暫時性的，未納入 repository。
+
+- JVM：真實 `SerializedCallbackCollector` 與 `ExperimentRuntime`，記憶體內 StudyStore。每次喚醒時已排入 50 筆：每 1,000 筆事件的 commit 從 1,000 降為 20；consumer 在 `Dispatchers.Default` 自然排程時，三次執行分別為 23、24、28。觸發事件先單獨提交、其後 49 筆排在它之後時，barrier pending slot 的寫入從 50 次降為 2 次，累計重新編碼的事件從 1,275 筆降為 51 筆。
+- API 34 模擬器，P2 gyro 以 20 ms 抽樣、`maximum_report_latency_us = 0`，20 秒視窗，記憶體內 sink：sink 不延遲時，修改前後都是 1,000 筆事件對應 1,000 個 observation。每個 sample 單獨到達，佇列沒有累積，所以不會合併。
+- 同一模擬器設定，由 sink 對每個 observation 假設 20 ms／100 ms 的提交延遲：修改後分別是 1,000 筆事件 880 個 observation、1,020 筆事件 196 個 observation。修改前同一視窗只處理 882／196 筆事件，每筆一個 observation，consumer 落後且積壓持續增加；依 100 ms 時的速率推算，2,048 筆佇列約 50 秒後會滿。這兩個延遲是假設值，不是加密儲存的實測延遲。
+
+因此，在 `maximum_report_latency_us = 0` 時，gyro 每個 sample 仍單獨到達；只有 sample 在佇列中累積，例如排在一筆較慢的 commit 之後，gyro 的 commit 數才會下降。要在一般負載下大幅減少 gyro commit，仍需第 3 節經硬體驗證的批次與 flush 設計。
+
+對研究資料的影響：原始 sample、observed time、時間解析度、交付延遲、持久性與裝置資格不變，但可能改變介入暴露。reducer 仍依序處理每個事件，每個 observation 卻只 reconcile 一次 desired resources。同一合併 observation 內先成立又復原的條件不再切換資源或輪替 epoch；逐筆提交時，排在觸發事件之後的復原事件會以 pre-drain 輸入先於觸發事件被 reduce，資源仍會切換。合併在觸發事件之前的 callback 先以一般 commit 記錄，與逐筆提交相同；觸發事件與排在其後的 callback 組成 causal observation，在 barrier 的 pre-drain 輸入之後才被 reduce。事件記錄與 condition-epoch 歸屬不變；在合併的 causal observation 內，事件序號依 capture 順序。
+
+驗證：`SerializedCallbackCollectorTest` 涵蓋不等待的合併、barrier 不跨越且在先前事件處理後才完成、數量／位元組上限、token 不相等、時間倒退與 boot 變更、被拒批次的前綴與連續 ordinal、admission 在拒絕後放寬時仍提交剩餘事件、契約違規前的有效事件先記錄且 collector 在違規事件失效、只記錄前段時以下一個 ordinal 提交其餘事件，以及 `captureAll`；`EventAdmissionGateTest` 涵蓋 token 相等性；`AutomationReducerTest` 涵蓋第一個改變資源的輸入；`ExperimentRuntimeTest` 涵蓋合併批次中段的觸發從觸發事件開始 staged、其前事件先 commit 且與逐筆提交有相同的 epoch 歸屬、drain 期間的輸入不使 rising edge 重複觸發、同一批內先成立又復原不輪替 epoch，以及合併的 window 滑動只記錄 timer 淨變化且不排程中間 generation；particeps-analysis 的 `test_engine.py` 涵蓋驗證器的 timer 淨變化規則。
+
 ## 結論
 
 保留 collector 插件、單一事件序列、純函式 automation reducer、持久化後執行副作用與必要來源失效時暫停的設計。需要重整的是資料路徑的工作頻率：目前把高頻觀測、持久化、完整狀態恢復及顯示更新連在一起；此外，陀螺儀要求 CPU 在研究進行期間保持喚醒。
@@ -68,6 +91,8 @@
 - 暫停、撤回、截止、資源切換需要 barrier；不能讓一批資料穿過不同 epoch，或延後需要即時執行的控制事件。
 
 **驗收：**量測每千筆事件的檔案同步次數、加密次數、磁碟 bytes、queue 峰值、commit 延遲與 CPU 時間。加入斷電／程序死亡、快照落後、尾端截斷與配額邊界測試。
+
+**狀態（2026-09-25）：**已實作「collector 多筆提交」中只合併已排隊 callback 的部分，見上方「第 2 項實作狀態」。硬體批次回報與「多個邏輯 commit 合併一次同步」尚未實作；上述驗收中的同步次數、加密次數、磁碟 bytes 與 commit 延遲尚未以加密儲存實測。
 
 ## 3. 陀螺儀長時間持有 partial wake lock
 

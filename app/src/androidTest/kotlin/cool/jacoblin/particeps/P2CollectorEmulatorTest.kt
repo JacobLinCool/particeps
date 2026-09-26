@@ -238,6 +238,7 @@ class P2CollectorEmulatorTest {
                 }
                 EmitBatchResult.Accepted(
                     observationSequence = observationSequence,
+                    recordedEvents = batch.events.size,
                 )
             }
 

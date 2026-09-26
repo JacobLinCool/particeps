@@ -1997,20 +1997,27 @@ class EngineReplayVerifier:
             and not event.wire_fields["producer_key"].startswith("resource-audit:")
             and event.wire_fields["producer_key"] != "study-deadline"
         ]
-        expected_timers = [
-            (
-                item.type,
-                _timer_output_evidence(
-                    item.timer
-                    if item.timer is not None
-                    else self.authoritative_checkpoint.timers.get(item.timer_id or ""),
-                    include_cause=item.type == "SCHEDULE",
-                ),
-            )
-            for item in result.timer_intents
-            if item.type == "SCHEDULE"
-            or item.timer_id in self.authoritative_checkpoint.timers
-        ]
+        # A commit records the net change of the reducer timer map, not every intent: a
+        # multi-input reduction's intents also name each generation it armed and replaced on the
+        # way. Each prior timer removed or replaced retires once with its own generation, and each
+        # resulting timer that is new or replaced is scheduled once, ordered by timer ID with the
+        # retirement first. For a single-input reduction this equals its intents.
+        prior_timers = self.authoritative_checkpoint.timers
+        result_timers = result.checkpoint.timers
+        expected_timers: list[tuple[str, tuple[str, str, str | None, str, str, str, str]]] = []
+        for timer_id in sorted(prior_timers.keys() | result_timers.keys()):
+            prior = prior_timers.get(timer_id)
+            successor = result_timers.get(timer_id)
+            if prior == successor:
+                continue
+            if prior is not None:
+                expected_timers.append(
+                    ("RETIRE", _timer_output_evidence(prior, include_cause=False))
+                )
+            if successor is not None:
+                expected_timers.append(
+                    ("SCHEDULE", _timer_output_evidence(successor, include_cause=True))
+                )
         actual_timers = [
             (
                 "SCHEDULE" if event.event_type == "TIMER_SCHEDULED" else "RETIRE",

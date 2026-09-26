@@ -10,7 +10,7 @@ import org.junit.Test
 class NetworkUsageFlushCursorTest {
     @Test
     fun producerOrdinalAdvancesOnlyAfterAcceptedDurableOwnership() {
-        val accepted = EmitBatchResult.Accepted(1)
+        val accepted = EmitBatchResult.Accepted(1, recordedEvents = 1)
         assertEquals(8L, producerOrdinalAfter(accepted, 7L))
         assertEquals(7L, producerOrdinalAfter(EmitBatchResult.RejectedByAdmissionGate, 7L))
         assertEquals(7L, producerOrdinalAfter(EmitBatchResult.StorageFailure, 7L))

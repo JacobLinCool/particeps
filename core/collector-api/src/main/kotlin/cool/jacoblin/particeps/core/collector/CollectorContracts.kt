@@ -246,7 +246,10 @@ data class CollectorHealth(
     }
 }
 
-/** Opaque runtime-issued admission capability; collector features cannot construct a valid token. */
+/**
+ * Opaque runtime-issued admission capability; collector features cannot construct a valid token.
+ * Two tokens are equal only when the runtime admits a batch under either of them identically.
+ */
 interface AdmissionToken
 
 data class SourceEventBatch(
@@ -306,11 +309,19 @@ enum class SourceQualityGapReason {
 }
 
 sealed interface EmitBatchResult {
+    /**
+     * The batch's producer ordinal now names one durable observation. [recordedEvents] counts the
+     * batch's leading events that observation holds: every event of the offer, except where
+     * [EventSink.emitBatch] records a live batch only up to its first desired-resource change. A
+     * coverage advance records none.
+     */
     data class Accepted(
         val observationSequence: Long,
+        val recordedEvents: Int,
     ) : EmitBatchResult {
         init {
             require(observationSequence > 0) { "Observation sequence must be positive" }
+            require(recordedEvents >= 0) { "Recorded event count must not be negative" }
         }
     }
 
@@ -430,6 +441,23 @@ interface EventSink {
      */
     fun captureBarrierFlushToken(boundary: ResearchTime): AdmissionToken?
 
+    /**
+     * Admits [batch] as one observation under its producer ordinal, or none of it.
+     *
+     * A live batch, one without coverage, may be recorded only in part: when a desired resource
+     * would change only after its first event, the observation holds the events before that one,
+     * [EmitBatchResult.Accepted.recordedEvents] counts them, and the caller offers the rest as a
+     * new batch under the next producer ordinal. The observation that stages the change then
+     * starts with the event that causes it, and the events before it are committed first, as when
+     * each event is offered alone. A batch with coverage is always recorded whole.
+     *
+     * Admission under one [token] bounds observed time from above and narrows over time with one
+     * exception: once the study deadline has passed, an open epoch refuses every batch, but a drain
+     * that begins afterwards, such as the deadline stop's, admits events observed at or before its
+     * boundary and before the deadline. So when a batch ordered by observed time is rejected, a
+     * prefix of it may still be admitted, and no event after the first rejected one can be unless
+     * a drain began after that rejection.
+     */
     suspend fun emitBatch(token: AdmissionToken, batch: SourceEventBatch): EmitBatchResult
 
     suspend fun advanceCoverage(token: AdmissionToken, advance: CoverageAdvance): EmitBatchResult

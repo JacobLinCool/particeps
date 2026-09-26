@@ -164,7 +164,15 @@ interface Collector {
 - `stop` proves process resources are released. Wrong call order fails loudly.
 
 Use `SerializedCallbackCollector` for callback sources. It owns a bounded channel, one consumer,
-registration/teardown state, producer ordinals, and health transitions. Use
+registration/teardown state, producer ordinals, and health transitions. The consumer merges
+callbacks that are already queued into one observation, split at barriers, unequal admission
+tokens, observed-time regressions, boot changes, and the per-source event bound; it never waits for
+more. When the runtime records only the events before a resource change, the base class offers the
+rest under the next producer ordinal; when the runtime refuses a merged batch, the base class
+searches for its admitted prefix as the `EventSink.emitBatch` contract describes. A subclass never
+handles `EmitBatchResult` itself. Use `capture` for one sample and `captureAll` when one platform
+callback delivers several, so
+they share one queue slot and one admission token. Use
 `registerSourceWithRollback` and explicit `SourceRegistrationResult`/`SourceTeardownResult` when
 registration has multiple steps. An uncertain teardown must block a new generation instead of
 registering a second listener over unknown physical state.

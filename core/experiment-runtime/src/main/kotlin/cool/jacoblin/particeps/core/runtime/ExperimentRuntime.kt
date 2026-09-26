@@ -1070,9 +1070,35 @@ class ExperimentRuntime(
         } catch (_: IllegalArgumentException) {
             return EmitBatchResult.ContractViolation
         }
-        val reduction = reduceRecordedEvents(prepared.events, clock, automationCheckpoint)
+        val inputs = recordedEventInputs(prepared.events, clock, automationCheckpoint)
+        val reduction = if (inputs.isEmpty()) emptyReduction(automationCheckpoint) else {
+            reducer.reduceBatch(program, automationCheckpoint, inputs)
+        }
         val causalObservation = prepared.observations.single()
         if (reduction.resourceChanges.isNotEmpty()) {
+            unchangedLeadingEvents(submission, inputs)?.let { leadingEvents ->
+                // Record only the events before the first resource change. The caller offers the
+                // rest again, so the change is staged from the event that causes it, and the events
+                // captured before that one are never reduced after input the barrier drains.
+                val leading = prepareSources(
+                    document = current,
+                    submissions = listOf(
+                        submission.copy(events = submission.events.subList(0, leadingEvents).toList())
+                            .withKind(ObservationAdmissionKind.NORMAL),
+                    ),
+                    conditionEpochId = epochId,
+                    startingCheckpoints = current.sourceCheckpoints,
+                )
+                val leadingReduction = reducer.reduceBatch(
+                    program,
+                    automationCheckpoint,
+                    inputs.subList(0, leadingEvents),
+                )
+                check(leadingReduction.resourceChanges.isEmpty()) {
+                    "Events before the first resource change changed a resource"
+                }
+                return commitObservationLocked(leading, leadingReduction, clock)
+            }
             require(submission.events.isNotEmpty()) { "Coverage-only input cannot change a resource" }
             val pending = PendingEngineInput(
                 conditionEpochId = epochId,
@@ -1119,7 +1145,15 @@ class ExperimentRuntime(
             }
             return accepted(causalObservation)
         }
+        return commitObservationLocked(prepared, reduction, clock)
+    }
 
+    /** Commits one admitted observation whose reduction changes no desired resource. */
+    private suspend fun commitObservationLocked(
+        prepared: PreparedSources,
+        reduction: ReductionResult,
+        clock: StudyClockCheckpoint,
+    ): EmitBatchResult {
         val effects = try {
             appendReductionLocked(
                     inputKind = EngineInputKind.SOURCE_OBSERVATION,
@@ -1139,7 +1173,7 @@ class ExperimentRuntime(
             gate.forceClose()
             enqueueBarrier(FailClosedBarrier(SafetyPauseReason.STORAGE_FAILURE, null))
         }
-        return accepted(causalObservation)
+        return accepted(prepared.observations.single())
     }
 
     private suspend fun activate(from: ExperimentState, resumed: Boolean): RuntimeCommandResult = command {
@@ -2620,17 +2654,31 @@ class ExperimentRuntime(
         }
     }
 
-    private fun reduceRecordedEvents(
+    private fun recordedEventInputs(
         events: List<RecordedEvent>,
         clock: StudyClockCheckpoint,
         base: AutomationCheckpoint,
-    ): ReductionResult {
-        if (events.isEmpty()) return emptyReduction(base)
+    ): List<ReducerInput.Event> {
         val reducerClock = reducerClock(clock)
-        val inputs = events.mapIndexed { index, event ->
+        return events.mapIndexed { index, event ->
             event.toReducerInput(base.evaluatedThroughSequence + index + 1L, reducerClock)
         }
-        return reducer.reduceBatch(program, base, inputs)
+    }
+
+    /**
+     * How many leading events of a live [submission] to record before the one that first changes
+     * a desired resource, or null to handle the submission whole. The reducer reconciles resources
+     * once per observation, so staging a merged callback batch whole would reduce the callbacks
+     * captured before its trigger after the input the barrier drains, where each alone would have
+     * committed first. A batch with coverage is one retrospective claim and is never split. This
+     * runs only for an observation that changes a resource.
+     */
+    private fun unchangedLeadingEvents(submission: SourceSubmission, inputs: List<ReducerInput.Event>): Int? {
+        if (submission.coverage != null || inputs.size < 2) return null
+        val first = checkNotNull(reducer.firstResourceChangingInput(program, automationCheckpoint, inputs)) {
+            "A resource-changing observation has no first resource change"
+        }
+        return first.takeIf { it > 0 }
     }
 
     private fun RecordedEvent.toReducerInput(sequence: Long, clock: ReducerClock): ReducerInput.Event {
@@ -2666,6 +2714,8 @@ class ExperimentRuntime(
     ): PostCommitEffects {
         val conditionDigest = reduction.checkpoint.digest()
         val causalSequence = reduction.checkpoint.evaluatedThroughSequence.coerceAtLeast(1)
+        val oldTimers = automationCheckpoint.timers
+        val timerChanges = netTimerChanges(oldTimers, reduction.checkpoint.timers)
         val generatedEvents = buildList {
             reduction.audits.mapNotNullTo(this) {
                 RuntimeEventFactory.automationAudit(it, conditionDigest, causalSequence, clock.anchor)
@@ -2673,12 +2723,12 @@ class ExperimentRuntime(
             reduction.actionRequests.forEach {
                 add(RuntimeEventFactory.actionRequested(it, conditionDigest, causalSequence, clock.anchor))
             }
-            val oldTimers = automationCheckpoint.timers
-            reduction.timerIntents.forEach { intent ->
-                when (intent) {
-                    is TimerIntent.Schedule -> add(RuntimeEventFactory.timerScheduled(intent.timer, clock.anchor))
-                    is TimerIntent.Retire -> oldTimers[intent.timerId]?.let { timer ->
-                        add(RuntimeEventFactory.timerRetired(timer, timerRetirementReason, clock.anchor))
+            timerChanges.forEach { change ->
+                when (change) {
+                    is TimerIntent.Schedule -> add(RuntimeEventFactory.timerScheduled(change.timer, clock.anchor))
+                    is TimerIntent.Retire -> {
+                        val retired = oldTimers.getValue(change.timerId)
+                        add(RuntimeEventFactory.timerRetired(retired, timerRetirementReason, clock.anchor))
                     }
                 }
             }
@@ -2699,7 +2749,7 @@ class ExperimentRuntime(
                 failureReason = null,
             )
         }
-        val timerMutations = timerMutations(automationCheckpoint.timers, reduction.checkpoint.timers)
+        val timerMutations = timerMutations(oldTimers, reduction.checkpoint.timers)
         val effects = appendCommitLocked(
             inputKind = inputKind,
             checkpoint = reduction.checkpoint,
@@ -2715,7 +2765,7 @@ class ExperimentRuntime(
             sourceCheckpoints = sourceCheckpoints,
         )
         return effects.copy(
-            timerIntents = reduction.timerIntents,
+            timerIntents = timerChanges,
             actionsReady = actions.map(DurableActionInvocation::actionId),
             timerProductionRequests = reduction.timerProductionRequests,
         )
@@ -3493,6 +3543,35 @@ class ExperimentRuntime(
         null,
     )
 
+    /**
+     * The automation timers one commit retires and schedules: the net change from [before] to
+     * [after], ordered like reducer intents (by timer ID, a retirement before a schedule). A
+     * multi-input reduction's intents also name every generation it armed and replaced on the way,
+     * so a window that slides once per merged event would otherwise retire its base generation once
+     * per event and schedule wakeups for generations that no longer exist. Here each base timer
+     * that is removed or replaced retires once, with its own generation, and each resulting timer
+     * that is new or replaced schedules once. Within one input the reducer replaces each timer at
+     * most once, so for a single-input reduction this equals its intents.
+     */
+    private fun netTimerChanges(
+        before: Map<String, DurableTimer>,
+        after: Map<String, DurableTimer>,
+    ): List<TimerIntent> {
+        if (before == after) return emptyList()
+        return (before.keys + after.keys).sorted().flatMap { timerId ->
+            val old = before[timerId]
+            val new = after[timerId]
+            if (old == new) {
+                emptyList()
+            } else {
+                listOfNotNull(
+                    old?.let { TimerIntent.Retire(it.id, it.generation) },
+                    new?.let(TimerIntent::Schedule),
+                )
+            }
+        }
+    }
+
     private fun timerMutations(
         before: Map<String, DurableTimer>,
         after: Map<String, DurableTimer>,
@@ -3559,6 +3638,7 @@ class ExperimentRuntime(
 
     private fun accepted(observation: SourceObservation) = EmitBatchResult.Accepted(
         observation.observationSequence,
+        observation.eventCount,
     )
 
     private fun commandId(kind: String, sequence: Long): String = digest(
@@ -3797,7 +3877,7 @@ class ExperimentRuntime(
             val observation = firstObservationSequence + normalSubmissions.size + flushSubmissions.size - 1L
             eventCount += submission.events.size
             sourceCheckpoints[submission.sourceId] = nextCheckpoint
-            EmitBatchResult.Accepted(observation)
+            EmitBatchResult.Accepted(observation, submission.events.size)
         }
 
         suspend fun snapshot(): BarrierSnapshot = lock.withLock {

@@ -147,7 +147,7 @@ class AllAppsTrafficShapingAndroidTest {
         override fun captureBarrierFlushToken(boundary: ResearchTime): AdmissionToken? = null
         override suspend fun emitBatch(token: AdmissionToken, batch: SourceEventBatch): EmitBatchResult = synchronized(recorded) {
             recorded.addAll(batch.events)
-            EmitBatchResult.Accepted(++sequence)
+            EmitBatchResult.Accepted(++sequence, batch.events.size)
         }
         override suspend fun advanceCoverage(token: AdmissionToken, advance: CoverageAdvance): EmitBatchResult =
             error("VPN state is a live callback source")

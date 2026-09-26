@@ -146,11 +146,30 @@ internal class EventAdmissionGate(
     private fun ResearchTime.isStrictlyBefore(boundary: ResearchTime): Boolean =
         bootSessionId == boundary.bootSessionId && elapsedRealtimeNanos < boundary.elapsedRealtimeNanos
 
+    /**
+     * [classify] reads only a normal token's owner, generation, and kind, so normal tokens that
+     * agree on all three are interchangeable and compare equal; a collector may submit callbacks
+     * captured under equal tokens as one batch. The drain's barrier-flush token is admitted only by
+     * identity, so it equals itself alone.
+     */
     private class EpochToken(
         val owner: Any,
         val generation: Long,
         val kind: TokenKind,
-    ) : AdmissionToken
+    ) : AdmissionToken {
+        override fun equals(other: Any?): Boolean = this === other || (
+            other is EpochToken &&
+                kind == TokenKind.NORMAL &&
+                other.kind == TokenKind.NORMAL &&
+                other.owner === owner &&
+                other.generation == generation
+            )
+
+        override fun hashCode(): Int = when (kind) {
+            TokenKind.NORMAL -> 31 * System.identityHashCode(owner) + generation.hashCode()
+            TokenKind.BARRIER_FLUSH -> System.identityHashCode(this)
+        }
+    }
 
     private enum class TokenKind { NORMAL, BARRIER_FLUSH }
 

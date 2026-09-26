@@ -28,6 +28,7 @@ import cool.jacoblin.particeps.core.collector.SourceTeardownResult
 import cool.jacoblin.particeps.core.collector.StudyScopedTokenEncoder
 import cool.jacoblin.particeps.core.collector.ResearchClocks
 import cool.jacoblin.particeps.core.collector.SourceEventBatch
+import cool.jacoblin.particeps.core.definition.Aggregate
 import cool.jacoblin.particeps.core.definition.AutomationCompilerInput
 import cool.jacoblin.particeps.core.definition.DeclaredResource
 import cool.jacoblin.particeps.core.definition.DurationClock
@@ -36,6 +37,7 @@ import cool.jacoblin.particeps.core.definition.EventMatcher
 import cool.jacoblin.particeps.core.definition.FieldOperator
 import cool.jacoblin.particeps.core.definition.FieldPredicate
 import cool.jacoblin.particeps.core.definition.InterventionDefinition
+import cool.jacoblin.particeps.core.definition.NumericComparison
 import cool.jacoblin.particeps.core.definition.OccurrenceAutomation
 import cool.jacoblin.particeps.core.definition.ResourceBindingAutomation
 import cool.jacoblin.particeps.core.definition.ResourceConditionCase
@@ -51,6 +53,7 @@ import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.model.PendingEngineInput
 import cool.jacoblin.particeps.core.model.PendingSourceSubmission
 import cool.jacoblin.particeps.core.model.ResearchTime
+import cool.jacoblin.particeps.core.model.RuntimeComponentKind
 import cool.jacoblin.particeps.core.model.RuntimeDocument
 import cool.jacoblin.particeps.core.model.SourceCoverage
 import cool.jacoblin.particeps.core.model.SourceClockBasis
@@ -82,15 +85,18 @@ import java.io.IOException
 import java.math.BigInteger
 import java.time.Instant
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
@@ -371,6 +377,233 @@ class ExperimentRuntimeTest {
         val causalCommit = fixture.store.commits.single { it.consumedPendingInputSha256 != null }
         assertEquals(oldEpoch, causalCommit.sourceObservations.single().conditionEpochId)
         assertEquals(oldEpoch, causalCommit.events.first { it.type.eventType == "BATTERY_STATE" }.conditionEpochId)
+    }
+
+    @Test
+    fun triggerInsideAMergedCallbackBatchIsStagedFromTheTriggerWithSequentialEpochAttribution() = runTest {
+        val percentages = listOf(50, 42, 51)
+
+        // Merged: the real collector submits three already-queued callbacks as one observation.
+        val merged = fixture(backgroundScope)
+        merged.runtime.initialize()
+        completeSetup(merged.runtime)
+        merged.runtime.start()
+        val mergedOldEpoch = requireNotNull(merged.runtime.snapshot.value.conditionEpochId)
+        var stagedEvents = 0
+        merged.store.afterPendingStaged = {
+            stagedEvents = requireNotNull(merged.store.pending).submissions.sumOf { it.events.size }
+        }
+        val collector = RuntimeCallbackCollector(
+            CollectorContext(
+                scope = backgroundScope,
+                eventSink = merged.runtime,
+                clocks = merged.clock,
+                sourceContract = requireNotNull(ProtocolEventSourceRegistry[BATTERY_SOURCE.value]),
+                resourceGeneration = 1,
+                tokenEncoder = StudyScopedTokenEncoder { _, _ -> "0".repeat(64) },
+            ),
+            consumerDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        collector.start()
+        collector.onAdmissionOpened()
+        percentages.forEach(collector::trigger)
+        runCurrent()
+
+        // The callback captured before the trigger commits first, as it did when offered alone;
+        // the trigger and the callback queued behind it are staged together from the trigger.
+        assertEquals(2, stagedEvents)
+        assertNull(merged.store.pending)
+        val leading = merged.store.commits.single { commit ->
+            commit.consumedPendingInputSha256 == null && commit.events.any { it.type == BATTERY_EVENT }
+        }
+        assertEquals(1, leading.sourceObservations.single().eventCount)
+        assertEquals(0L, leading.sourceObservations.single().producerOrdinal)
+        assertEquals(
+            listOf("50"),
+            leading.events.filter { it.type == BATTERY_EVENT }.map { it.fields.getValue("percentage") },
+        )
+        val mergedBarrier = merged.store.commits.single { it.consumedPendingInputSha256 != null }
+        assertTrue(mergedBarrier.commitSequence > leading.commitSequence)
+        val causal = mergedBarrier.sourceObservations.single()
+        assertEquals(2, causal.eventCount)
+        assertEquals(1L, causal.producerOrdinal)
+        assertEquals(mergedOldEpoch, causal.conditionEpochId)
+        assertEquals(
+            listOf("42", "51"),
+            mergedBarrier.events.filter { it.type == BATTERY_EVENT }.map { it.fields.getValue("percentage") },
+        )
+        collector.stop()
+
+        // Sequential: the per-callback offers the consumer made before merging.
+        val sequential = fixture(backgroundScope)
+        sequential.runtime.initialize()
+        completeSetup(sequential.runtime)
+        sequential.runtime.start()
+        val sequentialOldEpoch = requireNotNull(sequential.runtime.snapshot.value.conditionEpochId)
+        val token = requireNotNull(sequential.runtime.captureToken())
+        // Every callback was observed while queued, before the consumer reached the trigger.
+        val queued = percentages.mapIndexed { ordinal, percentage ->
+            batteryBatch(sequential.clock.now(), percentage).copy(producerOrdinal = ordinal.toLong())
+        }
+        queued.forEach { batch ->
+            assertTrue(sequential.runtime.emitBatch(token, batch) is EmitBatchResult.Accepted)
+        }
+        runCurrent()
+
+        assertNull(sequential.store.pending)
+        assertEquals(mergedOldEpoch, sequentialOldEpoch)
+        fun Fixture.attribution() = store.commits
+            .flatMap { it.events }
+            .filter { it.type == BATTERY_EVENT }
+            .associate { it.fields.getValue("percentage") to it.conditionEpochId }
+        assertEquals(percentages.associate { it.toString() to mergedOldEpoch }, merged.attribution())
+        assertEquals(merged.attribution(), sequential.attribution())
+        assertEquals(sequential.runtime.snapshot.value.conditionEpochId, merged.runtime.snapshot.value.conditionEpochId)
+        assertNotEquals(mergedOldEpoch, merged.runtime.snapshot.value.conditionEpochId)
+        assertEquals("slow", merged.traffic.lastDesired?.profile?.id)
+        assertEquals("slow", sequential.traffic.lastDesired?.profile?.id)
+    }
+
+    @Test
+    fun setAndResetInsideOneMergedBatchReconcileOnceWithoutRotatingTheEpoch() = runTest {
+        // Merged: the latch sets and resets inside one observation, so the final state is unchanged.
+        val merged = fixture(backgroundScope)
+        merged.runtime.initialize()
+        completeSetup(merged.runtime)
+        merged.runtime.start()
+        val oldEpoch = requireNotNull(merged.runtime.snapshot.value.conditionEpochId)
+        val mergedToken = requireNotNull(merged.runtime.captureToken())
+        val first = batteryBatch(merged.clock.now(), 42).events.single()
+        val second = batteryBatch(merged.clock.now(), 43).events.single()
+        val batch = batteryBatch(merged.clock.now()).copy(events = listOf(first, second))
+
+        assertTrue(merged.runtime.emitBatch(mergedToken, batch) is EmitBatchResult.Accepted)
+        runCurrent()
+
+        assertFalse(merged.store.pendingStaged.isCompleted)
+        assertEquals(oldEpoch, merged.runtime.snapshot.value.conditionEpochId)
+        assertEquals("baseline", merged.traffic.lastDesired?.profile?.id)
+        val commit = merged.store.commits.single { commit -> commit.events.any { it.type == BATTERY_EVENT } }
+        assertEquals(2, commit.sourceObservations.single().eventCount)
+        assertTrue(commit.events.filter { it.type == BATTERY_EVENT }.all { it.conditionEpochId == oldEpoch })
+
+        // Per-callback offers: the reset is buffered behind the staged set and reduced before it.
+        val sequential = fixture(backgroundScope)
+        sequential.runtime.initialize()
+        completeSetup(sequential.runtime)
+        sequential.runtime.start()
+        val token = requireNotNull(sequential.runtime.captureToken())
+        val queued = listOf(42, 43).mapIndexed { ordinal, percentage ->
+            batteryBatch(sequential.clock.now(), percentage).copy(producerOrdinal = ordinal.toLong())
+        }
+        queued.forEach { assertTrue(sequential.runtime.emitBatch(token, it) is EmitBatchResult.Accepted) }
+        runCurrent()
+
+        assertNotEquals(oldEpoch, sequential.runtime.snapshot.value.conditionEpochId)
+        assertEquals("slow", sequential.traffic.lastDesired?.profile?.id)
+    }
+
+    @Test
+    fun callbacksMergedBeforeATriggerAreReducedBeforeInputTheBarrierDrains() = runTest {
+        // One rising edge of the latch notifies. A reset merged ahead of the set it precedes must
+        // not be reduced after a set that the barrier drains, or the latch would rise twice.
+        val fixture = fixture(backgroundScope, notifyTrigger = Trigger.ConditionRisingEdge(PERCENTAGE_LATCH))
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val oldEpoch = requireNotNull(fixture.runtime.snapshot.value.conditionEpochId)
+        val token = requireNotNull(fixture.runtime.captureToken())
+        val reset = batteryBatch(fixture.clock.now(), 43).events.single()
+        val set = batteryBatch(fixture.clock.now(), 42).events.single()
+        // Observed before the barrier's boundary but submitted only while the barrier drains.
+        val drained = batteryBatch(fixture.clock.now(), 42).copy(producerOrdinal = 2)
+
+        val merged = fixture.runtime.emitBatch(
+            token,
+            batteryBatch(fixture.clock.now()).copy(events = listOf(reset, set)),
+        )
+
+        // Only the reset is recorded; nothing is staged until the collector offers the rest.
+        assertEquals(1, (merged as EmitBatchResult.Accepted).recordedEvents)
+        assertNull(fixture.store.pending)
+        val leading = fixture.store.commits.last()
+        assertEquals(EngineInputKind.SOURCE_OBSERVATION, leading.inputKind)
+        assertEquals(
+            listOf("43"),
+            leading.events.filter { it.type == BATTERY_EVENT }.map { it.fields.getValue("percentage") },
+        )
+        val rest = batteryBatch(fixture.clock.now()).copy(producerOrdinal = 1, events = listOf(set))
+        assertEquals(1, (fixture.runtime.emitBatch(token, rest) as EmitBatchResult.Accepted).recordedEvents)
+        assertNotNull(fixture.store.pending)
+        // A set submitted while the barrier drains is reduced before the staged trigger.
+        assertTrue(fixture.runtime.emitBatch(token, drained) is EmitBatchResult.Accepted)
+        runCurrent()
+
+        assertNull(fixture.store.pending)
+        assertNotEquals(oldEpoch, fixture.runtime.snapshot.value.conditionEpochId)
+        assertEquals("slow", fixture.traffic.lastDesired?.profile?.id)
+        val barrier = fixture.store.commits.single { it.consumedPendingInputSha256 != null }
+        assertEquals(listOf(1L, 2L), barrier.sourceObservations.map { it.producerOrdinal })
+        val audits = fixture.store.commits.flatMap { it.events }
+            .filter { it.type.eventType in setOf("AUTOMATION_MATCHED", "AUTOMATION_SUPPRESSED") }
+        assertEquals(listOf("AUTOMATION_MATCHED"), audits.map { it.type.eventType })
+        assertEquals(1, fixture.store.commits.flatMap { it.events }.count { it.type.eventType == "ACTION_REQUESTED" })
+    }
+
+    @Test
+    fun mergedWindowSlidesRetireEachTimerGenerationOnceAndWakeOnlyTheLast() = runTest {
+        // A one-second count window never reaches its threshold, so every sample only slides it.
+        val window = StateCondition.WindowThreshold(
+            EventMatcher(BATTERY_EVENT),
+            windowSeconds = 1,
+            EvaluationClock.OBSERVED_RESEARCH_TIME,
+            Aggregate.Count,
+            NumericComparison(FieldOperator.GTE, "100"),
+        )
+        val fixture = fixture(backgroundScope, trafficCondition = window)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val token = requireNotNull(fixture.runtime.captureToken())
+        fun Fixture.windowTimerEvents(commit: EngineCommit) = commit.events.filter {
+            it.type.sourceId.value == "timer.v1" && it.fields.getValue("producer_key").startsWith("condition:")
+        }
+
+        assertTrue(fixture.runtime.emitBatch(token, batteryBatch(fixture.clock.now(), 50)) is EmitBatchResult.Accepted)
+        val armed = fixture.windowTimerEvents(fixture.store.commits.last()).single()
+        assertEquals("TIMER_SCHEDULED", armed.type.eventType)
+        val timerId = armed.fields.getValue("timer_id")
+        val armedGeneration = armed.fields.getValue("generation").toULong()
+        val scheduledBefore = fixture.timerWakeups.scheduled.size
+        val retiredBefore = fixture.timerWakeups.retiredGenerations.size
+
+        // Three samples queued together, each more than a window after the one before it.
+        val samples = (1..3).map { index ->
+            fixture.clock.advanceMillis(1_100)
+            batteryBatch(fixture.clock.now(), 50 + index).events.single()
+        }
+        val merged = batteryBatch(fixture.clock.now()).copy(producerOrdinal = 1, events = samples)
+        assertEquals(3, (fixture.runtime.emitBatch(token, merged) as EmitBatchResult.Accepted).recordedEvents)
+        runCurrent()
+
+        // The reducer replaced the timer three times; the commit records only the net change.
+        val commit = fixture.store.commits.last()
+        assertEquals(3, commit.sourceObservations.single().eventCount)
+        val timerEvents = fixture.windowTimerEvents(commit)
+        assertEquals(listOf("TIMER_RETIRED", "TIMER_SCHEDULED"), timerEvents.map { it.type.eventType })
+        assertTrue(timerEvents.all { it.fields.getValue("timer_id") == timerId })
+        assertEquals(armedGeneration.toString(), timerEvents[0].fields.getValue("generation"))
+        assertEquals("CANCELLED", timerEvents[0].fields.getValue("retirement_reason"))
+        val finalGeneration = armedGeneration + 3uL
+        assertEquals(finalGeneration.toString(), timerEvents[1].fields.getValue("generation"))
+        val durable = commit.mutations.filter { it.key.kind == RuntimeComponentKind.TIMER }
+        assertEquals(listOf(timerId), durable.map { it.key.id })
+        // WorkManager retires the armed generation and wakes only the final one.
+        assertEquals(listOf(timerId to armedGeneration), fixture.timerWakeups.retiredGenerations.drop(retiredBefore))
+        assertEquals(
+            listOf(timerId to finalGeneration),
+            fixture.timerWakeups.scheduled.drop(scheduledBefore).map { it.id to it.generation },
+        )
     }
 
     @Test
@@ -1814,6 +2047,11 @@ class ExperimentRuntimeTest {
         clock: FakeClocks? = null,
         interventionRequired: Boolean = false,
         actionNotifier: RecordingActionNotifier = RecordingActionNotifier(),
+        trafficCondition: StateCondition = PERCENTAGE_LATCH,
+        notifyTrigger: Trigger = Trigger.EventMatch(
+            EventMatcher(BATTERY_EVENT, listOf(FieldPredicate("percentage", FieldOperator.EQ, value = "42"))),
+            EvaluationClock.OBSERVED_RESEARCH_TIME,
+        ),
     ): Fixture {
         val runtimeClock = clock ?: store.runtime?.clockCheckpoint?.anchor?.let(FakeClocks::continuingAfter)
             ?: FakeClocks()
@@ -1843,13 +2081,7 @@ class ExperimentRuntimeTest {
                 ),
                 OccurrenceAutomation(
                     "notify-battery",
-                    Trigger.EventMatch(
-                        EventMatcher(
-                            BATTERY_EVENT,
-                            listOf(FieldPredicate("percentage", FieldOperator.EQ, value = "42")),
-                        ),
-                        EvaluationClock.OBSERVED_RESEARCH_TIME,
-                    ),
+                    notifyTrigger,
                     guard = null,
                     interventionId = "prompt",
                     availabilitySeconds = 300,
@@ -1859,25 +2091,7 @@ class ExperimentRuntimeTest {
                 ResourceBindingAutomation(
                     "traffic-binding",
                     trafficKey,
-                    listOf(
-                        ResourceConditionCase(
-                            StateCondition.EventLatch(
-                                setWhen = listOf(
-                                    EventMatcher(
-                                        BATTERY_EVENT,
-                                        listOf(FieldPredicate("percentage", FieldOperator.EQ, value = "42")),
-                                    ),
-                                ),
-                                resetWhen = listOf(
-                                    EventMatcher(
-                                        BATTERY_EVENT,
-                                        listOf(FieldPredicate("percentage", FieldOperator.EQ, value = "43")),
-                                    ),
-                                ),
-                            ),
-                            "slow",
-                        ),
-                    ),
+                    listOf(ResourceConditionCase(trafficCondition, "slow")),
                     "baseline",
                 ),
             ),
@@ -1896,7 +2110,7 @@ class ExperimentRuntimeTest {
             triggerScope = TriggerScope.RESEARCHER,
             deliveryMode = DeliveryMode.LIVE,
             clockSupport = setOf(EventClockSupport.OBSERVED_RESEARCH_TIME),
-            conditionKinds = setOf(EventConditionKind.EVENT_MATCH),
+            conditionKinds = setOf(EventConditionKind.EVENT_MATCH, EventConditionKind.WINDOW_COUNT),
             presence = null,
             rateBound = EventRateBound(60, 60),
         )
@@ -1986,7 +2200,7 @@ class ExperimentRuntimeTest {
         return RetrospectiveFixture(runtime, store, actuator, clock)
     }
 
-    private fun batteryBatch(now: ResearchTime) = SourceEventBatch(
+    private fun batteryBatch(now: ResearchTime, percentage: Int = 42) = SourceEventBatch(
         sourceId = BATTERY_SOURCE,
         schemaVersion = 1,
         resourceGeneration = 1,
@@ -1998,7 +2212,7 @@ class ExperimentRuntimeTest {
                 mapOf(
                     "charging_source" to "NONE",
                     "charging_state" to "DISCHARGING",
-                    "percentage" to "42",
+                    "percentage" to percentage.toString(),
                     "power_save_enabled" to "false",
                 ),
             ),
@@ -2025,6 +2239,7 @@ class ExperimentRuntimeTest {
     private class RecordingTimerWakeups : TimerWakeupAdapter {
         val scheduled = mutableListOf<DurableTimer>()
         val retired = mutableListOf<String>()
+        val retiredGenerations = mutableListOf<Pair<String, ULong>>()
 
         override suspend fun schedule(timer: DurableTimer) {
             scheduled += timer
@@ -2032,6 +2247,7 @@ class ExperimentRuntimeTest {
 
         override suspend fun retire(timerId: String, generation: ULong) {
             retired += timerId
+            retiredGenerations += timerId to generation
         }
     }
 
@@ -2376,7 +2592,8 @@ class ExperimentRuntimeTest {
 
     private class RuntimeCallbackCollector(
         context: CollectorContext,
-    ) : SerializedCallbackCollector(context, queueCapacity = 4) {
+        consumerDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    ) : SerializedCallbackCollector(context, queueCapacity = 4, consumerDispatcher) {
         fun trigger(percentage: Int) = capture {
             EventDraft(
                 BATTERY_EVENT,
@@ -2698,6 +2915,15 @@ class ExperimentRuntimeTest {
         val BATTERY_SOURCE = EventSourceId("battery_state.v1")
         val USAGE_SOURCE = EventSourceId("usage_events.v1")
         val BATTERY_EVENT = EventTypeKey(BATTERY_SOURCE, 1, "BATTERY_STATE")
+        /** Set by a 42% battery event and reset by a 43% one; the fixture binds "slow" to it. */
+        val PERCENTAGE_LATCH = StateCondition.EventLatch(
+            setWhen = listOf(
+                EventMatcher(BATTERY_EVENT, listOf(FieldPredicate("percentage", FieldOperator.EQ, value = "42"))),
+            ),
+            resetWhen = listOf(
+                EventMatcher(BATTERY_EVENT, listOf(FieldPredicate("percentage", FieldOperator.EQ, value = "43"))),
+            ),
+        )
         const val CONFIG_DIGEST = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         const val ZERO_DIGEST = "0000000000000000000000000000000000000000000000000000000000000000"
     }

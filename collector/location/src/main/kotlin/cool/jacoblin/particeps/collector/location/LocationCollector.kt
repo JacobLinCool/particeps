@@ -73,7 +73,8 @@ private class LocationCollector(
     private val callbackBoundary = SourceCallbackBoundary()
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
-            callbackBoundary.runIfActive { result.locations.forEach(::capture) }
+            // One batched delivery is one queued submission; each fix keeps its own observed time.
+            callbackBoundary.runIfActive { captureAll { result.locations.map(::fixDraft) } }
         }
     }
     private var handlerThread: HandlerThread? = null
@@ -129,34 +130,32 @@ private class LocationCollector(
         return SourceTeardownResult.Released
     }
 
-    private fun capture(location: Location) {
-        capture {
-            val fields = buildMap {
-                put("source_elapsed_realtime_nanos", location.elapsedRealtimeNanos.toString())
-                put("latitude_degrees", location.latitude.toString())
-                put("longitude_degrees", location.longitude.toString())
-                put("horizontal_accuracy_meters", location.accuracy.toString())
-                put("source_time_utc_millis", location.time.toString())
-                if (location.hasAltitude()) put("altitude_meters", location.altitude.toString())
-                if (location.hasVerticalAccuracy()) {
-                    put("vertical_accuracy_meters", location.verticalAccuracyMeters.toString())
-                }
-                if (location.hasSpeed()) put("speed_meters_per_second", location.speed.toString())
-                if (location.hasSpeedAccuracy()) {
-                    put("speed_accuracy_meters_per_second", location.speedAccuracyMetersPerSecond.toString())
-                }
-                if (location.hasBearing()) put("bearing_degrees", location.bearing.toString())
-                if (location.hasBearingAccuracy()) {
-                    put("bearing_accuracy_degrees", location.bearingAccuracyDegrees.toString())
-                }
-                put("mock", location.isMock.toString())
+    private fun fixDraft(location: Location): EventDraft {
+        val fields = buildMap {
+            put("source_elapsed_realtime_nanos", location.elapsedRealtimeNanos.toString())
+            put("latitude_degrees", location.latitude.toString())
+            put("longitude_degrees", location.longitude.toString())
+            put("horizontal_accuracy_meters", location.accuracy.toString())
+            put("source_time_utc_millis", location.time.toString())
+            if (location.hasAltitude()) put("altitude_meters", location.altitude.toString())
+            if (location.hasVerticalAccuracy()) {
+                put("vertical_accuracy_meters", location.verticalAccuracyMeters.toString())
             }
-            EventDraft(
-                type = EventTypeKey(EventSourceId(LocationV1ProfileConfiguration.SOURCE_ID), 1, "LOCATION_FIX"),
-                observedTime = context.clocks.now(),
-                fields = fields,
-            )
+            if (location.hasSpeed()) put("speed_meters_per_second", location.speed.toString())
+            if (location.hasSpeedAccuracy()) {
+                put("speed_accuracy_meters_per_second", location.speedAccuracyMetersPerSecond.toString())
+            }
+            if (location.hasBearing()) put("bearing_degrees", location.bearing.toString())
+            if (location.hasBearingAccuracy()) {
+                put("bearing_accuracy_degrees", location.bearingAccuracyDegrees.toString())
+            }
+            put("mock", location.isMock.toString())
         }
+        return EventDraft(
+            type = EventTypeKey(EventSourceId(LocationV1ProfileConfiguration.SOURCE_ID), 1, "LOCATION_FIX"),
+            observedTime = context.clocks.now(),
+            fields = fields,
+        )
     }
 
     private fun LocationV1PriorityValue.toPlayServicesPriority(): Int = when (this) {

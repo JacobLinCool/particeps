@@ -237,6 +237,35 @@ class AutomationReducerTest {
     }
 
     @Test
+    fun firstResourceChangingInputIsTheShortestPrefixWhoseBatchChangesAResource() {
+        val presence = StateCondition.KeyedPresence(
+            enterWhen = listOf(EventMatcher(resumed)),
+            exitWhen = listOf(EventMatcher(paused)),
+            keyField = "activity_component_token",
+        )
+        val program = trafficProgram(presence)
+        val started = start(program).checkpoint
+        // An unrelated exit, then enter and exit (a change that the final state cancels), then enter.
+        val inputs = listOf(
+            eventInput(3, paused, 1_000, 1_000, "component-b"),
+            eventInput(4, resumed, 2_000, 2_000, "component-a"),
+            eventInput(5, paused, 3_000, 3_000, "component-a"),
+            eventInput(6, resumed, 4_000, 4_000, "component-a"),
+        )
+        val prefixChanges = inputs.indices.map { index ->
+            reducer.reduceBatch(program, started, inputs.subList(0, index + 1)).resourceChanges.isNotEmpty()
+        }
+        assertEquals(listOf(false, true, false, true), prefixChanges)
+        assertEquals(1, reducer.firstResourceChangingInput(program, started, inputs))
+        assertEquals(null, reducer.firstResourceChangingInput(program, started, inputs.subList(0, 1)))
+        // The query changes no state: the whole batch still reconciles from its final state.
+        assertEquals(
+            "slow-network",
+            reducer.reduceBatch(program, started, inputs).resourceChanges.getValue(trafficResource).profileId,
+        )
+    }
+
+    @Test
     fun pauseAndQualityGapResetSessionScopedStateAndRestoreBaseline() {
         val presence = StateCondition.KeyedPresence(
             listOf(EventMatcher(resumed)),

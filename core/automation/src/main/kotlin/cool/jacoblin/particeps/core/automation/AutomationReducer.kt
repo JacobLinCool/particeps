@@ -215,92 +215,11 @@ class AutomationReducer {
     ): ReductionResult {
         require(inputs.isNotEmpty()) { "Reducer batch must not be empty" }
         val mutable = MutableCheckpoint(checkpoint)
-        val actions = mutableListOf<ActionRequest>()
-        val audits = mutableListOf<AutomationAudit>()
-        val timerIntents = mutableListOf<TimerIntent>()
-
-        inputs.forEachIndexed { index, input ->
-            val expectedSequence = Math.addExact(checkpoint.evaluatedThroughSequence, index.toLong() + 1L)
-            require(input.sequenceNumber == expectedSequence) { "Reducer input sequences must be contiguous" }
-            mutable.beginInput(input)
-            val dueResolution = when (input) {
-                is ReducerInput.Event -> {
-                    require(input.event.sequenceNumber == input.sequenceNumber) { "Nested event sequence mismatch" }
-                    DueResolution.None
-                }
-                is ReducerInput.Lifecycle -> {
-                    mutable.applyLifecycle(input.state, input.clock, timerIntents)
-                    DueResolution.None
-                }
-                is ReducerInput.TimerDue -> mutable.acceptDueTimer(input, timerIntents)
-                is ReducerInput.TimerMaterialized -> {
-                    mutable.materializeTimer(program, input, timerIntents)
-                    DueResolution.None
-                }
-                is ReducerInput.QualityGap -> {
-                    mutable.resetSessionState(timerIntents)
-                    DueResolution.None
-                }
-                is ReducerInput.ClockDiscontinuity -> {
-                    mutable.resetSessionState(timerIntents)
-                    mutable.resetCalendarState(timerIntents)
-                    mutable.restartResources(program, input.restartResources)
-                    DueResolution.None
-                }
-            }
-            val dueTimer = (dueResolution as? DueResolution.Accepted)?.timer
-            if (dueResolution == DueResolution.Stale) {
-                val dueInput = input as ReducerInput.TimerDue
-                program.occurrenceAutomations.singleOrNull {
-                    it.id == dueInput.automationId && it.trigger is Trigger.Schedule
-                }?.let {
-                    audits += AutomationAudit(
-                        automationId = it.id,
-                        matched = false,
-                        suppressionReason = SuppressionReason.STALE_TIMER,
-                        causalIdentity = "timer:${dueInput.timerId}",
-                    )
-                }
-            }
-
-            program.occurrenceAutomations.forEachIndexed { automationIndex, automation ->
-                val paths = program.plan.occurrencePaths[automationIndex]
-                val guardValue = automation.guard?.let {
-                    mutable.evaluateCondition(program, it, paths.guard, input, timerIntents, automation.id)
-                } ?: true
-                val matches = if (
-                    mutable.lifecycle == StudySessionState.RUNNING &&
-                    input !is ReducerInput.QualityGap &&
-                    input !is ReducerInput.ClockDiscontinuity
-                ) {
-                    mutable.evaluateTrigger(program, automation, paths, input, dueTimer, timerIntents)
-                } else {
-                    emptyList()
-                }
-                matches.forEach { match ->
-                    val outcome = mutable.requestAction(program, automation, match, guardValue, input.clock)
-                    audits += outcome.audit
-                    outcome.request?.let(actions::add)
-                }
-            }
-
-            program.resourceBindings.forEach { binding ->
-                val casePaths = program.plan.casePaths(binding)
-                binding.cases.forEachIndexed { caseIndex, case ->
-                    val path = casePaths[caseIndex]
-                    val value = mutable.evaluateCondition(
-                        program,
-                        case.condition,
-                        path,
-                        input,
-                        timerIntents,
-                        binding.id,
-                    )
-                    mutable.rememberConditionResult(path, value)
-                }
-            }
-            mutable.finishInput(input)
-        }
+        val outputs = InputOutputs()
+        inputs.forEachIndexed { index, input -> reduceInput(program, checkpoint, mutable, index, input, outputs) }
+        val actions = outputs.actions
+        val audits = outputs.audits
+        val timerIntents = outputs.timerIntents
 
         val finalInput = inputs.last()
         // SourceObservation/EngineCommit is the atomic semantic boundary. Conditions consume
@@ -321,6 +240,128 @@ class AutomationReducer {
             resourceChanges = resourceChanges,
             audits = audits,
         )
+    }
+
+    /**
+     * The index of the first of [inputs] at which [reduceBatch] of [inputs] up to and including it
+     * would change a desired resource, or null when no such prefix would. [reduceBatch] reconciles
+     * desired resources once, from its final state, so a caller that keeps the inputs before a
+     * resource change out of the observation that stages the change finds that boundary here. It
+     * evaluates exactly what [reduceBatch] evaluates for each input and returns no other output.
+     */
+    fun firstResourceChangingInput(
+        program: CompiledAutomationProgram,
+        checkpoint: AutomationCheckpoint,
+        inputs: List<ReducerInput>,
+    ): Int? {
+        require(inputs.isNotEmpty()) { "Reducer batch must not be empty" }
+        val mutable = MutableCheckpoint(checkpoint)
+        val outputs = InputOutputs()
+        inputs.forEachIndexed { index, input ->
+            reduceInput(program, checkpoint, mutable, index, input, outputs)
+            if (mutable.resourcesWouldChange(program)) return index
+        }
+        return null
+    }
+
+    /** What the inputs of one batch produce, in input order, before the batch is reconciled. */
+    private class InputOutputs {
+        val actions = mutableListOf<ActionRequest>()
+        val audits = mutableListOf<AutomationAudit>()
+        val timerIntents = mutableListOf<TimerIntent>()
+    }
+
+    private fun reduceInput(
+        program: CompiledAutomationProgram,
+        checkpoint: AutomationCheckpoint,
+        mutable: MutableCheckpoint,
+        index: Int,
+        input: ReducerInput,
+        outputs: InputOutputs,
+    ) {
+        val actions = outputs.actions
+        val audits = outputs.audits
+        val timerIntents = outputs.timerIntents
+        val expectedSequence = Math.addExact(checkpoint.evaluatedThroughSequence, index.toLong() + 1L)
+        require(input.sequenceNumber == expectedSequence) { "Reducer input sequences must be contiguous" }
+        mutable.beginInput(input)
+        val dueResolution = when (input) {
+            is ReducerInput.Event -> {
+                require(input.event.sequenceNumber == input.sequenceNumber) { "Nested event sequence mismatch" }
+                DueResolution.None
+            }
+            is ReducerInput.Lifecycle -> {
+                mutable.applyLifecycle(input.state, input.clock, timerIntents)
+                DueResolution.None
+            }
+            is ReducerInput.TimerDue -> mutable.acceptDueTimer(input, timerIntents)
+            is ReducerInput.TimerMaterialized -> {
+                mutable.materializeTimer(program, input, timerIntents)
+                DueResolution.None
+            }
+            is ReducerInput.QualityGap -> {
+                mutable.resetSessionState(timerIntents)
+                DueResolution.None
+            }
+            is ReducerInput.ClockDiscontinuity -> {
+                mutable.resetSessionState(timerIntents)
+                mutable.resetCalendarState(timerIntents)
+                mutable.restartResources(program, input.restartResources)
+                DueResolution.None
+            }
+        }
+        val dueTimer = (dueResolution as? DueResolution.Accepted)?.timer
+        if (dueResolution == DueResolution.Stale) {
+            val dueInput = input as ReducerInput.TimerDue
+            program.occurrenceAutomations.singleOrNull {
+                it.id == dueInput.automationId && it.trigger is Trigger.Schedule
+            }?.let {
+                audits += AutomationAudit(
+                    automationId = it.id,
+                    matched = false,
+                    suppressionReason = SuppressionReason.STALE_TIMER,
+                    causalIdentity = "timer:${dueInput.timerId}",
+                )
+            }
+        }
+
+        program.occurrenceAutomations.forEachIndexed { automationIndex, automation ->
+            val paths = program.plan.occurrencePaths[automationIndex]
+            val guardValue = automation.guard?.let {
+                mutable.evaluateCondition(program, it, paths.guard, input, timerIntents, automation.id)
+            } ?: true
+            val matches = if (
+                mutable.lifecycle == StudySessionState.RUNNING &&
+                input !is ReducerInput.QualityGap &&
+                input !is ReducerInput.ClockDiscontinuity
+            ) {
+                mutable.evaluateTrigger(program, automation, paths, input, dueTimer, timerIntents)
+            } else {
+                emptyList()
+            }
+            matches.forEach { match ->
+                val outcome = mutable.requestAction(program, automation, match, guardValue, input.clock)
+                audits += outcome.audit
+                outcome.request?.let(actions::add)
+            }
+        }
+
+        program.resourceBindings.forEach { binding ->
+            val casePaths = program.plan.casePaths(binding)
+            binding.cases.forEachIndexed { caseIndex, case ->
+                val path = casePaths[caseIndex]
+                val value = mutable.evaluateCondition(
+                    program,
+                    case.condition,
+                    path,
+                    input,
+                    timerIntents,
+                    binding.id,
+                )
+                mutable.rememberConditionResult(path, value)
+            }
+        }
+        mutable.finishInput(input)
     }
 
     private companion object {
@@ -739,17 +780,9 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
     ): Map<ResourceKey, DesiredProfile> {
         val changes = linkedMapOf<ResourceKey, DesiredProfile>()
         program.plan.bindingsByResource.forEach { binding ->
-            val selected = if (lifecycle in ACTIVE_SESSION_STATES) {
-                val casePaths = program.plan.casePaths(binding)
-                val selectedCase = binding.cases.withIndex().firstOrNull { (index, _) ->
-                    latestConditionResults.getValue(casePaths[index])
-                }
-                if (selectedCase == null) binding.defaultProfileId else selectedCase.value.profileId
-            } else null
-            val previous = desiredResources[binding.resource]
-            val forceRestart = binding.resource in forcedResourceRestarts &&
-                previous?.profileId != null && selected != null
-            if (previous == null || previous.profileId != selected || forceRestart) {
+            val selected = selectedProfile(program, binding)
+            if (requiresReconciliation(binding, selected)) {
+                val previous = desiredResources[binding.resource]
                 val generation = previous?.generation?.next() ?: ResourceGeneration(1uL)
                 val desired = DesiredProfile(generation, selected)
                 desiredResources[binding.resource] = desired
@@ -757,6 +790,28 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
             }
         }
         return changes
+    }
+
+    /** Whether [reconcileResources] would change a desired resource now, without changing one. */
+    fun resourcesWouldChange(program: CompiledAutomationProgram): Boolean =
+        program.plan.bindingsByResource.any { binding ->
+            requiresReconciliation(binding, selectedProfile(program, binding))
+        }
+
+    private fun selectedProfile(program: CompiledAutomationProgram, binding: ResourceBindingAutomation): String? {
+        if (lifecycle !in ACTIVE_SESSION_STATES) return null
+        val casePaths = program.plan.casePaths(binding)
+        val selectedCase = binding.cases.withIndex().firstOrNull { (index, _) ->
+            latestConditionResults.getValue(casePaths[index])
+        }
+        return if (selectedCase == null) binding.defaultProfileId else selectedCase.value.profileId
+    }
+
+    private fun requiresReconciliation(binding: ResourceBindingAutomation, selected: String?): Boolean {
+        val previous = desiredResources[binding.resource]
+        val forceRestart = binding.resource in forcedResourceRestarts &&
+            previous?.profileId != null && selected != null
+        return previous == null || previous.profileId != selected || forceRestart
     }
 
     fun timerProductionRequests(

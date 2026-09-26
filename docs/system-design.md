@@ -136,7 +136,52 @@ The sink validates:
 
 The coordinator provisionally reduces the complete observation. If desired resources do not
 change, it creates one ordinary `EngineCommit`. If they might change, it durably stages the bounded
-causal input and enters the global resource barrier.
+causal input and enters the global resource barrier. A live batch, one without coverage, that would
+change a desired resource only after its first event is recorded only up to that event, as an
+ordinary commit: `EmitBatchResult.Accepted.recordedEvents` counts the leading events it holds, and
+the collector offers the rest under the next producer ordinal. The staged causal observation
+therefore starts with the event that changes a resource, as it did when each callback was offered
+alone. A batch with coverage is one retrospective claim and is always handled whole.
+
+`SerializedCallbackCollector` submits a callback source's queue in capture order. When its single
+consumer wakes, it merges the callbacks that are already queued into one batch and never waits for
+another callback, so merging adds no timer, wake lock, or delivery latency. A batch ends at a
+barrier or stop message (a barrier completes only after every earlier event has been handled), at
+an admission token that is not equal to the batch's, at an observed-time regression or boot-session
+change, and at min(4,096, the registry's per-batch rate bound, ⌊1 MiB ÷ the source's largest
+`maximum_encoded_event_bytes`⌋) events; an oversized single callback splits the same way.
+`captureAll` queues one platform delivery, such as a batched `LocationResult`, as one message under
+one token, and each fix keeps its own observed time. Normal tokens of one gate generation compare
+equal, because the gate classifies a normal token only by its owner, generation, and kind; the
+drain's barrier-flush token keeps identity equality.
+
+The sink admits or refuses each offer as one observation. Admission under one token bounds observed
+time from above and narrows over time, with one exception at the study deadline: once it has passed,
+an open epoch refuses every batch, but a drain that begins afterwards, such as the deadline stop's,
+admits the events observed at or before its boundary and before the deadline. A refused batch
+ordered by observed time can therefore have an admitted prefix. The collector halves an offer the
+gate refuses, or one that violates the event contract, until a prefix is accepted, advances the
+producer ordinal only on acceptance, and after every acceptance offers the whole remainder again, so
+a drain that begins during the search still admits what it covers. Each part accepted this way holds
+at least half of what is still admissible, so a batch takes O(log n) accepted observations, which
+bounds the pending-slot rewrites of a barrier drain, and O(log² n) offers. A refused one-event offer
+ends the batch. After a gate refusal, that event and every later event of the batch are dropped. A
+contract violation fails the collector at the offending event: the valid events before it are
+recorded, as they were when each callback was offered alone, and the later events of the batch are
+dropped. A storage failure or quality gap fails the collector at once. Parts of the batch accepted
+before a failure stay recorded.
+
+Merging stays within Protocol v1 but changes the granularity of resource reconciliation. The
+reducer consumes every merged event in capture order but reconciles desired resources once per
+observation. A condition that sets and resets inside one merged observation therefore neither
+changes a resource nor rotates the epoch. Callbacks merged ahead of a trigger commit before it is
+staged, exactly as when each was submitted alone. The trigger and the callbacks merged behind it
+form the causal observation, which the barrier reduces after its pre-drain input. Per-callback
+submission instead staged the trigger alone and reduced the callbacks queued behind it first, as
+pre-drain input, so a reset queued behind its trigger was reduced before the trigger and the
+resource changed anyway. A callback queued only after its trigger was submitted still takes that
+pre-drain path. Recorded events, their observed times, and their condition-epoch attribution are
+unchanged; inside a merged causal observation, event sequence numbers follow capture order.
 
 An in-memory `Flow` publishes participant-safe state after commit for UI refresh. It is never
 recovery truth.
@@ -290,6 +335,13 @@ or call the resource recursively.
 
 Timer state stores one stable clock-domain target: calendar UTC, accumulated active-running
 elapsed, or same-boot monotonic. `TIMER_SCHEDULED` commits before WorkManager is asked to wake.
+A commit records the net change of the reducer's timer map rather than every timer intent: each
+prior timer the reduction removed or replaced gets one `TIMER_RETIRED` with its own generation, each
+resulting timer that is new or replaced gets one `TIMER_SCHEDULED`, ordered by timer ID with the
+retirement first, and only those changes reach WorkManager. A multi-input reduction, such as a
+merged callback batch that slides a window once per event or a barrier's combined input, therefore
+never records or wakes a generation that it armed and replaced within itself. For a single input
+the net change is exactly the reducer's intents, and Python replay verifies the same rule.
 WorkManager carries only timer ID and generation and calls `onTimerDue`; the runtime resolves the
 authenticated target from its durable timer component and never accepts a deadline from worker
 input or rebuilds a schedule from configuration. Timer audit events use the same immutable
