@@ -5,6 +5,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import cool.jacoblin.particeps.collector.sensorcommon.AndroidSensorCollector
 import cool.jacoblin.particeps.core.collector.AccessKind
+import cool.jacoblin.particeps.core.collector.CallbackCommitWindow
 import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
@@ -51,6 +52,9 @@ private class AccelerometerCollector(
     maximumReportLatencyUs = configuration.maximumReportLatencyUs.toInt(),
     threadName = "particeps-accelerometer",
     queueCapacity = CHANNEL_CAPACITY,
+    // A continuous sampled source: unless automation references it, commit up to 5 s per batch.
+    // It holds no wake lock, so a batch open when the CPU suspends commits after the next wake.
+    commitWindow = CallbackCommitWindow.SAMPLED_SENSOR,
 ) {
     override fun eventDraft(event: SensorEvent): EventDraft? {
         if (

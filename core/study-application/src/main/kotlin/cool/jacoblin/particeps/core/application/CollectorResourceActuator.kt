@@ -131,6 +131,8 @@ class BindableStudyScopedTokenEncoder : StudyScopedTokenEncoder {
  * A profile/generation pair is immutable. Global barriers may suspend every collector even when
  * this particular resource is unchanged; [apply] therefore preserves the existing instance for
  * an identical pair and [resume] reopens it without manufacturing a new source generation.
+ * [referencedByAutomation] reaches every collector instance as
+ * [CollectorContext.referencedByAutomation].
  */
 class CollectorResourceActuator(
     private val declaration: CollectorResourceConfiguration,
@@ -139,6 +141,7 @@ class CollectorResourceActuator(
     private val eventSink: EventSink,
     private val clocks: ResearchClocks,
     private val tokenEncoder: StudyScopedTokenEncoder,
+    private val referencedByAutomation: Boolean,
 ) : StatefulResourceActuator {
     override val key = declaration.resourceKey
     override val supportsHotProfileSwap: Boolean = false
@@ -285,6 +288,7 @@ class CollectorResourceActuator(
                 sourceContract = plugin.descriptor.sourceContract,
                 resourceGeneration = generation.toLong(),
                 tokenEncoder = tokenEncoder,
+                referencedByAutomation = referencedByAutomation,
             ),
         )
         val created = ActiveCollector(desired.generation, named, collector)

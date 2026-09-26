@@ -416,7 +416,12 @@ class ExperimentRuntime(
         RuntimeCommandResult.Success
     }
 
-    /** Durable TIME_SET/TIMEZONE_CHANGE input. Crossed retrospective wall intervals are discarded. */
+    /**
+     * Durable TIME_SET/TIMEZONE_CHANGE input. Crossed retrospective wall intervals are discarded.
+     * While running, admission closes before collectors pause, so live callbacks not yet committed,
+     * including an open [cool.jacoblin.particeps.core.collector.CallbackCommitWindow] batch, are
+     * refused rather than drained.
+     */
     suspend fun onClockDiscontinuity(): RuntimeCommandResult = command {
         val current = requireDocument()
         if (current.state !in setOf(ExperimentState.RUNNING, ExperimentState.PAUSED)) {

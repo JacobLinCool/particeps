@@ -66,6 +66,7 @@ class P2CollectorEmulatorTest {
                     sourceContract = plugin.descriptor.sourceContract,
                     resourceGeneration = RESOURCE_GENERATION,
                     tokenEncoder = StudyScopedTokenEncoder { domain, value -> "$domain:$value" },
+                    referencedByAutomation = false,
                 ),
             )
         }
@@ -92,6 +93,7 @@ class P2CollectorEmulatorTest {
             }
             assertPayloadSemantics(sink)
             if (syntheticInputsExpected) assertSyntheticInputs(sink)
+            assertOnlyTheGyroscopeCommitsThroughAWindow(sink)
 
             collectors.forEach { it.pause() }
             collectors.forEach { collector ->
@@ -178,6 +180,25 @@ class P2CollectorEmulatorTest {
         assertEquals((distance < maximumRange).toString(), proximity.fields["near"])
     }
 
+    /**
+     * No automation references these sources, so the gyroscope's first observation gathers
+     * samples captured over its commit window, while the on-change sources still commit only
+     * what was queued together.
+     */
+    private fun assertOnlyTheGyroscopeCommitsThroughAWindow(sink: RecordingEventSink) {
+        val gyroscope = GyroscopeV1ProfileConfiguration.SOURCE_ID
+        assertTrue(
+            "The gyroscope did not gather samples across its commit window",
+            sink.longestObservationSpanNanos(gyroscope) >= WINDOWED_SPAN_NANOS,
+        )
+        (P2_COLLECTOR_IDS - gyroscope).forEach { sourceId ->
+            assertTrue(
+                "$sourceId held an observation open across time",
+                sink.longestObservationSpanNanos(sourceId) < WINDOWED_SPAN_NANOS,
+            )
+        }
+    }
+
     private fun assertSyntheticInputs(sink: RecordingEventSink) {
         val battery = sink.latestEventDraft(BatteryStateV1ProfileConfiguration.SOURCE_ID)
         assertEquals("73", battery.fields["percentage"])
@@ -214,6 +235,7 @@ class P2CollectorEmulatorTest {
     private class RecordingEventSink : EventSink {
         private val token = object : AdmissionToken {}
         private val events = mutableListOf<CapturedEvent>()
+        private val longestSpans = mutableMapOf<String, Long>()
         private var nextObservationSequence = 1L
         private var nextEventSequence = 1L
 
@@ -227,6 +249,9 @@ class P2CollectorEmulatorTest {
         override suspend fun emitBatch(token: AdmissionToken, batch: SourceEventBatch): EmitBatchResult =
             synchronized(events) {
                 check(token === this.token) { "Unexpected admission token" }
+                val span = batch.events.last().observedTime.elapsedRealtimeNanos -
+                    batch.events.first().observedTime.elapsedRealtimeNanos
+                longestSpans.merge(batch.sourceId.value, span, ::maxOf)
                 val observationSequence = nextObservationSequence++
                 batch.events.forEach { event ->
                     events += CapturedEvent(
@@ -256,6 +281,11 @@ class P2CollectorEmulatorTest {
         }
 
         fun latestEventDraft(sourceId: String): EventDraft = latestCaptured(sourceId).event
+
+        /** The longest observed-time span of one accepted observation of [sourceId]. */
+        fun longestObservationSpanNanos(sourceId: String): Long = synchronized(events) {
+            longestSpans[sourceId] ?: 0L
+        }
     }
 
     private companion object {
@@ -264,6 +294,8 @@ class P2CollectorEmulatorTest {
         const val PAUSE_SETTLE_MILLIS = 750L
         const val POLL_MILLIS = 25L
         const val FLOAT_TOLERANCE = 0.001f
+        /** Well above what callbacks queued together span, well below the 5 s commit window. */
+        const val WINDOWED_SPAN_NANOS = 1_000_000_000L
         const val SYNTHETIC_INPUTS_ARGUMENT = "p2SyntheticInputs"
         val P2_COLLECTOR_IDS = setOf(
             BatteryStateV1ProfileConfiguration.SOURCE_ID,

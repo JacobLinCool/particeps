@@ -468,6 +468,15 @@ fun interface StudyScopedTokenEncoder {
     fun encode(domain: String, value: String): String
 }
 
+/**
+ * [referencedByAutomation] is true when the study's compiled automation program reads this source's
+ * events: a matcher (in a trigger, a guard, or a resource-binding condition) names one of its events,
+ * or the program keeps sequence or window state, which reads the time of every event of every
+ * source and requires it to be no older than that state's newest entry. Such a source's
+ * observations can change automation state or must reach it in time order, so its collector commits
+ * them without an added [CallbackCommitWindow]. It is process-local assembly state derived from the
+ * signed configuration, never part of it.
+ */
 data class CollectorContext(
     val scope: CoroutineScope,
     val eventSink: EventSink,
@@ -475,6 +484,7 @@ data class CollectorContext(
     val sourceContract: RegistrySourceContract,
     val resourceGeneration: Long,
     val tokenEncoder: StudyScopedTokenEncoder,
+    val referencedByAutomation: Boolean,
 ) {
     init {
         require(sourceContract.sourceKind == RegistrySourceKind.COLLECTOR) {

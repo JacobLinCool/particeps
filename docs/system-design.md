@@ -144,16 +144,18 @@ therefore starts with the event that changes a resource, as it did when each cal
 alone. A batch with coverage is one retrospective claim and is always handled whole.
 
 `SerializedCallbackCollector` submits a callback source's queue in capture order. When its single
-consumer wakes, it merges the callbacks that are already queued into one batch and never waits for
-another callback, so merging adds no timer, wake lock, or delivery latency. A batch ends at a
-barrier or stop message (a barrier completes only after every earlier event has been handled), at
-an admission token that is not equal to the batch's, at an observed-time regression or boot-session
-change, and at min(4,096, the registry's per-batch rate bound, ⌊1 MiB ÷ the source's largest
-`maximum_encoded_event_bytes`⌋) events; an oversized single callback splits the same way.
-`captureAll` queues one platform delivery, such as a batched `LocationResult`, as one message under
-one token, and each fix keeps its own observed time. Normal tokens of one gate generation compare
-equal, because the gate classifies a normal token only by its owner, generation, and kind; the
-drain's barrier-flush token keeps identity equality.
+consumer wakes, it merges the callbacks that are already queued into one batch. Unless the collector
+passes a commit window (see [Commit windows for continuous
+sensors](#commit-windows-for-continuous-sensors)), it never waits for another callback, so merging
+adds no timer, wake lock, or delivery latency. A batch ends at a barrier or stop message (a barrier
+completes only after every earlier event has been handled), at an admission token that is not equal
+to the batch's, at an observed-time regression or boot-session change, and at min(4,096, the
+registry's per-batch rate bound, ⌊1 MiB ÷ the source's largest `maximum_encoded_event_bytes`⌋)
+events; an oversized single callback splits the same way. `captureAll` queues one platform delivery,
+such as a batched `LocationResult`, as one message under one token, and each fix keeps its own
+observed time. Normal tokens of one gate generation compare equal, because the gate classifies a
+normal token only by its owner, generation, and kind; the drain's barrier-flush token keeps identity
+equality.
 
 The sink admits or refuses each offer as one observation. Admission under one token bounds observed
 time from above and narrows over time, with one exception at the study deadline: once it has passed,
@@ -165,7 +167,8 @@ producer ordinal only on acceptance, and after every acceptance offers the whole
 a drain that begins during the search still admits what it covers. Each part accepted this way holds
 at least half of what is still admissible, so a batch takes O(log n) accepted observations, which
 bounds the pending-slot rewrites of a barrier drain, and O(log² n) offers. A refused one-event offer
-ends the batch. After a gate refusal, that event and every later event of the batch are dropped. A
+ends the batch. After a gate refusal, that event and every later event of the batch are dropped; a
+windowed collector first holds them for one more offer, as described below. A
 contract violation fails the collector at the offending event: the valid events before it are
 recorded, as they were when each callback was offered alone, and the later events of the batch are
 dropped. A storage failure or quality gap fails the collector at once. Parts of the batch accepted
@@ -182,6 +185,113 @@ pre-drain input, so a reset queued behind its trigger was reduced before the tri
 resource changed anyway. A callback queued only after its trigger was submitted still takes that
 pre-drain path. Recorded events, their observed times, and their condition-epoch attribution are
 unchanged; inside a merged causal observation, event sequence numbers follow capture order.
+
+### Commit windows for continuous sensors
+
+A collector may also pass a `CallbackCommitWindow`, at most `MAXIMUM_CALLBACK_COMMIT_WINDOW`
+(5 s). Only `gyroscope.v1` and `accelerometer.v1` do, with 5 s. Every other callback source,
+including ambient light, proximity, screen, network, keyboard, location, app lifecycle, and battery,
+passes none and keeps the merge-only consumer above.
+
+The window applies only when `CollectorContext.referencedByAutomation` is false.
+`EventDrivenRuntimeAssemblyFactory` sets that flag for each collector from the compiled program:
+`CompiledAutomationProgram.referencesSource` is true when any matcher names an event of the source.
+A matcher can be an event-match or sequence trigger, a window selector, or an event-latch or
+keyed-presence condition, in a trigger, a guard, or a resource-binding case. The compiler records
+the event of every matcher it validates (`AutomationCompiler.kt:382`), and a program exists only
+when all of them validate. The compiler does not forbid references to the two sensors. Their events
+are `RESEARCHER`-scoped with `event_match`, `sequence_step`, `window_count`, and `window_sum`.
+Sequences and windows over them are rejected as `UNBOUNDED_SOURCE` (`AutomationCompiler.kt:482`),
+because their `PLATFORM_ONLY` rate gets no enforced bound (`GeneratedEventContractRegistry.kt:109`).
+Event-match triggers and event latches over them compile. Such a source must then be required and
+continuously active (`AutomationCompiler.kt:582`, `:586`), and its collector commits every sample
+without a window. The flag is process-local assembly state; it is never signed, stored, or exported.
+
+The factory also sets the flag for every collector when
+`CompiledAutomationProgram.retainsEventTimeOrderedState` is true: the program has a sequence or
+window-threshold trigger, or a window-threshold condition anywhere in a trigger, a guard, or a
+resource-binding case. Sequence partials and window entries retain the time of the event that made
+them, and the reducer requires every later event, from any source and whether or not a matcher
+names it, to be no older than the newest one (`AutomationReducer.kt:880`, `:932`). A windowed
+sample commits up to one window after events that other sources observed later and committed at
+once, so it would fail that check. The reducer would throw, the collector would fail with
+`STORAGE_WRITE_FAILED` and lose the batch, and its terminal failure would safety-pause the study; a
+barrier that drained such a batch would fail closed the same way. So a study with any sequence or
+window commits every gyroscope and accelerometer sample without a window, as before. The reducer
+check itself is unchanged.
+
+With a window, the consumer keeps a batch open after taking its first callback, until 5 s of the
+consumer dispatcher's monotonic time have elapsed since that callback was captured. It then offers
+the batch, together with whatever is already queued. A barrier or stop message offers the open batch
+at once and is then handled as before, so pause, completion, withdrawal, resource barriers, and the
+deadline stop never wait for a window. Every merge rule still ends a batch at once: an unequal
+admission token, an observed-time regression or boot change, and the per-source event bound (512
+for both sensors, ⌊1 MiB ÷ 2,048 bytes⌋). The callback that ends a batch opens the next one, whose
+window starts at that callback's capture. The window is a `select` with `onTimeout` on the consumer
+dispatcher; it adds no WorkManager work, alarm, `Handler` callback, or wake lock. On Android that
+dispatcher measures awake monotonic time. If the CPU suspends while a batch is open, which the
+accelerometer allows because it holds no wake lock, the window pauses with it. The batch then
+commits after the next wake, once the rest of the window has elapsed, or earlier at a barrier, stop,
+or merge rule. The gyroscope keeps its partial wake lock, so its window elapses in real time.
+
+Samples keep their capture-time observed time and the admission token captured in their callback.
+The window therefore changes when a sample commits, never what it records or which epoch it
+belongs to: samples captured before a drain are admitted as pre-drain input of the old epoch, and
+none is admitted after a force-close. When the gate refuses a windowed batch, the consumer holds the
+refused events, together with same-token callbacks that were already queued. It offers them once
+more before its next barrier, stop, or callback under another token, and a refusal of that final
+offer drops them. For example, after the study deadline an open epoch refuses every batch until the
+deadline stop's drain begins. A window that closes in that interval is held and drained by the
+deadline stop, which admits what was observed before the deadline, as it would have admitted the
+same samples committed one at a time. Once the gate refuses a token it issues no equal token again,
+so a held batch is at most one batch plus the queue. Anything more fails the collector with
+`CALLBACK_QUEUE_FULL`. While a batch is open the consumer keeps moving callbacks from the queue into
+it. The 2,048-message queue therefore still fails with `CALLBACK_QUEUE_FULL` only when the consumer
+falls that far behind, for example behind a slow commit, and memory stays bounded by one open batch
+of at most 512 events plus the queue.
+
+Until its batch is accepted, a windowed sample exists only in process memory. Acceptance still
+means a durable commit or a durable pending-slot write. Process death therefore loses the samples
+captured since the source's last recorded event: at most one window (5 s of awake time, longer
+across a CPU suspend for the accelerometer), plus a batch whose offer was in progress. Death from
+durable `ACTIVATING`, `RUNNING`, or `PAUSING` makes the next initialization commit one `RECOVERY`
+commit with `SOURCE_QUALITY_GAP` (`PROCESS_RECOVERY`) that also closes the epoch the samples
+belonged to, so the loss is never silent. That event carries only its own time. For a windowed
+source, the interval it marks begins after that source's last recorded event. When the chain's last
+commit came from another source, a timer, or a command, that event can precede the commit by up to
+5 s of awake time. For the accelerometer, whose window pauses while the CPU is suspended, it can
+precede the commit by that much awake time plus every suspend in between, which can be hours.
+Analyses must treat a windowed source as unobserved from its last recorded event, not from the
+previous commit, and must not bound that interval by 5 s.
+
+Three admission closures drop an open window instead of committing it. Each closes admission
+before it suspends collectors, so the samples in the window are refused and dropped, as queued
+callbacks always were, and no `SOURCE_QUALITY_GAP` names the sensor:
+
+- A safety pause, including one for storage or required-resource failure. Up to 5 s of samples
+  before `STUDY_SAFETY_PAUSE_REQUESTED` can be missing.
+- A running wall-clock discontinuity (TIME_SET or TIMEZONE_CHANGE), which is a discard barrier
+  (below). Up to 5 s of samples captured before the change can be missing, although the study stays
+  `RUNNING` in a new epoch. The only record is `SOURCE_QUALITY_GAP` with `source_id` `timer.v1`
+  and `WALL_CLOCK_CHANGED`. Analyses must treat each windowed source as unobserved from its last
+  recorded event before that gap to the new epoch's activation.
+- A wall-clock discontinuity first observed after the signed deadline, which completes the study
+  from durable input without a drain. The samples captured before the deadline in an open window
+  are dropped, where the deadline stop's drain would have admitted them.
+
+Before the window, each of these lost only callbacks still queued or in flight. The discard barrier
+does not drain live sources: a drain would admit these samples to the old epoch, but it would add
+pre-drain observations to the discard commit. Cancelling a collector's scope drops its open batch
+as process death does; the application scope ends only with the process.
+
+Excluding referenced sources is exact for event matching, but a windowed source's events remain
+reducer inputs reduced at their commit's clock. Each commit therefore also evaluates time-based
+conditions such as `study_local_window`, `held_for`, and `elapsed_at_least`. Their durable timers
+remain the authority. When a WorkManager wake is late, the first commit after a
+boundary surfaces the transition instead, and a windowed source's commits surface it up to one
+window later than per-sample commits would. The old epoch, including samples of this source
+captured after the boundary, then lasts until that commit, another source's commit, or the late
+timer, whichever comes first.
 
 An in-memory `Flow` publishes participant-safe state after commit for UI refresh. It is never
 recovery truth.
@@ -306,7 +416,10 @@ TIME_SET and TIMEZONE_CHANGE are durable discard barriers rather than ordinary t
 runtime closes admission, suspends resources, resets latch/presence/window/sequence state, removes
 all retrospective cursors without a flush, restarts active retrospective resource generations,
 and rotates the condition epoch only after the new vector verifies. If the discontinuity crosses
-the signed duration, it completes the study instead of opening a replacement epoch.
+the signed duration, it completes the study instead of opening a replacement epoch. Because
+admission closes before suspension, a live source's callbacks that have not yet committed are
+refused. For the gyroscope and accelerometer that includes an open commit window, up to 5 s of
+samples; see [Commit windows for continuous sensors](#commit-windows-for-continuous-sensors).
 
 ## Global resource barrier
 

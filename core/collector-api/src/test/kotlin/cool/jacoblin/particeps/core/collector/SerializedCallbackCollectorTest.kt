@@ -6,12 +6,20 @@ import cool.jacoblin.particeps.core.model.EventTypeKey
 import cool.jacoblin.particeps.core.model.MAX_OBSERVATION_EVENTS
 import cool.jacoblin.particeps.core.model.ResearchTime
 import kotlinx.coroutines.CompletableDeferred
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -487,6 +495,320 @@ class SerializedCallbackCollectorTest {
         assertEquals(2, collector.unregisterCount)
     }
 
+    @Test
+    fun windowedBatchCommitsWhenFiveSecondsHaveElapsedSinceItsFirstCapture() = runTest {
+        val sink = timedSink()
+        val collector = TestCollector(context(sink), queueCapacity = 8, consumer(), window())
+        collector.start()
+
+        collector.trigger()
+        runCurrent()
+        advanceTimeBy(1_000)
+        collector.trigger()
+        advanceTimeBy(3_999)
+        runCurrent()
+        assertTrue("A windowed batch was offered before its window elapsed", sink.offeredSizes.isEmpty())
+
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(listOf(2), sink.batchSizes)
+        assertEquals(listOf(5_000L), sink.acceptedAt)
+
+        // The next callback opens a new window, measured from its own capture.
+        advanceTimeBy(1_000)
+        collector.trigger()
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(listOf(2, 1), sink.batchSizes)
+        assertEquals(listOf(5_000L, 11_000L), sink.acceptedAt)
+        assertEquals(listOf(0L, 1L), sink.producerOrdinals)
+        collector.stop()
+    }
+
+    @Test
+    fun windowIsMeasuredFromCaptureEvenWhileTheConsumerIsBusy() = runTest {
+        val sink = timedSink()
+        // The first commit takes three seconds; a callback captured meanwhile waits in the queue.
+        sink.beforeDecision = { batch -> if (batch.producerOrdinal == 0L) delay(3_000) }
+        val collector = TestCollector(context(sink), queueCapacity = 8, consumer(), window())
+        collector.start()
+
+        collector.trigger()
+        advanceTimeBy(6_000)
+        collector.trigger()
+        advanceTimeBy(5_000)
+        runCurrent()
+
+        // Captured at 6 s and taken at 8 s, the second callback still commits at 11 s.
+        assertEquals(listOf(8_000L, 11_000L), sink.acceptedAt)
+        collector.stop()
+    }
+
+    @Test
+    fun barrierOrStopInsideAWindowOffersTheBatchAtOnce() = runTest {
+        val sink = timedSink()
+        val collector = TestCollector(context(sink), queueCapacity = 8, consumer(), window())
+        collector.start()
+
+        repeat(3) { collector.trigger() }
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertTrue(sink.offeredSizes.isEmpty())
+        val pausing = async { collector.pause() }
+        runCurrent()
+
+        assertTrue("A barrier waited for the window", pausing.isCompleted)
+        assertEquals(listOf(3), sink.batchSizes)
+        assertEquals(listOf(1_000L), sink.acceptedAt)
+
+        collector.resume()
+        collector.trigger()
+        runCurrent()
+        collector.stop()
+
+        assertEquals(listOf(3, 1), sink.batchSizes)
+        assertEquals(listOf(1_000L, 1_000L), sink.acceptedAt)
+        assertEquals(1_000L, currentTime)
+        assertEquals(CollectorStatus.STOPPED, collector.health.value.status)
+    }
+
+    @Test
+    fun sizeBoundAndUnequalTokenEndAWindowedBatchAtOnce() = runTest {
+        val sink = timedSink()
+        val collector = TestCollector(context(sink, contract = boundedContract(3)), queueCapacity = 16, consumer(), window())
+        collector.start()
+
+        // A full batch is offered at once; the callback that did not fit opens the next window.
+        repeat(7) { collector.trigger() }
+        runCurrent()
+        assertEquals(listOf(3, 3), sink.batchSizes)
+        assertEquals(listOf(0L, 0L), sink.acceptedAt)
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(listOf(3, 3, 1), sink.batchSizes)
+        assertEquals(5_000L, sink.acceptedAt.last())
+
+        sink.token = GenerationToken(1)
+        collector.trigger()
+        advanceTimeBy(1_000)
+        sink.token = GenerationToken(2)
+        collector.trigger()
+        runCurrent()
+        assertEquals(listOf(3, 3, 1, 1), sink.batchSizes)
+        assertEquals(6_000L, sink.acceptedAt.last())
+
+        collector.stop()
+        assertEquals(listOf(3, 3, 1, 1, 1), sink.batchSizes)
+        assertEquals(listOf(GenerationToken(1), GenerationToken(2)), sink.acceptedTokens.takeLast(2))
+        assertEquals((0L..4L).toList(), sink.producerOrdinals)
+    }
+
+    @Test
+    fun observedTimeRegressionAndBootChangeEndAWindowedBatchAtOnce() = runTest {
+        val sink = timedSink()
+        val clocks = ScriptedClocks(time(10), time(10), time(5), time(7), time(8, boot = "boot-other"))
+        val collector = TestCollector(context(sink, clocks = clocks), queueCapacity = 8, consumer(), window())
+        collector.start()
+
+        repeat(5) { collector.trigger() }
+        runCurrent()
+        assertEquals(listOf(2, 2), sink.batchSizes)
+        assertEquals(listOf(0L, 0L), sink.acceptedAt)
+
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(listOf(2, 2, 1), sink.batchSizes)
+        assertEquals("boot-other", sink.accepted.last().events.single().observedTime.bootSessionId)
+        collector.stop()
+    }
+
+    @Test
+    fun sourceReferencedByAutomationIgnoresItsWindow() = runTest {
+        val sink = timedSink()
+        val collector = TestCollector(
+            context(sink, referencedByAutomation = true),
+            queueCapacity = 8,
+            consumer(),
+            window(),
+        )
+        collector.start()
+
+        repeat(2) { collector.trigger() }
+        runCurrent()
+        collector.trigger()
+        runCurrent()
+
+        assertEquals(listOf(2, 1), sink.batchSizes)
+        assertEquals(listOf(0L, 0L), sink.acceptedAt)
+        assertEquals(0L, currentTime)
+        collector.stop()
+    }
+
+    @Test
+    fun cancellationInsideAWindowLosesTheOpenBatchWithoutALateOffer() = runTest {
+        val sink = timedSink()
+        val collectorJob = Job(backgroundScope.coroutineContext[Job])
+        val collector = TestCollector(
+            context(sink, scope = CoroutineScope(backgroundScope.coroutineContext + collectorJob)),
+            queueCapacity = 8,
+            consumer(),
+            window(),
+        )
+        collector.start()
+        repeat(2) { collector.trigger() }
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        collectorJob.cancelAndJoin()
+        advanceTimeBy(10_000)
+        runCurrent()
+
+        // As at process death, the uncommitted batch is gone; it is never offered afterwards.
+        assertTrue(sink.offeredSizes.isEmpty())
+        assertEquals(0, sink.events.size)
+    }
+
+    @Test
+    fun windowedBatchTheGateRefusesIsOfferedAgainAtTheNextBarrier() = runTest {
+        val sink = timedSink()
+        // Past the study deadline an open epoch refuses every batch until the deadline stop's drain
+        // begins, and that drain admits what was observed before the deadline.
+        var drainBegun = false
+        sink.decide = { if (drainBegun) null else EmitBatchResult.RejectedByAdmissionGate }
+        val collector = TestCollector(context(sink), queueCapacity = 8, consumer(), window())
+        collector.start()
+
+        repeat(4) { collector.trigger() }
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(listOf(4, 2, 1), sink.offeredSizes)
+        assertTrue(sink.accepted.isEmpty())
+
+        // The refused batch is held, without another window, until a barrier arrives.
+        advanceTimeBy(60_000)
+        runCurrent()
+        assertEquals(listOf(4, 2, 1), sink.offeredSizes)
+
+        drainBegun = true
+        collector.pause()
+
+        assertEquals(listOf(4, 2, 1, 4), sink.offeredSizes)
+        assertEquals(listOf(4), sink.batchSizes)
+        assertEquals(listOf(0L), sink.producerOrdinals)
+        assertEquals(CollectorStatus.PAUSED, collector.health.value.status)
+        collector.resume()
+        collector.stop()
+    }
+
+    @Test
+    fun heldEventsTheFinalOfferRefusesAreDroppedAndOrdinalsStayContiguous() = runTest {
+        val sink = timedSink()
+        sink.decide = { batch ->
+            if (batch.events.any { it.fields["activity_class"] == "old" }) EmitBatchResult.RejectedByAdmissionGate else null
+        }
+        val collector = TestCollector(context(sink), queueCapacity = 8, consumer(), window())
+        collector.start()
+
+        repeat(2) { collector.trigger(activityClass = "old") }
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(listOf(2, 1), sink.offeredSizes)
+
+        // A callback under another token means the held token's admission has ended: the held
+        // events are offered once more, dropped when refused, and the new batch proceeds.
+        sink.token = GenerationToken(2)
+        collector.trigger(activityClass = "new")
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(listOf(2, 1, 2, 1, 1), sink.offeredSizes)
+        assertEquals(listOf("new"), sink.events.map { it.fields.getValue("activity_class") })
+
+        repeat(2) { collector.trigger(activityClass = "old") }
+        advanceTimeBy(5_000)
+        runCurrent()
+        // At a barrier the held events get their final offer; a refusal drops them without failing.
+        collector.pause()
+        assertEquals(listOf("new"), sink.events.map { it.fields.getValue("activity_class") })
+        assertEquals(listOf(0L), sink.producerOrdinals)
+        assertEquals(CollectorStatus.PAUSED, collector.health.value.status)
+
+        collector.resume()
+        collector.trigger(activityClass = "after")
+        collector.stop()
+        assertEquals(listOf(0L, 1L), sink.producerOrdinals)
+    }
+
+    @Test
+    fun windowMovesQueuedCallbacksIntoItsBoundedBatchAndAFullQueueStillFails() = runTest {
+        val sink = timedSink()
+        val collector = TestCollector(context(sink, contract = boundedContract(3)), queueCapacity = 2, consumer(), window())
+        collector.start()
+
+        // Gathering takes each callback out of the queue, and the size bound caps the batch.
+        repeat(7) {
+            collector.trigger()
+            runCurrent()
+        }
+        assertEquals(CollectorStatus.ACTIVE, collector.health.value.status)
+        assertEquals(listOf(3, 3), sink.batchSizes)
+
+        // A queue the consumer has not drained still overflows: the waiting consumer takes one
+        // callback, the two-slot queue holds two more, and the fourth is refused.
+        repeat(3) { collector.trigger() }
+        assertEquals(CollectorStatus.ACTIVE, collector.health.value.status)
+        collector.trigger()
+        assertEquals(CollectorHealth(CollectorStatus.FAILED, "CALLBACK_QUEUE_FULL"), collector.health.value)
+
+        collector.stop()
+        assertEquals(listOf(3, 3, 3, 1), sink.batchSizes)
+    }
+
+    @Test
+    fun heldEventsBeyondOneBatchPlusTheQueueFailTheCollector() = runTest {
+        // A sink that keeps issuing tokens after refusing is outside the runtime contract; the
+        // collector bounds what it holds and reports the overflow instead of growing.
+        val sink = timedSink()
+        sink.decide = { EmitBatchResult.RejectedByAdmissionGate }
+        val collector = TestCollector(context(sink, contract = boundedContract(3)), queueCapacity = 2, consumer(), window())
+        collector.start()
+
+        collector.trigger()
+        advanceTimeBy(5_000)
+        runCurrent()
+        repeat(4) {
+            collector.trigger()
+            runCurrent()
+        }
+        assertEquals(CollectorStatus.ACTIVE, collector.health.value.status)
+        collector.trigger()
+        runCurrent()
+
+        assertEquals(CollectorHealth(CollectorStatus.FAILED, "CALLBACK_QUEUE_FULL"), collector.health.value)
+        collector.stop()
+        assertTrue(sink.accepted.isEmpty())
+    }
+
+    @Test
+    fun commitWindowIsPositiveAndAtMostFiveSeconds() {
+        assertEquals(5.seconds, CallbackCommitWindow.SAMPLED_SENSOR.duration)
+        assertEquals(5.seconds, MAXIMUM_CALLBACK_COMMIT_WINDOW)
+        assertTrue(runCatching { CallbackCommitWindow(5.seconds + 1.milliseconds) }.isFailure)
+        assertTrue(runCatching { CallbackCommitWindow(0.seconds) }.isFailure)
+    }
+
+    private fun TestScope.window() = CallbackCommitWindow(5.seconds, testScheduler.timeSource)
+
+    private fun TestScope.timedSink() = FakeSink().apply { now = { testScheduler.currentTime } }
+
+    private fun boundedContract(eventsPerBatch: Int): RegistrySourceContract {
+        val base = requireNotNull(ProtocolEventSourceRegistry["app_lifecycle.v1"])
+        return base.copy(
+            events = base.events.mapValues { (_, event) ->
+                event.copy(maximumEncodedEventBytes = 128, maximumEventsPerBatch = eventsPerBatch)
+            },
+        ).also { assertEquals(eventsPerBatch, callbackBatchEventLimit(it)) }
+    }
+
     /** Runs the consumer only when the test yields, so queue contents at each wake are exact. */
     private fun TestScope.consumer(): CoroutineDispatcher = StandardTestDispatcher(testScheduler)
 
@@ -494,13 +816,16 @@ class SerializedCallbackCollectorTest {
         sink: FakeSink,
         clocks: ResearchClocks = FixedClocks,
         contract: RegistrySourceContract = requireNotNull(ProtocolEventSourceRegistry["app_lifecycle.v1"]),
+        referencedByAutomation: Boolean = false,
+        scope: CoroutineScope = backgroundScope,
     ) = CollectorContext(
-        scope = backgroundScope,
+        scope = scope,
         eventSink = sink,
         clocks = clocks,
         sourceContract = contract,
         resourceGeneration = 3,
         tokenEncoder = StudyScopedTokenEncoder { _, _ -> "0".repeat(64) },
+        referencedByAutomation = referencedByAutomation,
     )
 
     private object FixedClocks : ResearchClocks {
@@ -519,7 +844,8 @@ class SerializedCallbackCollectorTest {
         context: CollectorContext,
         queueCapacity: Int,
         consumerDispatcher: CoroutineDispatcher,
-    ) : SerializedCallbackCollector(context, queueCapacity, consumerDispatcher) {
+        commitWindow: CallbackCommitWindow? = null,
+    ) : SerializedCallbackCollector(context, queueCapacity, consumerDispatcher, commitWindow) {
         var registerCount = 0
         var unregisterCount = 0
         var draftConstructed = false
@@ -587,6 +913,10 @@ class SerializedCallbackCollectorTest {
         /** How many leading events of an admitted batch the one observation records. */
         var record: (SourceEventBatch) -> Int = { it.events.size }
         var beforeDecision: suspend (SourceEventBatch) -> Unit = {}
+        /** Virtual time of each offer, when [now] is set. */
+        var now: () -> Long = { 0L }
+        val offeredAt = mutableListOf<Long>()
+        val acceptedAt = mutableListOf<Long>()
         val events = mutableListOf<EventDraft>()
         val producerOrdinals = mutableListOf<Long>()
         val offeredSizes = mutableListOf<Int>()
@@ -603,6 +933,7 @@ class SerializedCallbackCollectorTest {
         override suspend fun emitBatch(token: AdmissionToken, batch: SourceEventBatch): EmitBatchResult {
             calls += 1
             offeredSizes += batch.events.size
+            offeredAt += now()
             beforeDecision(batch)
             if (rejectFirst && calls == 1) {
                 producerOrdinals += batch.producerOrdinal
@@ -617,6 +948,7 @@ class SerializedCallbackCollectorTest {
             val recorded = batch.events.take(record(batch))
             events += recorded
             if (recorded.isNotEmpty()) accepted += batch.copy(events = recorded)
+            acceptedAt += now()
             acceptedTokens += token
             return EmitBatchResult.Accepted(
                 observationSequence = producerOrdinals.size.toLong(),

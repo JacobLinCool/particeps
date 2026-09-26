@@ -14,6 +14,7 @@ import cool.jacoblin.particeps.core.definition.ResourceBindingAutomation
 import cool.jacoblin.particeps.core.definition.StateCondition
 import cool.jacoblin.particeps.core.definition.EvaluationClock
 import cool.jacoblin.particeps.core.definition.Trigger
+import cool.jacoblin.particeps.core.model.EventSourceId
 import cool.jacoblin.particeps.core.model.EventTypeKey
 
 data class ValidationIssue(val code: String, val path: String, val message: String)
@@ -29,6 +30,50 @@ class CompiledAutomationProgram internal constructor(
     internal val contracts: Map<EventTypeKey, EventTypeContract>,
 ) {
     internal val plan = ReducerPlan(input, occurrenceAutomations, resourceBindings, contracts)
+
+    // The validator records the event of every matcher it checks, and a program exists only when
+    // every automation validated, so this set names every event any matcher can match.
+    private val referencedSources: Set<EventSourceId> = referencedEvents.mapTo(hashSetOf()) { it.sourceId }
+
+    /**
+     * True when a matcher of this program names an event of [sourceId]: an event-match or sequence
+     * trigger, a window selector, or an event-latch or keyed-presence condition, in a trigger, a
+     * guard, or a resource-binding case. Only such a source's events can match automation state.
+     */
+    fun referencesSource(sourceId: EventSourceId): Boolean = sourceId in referencedSources
+
+    /**
+     * True when this program retains state ordered by event time: a sequence or window-threshold
+     * trigger, or a window-threshold condition anywhere in a trigger, a guard, or a resource-binding
+     * case. The reducer reads the time of every event for that state, whichever source produced it
+     * and whether or not a matcher names it, and requires it to be no older than the newest retained
+     * sequence partial or window entry. A source that delays its commits after capture would reach
+     * the reducer behind later-observed events of other sources and fail that check, so no source
+     * of such a program may delay them.
+     */
+    val retainsEventTimeOrderedState: Boolean =
+        occurrenceAutomations.any { automation ->
+            automation.guard?.retainsEventTimeOrderedState() == true ||
+                when (val trigger = automation.trigger) {
+                    is Trigger.Sequence, is Trigger.WindowThreshold -> true
+                    is Trigger.ConditionRisingEdge -> trigger.condition.retainsEventTimeOrderedState()
+                    is Trigger.EventMatch, is Trigger.Schedule -> false
+                }
+        } || resourceBindings.any { binding -> binding.cases.any { it.condition.retainsEventTimeOrderedState() } }
+}
+
+private fun StateCondition.retainsEventTimeOrderedState(): Boolean = when (this) {
+    is StateCondition.WindowThreshold -> true
+    is StateCondition.HeldFor -> condition.retainsEventTimeOrderedState()
+    is StateCondition.Not -> condition.retainsEventTimeOrderedState()
+    is StateCondition.All -> conditions.any { it.retainsEventTimeOrderedState() }
+    is StateCondition.Any -> conditions.any { it.retainsEventTimeOrderedState() }
+    StateCondition.StudySessionActive,
+    is StateCondition.EventLatch,
+    is StateCondition.KeyedPresence,
+    is StateCondition.StudyLocalWindow,
+    is StateCondition.ElapsedAtLeast,
+    -> false
 }
 
 class AutomationCompiler(private val registry: EventContractRegistry) {

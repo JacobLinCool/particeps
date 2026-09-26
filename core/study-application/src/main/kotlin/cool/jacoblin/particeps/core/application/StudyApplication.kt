@@ -37,6 +37,7 @@ import cool.jacoblin.particeps.core.export.ExportStage
 import cool.jacoblin.particeps.core.export.ExportReceipt
 import cool.jacoblin.particeps.core.export.ExportSnapshot
 import cool.jacoblin.particeps.core.export.ResearchExport
+import cool.jacoblin.particeps.core.model.EventSourceId
 import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.core.model.RuntimeDocument
@@ -187,6 +188,11 @@ class EventDrivenRuntimeAssemblyFactory(
                 eventSink = eventSink,
                 clocks = clocks,
                 tokenEncoder = tokenEncoder,
+                // A source the signed automation references never commits through a window, and
+                // neither does any source of a program whose sequence or window state orders every
+                // event by its time.
+                referencedByAutomation = program.referencesSource(EventSourceId(declaration.id)) ||
+                    program.retainsEventTimeOrderedState,
             )
             val decorated = collectorActuatorDecorator.decorate(signed, declaration, collectorActuator)
             require(decorated.key == declaration.resourceKey) { "Collector decorator changed the resource key" }

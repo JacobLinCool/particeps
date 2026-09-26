@@ -2,6 +2,7 @@ package cool.jacoblin.particeps.core.runtime
 
 import cool.jacoblin.particeps.core.automation.AutomationCompiler
 import cool.jacoblin.particeps.core.automation.CompilationResult
+import cool.jacoblin.particeps.core.automation.CompiledAutomationProgram
 import cool.jacoblin.particeps.core.automation.DeliveryMode
 import cool.jacoblin.particeps.core.automation.DeterministicIds
 import cool.jacoblin.particeps.core.automation.DurableTimer
@@ -18,6 +19,9 @@ import cool.jacoblin.particeps.core.automation.TimerTarget
 import cool.jacoblin.particeps.core.automation.TriggerScope
 import cool.jacoblin.particeps.core.collector.EmitBatchResult
 import cool.jacoblin.particeps.core.collector.AdmissionToken
+import cool.jacoblin.particeps.core.collector.CallbackCommitWindow
+import cool.jacoblin.particeps.core.collector.CollectorHealth
+import cool.jacoblin.particeps.core.collector.CollectorStatus
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CoverageAdvance
 import cool.jacoblin.particeps.core.collector.EventSink
@@ -55,6 +59,7 @@ import cool.jacoblin.particeps.core.model.PendingSourceSubmission
 import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.core.model.RuntimeComponentKind
 import cool.jacoblin.particeps.core.model.RuntimeDocument
+import cool.jacoblin.particeps.core.model.SafetyPauseReason
 import cool.jacoblin.particeps.core.model.SourceCoverage
 import cool.jacoblin.particeps.core.model.SourceClockBasis
 import cool.jacoblin.particeps.core.model.StorageUsage
@@ -84,12 +89,15 @@ import cool.jacoblin.particeps.core.resource.VerifyReceipt
 import java.io.IOException
 import java.math.BigInteger
 import java.time.Instant
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -401,6 +409,7 @@ class ExperimentRuntimeTest {
                 sourceContract = requireNotNull(ProtocolEventSourceRegistry[BATTERY_SOURCE.value]),
                 resourceGeneration = 1,
                 tokenEncoder = StudyScopedTokenEncoder { _, _ -> "0".repeat(64) },
+                referencedByAutomation = true,
             ),
             consumerDispatcher = StandardTestDispatcher(testScheduler),
         )
@@ -622,6 +631,7 @@ class ExperimentRuntimeTest {
                 sourceContract = requireNotNull(ProtocolEventSourceRegistry[BATTERY_SOURCE.value]),
                 resourceGeneration = 1,
                 tokenEncoder = StudyScopedTokenEncoder { _, _ -> "0".repeat(64) },
+                referencedByAutomation = true,
             ),
         )
         val barrierAdmissionOpened = CompletableDeferred<Unit>()
@@ -2039,6 +2049,359 @@ class ExperimentRuntimeTest {
         val clocks: FakeClocks,
     )
 
+    @Test
+    fun windowedSensorSamplesKeepTheConditionEpochOfTheirCaptureAcrossABarrier() = runTest {
+        /** Each sample's epoch, and the samples the barrier commit carried as pre-drain input. */
+        suspend fun attribution(window: CallbackCommitWindow?): Pair<Map<String, ConditionEpochId?>, List<String>> {
+            val fixture = fixture(backgroundScope, withGyroscope = true)
+            fixture.runtime.initialize()
+            completeSetup(fixture.runtime)
+            fixture.runtime.start()
+            val gyroscope = gyroscopeCollector(fixture, window)
+            gyroscope.sample(1f)
+            gyroscope.sample(2f)
+            runCurrent()
+            // A battery trigger rotates the epoch through the global barrier while the batch is open.
+            val token = requireNotNull(fixture.runtime.captureToken())
+            assertTrue(fixture.runtime.emitBatch(token, batteryBatch(fixture.clock.now())) is EmitBatchResult.Accepted)
+            runCurrent()
+            assertEquals("slow", fixture.traffic.lastDesired?.profile?.id)
+            gyroscope.sample(3f)
+            runCurrent()
+            detach(fixture)
+            gyroscope.stop()
+            fun EngineCommit.samples() = events.filter { it.type == GYROSCOPE_EVENT }
+                .map { it.fields.getValue("x_radians_per_second") }
+            return fixture.store.commits.flatMap { it.events }
+                .filter { it.type == GYROSCOPE_EVENT }
+                .associate { it.fields.getValue("x_radians_per_second") to it.conditionEpochId } to
+                fixture.store.commits.single { it.consumedPendingInputSha256 != null }.samples()
+        }
+
+        val (windowed, windowedDrained) = attribution(CallbackCommitWindow(5.seconds, testScheduler.timeSource))
+        val (unwindowed, unwindowedDrained) = attribution(window = null)
+
+        // Unwindowed, the first two samples commit before the trigger; windowed, they are still
+        // open when the barrier begins and are drained into it. Either way they keep the old epoch.
+        assertEquals(emptyList<String>(), unwindowedDrained)
+        assertEquals(listOf("1.0", "2.0"), windowedDrained)
+        assertEquals(setOf("1.0", "2.0", "3.0"), windowed.keys)
+        assertEquals(unwindowed, windowed)
+        assertEquals(windowed["1.0"], windowed["2.0"])
+        assertNotEquals(windowed["2.0"], windowed["3.0"])
+    }
+
+    @Test
+    fun windowedSensorSamplesAreNeverAdmittedAfterAForceClose() = runTest {
+        val fixture = fixture(backgroundScope, withGyroscope = true)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val results = mutableListOf<EmitBatchResult>()
+        val gyroscope = gyroscopeCollector(fixture, CallbackCommitWindow(5.seconds, testScheduler.timeSource), results)
+        gyroscope.sample(1f)
+        gyroscope.sample(2f)
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertTrue(results.isEmpty())
+
+        // A safety pause closes admission before it suspends collectors; the open batch is refused.
+        fixture.runtime.safetyPause(SafetyPauseReason.REQUIRED_RESOURCE_FAILURE)
+        advanceTimeBy(10_000)
+        runCurrent()
+
+        assertEquals(ExperimentState.PAUSED, fixture.runtime.snapshot.value.state)
+        assertTrue(results.isNotEmpty() && results.all { it == EmitBatchResult.RejectedByAdmissionGate })
+        assertTrue(fixture.store.commits.flatMap { it.events }.none { it.type == GYROSCOPE_EVENT })
+        assertEquals(CollectorStatus.PAUSED, gyroscope.health.value.status)
+        detach(fixture)
+        gyroscope.stop()
+    }
+
+    @Test
+    fun wallClockChangeRefusesTheOpenWindowAndKeepsRunning() = runTest {
+        /**
+         * Each recorded sample, labelled "old" or "new" by the epoch it belongs to, the gyroscope's
+         * offer results, and the sources the recorded quality gaps name.
+         */
+        suspend fun acrossAClockChange(
+            window: CallbackCommitWindow?,
+        ): Triple<Map<String, String>, List<EmitBatchResult>, List<String?>> {
+            val fixture = fixture(backgroundScope, withGyroscope = true)
+            fixture.runtime.initialize()
+            completeSetup(fixture.runtime)
+            fixture.runtime.start()
+            val oldEpoch = requireNotNull(fixture.runtime.snapshot.value.conditionEpochId)
+            val results = mutableListOf<EmitBatchResult>()
+            val gyroscope = gyroscopeCollector(fixture, window, results)
+            gyroscope.sample(1f)
+            gyroscope.sample(2f)
+            advanceTimeBy(1_000)
+            runCurrent()
+
+            // A running TIME_SET closes admission before it suspends collectors, as a safety pause does.
+            fixture.clock.advanceMillis(1_000)
+            assertEquals(RuntimeCommandResult.Success, fixture.runtime.onClockDiscontinuity())
+            runCurrent()
+            assertEquals(ExperimentState.RUNNING, fixture.runtime.snapshot.value.state)
+            val newEpoch = requireNotNull(fixture.runtime.snapshot.value.conditionEpochId)
+            assertNotEquals(oldEpoch, newEpoch)
+            assertEquals(CollectorStatus.ACTIVE, gyroscope.health.value.status)
+            gyroscope.sample(3f)
+            advanceTimeBy(5_000)
+            runCurrent()
+            detach(fixture)
+            gyroscope.stop()
+            val events = fixture.store.commits.flatMap { it.events }
+            val epochLabels = mapOf(oldEpoch to "old", newEpoch to "new")
+            return Triple(
+                events.filter { it.type == GYROSCOPE_EVENT }.associate {
+                    it.fields.getValue("x_radians_per_second") to epochLabels.getValue(requireNotNull(it.conditionEpochId))
+                },
+                results,
+                events.filter { it.type.eventType == "SOURCE_QUALITY_GAP" }.map { it.fields["source_id"] },
+            )
+        }
+
+        val (unwindowed, unwindowedResults, unwindowedGaps) = acrossAClockChange(window = null)
+        val (windowed, windowedResults, windowedGaps) = acrossAClockChange(
+            CallbackCommitWindow(5.seconds, testScheduler.timeSource),
+        )
+
+        // Committed at capture, the first two samples keep the old epoch. Windowed, they are still
+        // open when admission closes, so the rotation's pause refuses them and they are dropped.
+        assertEquals(mapOf("1.0" to "old", "2.0" to "old", "3.0" to "new"), unwindowed)
+        assertTrue(unwindowedResults.all { it is EmitBatchResult.Accepted })
+        assertEquals(mapOf("3.0" to "new"), windowed)
+        assertEquals(
+            listOf(EmitBatchResult.RejectedByAdmissionGate, EmitBatchResult.RejectedByAdmissionGate),
+            windowedResults.take(2),
+        )
+        assertTrue(windowedResults.drop(2).single() is EmitBatchResult.Accepted)
+        // Only the clock's own gap is recorded; none names the sensor whose samples were dropped.
+        assertEquals(listOf("timer.v1"), unwindowedGaps)
+        assertEquals(listOf("timer.v1"), windowedGaps)
+    }
+
+    @Test
+    fun wallClockChangeFirstSeenAfterTheDeadlineRefusesTheOpenWindow() = runTest {
+        val fixture = fixture(backgroundScope, withGyroscope = true, durationSeconds = 1)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val deadline = fixture.runtime.pendingTimers().single { it.producerKey == "study-deadline" }
+        val results = mutableListOf<EmitBatchResult>()
+        val gyroscope = gyroscopeCollector(fixture, CallbackCommitWindow(5.seconds, testScheduler.timeSource), results)
+        gyroscope.sample(1f)
+        gyroscope.sample(2f)
+        runCurrent()
+
+        // Unlike the deadline stop's drain, a clock change first seen after the deadline completes
+        // from durable input only: the samples captured before the deadline are refused.
+        fixture.clock.advanceToElapsedNanos((deadline.target as TimerTarget.SameBootMonotonic).elapsedRealtimeNanos)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.onClockDiscontinuity())
+        runCurrent()
+
+        assertEquals(ExperimentState.COMPLETED, fixture.runtime.snapshot.value.state)
+        assertEquals(listOf(EmitBatchResult.RejectedByAdmissionGate, EmitBatchResult.RejectedByAdmissionGate), results)
+        assertTrue(fixture.store.commits.flatMap { it.events }.none { it.type == GYROSCOPE_EVENT })
+        detach(fixture)
+        gyroscope.stop()
+    }
+
+    @Test
+    fun sequenceOrWindowStateOverAnotherSourceTurnsTheSensorsWindowOff() = runTest {
+        // A battery window count keeps each battery event's observed time, and the reducer requires
+        // every later event, from any source, to be no older than the newest entry.
+        val batteryWindow = Trigger.WindowThreshold(
+            EventMatcher(BATTERY_EVENT),
+            60,
+            EvaluationClock.OBSERVED_RESEARCH_TIME,
+            Aggregate.Count,
+            NumericComparison(FieldOperator.GTE, "100"),
+        )
+
+        /** The gyroscope's health and recorded samples after a battery event commits inside its window. */
+        suspend fun afterABatteryEvent(referencedByAutomation: (CompiledAutomationProgram) -> Boolean): Pair<CollectorHealth, List<String>> {
+            val fixture = fixture(backgroundScope, withGyroscope = true, notifyTrigger = batteryWindow)
+            fixture.runtime.initialize()
+            completeSetup(fixture.runtime)
+            fixture.runtime.start()
+            val gyroscope = gyroscopeCollector(
+                fixture,
+                CallbackCommitWindow(5.seconds, testScheduler.timeSource),
+                referencedByAutomation = referencedByAutomation(fixture.program),
+            )
+            gyroscope.sample(1f)
+            runCurrent()
+            advanceTimeBy(1_000)
+            // A battery event that changes no resource commits at once, after the sample's capture.
+            val token = requireNotNull(fixture.runtime.captureToken())
+            val battery = fixture.runtime.emitBatch(token, batteryBatch(fixture.clock.now(), percentage = 50))
+            assertTrue(battery is EmitBatchResult.Accepted)
+            advanceTimeBy(5_000)
+            runCurrent()
+            val health = gyroscope.health.value
+            val samples = fixture.store.commits.flatMap { it.events }
+                .filter { it.type == GYROSCOPE_EVENT }
+                .map { it.fields.getValue("x_radians_per_second") }
+            detach(fixture)
+            gyroscope.stop()
+            return health to samples
+        }
+
+        // The assembly's rule: no matcher names the gyroscope, but the window orders every event.
+        assertEquals(
+            CollectorHealth(CollectorStatus.ACTIVE) to listOf("1.0"),
+            afterABatteryEvent { it.referencesSource(GYROSCOPE_SOURCE) || it.retainsEventTimeOrderedState },
+        )
+        // Matcher references alone would keep the window: its batch then lands behind the battery
+        // entry, the reducer refuses it, and the collector fails with the sample lost.
+        assertEquals(
+            CollectorHealth(CollectorStatus.FAILED, "STORAGE_WRITE_FAILED") to emptyList<String>(),
+            afterABatteryEvent { it.referencesSource(GYROSCOPE_SOURCE) },
+        )
+    }
+
+    @Test
+    fun deadlineCompletionCommitsTheOpenWindowBeforeTheEpochEnds() = runTest {
+        val fixture = fixture(backgroundScope, withGyroscope = true, durationSeconds = 1)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val epoch = requireNotNull(fixture.runtime.snapshot.value.conditionEpochId)
+        val deadline = fixture.runtime.pendingTimers().single { it.producerKey == "study-deadline" }
+        val gyroscope = gyroscopeCollector(fixture, CallbackCommitWindow(5.seconds, testScheduler.timeSource))
+        gyroscope.sample(1f)
+        gyroscope.sample(2f)
+        runCurrent()
+
+        fixture.clock.advanceToElapsedNanos((deadline.target as TimerTarget.SameBootMonotonic).elapsedRealtimeNanos)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.onTimerDue(deadline.id, deadline.generation))
+        runCurrent()
+
+        assertEquals(ExperimentState.COMPLETED, fixture.runtime.snapshot.value.state)
+        assertDrainedIntoEpochEnd(fixture, epoch)
+        detach(fixture)
+        gyroscope.stop()
+    }
+
+    @Test
+    fun windowClosingAfterTheDeadlineIsHeldForTheDeadlineStopsDrain() = runTest {
+        val fixture = fixture(backgroundScope, withGyroscope = true, durationSeconds = 1)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val epoch = requireNotNull(fixture.runtime.snapshot.value.conditionEpochId)
+        val deadline = fixture.runtime.pendingTimers().single { it.producerKey == "study-deadline" }
+        val results = mutableListOf<EmitBatchResult>()
+        val gyroscope = gyroscopeCollector(fixture, CallbackCommitWindow(5.seconds, testScheduler.timeSource), results)
+        gyroscope.sample(1f)
+        gyroscope.sample(2f)
+        runCurrent()
+
+        // The window closes after the deadline but before its timer runs: the open epoch refuses.
+        fixture.clock.advanceToElapsedNanos((deadline.target as TimerTarget.SameBootMonotonic).elapsedRealtimeNanos)
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(listOf(EmitBatchResult.RejectedByAdmissionGate, EmitBatchResult.RejectedByAdmissionGate), results)
+        assertTrue(fixture.store.commits.flatMap { it.events }.none { it.type == GYROSCOPE_EVENT })
+
+        // A late deadline wake drains what was observed before the deadline, held batch included.
+        fixture.clock.advanceMillis(5_000)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.onTimerDue(deadline.id, deadline.generation))
+        runCurrent()
+
+        assertEquals(ExperimentState.COMPLETED, fixture.runtime.snapshot.value.state)
+        assertDrainedIntoEpochEnd(fixture, epoch)
+        detach(fixture)
+        gyroscope.stop()
+    }
+
+    @Test
+    fun lateTimeBasedTransitionIsSurfacedByAWindowedCommitOnlyWhenItCommits() = runTest {
+        // Traffic slows after 10 s of running time. Its durable timer is never delivered here, as
+        // when WorkManager runs late, so only a later commit can surface the transition.
+        suspend fun slowedAt(window: CallbackCommitWindow?): List<String?> {
+            val fixture = fixture(
+                backgroundScope,
+                withGyroscope = true,
+                trafficCondition = StateCondition.ElapsedAtLeast(10, DurationClock.ACTIVE_RUNNING_TIME),
+            )
+            fixture.runtime.initialize()
+            completeSetup(fixture.runtime)
+            fixture.runtime.start()
+            val gyroscope = gyroscopeCollector(fixture, window)
+            fixture.clock.advanceMillis(11_000)
+            gyroscope.sample(1f)
+            runCurrent()
+            val beforeWindow = fixture.traffic.lastDesired?.profile?.id
+            advanceTimeBy(5_000)
+            runCurrent()
+            val afterWindow = fixture.traffic.lastDesired?.profile?.id
+            detach(fixture)
+            gyroscope.stop()
+            return listOf(beforeWindow, afterWindow)
+        }
+
+        assertEquals(listOf("slow", "slow"), slowedAt(window = null))
+        assertEquals(listOf("baseline", "slow"), slowedAt(CallbackCommitWindow(5.seconds, testScheduler.timeSource)))
+    }
+
+    /** The samples 1.0 and 2.0 are one pre-drain observation of the commit that ends [epoch]. */
+    private fun assertDrainedIntoEpochEnd(fixture: Fixture, epoch: ConditionEpochId) {
+        val epochEnd = fixture.store.commits.single { commit ->
+            commit.events.any { it.type.eventType == "CONDITION_EPOCH_DEACTIVATED" }
+        }
+        val samples = epochEnd.events.filter { it.type == GYROSCOPE_EVENT }
+        assertEquals(listOf("1.0", "2.0"), samples.map { it.fields.getValue("x_radians_per_second") })
+        assertTrue(samples.all { it.conditionEpochId == epoch })
+        val observation = epochEnd.sourceObservations.single { it.sourceId == GYROSCOPE_SOURCE }
+        assertEquals(0L, observation.producerOrdinal)
+        assertEquals(2, observation.eventCount)
+        assertTrue(fixture.store.commits.flatMap { it.events }.count { it.type == GYROSCOPE_EVENT } == 2)
+    }
+
+    /** Starts a gyroscope collector, unreferenced by default, whose resource barriers pause and resume it. */
+    private suspend fun TestScope.gyroscopeCollector(
+        fixture: Fixture,
+        window: CallbackCommitWindow?,
+        results: MutableList<EmitBatchResult> = mutableListOf(),
+        referencedByAutomation: Boolean = false,
+    ): RuntimeGyroscopeCollector {
+        val sink = object : EventSink by fixture.runtime {
+            override suspend fun emitBatch(token: AdmissionToken, batch: SourceEventBatch): EmitBatchResult =
+                fixture.runtime.emitBatch(token, batch).also(results::add)
+        }
+        val collector = RuntimeGyroscopeCollector(
+            CollectorContext(
+                scope = backgroundScope,
+                eventSink = sink,
+                clocks = fixture.clock,
+                sourceContract = requireNotNull(ProtocolEventSourceRegistry[GYROSCOPE_SOURCE.value]),
+                resourceGeneration = 1,
+                tokenEncoder = StudyScopedTokenEncoder { _, _ -> "0".repeat(64) },
+                referencedByAutomation = referencedByAutomation,
+            ),
+            StandardTestDispatcher(testScheduler),
+            window,
+        )
+        collector.start()
+        collector.onAdmissionOpened()
+        val actuator = requireNotNull(fixture.gyroscope)
+        actuator.suspendHook = { collector.pause() }
+        actuator.resumeHook = { collector.resume() }
+        actuator.admissionOpenedHook = { collector.onAdmissionOpened() }
+        return collector
+    }
+
+    private fun detach(fixture: Fixture) {
+        val actuator = requireNotNull(fixture.gyroscope)
+        actuator.suspendHook = null
+        actuator.resumeHook = null
+        actuator.admissionOpenedHook = null
+    }
+
     private fun fixture(
         scope: kotlinx.coroutines.CoroutineScope,
         store: InMemoryStudyStore = InMemoryStudyStore(),
@@ -2052,6 +2415,8 @@ class ExperimentRuntimeTest {
             EventMatcher(BATTERY_EVENT, listOf(FieldPredicate("percentage", FieldOperator.EQ, value = "42"))),
             EvaluationClock.OBSERVED_RESEARCH_TIME,
         ),
+        /** Adds a continuously collected gyroscope that no automation references. */
+        withGyroscope: Boolean = false,
     ): Fixture {
         val runtimeClock = clock ?: store.runtime?.clockCheckpoint?.anchor?.let(FakeClocks::continuingAfter)
             ?: FakeClocks()
@@ -2060,25 +2425,34 @@ class ExperimentRuntimeTest {
         val slow = SignedResourceProfile("slow", "{\"id\":\"slow\"}".toByteArray())
         val batteryKey = ResourceKey(ResourceKind.COLLECTOR, BATTERY_SOURCE.value)
         val trafficKey = ResourceKey(ResourceKind.ACTUATOR, "traffic-shaping.v1")
+        val gyroscopeKey = ResourceKey(ResourceKind.COLLECTOR, GYROSCOPE_SOURCE.value)
         val compilerInput = AutomationCompilerInput(
             configurationSha256 = CONFIG_DIGEST,
             studyDurationSeconds = durationSeconds,
-            resources = listOf(
+            resources = listOfNotNull(
                 DeclaredResource(
                     trafficKey,
                     true,
                     mapOf("baseline" to baseline.expectedSha256.value, "slow" to slow.expectedSha256.value),
                 ),
                 DeclaredResource(batteryKey, true, mapOf("continuous" to batteryProfile.expectedSha256.value)),
+                DeclaredResource(gyroscopeKey, true, mapOf("continuous" to batteryProfile.expectedSha256.value))
+                    .takeIf { withGyroscope },
             ),
             interventions = listOf(InterventionDefinition("prompt", required = interventionRequired)),
-            automations = listOf(
+            automations = listOfNotNull(
                 ResourceBindingAutomation(
                     "battery-binding",
                     batteryKey,
                     listOf(ResourceConditionCase(StateCondition.StudySessionActive, "continuous")),
                     "continuous",
                 ),
+                ResourceBindingAutomation(
+                    "gyroscope-binding",
+                    gyroscopeKey,
+                    listOf(ResourceConditionCase(StateCondition.StudySessionActive, "continuous")),
+                    "continuous",
+                ).takeIf { withGyroscope },
                 OccurrenceAutomation(
                     "notify-battery",
                     notifyTrigger,
@@ -2120,6 +2494,7 @@ class ExperimentRuntimeTest {
             ?: error("Compilation failed: ${(compilation as CompilationResult.Failure).issues}")
         val battery = FakeActuator(batteryKey)
         val traffic = FakeActuator(trafficKey)
+        val gyroscope = FakeActuator(gyroscopeKey).takeIf { withGyroscope }
         val entropy = DeterministicEntropy()
         val trafficAudit = FakeTrafficAuditSource(trafficKey).takeIf { withTrafficAudit }
         val timerWakeups = RecordingTimerWakeups()
@@ -2128,7 +2503,7 @@ class ExperimentRuntimeTest {
             store = store,
             program = program,
             surveyInterventionIds = setOf("prompt"),
-            resourceHosts = listOf(
+            resourceHosts = listOfNotNull(
                 RuntimeResourceHost(batteryKey, true, mapOf("continuous" to batteryProfile), battery),
                 RuntimeResourceHost(
                     trafficKey,
@@ -2137,6 +2512,7 @@ class ExperimentRuntimeTest {
                     traffic,
                     trafficAudit,
                 ),
+                gyroscope?.let { RuntimeResourceHost(gyroscopeKey, true, mapOf("continuous" to batteryProfile), it) },
             ),
             clocks = runtimeClock,
             scope = scope,
@@ -2146,7 +2522,7 @@ class ExperimentRuntimeTest {
             actionNotifier = actionNotifier,
             entropy = entropy,
         )
-        return Fixture(runtime, store, battery, traffic, runtimeClock, timerWakeups, actionNotifier)
+        return Fixture(runtime, store, battery, traffic, runtimeClock, timerWakeups, actionNotifier, program, gyroscope)
     }
 
     private fun retrospectiveFixture(
@@ -2227,6 +2603,8 @@ class ExperimentRuntimeTest {
         val clock: FakeClocks,
         val timerWakeups: RecordingTimerWakeups,
         val actionNotifier: RecordingActionNotifier,
+        val program: CompiledAutomationProgram,
+        val gyroscope: FakeActuator? = null,
     )
 
     private data class RetrospectiveFixture(
@@ -2612,6 +2990,32 @@ class ExperimentRuntimeTest {
         override suspend fun unregisterSource() = SourceTeardownResult.Released
     }
 
+    /** A gyroscope-shaped sampled source; [sample] records its x rate as the sample's label. */
+    private class RuntimeGyroscopeCollector(
+        context: CollectorContext,
+        consumerDispatcher: CoroutineDispatcher,
+        commitWindow: CallbackCommitWindow?,
+    ) : SerializedCallbackCollector(context, queueCapacity = 64, consumerDispatcher, commitWindow) {
+        fun sample(x: Float) = capture {
+            val observed = context.clocks.now()
+            EventDraft(
+                GYROSCOPE_EVENT,
+                observed,
+                mapOf(
+                    "accuracy" to "3",
+                    "source_elapsed_realtime_nanos" to observed.elapsedRealtimeNanos.toString(),
+                    "x_radians_per_second" to x.toString(),
+                    "y_radians_per_second" to "0.0",
+                    "z_radians_per_second" to "0.0",
+                ),
+            )
+        }
+
+        override suspend fun registerSource() = SourceRegistrationResult.Registered
+
+        override suspend fun unregisterSource() = SourceTeardownResult.Released
+    }
+
     private class RetrospectiveActuator(
         override val key: ResourceKey,
         private val sourceId: EventSourceId,
@@ -2913,6 +3317,8 @@ class ExperimentRuntimeTest {
         )
 
         val BATTERY_SOURCE = EventSourceId("battery_state.v1")
+        val GYROSCOPE_SOURCE = EventSourceId("gyroscope.v1")
+        val GYROSCOPE_EVENT = EventTypeKey(GYROSCOPE_SOURCE, 1, "GYROSCOPE_SAMPLE")
         val USAGE_SOURCE = EventSourceId("usage_events.v1")
         val BATTERY_EVENT = EventTypeKey(BATTERY_SOURCE, 1, "BATTERY_STATE")
         /** Set by a 42% battery event and reset by a 43% one; the fixture binds "slow" to it. */

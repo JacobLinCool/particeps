@@ -41,6 +41,32 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class CollectorResourceActuatorTest {
     @Test
+    fun everyCollectorInstanceReceivesWhetherAutomationReferencesItsSource() = runTest {
+        val declaration = CollectorResourceConfiguration(
+            id = BatteryStateV1ProfileConfiguration.SOURCE_ID,
+            required = true,
+            profiles = listOf(
+                NamedCollectorProfile("continuous", BatteryStateV1ProfileConfiguration()),
+                NamedCollectorProfile("reduced", BatteryStateV1ProfileConfiguration()),
+            ),
+        )
+        listOf(true, false).forEach { referenced ->
+            val plugin = FakeCollectorPlugin()
+            val actuator = actuator(declaration, plugin, referencedByAutomation = referenced)
+            val first = desired(declaration, "continuous", 1uL)
+            actuator.prepare(first, "initial")
+            actuator.apply(first)
+            val second = desired(declaration, "reduced", 2uL)
+            actuator.prepare(second, "rotate")
+            actuator.apply(second)
+
+            assertEquals(2, plugin.contexts.size)
+            assertTrue(plugin.contexts.all { it.referencedByAutomation == referenced })
+            actuator.release(second)
+        }
+    }
+
+    @Test
     fun preservesAnUnchangedGenerationAndRotatesAnActuallyChangedProfile() = runTest {
         val declaration = CollectorResourceConfiguration(
             id = BatteryStateV1ProfileConfiguration.SOURCE_ID,
@@ -211,6 +237,7 @@ class CollectorResourceActuatorTest {
     private fun TestScope.actuator(
         declaration: CollectorResourceConfiguration,
         plugin: FakeCollectorPlugin,
+        referencedByAutomation: Boolean = false,
     ) = CollectorResourceActuator(
         declaration = declaration,
         plugin = plugin,
@@ -222,6 +249,7 @@ class CollectorResourceActuatorTest {
         tokenEncoder = BindableStudyScopedTokenEncoder().apply {
             bindBase64Url(Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32) { 1 }))
         },
+        referencedByAutomation = referencedByAutomation,
     )
 
     private fun desired(
@@ -240,6 +268,7 @@ class CollectorResourceActuatorTest {
         private val failStop: Boolean = false,
     ) : CollectorPlugin {
         val instances = mutableListOf<FakeCollector>()
+        val contexts = mutableListOf<CollectorContext>()
         override val descriptor = CollectorDescriptor(
             id = BatteryStateV1ProfileConfiguration.SOURCE_ID,
             displayName = "Battery state",
@@ -251,6 +280,7 @@ class CollectorResourceActuatorTest {
 
         override fun create(configuration: CollectorProfileConfiguration, context: CollectorContext): Collector {
             require(configuration is BatteryStateV1ProfileConfiguration)
+            contexts += context
             return FakeCollector(failStart, failStop).also(instances::add)
         }
     }

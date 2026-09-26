@@ -190,6 +190,17 @@ Residual risks:
   uses acknowledged file/directory sync and fail-closed reopen, but cannot repair dishonest storage.
 - Forced process termination can delay the visible paused notification until Android restarts the
   app; no collector event gate survives the process to accept data during that gap.
+- When no automation matches their events and the study has no sequence or window automation,
+  gyroscope and accelerometer samples wait in process memory for up to 5 s of awake time before
+  their batch commits; for the accelerometer, a CPU suspend extends the wait until after the next
+  wake. Process death loses those samples. Recovery records the `PROCESS_RECOVERY` quality gap,
+  whose interval for these sources begins at their last recorded sample, possibly before the
+  chain's previous commit, and for the accelerometer possibly hours before it. A safety pause, a
+  running wall-clock or time-zone change, and a clock change first seen after the deadline each
+  close admission before suspending collectors and refuse an open batch, so up to 5 s of samples
+  before them can be missing without a quality-gap event that names the sensor; the clock change
+  records only its `timer.v1` `WALL_CLOCK_CHANGED` gap. Admission is unchanged: samples keep their
+  capture-time token, so none is admitted after a force-close.
 
 ## Source completeness and time
 

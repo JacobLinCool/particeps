@@ -32,11 +32,49 @@
 - API 34 模擬器，P2 gyro 以 20 ms 抽樣、`maximum_report_latency_us = 0`，20 秒視窗，記憶體內 sink：sink 不延遲時，修改前後都是 1,000 筆事件對應 1,000 個 observation。每個 sample 單獨到達，佇列沒有累積，所以不會合併。
 - 同一模擬器設定，由 sink 對每個 observation 假設 20 ms／100 ms 的提交延遲：修改後分別是 1,000 筆事件 880 個 observation、1,020 筆事件 196 個 observation。修改前同一視窗只處理 882／196 筆事件，每筆一個 observation，consumer 落後且積壓持續增加；依 100 ms 時的速率推算，2,048 筆佇列約 50 秒後會滿。這兩個延遲是假設值，不是加密儲存的實測延遲。
 
-因此，在 `maximum_report_latency_us = 0` 時，gyro 每個 sample 仍單獨到達；只有 sample 在佇列中累積，例如排在一筆較慢的 commit 之後，gyro 的 commit 數才會下降。要在一般負載下大幅減少 gyro commit，仍需第 3 節經硬體驗證的批次與 flush 設計。
+因此，在 `maximum_report_latency_us = 0` 時，只合併已排隊 callback 並不會減少一般負載下的 gyro commit；下一節的 5 秒提交窗口改變了這一點。CPU 喚醒與 wake lock 的成本仍需第 3 節經硬體驗證的批次與 flush 設計。
 
 對研究資料的影響：原始 sample、observed time、時間解析度、交付延遲、持久性與裝置資格不變，但可能改變介入暴露。reducer 仍依序處理每個事件，每個 observation 卻只 reconcile 一次 desired resources。同一合併 observation 內先成立又復原的條件不再切換資源或輪替 epoch；逐筆提交時，排在觸發事件之後的復原事件會以 pre-drain 輸入先於觸發事件被 reduce，資源仍會切換。合併在觸發事件之前的 callback 先以一般 commit 記錄，與逐筆提交相同；觸發事件與排在其後的 callback 組成 causal observation，在 barrier 的 pre-drain 輸入之後才被 reduce。事件記錄與 condition-epoch 歸屬不變；在合併的 causal observation 內，事件序號依 capture 順序。
 
 驗證：`SerializedCallbackCollectorTest` 涵蓋不等待的合併、barrier 不跨越且在先前事件處理後才完成、數量／位元組上限、token 不相等、時間倒退與 boot 變更、被拒批次的前綴與連續 ordinal、admission 在拒絕後放寬時仍提交剩餘事件、契約違規前的有效事件先記錄且 collector 在違規事件失效、只記錄前段時以下一個 ordinal 提交其餘事件，以及 `captureAll`；`EventAdmissionGateTest` 涵蓋 token 相等性；`AutomationReducerTest` 涵蓋第一個改變資源的輸入；`ExperimentRuntimeTest` 涵蓋合併批次中段的觸發從觸發事件開始 staged、其前事件先 commit 且與逐筆提交有相同的 epoch 歸屬、drain 期間的輸入不使 rising edge 重複觸發、同一批內先成立又復原不輪替 epoch，以及合併的 window 滑動只記錄 timer 淨變化且不排程中間 generation；particeps-analysis 的 `test_engine.py` 涵蓋驗證器的 timer 淨變化規則。
+
+## 第 2 項後續（2026-09-25）：陀螺儀與加速度計的 5 秒提交窗口
+
+使用者核准的取捨：程序被終止時，最多約 5 秒尚未提交的 sample 可能遺失，而且遺失必須落在恢復時記錄的品質缺口內，不能無聲發生。安全暫停與時間變更會先關閉 admission，不在這項取捨內：開啟的窗口在這些路徑上被丟棄，沒有指名該 sensor 的品質缺口（見下方「不經品質缺口記錄的遺失」）。時間變更路徑是否改為先 drain live 來源會改變 discard commit 的內容，尚待決定。本次仍沒有實作第 3 節的 wake-up gyro、FIFO flush 或暫停前排空；gyro 的 wake lock、抽樣頻率與回報延遲設定不變。
+
+- 範圍：只有 `gyroscope.v1` 與 `accelerometer.v1` 傳入 `CallbackCommitWindow.SAMPLED_SENSOR`（5 秒，即 `MAXIMUM_CALLBACK_COMMIT_WINDOW`）。ambient light、proximity、screen、network、keyboard、location、app lifecycle、battery 等 on-change／事件來源不傳窗口，行為不變。
+- 前提：簽署研究的 automation 沒有任何 matcher 引用該 sensor 的事件，而且整份研究沒有任何 sequence 或 window 狀態。`EventDrivenRuntimeAssemblyFactory` 依編譯後的 `CompiledAutomationProgram.referencesSource` 與 `CompiledAutomationProgram.retainsEventTimeOrderedState` 設定 `CollectorContext.referencedByAutomation`；這是程序內的組裝狀態，不簽署、不儲存、不匯出。編譯器並不禁止引用這兩個 sensor：event_match trigger 與 event_latch 條件可以引用；sequence 與 window 因為 `PLATFORM_ONLY` 速率沒有強制上限，以 `UNBOUNDED_SOURCE` 拒絕（`AutomationCompiler.kt:482`、`GeneratedEventContractRegistry.kt:109`）。被引用的 sensor 不開窗口，每個 sample 照舊提交。研究只要在 trigger、guard 或 resource binding 的任何位置有 sequence、window-threshold trigger 或 window-threshold 條件，不論選的是哪個來源，兩個 sensor 都不開窗口：reducer 要求每筆事件（任何來源、不論是否被 matcher 引用）都不早於最新保留的 sequence partial 或 window entry（`AutomationReducer.kt:880`、`:932`）。開窗口的 sample 會在其他來源較晚觀測、立即提交的事件之後才提交，reducer 因此會拋出例外，collector 以 `STORAGE_WRITE_FAILED` 失效並遺失該批，研究接著安全暫停；reducer 的這項檢查不變。
+- 機制：consumer 取得批次的第一個 callback 後持續收集，直到自該 callback 擷取起經過 5 秒 consumer dispatcher 的 monotonic 時間（Android 上是清醒時間）。barrier 或 stop 到達時立即提交已收集的批次，再照舊處理，所以暫停、完成、撤回、資源 barrier 與截止時的停止都不等待窗口。token 不相等、observed time 倒退、boot 變更與每批 512 筆上限仍立即結束批次。窗口是 consumer dispatcher 上的 `select` 與 `onTimeout`，沒有新增 WorkManager 工作、alarm、`Handler` 或 wake lock。CPU 在窗口內 suspend 時（沒有 wake lock 的加速度計可能發生），窗口一併暫停，批次在下次喚醒並經過剩餘時間後提交；gyro 持有 wake lock，窗口按實際時間經過。
+- 被 admission gate 拒絕的窗口批次，連同已排隊的同 token callback，保留到下一個 barrier、stop 或其他 token 的 callback 前再提交一次；該次仍被拒絕就丟棄。研究截止後、截止 drain 開始前關閉的窗口，因此仍由截止 drain 收入截止前觀測到的 sample。gate 拒絕某個 token 後不再發出相等的 token，所以保留量最多是一批加上佇列容量；超過時 collector 以 `CALLBACK_QUEUE_FULL` 失效。窗口期間 consumer 持續把 callback 從佇列移入批次，記憶體上限為一個最多 512 筆的開啟批次加上 2,048 則的佇列。
+
+對研究資料的影響：
+
+- 原始 sample、observed time（仍是擷取時間）、`source_elapsed_realtime_nanos`、時間解析度與裝置資格不變。
+- 交付延遲：這兩個 sensor 的 sample 最多延後 5 秒清醒時間才提交；加速度計在 CPU suspend 時延到下次喚醒之後。
+- 持久性：批次被接受前，sample 只存在於程序記憶體；被接受仍代表已同步寫入 commit 或 pending slot。程序死亡時遺失的是該來源最後一筆紀錄之後擷取的 sample，最多約一個窗口。只要持久狀態是 `ACTIVATING`、`RUNNING` 或 `PAUSING`，下次初始化都會提交 `RECOVERY` commit，其中有 `SOURCE_QUALITY_GAP`（`PROCESS_RECOVERY`）並關閉這些 sample 所屬的 epoch，所以遺失不會無聲發生。這個事件只帶自己的時間；對開窗口的來源，缺口應從該來源最後一筆紀錄算起。鏈上前一個 commit 由其他來源、timer 或命令產生時，gyro 最後一筆紀錄最多比它早 5 秒；加速度計的窗口在 CPU suspend 時暫停，所以最多早 5 秒清醒時間再加上其間所有 suspend，可能是數小時。分析不可用 5 秒界定這段缺口。
+- 不經品質缺口記錄的遺失：以下三種情況都會先關閉 admission 再暫停 collector，開啟中的窗口因此被拒絕而丟棄，且沒有指名該 sensor 的 `SOURCE_QUALITY_GAP`。(1) 安全暫停（包含儲存失敗與必要資源失效）：最多是 `STUDY_SAFETY_PAUSE_REQUESTED` 之前 5 秒的 sample。(2) 研究進行中的 TIME_SET 或 TIMEZONE_CHANGE（discard barrier）：最多是時間變更前 5 秒的 sample，研究仍維持 `RUNNING` 並換到新 epoch，唯一紀錄是 `source_id` 為 `timer.v1`、原因為 `WALL_CLOCK_CHANGED` 的缺口；分析應把各開窗口來源從該缺口前最後一筆紀錄到新 epoch 啟用視為未觀測。(3) 截止後才首次觀察到的時間變更：研究只以持久輸入完成、不做 drain，開啟窗口中截止前擷取的 sample 被丟棄，而一般的截止 drain 會收入這些 sample。開窗口前，這些情況只會遺失仍在佇列或提交中的 callback。discard barrier 不 drain live 來源，因為 drain 會在 discard commit 中加入 pre-drain observation。
+- epoch 歸屬不變：token 在 callback 時擷取；drain 前擷取的 sample 以 pre-drain 輸入收入舊 epoch；force-close 後不收任何 sample。
+- 介入暴露：時間型條件（例如 17:00 的 `study_local_window` 邊界）仍以 durable timer 為準。WorkManager 喚醒延遲時，邊界之後的第一個 commit 會讓 reducer 看到轉換；開窗口來源的 commit 比逐筆提交最多晚一個窗口，舊條件（例如限速）因此最多延長 5 秒，直到該 commit、其他來源的 commit 或延遲的 timer，以先到者為準。
+
+量測是原始碼路徑的工作量，不是耗電量測；量測程式放在 scratchpad，未納入 repository。
+
+- JVM（虛擬時間 60 秒，真實 `SerializedCallbackCollector` 與 `ExperimentRuntime`，記憶體內 StudyStore）：1 Hz 從 60 次 commit 降為 10 次（每批 6 筆，換算每小時 3,600 → 600）；50 Hz 從 3,000 次降為 12 次（每批最多 251 筆，每小時 180,000 → 720）。automation 引用該來源時與修改前完全相同。
+- API 34 模擬器（真實 gyroscope collector、`ExperimentRuntime` 與 `EncryptedExperimentStore`，60 秒，含結束時的 flush；store 的可注入檔案系統與 frame 寫入函式計數）：
+
+| 要求的抽樣 | 條件 | sample | commit frame | fsync | Keystore 加密 | 每 1,000 sample 寫入 bytes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 Hz（模擬器實際約 2 Hz） | 修改前 | 121 | 121 | 126 | 122 | 2,905,289 |
+| 1 Hz | 修改後，automation 引用 | 120 | 120 | 125 | 121 | 2,905,541 |
+| 1 Hz | 修改後，5 秒窗口 | 121 | 12 | 12 | 12 | 692,016 |
+| 50 Hz | 修改前 | 3,001 | 3,000 | 3,235 | 3,047 | 2,960,435 |
+| 50 Hz | 修改後，automation 引用 | 3,001 | 3,001 | 3,236 | 3,048 | 2,961,241 |
+| 50 Hz | 修改後，5 秒窗口 | 3,000 | 12 | 17 | 13 | 466,001 |
+
+fsync 包含每個 frame 一次、快照與 pending slot 的檔案及目錄同步；Keystore 加密包含 frame、快照與 pending 文件。修改前每 64 次 commit 寫一次快照（50 Hz 時 47 次，每次 2 個檔案同步與 3 個目錄同步）；開窗口後 frame 變大，快照改由 1 MiB 條件觸發（50 Hz 時 60 秒 1 次）。由 50 Hz 的兩組 frame bytes 推得，每個 sample 約佔 455 bytes，每個 commit 另有約 2.4 KB 與 sample 數無關的內容；開窗口後後者分攤到約 250 筆 sample，所以每 1,000 sample 的寫入量下降。以每小時換算：50 Hz 時 commit 約 180,000 → 720，fsync 約 194,100 → 1,020，Keystore 加密約 182,820 → 780。
+
+五天範本的 gyro 以 1 Hz 在每天 12:00–17:00 收集，名目上共 25 小時、90,000 筆 sample；逐筆提交約 90,000 次 commit，開窗口後約 18,000 次。這是名目推算，不是實測；實際 sample 頻率由平台決定。gyro 的 partial wake lock 仍在，CPU 仍會在收集期間保持喚醒，這部分仍需第 3 節。
+
+驗證：`SerializedCallbackCollectorTest` 涵蓋窗口在第一次擷取後 5 秒關閉、窗口以擷取時間而非 consumer 取得時間計算、barrier／stop 在窗口內立即提交且不等待、大小上限與 token 不相等及時間倒退／boot 變更仍立即結束批次、被 automation 引用時不開窗口、取消時開啟批次不會延後提交、被拒絕批次保留到下一個 barrier、最終拒絕時丟棄且 ordinal 連續、佇列滿時仍以 `CALLBACK_QUEUE_FULL` 失效、保留量上限與窗口長度上限；`ExperimentRuntimeTest` 以真實 runtime 驗證跨資源 barrier 的 epoch 歸屬與不開窗口時相同（開窗口時 sample 由 barrier 以 pre-drain 收入）、force-close 後不收、研究進行中的時間變更拒絕開啟的窗口且只記錄 `timer.v1` 缺口、截止後才觀察到的時間變更拒絕開啟的窗口、截止完成時先收入開啟的窗口、截止後才關閉的窗口由截止 drain 收入、timer 未送達時時間型轉換要等開窗口的批次提交才被 reducer 看到，以及其他來源的 window 狀態下組裝規則讓 gyro 逐筆提交而保持 `ACTIVE`（只依 matcher 開窗口時 collector 會以 `STORAGE_WRITE_FAILED` 失效）；`SensorAutomationReferenceTest` 以產生的 registry 驗證哪些 automation 會引用 sensor，以及哪些 program 保有依事件時間排序的 sequence／window 狀態；`CollectorAutomationReferenceAssemblyTest` 與 `CollectorResourceActuatorTest` 驗證組裝時的旗標，包括有 window 狀態時每個來源都標為引用；`P2CollectorEmulatorTest` 在模擬器上驗證只有 gyro 的 observation 跨越時間。
 
 ## 結論
 
@@ -92,7 +130,7 @@
 
 **驗收：**量測每千筆事件的檔案同步次數、加密次數、磁碟 bytes、queue 峰值、commit 延遲與 CPU 時間。加入斷電／程序死亡、快照落後、尾端截斷與配額邊界測試。
 
-**狀態（2026-09-25）：**已實作「collector 多筆提交」中只合併已排隊 callback 的部分，見上方「第 2 項實作狀態」。硬體批次回報與「多個邏輯 commit 合併一次同步」尚未實作；上述驗收中的同步次數、加密次數、磁碟 bytes 與 commit 延遲尚未以加密儲存實測。
+**狀態（2026-09-25）：**已實作「collector 多筆提交」中只合併已排隊 callback 的部分，見上方「第 2 項實作狀態」；gyro 與加速度計在沒有 automation 引用、且研究沒有 sequence／window 狀態時另以最多 5 秒的窗口批次提交，見「第 2 項後續」，其同步次數、加密次數與寫入 bytes 已在模擬器上以加密儲存量測。硬體批次回報與「多個邏輯 commit 合併一次同步」尚未實作；commit 延遲與實機能耗尚未量測。
 
 ## 3. 陀螺儀長時間持有 partial wake lock
 

@@ -165,17 +165,33 @@ interface Collector {
 
 Use `SerializedCallbackCollector` for callback sources. It owns a bounded channel, one consumer,
 registration/teardown state, producer ordinals, and health transitions. The consumer merges
-callbacks that are already queued into one observation, split at barriers, unequal admission
-tokens, observed-time regressions, boot changes, and the per-source event bound; it never waits for
-more. When the runtime records only the events before a resource change, the base class offers the
-rest under the next producer ordinal; when the runtime refuses a merged batch, the base class
-searches for its admitted prefix as the `EventSink.emitBatch` contract describes. A subclass never
-handles `EmitBatchResult` itself. Use `capture` for one sample and `captureAll` when one platform
-callback delivers several, so
-they share one queue slot and one admission token. Use
+callbacks that are already queued into one observation, split at barriers, unequal admission tokens,
+observed-time regressions, boot changes, and the per-source event bound; without a commit window it
+never waits for more. When the runtime records only the events before a resource change, the base
+class offers the rest under the next producer ordinal; when the runtime refuses a merged batch, the
+base class searches for its admitted prefix as the `EventSink.emitBatch` contract describes. A
+subclass never handles `EmitBatchResult` itself. Use `capture` for one sample and `captureAll` when
+one platform callback delivers several, so they share one queue slot and one admission token. Use
 `registerSourceWithRollback` and explicit `SourceRegistrationResult`/`SourceTeardownResult` when
 registration has multiple steps. An uncertain teardown must block a new generation instead of
 registering a second listener over unknown physical state.
+
+A continuously sampled source may pass `commitWindow = CallbackCommitWindow.SAMPLED_SENSOR` (5 s,
+the maximum `CallbackCommitWindow` accepts); `AndroidSensorCollector` forwards the parameter.
+Today only the gyroscope and accelerometer do. Do not pass one for an on-change or event source
+(ambient light, proximity, screen, network, keyboard, location, app lifecycle, battery, and the
+like). The base class ignores the window when `CollectorContext.referencedByAutomation` is true,
+which the study application sets when the signed automation matches any of the source's events,
+and for every source when the automation keeps sequence or window state.
+With a window, the consumer offers a batch once the window has elapsed since the capture of its
+first callback, at once at a barrier or stop, and at every merge rule. It holds a batch the gate
+refused until its next barrier, stop, or callback under another token, and bounds what it holds
+to one batch plus the queue capacity. Use `capture`, one draft per callback, so that bound holds.
+Keep the default consumer dispatcher, whose delays share `TimeSource.Monotonic` (awake monotonic
+time on Android) with the window. A test passes a `StandardTestDispatcher` together with
+`CallbackCommitWindow(duration, testScheduler.timeSource)` so virtual time drives both. Document
+the source's added delivery latency, memory-only exposure, and CPU-suspend behavior in the
+researcher guide, as for the two sensors.
 
 Polling sources may implement `Collector` directly, but they must retain the same lifecycle,
 cancellation, ordinal, coverage, and fail-closed rules. Blocking platform queries run off callback

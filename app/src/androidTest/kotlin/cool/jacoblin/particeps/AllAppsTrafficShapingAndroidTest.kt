@@ -67,6 +67,7 @@ class AllAppsTrafficShapingAndroidTest {
             CollectorContext(
                 scope, vpnEvents, AndroidResearchClocks(context, "all-apps-vpn-state-test"),
                 plugin.descriptor.sourceContract, 1, StudyScopedTokenEncoder { _, _ -> "a".repeat(64) },
+                referencedByAutomation = false,
             ),
         )
         val actuator = TrafficShapingActuator.createAndroid(

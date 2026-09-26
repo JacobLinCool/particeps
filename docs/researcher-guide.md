@@ -239,6 +239,45 @@ Scheduled inactivity is recorded explicitly and is not a collection failure. A c
 automation event source must remain required and continuously active, even when the consuming
 automation is optional.
 
+### Batched commits for the gyroscope and accelerometer
+
+Gyroscope and accelerometer samples are committed in batches of up to 5 s when no automation in
+the signed study matches that sensor's events and the study has no `sequence` or
+`window_threshold` automation state.
+Each sample keeps its observed time, which is still the time it was captured, and its own
+`source_elapsed_realtime_nanos`; only the commit that records it is later. Sampling rate, time
+resolution, and the recorded values do not change. A participant pause, completion, withdrawal,
+the deadline stop, or a resource change commits the open batch at once. Other collectors never wait
+for later callbacks.
+
+- If an automation matches a sensor's events anywhere, in a trigger, a guard, or a resource
+  binding, that sensor commits every sample without waiting, as before. Only `event_match` triggers
+  and `event_latch` conditions can reference these two sensors; sequences and windows over them are
+  rejected for an unbounded rate.
+- If the study has any `sequence` trigger or `window_threshold` trigger or condition, over any
+  source and anywhere in a trigger, a guard, or a resource binding, both sensors commit every sample
+  without waiting. That state requires every event, from every source, to arrive in observed-time
+  order.
+- If the app process dies, the samples captured since the sensor's last recorded sample are lost,
+  at most about one batch. Recovery records `SOURCE_QUALITY_GAP` with `PROCESS_RECOVERY` and pauses
+  the study. Treat the sensor as unobserved from its last recorded sample until that recovery. Do not
+  bound that interval by 5 s: when another source made the last commit before the gap, the
+  gyroscope's last sample can precede it by up to 5 s, but the accelerometer's can precede it by
+  5 s of awake time plus every CPU suspend in between, which can be hours.
+- A safety pause refuses the open batch, so up to 5 s of samples before
+  `STUDY_SAFETY_PAUSE_REQUESTED` can be missing without a quality-gap event that names the sensor.
+- A phone clock or time-zone change while the study runs also refuses the open batch, so up to 5 s
+  of samples captured before the change can be missing although the study keeps running. The only
+  record is `SOURCE_QUALITY_GAP` with `source_id` `timer.v1` and `WALL_CLOCK_CHANGED`. Treat each
+  sensor as unobserved from its last recorded sample before that gap until the next epoch begins.
+  When the change is first seen after the study deadline, the study completes and the samples in
+  the open batch, captured before the deadline, are dropped the same way.
+- The 5 s are counted in awake time. The accelerometer holds no wake lock; when the CPU sleeps with
+  a batch open, that batch commits after the next wake. The gyroscope holds a wake lock.
+- Time-based automation, such as `study_local_window`, is still driven by its durable timer. If
+  Android delivers that timer late, the sensor's commits can surface the transition up to 5 s later
+  than per-sample commits would have, so the old condition can last that much longer.
+
 ## 4. One-shot actions
 
 An intervention declares only the action:
@@ -331,7 +370,9 @@ shows the legal bounds but does not draw participant-specific times.
 A running wall-clock discontinuity is a discard barrier: it closes admission, removes every
 retrospective cursor without flushing backlog, resets latch/presence/window/sequence state, restarts
 active retrospective resource generations, and opens a new epoch only after the replacement vector
-verifies. If it crosses the signed duration, the barrier completes the study instead. A paused
+verifies. If it crosses the signed duration, the barrier completes the study instead. Because
+admission closes first, live samples that have not yet committed are refused too, including up to
+5 s of gyroscope and accelerometer samples in an open batch (section 3). A paused
 reboot similarly records a quality gap and discards retrospective cursors; Resume requires a
 trustworthy UTC re-anchor, while Complete and Withdraw remain available without admission.
 Particeps does not backfill or guess.
@@ -431,17 +472,19 @@ Any collector or actuator change uses one global barrier:
 6. commit receipts, new epoch, and applied-vector digest;
 7. resume resources and reopen admission.
 
-Callback collectors submit callbacks that are already queued together as one observation; they
-never wait to fill a batch. Within that observation every event is recorded and reduced in capture
-order and keeps the condition epoch it would have had when submitted alone, but desired resources
-are reconciled once per observation. A condition that sets and resets inside one merged observation
-therefore changes no resource and rotates no epoch. When a merged observation does change a
-resource, the callbacks captured before the event that causes the change are committed first, as
-when each is submitted alone; that event and the callbacks queued behind it enter the barrier
-together and are reduced after the input the barrier drains. A reset that is queued only after its
-trigger was submitted still enters the barrier as pre-drain input, is reduced ahead of the trigger,
-and the change is applied. How many callbacks queue together depends on device load, so preregister
-resource bindings on callback conditions as best observed at observation granularity.
+Callback collectors submit callbacks that are already queued together as one observation. Apart from
+the gyroscope and accelerometer batches described in section 3, which apply only while no automation
+matches that sensor, they never wait to fill a batch. Within that observation every event is
+recorded and reduced in capture order and keeps the condition epoch it would have had when submitted
+alone, but desired resources are reconciled once per observation. A condition that sets and resets
+inside one merged observation therefore changes no resource and rotates no epoch. When a merged
+observation does change a resource, the callbacks captured before the event that causes the change
+are committed first, as when each is submitted alone; that event and the callbacks queued behind it
+enter the barrier together and are reduced after the input the barrier drains. A reset that is
+queued only after its trigger was submitted still enters the barrier as pre-drain input, is reduced
+ahead of the trigger, and the change is applied. How many callbacks queue together depends on device
+load, so preregister resource bindings on callback conditions as best observed at observation
+granularity.
 
 Participant pause, complete, withdraw, or safety failure always overrides automation. A study
 recovered from process death/reboot while `ACTIVATING`, `RUNNING`, or `PAUSING` becomes `PAUSED`; it

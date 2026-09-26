@@ -5,6 +5,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import cool.jacoblin.particeps.collector.sensorcommon.AndroidSensorCollector
 import cool.jacoblin.particeps.core.collector.AccessKind
+import cool.jacoblin.particeps.core.collector.CallbackCommitWindow
 import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.CollectorDescriptor
@@ -47,6 +48,8 @@ private class GyroscopeCollector(
     threadName = "particeps-gyroscope",
     queueCapacity = 2_048,
     keepCpuAwake = true,
+    // A continuous sampled source: unless automation references it, commit up to 5 s per batch.
+    commitWindow = CallbackCommitWindow.SAMPLED_SENSOR,
 ) {
     override fun eventDraft(event: SensorEvent): EventDraft? = gyroscopeEvent(
         values = event.values,

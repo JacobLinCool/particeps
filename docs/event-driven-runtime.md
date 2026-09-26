@@ -74,7 +74,9 @@ resource suspension, every retrospective cursor is removed without `flushThrough
 latches, keyed presence, windows, and sequences reset, and active retrospective resource
 generations restart. A replacement epoch opens only after the complete vector verifies. If the
 discontinuity first reveals that the signed duration has elapsed, the same barrier completes the
-study without opening an epoch or backfilling the crossed interval.
+study without opening an epoch or backfilling the crossed interval. Either way, live callbacks that
+have not committed when admission closes are refused, including an open gyroscope or
+accelerometer commit window of up to 5 s.
 
 A reboot first observed while `PAUSED` records a quality gap and discards retrospective cursors.
 Trusted UTC may then establish a new boot anchor and a replacement deadline generation. Without

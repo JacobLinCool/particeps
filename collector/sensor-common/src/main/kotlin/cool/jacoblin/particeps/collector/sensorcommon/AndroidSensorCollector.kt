@@ -8,6 +8,7 @@ import android.hardware.SensorManager
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.PowerManager
+import cool.jacoblin.particeps.core.collector.CallbackCommitWindow
 import cool.jacoblin.particeps.core.collector.CollectorContext
 import cool.jacoblin.particeps.core.collector.SerializedCallbackCollector
 import cool.jacoblin.particeps.core.collector.SourceCallbackBoundary
@@ -17,7 +18,10 @@ import cool.jacoblin.particeps.core.collector.completeSourceTeardown
 import cool.jacoblin.particeps.core.collector.registerSourceWithRollback
 import cool.jacoblin.particeps.core.model.EventDraft
 
-/** Common listener-thread ownership for raw Android sensor collectors. */
+/**
+ * Common listener-thread ownership for raw Android sensor collectors. A continuously sampled
+ * sensor may pass [commitWindow] to commit its samples in batches; see [CallbackCommitWindow].
+ */
 abstract class AndroidSensorCollector(
     androidContext: Context,
     collectorContext: CollectorContext,
@@ -27,7 +31,8 @@ abstract class AndroidSensorCollector(
     private val threadName: String,
     queueCapacity: Int,
     keepCpuAwake: Boolean = false,
-) : SerializedCallbackCollector(collectorContext, queueCapacity), SensorEventListener {
+    commitWindow: CallbackCommitWindow? = null,
+) : SerializedCallbackCollector(collectorContext, queueCapacity, commitWindow = commitWindow), SensorEventListener {
     private val wakeLock = if (keepCpuAwake) androidContext.getSystemService(PowerManager::class.java)
         .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Particeps:GyroscopeCollection").apply { setReferenceCounted(false) }
         else null
