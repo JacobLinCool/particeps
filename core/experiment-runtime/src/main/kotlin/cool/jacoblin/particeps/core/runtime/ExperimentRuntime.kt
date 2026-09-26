@@ -25,8 +25,7 @@ import cool.jacoblin.particeps.core.collector.RegistrySourceKind
 import cool.jacoblin.particeps.core.collector.ResearchClocks
 import cool.jacoblin.particeps.core.collector.SourceEventBatch
 import cool.jacoblin.particeps.core.collector.SourceQualityGapReason
-import cool.jacoblin.particeps.core.collector.accepts
-import cool.jacoblin.particeps.core.collector.protocolEncodedBytes
+import cool.jacoblin.particeps.core.collector.acceptedEncodedBytes
 import cool.jacoblin.particeps.core.model.ConditionEpoch
 import cool.jacoblin.particeps.core.model.ConditionEpochId
 import cool.jacoblin.particeps.core.model.EngineCommit
@@ -76,8 +75,8 @@ import cool.jacoblin.particeps.core.resource.requireInactiveMatches
 import cool.jacoblin.particeps.core.resource.requireMatches
 import cool.jacoblin.particeps.core.resource.requireReleased
 import java.security.MessageDigest
-import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
+import java.io.OutputStream
 import java.time.ZoneId
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
@@ -227,6 +226,14 @@ class ExperimentRuntime(
             RuntimeInitializationResult.Failed(SafetyPauseReason.STORAGE_FAILURE, failure)
         }
     }
+
+    /**
+     * The runtime document of the last acknowledged commit: the one [initialize] recovered, advanced
+     * only after each durable append. It never reads storage, so a caller that needs the document
+     * after initialization does not authenticate the retained log a second time. It is null until
+     * initialization has loaded or created the document.
+     */
+    suspend fun committedDocument(): RuntimeDocument? = mutex.withLock { document }
 
     suspend fun markConfigurationVerified(): RuntimeCommandResult = advanceSetup(
         expected = ExperimentState.IMPORTED,
@@ -2989,8 +2996,9 @@ class ExperimentRuntime(
         var bytes = 0L
         submission.events.forEachIndexed { index, event ->
             val sequence = firstSequence + index
-            require(source.accepts(event, sequence, epochId)) { "Collector event contract violation" }
-            bytes += event.protocolEncodedBytes(sequence, epochId)
+            bytes += requireNotNull(source.acceptedEncodedBytes(event, sequence, epochId)) {
+                "Collector event contract violation"
+            }
         }
         require(bytes <= MAX_OBSERVATION_ENCODED_BYTES) { "Collector batch exceeds encoded-size bound" }
         submission.events.zipWithNext().forEach { (left, right) ->
@@ -3561,8 +3569,9 @@ class ExperimentRuntime(
     )
 
     private fun submissionDigest(submission: SourceSubmission, epochId: ConditionEpochId): String {
-        val payload = ByteArrayOutputStream().use { bytes ->
-            DataOutputStream(bytes).use { output ->
+        val sha256 = MessageDigest.getInstance("SHA-256")
+        DigestSink(sha256).use { sink ->
+            DataOutputStream(sink).use { output ->
                 output.writeCanonicalString("particeps-source-observation-v1")
                 output.writeCanonicalString(submission.sourceId.value)
                 output.writeInt(submission.schemaVersion)
@@ -3581,7 +3590,7 @@ class ExperimentRuntime(
                     output.writeLong(event.observedTime.wallTimeUtcMillis)
                     output.writeLong(event.observedTime.elapsedRealtimeNanos)
                     output.writeCanonicalString(event.observedTime.bootSessionId)
-                    val fields = event.fields.toSortedMap()
+                    val fields = event.fields.inKeyOrder()
                     output.writeInt(fields.size)
                     fields.forEach { (key, value) ->
                         output.writeCanonicalString(key)
@@ -3589,11 +3598,8 @@ class ExperimentRuntime(
                     }
                 }
             }
-            bytes.toByteArray()
         }
-        return MessageDigest.getInstance("SHA-256").digest(payload).joinToString("") {
-            (it.toInt() and 0xff).toString(16).padStart(2, '0')
-        }
+        return sha256.digest().toLowerHex()
     }
 
     private fun digest(vararg components: String): String {
@@ -4109,6 +4115,63 @@ private fun DataOutputStream.writeCanonicalString(value: String) {
     val bytes = value.toByteArray(Charsets.UTF_8)
     writeInt(bytes.size)
     write(bytes)
+}
+
+/**
+ * Feeds a `DataOutputStream` preimage straight into [sha256] through a small unsynchronized buffer,
+ * the same bytes a `ByteArrayOutputStream` would have collected for one `digest` call.
+ */
+private class DigestSink(private val sha256: MessageDigest) : OutputStream() {
+    private val buffer = ByteArray(8 * 1_024)
+    private var buffered = 0
+
+    override fun write(b: Int) {
+        if (buffered == buffer.size) drain()
+        buffer[buffered++] = b.toByte()
+    }
+
+    override fun write(b: ByteArray, off: Int, len: Int) {
+        if (len > buffer.size - buffered) {
+            drain()
+            if (len >= buffer.size) {
+                sha256.update(b, off, len)
+                return
+            }
+        }
+        b.copyInto(buffer, buffered, off, off + len)
+        buffered += len
+    }
+
+    override fun flush() = drain()
+
+    override fun close() = drain()
+
+    private fun drain() {
+        sha256.update(buffer, 0, buffered)
+        buffered = 0
+    }
+}
+
+/** The map in ascending key order: itself when it already iterates that way, else a sorted copy. */
+private fun Map<String, String>.inKeyOrder(): Map<String, String> {
+    var previous: String? = null
+    keys.forEach { key ->
+        if (previous != null && previous >= key) return toSortedMap()
+        previous = key
+    }
+    return this
+}
+
+private val LOWER_HEX = "0123456789abcdef".toCharArray()
+
+private fun ByteArray.toLowerHex(): String {
+    val characters = CharArray(size * 2)
+    forEachIndexed { index, byte ->
+        val value = byte.toInt() and 0xff
+        characters[index * 2] = LOWER_HEX[value ushr 4]
+        characters[index * 2 + 1] = LOWER_HEX[value and 0x0f]
+    }
+    return String(characters)
 }
 
 private fun ExperimentState.toSessionState(): StudySessionState = when (this) {

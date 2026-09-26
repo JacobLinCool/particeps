@@ -350,13 +350,23 @@ fun RegistrySourceContract.accepts(
     event: EventDraft,
     sequenceNumber: Long,
     conditionEpochId: ConditionEpochId?,
-): Boolean {
-    if (event.type.sourceId.value != sourceId || event.type.schemaVersion != schemaVersion) return false
-    val eventContract = events[event.type.eventType] ?: return false
-    if (!eventContract.accepts(event.fields)) return false
+): Boolean = acceptedEncodedBytes(event, sequenceNumber, conditionEpochId) != null
+
+/**
+ * The [protocolEncodedBytes] of an event this source [accepts], or null when it does not, so an
+ * admission path that also bounds a batch's encoded size measures each event once.
+ */
+fun RegistrySourceContract.acceptedEncodedBytes(
+    event: EventDraft,
+    sequenceNumber: Long,
+    conditionEpochId: ConditionEpochId?,
+): Int? {
+    if (event.type.sourceId.value != sourceId || event.type.schemaVersion != schemaVersion) return null
+    val eventContract = events[event.type.eventType] ?: return null
+    if (!eventContract.accepts(event.fields)) return null
     val encodedBytes = runCatching { event.protocolEncodedBytes(sequenceNumber, conditionEpochId) }.getOrNull()
-        ?: return false
-    return encodedBytes <= eventContract.maximumEncodedEventBytes
+        ?: return null
+    return encodedBytes.takeIf { it <= eventContract.maximumEncodedEventBytes }
 }
 
 private fun String.quotedJsonBytes(): Int {
@@ -366,8 +376,8 @@ private fun String.quotedJsonBytes(): Int {
         val character = this[index]
         bytes += when {
             character == '"' || character == '\\' -> 2
-            character in JSON_NAMED_ESCAPES -> 2
-            character.code < 0x20 -> 6
+            // Every named escape is a control character, so printable text skips the set lookup.
+            character.code < 0x20 -> if (character in JSON_NAMED_ESCAPES) 2 else 6
             character.code < 0x80 -> 1
             character.code < 0x800 -> 2
             character.isHighSurrogate() -> {

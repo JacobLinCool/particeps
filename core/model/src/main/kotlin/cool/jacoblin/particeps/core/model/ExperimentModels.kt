@@ -60,11 +60,7 @@ data class ResearchTime(
     init {
         require(wallTimeUtcMillis >= 0) { "Wall time must be non-negative" }
         require(elapsedRealtimeNanos >= 0) { "Elapsed time must be non-negative" }
-        require(BOOT_SESSION_ID.matches(bootSessionId)) { "Invalid boot session ID" }
-    }
-
-    companion object {
-        private val BOOT_SESSION_ID = Regex("[A-Za-z0-9._:-]{1,128}")
+        require(bootSessionId.isBootSessionId()) { "Invalid boot session ID" }
     }
 }
 
@@ -186,7 +182,7 @@ data class SourceObservation(
         require(resourceGeneration > 0) { "Resource generation must be positive" }
         require(producerOrdinal >= 0) { "Producer ordinal must be non-negative" }
         require(eventCount in 0..MAX_OBSERVATION_EVENTS) { "Observation event count is out of range" }
-        require(SHA256.matches(encodedSha256)) { "Invalid observation digest" }
+        require(encodedSha256.isLowercaseSha256()) { "Invalid observation digest" }
         if (eventCount == 0) {
             require(firstEventSequence == null && lastEventSequence == null && coverage != null) {
                 "Empty observations require coverage and no event range"
@@ -201,8 +197,6 @@ data class SourceObservation(
     }
 }
 
-private val FIELD_KEY = Regex("[a-z][a-z0-9_]{0,63}")
-private val SHA256 = Regex("[0-9a-f]{64}")
 private const val MAX_FIELDS = 32
 private const val MAX_FIELD_VALUE_LENGTH = 60 * 1_024
 const val MAX_OBSERVATION_EVENTS = 4_096
@@ -211,7 +205,7 @@ const val MAX_OBSERVATION_ENCODED_BYTES = 8 * 1_024 * 1_024
 private fun validateFields(fields: Map<String, String>) {
     require(fields.size <= MAX_FIELDS) { "Event has too many fields" }
     fields.forEach { (key, value) ->
-        require(FIELD_KEY.matches(key)) { "Invalid event field key" }
+        require(key.isEventFieldKey()) { "Invalid event field key" }
         require(value.length <= MAX_FIELD_VALUE_LENGTH) { "Event field value is too long" }
     }
 }

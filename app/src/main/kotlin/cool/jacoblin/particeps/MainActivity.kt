@@ -15,7 +15,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import cool.jacoblin.particeps.actuator.trafficshaping.TrafficShapingAndroidPrerequisites
 import cool.jacoblin.particeps.core.collector.SetupAction
-import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.protocol.JoinLink
 import cool.jacoblin.particeps.core.protocol.SignedConfigurationCodec
 import java.time.Instant
@@ -152,10 +151,8 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshAccess()
-        val active = viewModel.state.value as? StudyUiState.ActiveStudy
         if (
-            active?.model?.trafficShapingDisclosureRequired == true &&
-            active.model.state == ExperimentState.RUNNING &&
+            viewModel.collectsWithTrafficShaping() &&
             (
                 !TrafficShapingAndroidPrerequisites.hasLocalNetworkPermission(this) ||
                     TrafficShapingAndroidPrerequisites.vpnConsentIntent(this) != null
@@ -215,8 +212,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun runAfterTrafficPrerequisites(action: PendingTrafficAction) {
-        val active = viewModel.state.value as? StudyUiState.ActiveStudy
-        if (active?.model?.trafficShapingDisclosureRequired != true) {
+        if (!viewModel.needsTrafficPrerequisites()) {
             executeTrafficAction(action)
             return
         }

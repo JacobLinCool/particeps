@@ -49,6 +49,14 @@ data class DurableTimer(
         ) { "Timer expiry precedes its deadline" }
     }
 
+    /**
+     * This timer's component of the checkpoint digest preimage, kept once built: a timer is carried
+     * unchanged through every checkpoint until it fires or is replaced. Not a constructor property,
+     * so equality, hashing and `copy` are unchanged.
+     */
+    @Volatile
+    internal var checkpointComponent: String? = null
+
     private companion object {
         val TIMER_ID = Regex("[0-9a-f]{64}")
         val AUTOMATION_ID = Regex("[a-z0-9][a-z0-9-]{2,63}")
@@ -166,7 +174,7 @@ class StandardTimerProducer : TimerProducer {
 
     private fun produceDaily(request: TimerProductionRequest, schedule: AutomationSchedule.DailyLocal): DurableTimer? {
         val zone = ZoneId.of(request.clock.zoneId)
-        val localTime = LocalTime.parse(schedule.localTime, DateTimeFormatter.ofPattern("HH:mm"))
+        val localTime = LocalTime.parse(schedule.localTime, LOCAL_TIME_FORMAT)
         val nowInstant = Instant.ofEpochMilli(request.clock.now.wallTimeUtcMillis)
         val lastInstant = Instant.ofEpochMilli(request.studyDeadlineUtcMillis - 1)
         var date = maxOf(
@@ -226,6 +234,10 @@ class StandardTimerProducer : TimerProducer {
     private fun calendarDeadlineEligible(request: TimerProductionRequest, deadline: Long): Boolean =
         deadline in request.studyStartUtcMillis until request.studyDeadlineUtcMillis &&
             minimumExpiry(request, deadline) > request.clock.now.wallTimeUtcMillis
+
+    private companion object {
+        val LOCAL_TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+    }
 }
 class RandomWindowTimerProducer(private val random: BoundedRandomSource) : TimerProducer {
     override fun produce(request: TimerProductionRequest): TimerProductionResult {
@@ -368,6 +380,7 @@ private const val MILLIS_PER_MINUTE = 60_000L
 private const val NANOS_PER_MILLI = 1_000_000L
 private const val NANOS_PER_SECOND = 1_000_000_000L
 private const val SECONDS_PER_MINUTE = 60L
+private const val SECONDS_PER_DAY = 86_400L
 
 internal data class StudyLocalWindowState(val active: Boolean, val nextBoundaryUtcMillis: Long?)
 
@@ -376,17 +389,96 @@ internal fun studyLocalWindow(
     studyStartUtcMillis: Long?, nowUtcMillis: Long, zoneId: String,
 ): StudyLocalWindowState {
     if (studyStartUtcMillis == null) return StudyLocalWindowState(false, null)
-    val zone = ZoneId.of(zoneId)
+    return studyLocalWindow(
+        condition.firstDay,
+        condition.lastDay,
+        LocalTime.parse(condition.startLocalTime),
+        LocalTime.parse(condition.endLocalTime),
+        studyStartUtcMillis,
+        nowUtcMillis,
+        ZoneId.of(zoneId),
+    )
+}
+
+/** [studyLocalWindow] with the signed local times already parsed and the zone resolved. */
+internal fun studyLocalWindow(
+    firstDay: Int,
+    lastDay: Int,
+    startTime: LocalTime,
+    endTime: LocalTime,
+    studyStartUtcMillis: Long?,
+    nowUtcMillis: Long,
+    zone: ZoneId,
+): StudyLocalWindowState {
+    if (studyStartUtcMillis == null) return StudyLocalWindowState(false, null)
     val startDate = Instant.ofEpochMilli(studyStartUtcMillis).atZone(zone).toLocalDate()
-    val lastDate = startDate.plusDays(condition.lastDay.toLong() - 1)
-    var date = maxOf(startDate.plusDays(condition.firstDay.toLong() - 1), Instant.ofEpochMilli(nowUtcMillis).atZone(zone).toLocalDate())
+    val lastDate = startDate.plusDays(lastDay.toLong() - 1)
+    var date = maxOf(startDate.plusDays(firstDay.toLong() - 1), Instant.ofEpochMilli(nowUtcMillis).atZone(zone).toLocalDate())
     while (date <= lastDate) {
-        val start = firstInstant(date.atTime(LocalTime.parse(condition.startLocalTime)), zone)?.toEpochMilli()
-        val end = firstInstant(date.atTime(LocalTime.parse(condition.endLocalTime)), zone)?.toEpochMilli()
+        val start = firstInstant(date.atTime(startTime), zone)?.toEpochMilli()
+        val end = firstInstant(date.atTime(endTime), zone)?.toEpochMilli()
         if (start != null && end != null && end > start && nowUtcMillis < end) {
             return StudyLocalWindowState(nowUtcMillis >= start, if (nowUtcMillis < start) start else end)
         }
         date = date.plusDays(1)
     }
     return StudyLocalWindowState(false, null)
+}
+
+/**
+ * The windows of one study-local-window condition for one study start and zone, one per study date
+ * from its first day through its last. A date keeps no window where either local time falls in a
+ * gap or the window would not open before it closes. [state] walks these dates from the same first
+ * date [studyLocalWindow] does, so it returns the same state for every instant while resolving each
+ * date's instants once instead of for every input.
+ */
+internal class StudyLocalWindowTable(
+    firstDay: Int,
+    lastDay: Int,
+    startTime: LocalTime,
+    endTime: LocalTime,
+    val studyStartUtcMillis: Long,
+    val zone: ZoneId,
+) {
+    private val firstEpochDay: Long
+    private val opens: LongArray
+    private val closes: LongArray
+    private val present: BooleanArray
+
+    init {
+        val startDate = Instant.ofEpochMilli(studyStartUtcMillis).atZone(zone).toLocalDate()
+        val firstDate = startDate.plusDays(firstDay.toLong() - 1)
+        val lastDate = startDate.plusDays(lastDay.toLong() - 1)
+        firstEpochDay = firstDate.toEpochDay()
+        val dates = maxOf(0L, lastDate.toEpochDay() - firstEpochDay + 1).toInt()
+        opens = LongArray(dates)
+        closes = LongArray(dates)
+        present = BooleanArray(dates)
+        for (index in 0 until dates) {
+            val date = firstDate.plusDays(index.toLong())
+            val start = firstInstant(date.atTime(startTime), zone)?.toEpochMilli()
+            val end = firstInstant(date.atTime(endTime), zone)?.toEpochMilli()
+            if (start != null && end != null && end > start) {
+                opens[index] = start
+                closes[index] = end
+                present[index] = true
+            }
+        }
+    }
+
+    fun state(nowUtcMillis: Long): StudyLocalWindowState {
+        // The local epoch day `atZone(zone).toLocalDate()` computes, without building the date-time.
+        val instant = Instant.ofEpochMilli(nowUtcMillis)
+        val today = Math.floorDiv(instant.epochSecond + zone.rules.getOffset(instant).totalSeconds, SECONDS_PER_DAY)
+        var index = maxOf(0L, today - firstEpochDay)
+        while (index < present.size) {
+            val date = index.toInt()
+            if (present[date] && nowUtcMillis < closes[date]) {
+                val start = opens[date]
+                return StudyLocalWindowState(nowUtcMillis >= start, if (nowUtcMillis < start) start else closes[date])
+            }
+            index++
+        }
+        return StudyLocalWindowState(false, null)
+    }
 }

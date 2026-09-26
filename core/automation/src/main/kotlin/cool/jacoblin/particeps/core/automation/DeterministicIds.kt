@@ -34,12 +34,21 @@ object DeterministicIds {
         require(domain.isNotBlank() && '\u0000' !in domain) { "Invalid digest domain" }
         require(components.none { '\u0000' in it }) { "Digest component contains NUL" }
         val encoded = (listOf(domain) + components).joinToString(separator = "\u0000").toByteArray(Charsets.UTF_8)
-        return MessageDigest.getInstance("SHA-256").digest(encoded).toHex()
+        return MessageDigest.getInstance("SHA-256").digest(encoded).toLowerHex()
     }
 
     private val SHA256 = Regex("[0-9a-f]{64}")
 }
 
-private fun ByteArray.toHex(): String = joinToString(separator = "") { byte ->
-    (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+private val LOWER_HEX = "0123456789abcdef".toCharArray()
+
+/** Two lowercase hexadecimal digits per byte. */
+internal fun ByteArray.toLowerHex(): String {
+    val characters = CharArray(size * 2)
+    forEachIndexed { index, byte ->
+        val value = byte.toInt() and 0xff
+        characters[index * 2] = LOWER_HEX[value ushr 4]
+        characters[index * 2 + 1] = LOWER_HEX[value and 0x0f]
+    }
+    return String(characters)
 }

@@ -2,6 +2,7 @@ package cool.jacoblin.particeps.core.model
 
 import java.io.IOException
 import java.time.ZoneId
+import java.util.TreeMap
 import java.util.UUID
 
 data class StudyClockCheckpoint(
@@ -31,8 +32,8 @@ data class ConditionEpoch(
     val activatedAt: ResearchTime,
 ) {
     init {
-        require(SHA256.matches(configurationSha256)) { "Invalid configuration digest" }
-        require(SHA256.matches(appliedResourceVectorSha256)) { "Invalid resource-vector digest" }
+        require(configurationSha256.isLowercaseSha256()) { "Invalid configuration digest" }
+        require(appliedResourceVectorSha256.isLowercaseSha256()) { "Invalid resource-vector digest" }
     }
 }
 
@@ -66,11 +67,13 @@ data class RuntimeComponentKey(
     val id: String,
 ) : Comparable<RuntimeComponentKey> {
     init {
-        require(COMPONENT_ID.matches(id)) { "Invalid runtime component ID" }
+        require(id.isRuntimeComponentId()) { "Invalid runtime component ID" }
     }
 
-    override fun compareTo(other: RuntimeComponentKey): Int =
-        compareValuesBy(this, other, { it.kind.ordinal }, { it.id })
+    override fun compareTo(other: RuntimeComponentKey): Int {
+        val byKind = kind.ordinal.compareTo(other.kind.ordinal)
+        return if (byKind != 0) byKind else id.compareTo(other.id)
+    }
 }
 
 enum class RuntimeMutationOperation {
@@ -92,7 +95,7 @@ data class RuntimeMutation(
                 "Remove mutation cannot carry a value"
             }
         }
-        require(canonicalValue == null || canonicalValue.toByteArray().size <= MAX_COMPONENT_BYTES) {
+        require(canonicalValue == null || canonicalValue.utf8LengthAtMost(MAX_COMPONENT_BYTES)) {
             "Runtime component is too large"
         }
     }
@@ -125,30 +128,40 @@ data class EngineCommit(
 ) {
     init {
         require(commitSequence > 0) { "Commit sequence must be positive" }
-        require(previousCommitSha256 == GENESIS_DIGEST || SHA256.matches(previousCommitSha256)) {
+        require(previousCommitSha256 == GENESIS_DIGEST || previousCommitSha256.isLowercaseSha256()) {
             "Invalid previous commit digest"
         }
-        require(consumedPendingInputSha256 == null || SHA256.matches(consumedPendingInputSha256)) {
+        require(consumedPendingInputSha256 == null || consumedPendingInputSha256.isLowercaseSha256()) {
             "Invalid consumed pending-input digest"
         }
-        require(SHA256.matches(resultingCheckpointSha256)) { "Invalid checkpoint digest" }
-        require(SHA256.matches(commitSha256)) { "Invalid commit digest" }
+        require(resultingCheckpointSha256.isLowercaseSha256()) { "Invalid checkpoint digest" }
+        require(commitSha256.isLowercaseSha256()) { "Invalid commit digest" }
         require(successorProjection.revision == commitSequence) {
             "Successor projection must advance to the committed revision"
         }
         require(successorProjection.nextCommitSequence == commitSequence + 1) {
             "Successor projection has an invalid next commit sequence"
         }
-        require(sourceObservations.zipWithNext().all { (left, right) ->
+        require(sourceObservations.adjacentPairsAll { left, right ->
             left.observationSequence < right.observationSequence
         }) { "Source observations must be strictly ordered" }
-        require(events.zipWithNext().all { (left, right) ->
+        require(events.adjacentPairsAll { left, right ->
             left.sequenceNumber + 1 == right.sequenceNumber
         }) { "Commit events must be contiguous" }
-        require(mutations.map(RuntimeMutation::key).distinct().size == mutations.size) {
+        require(mutations.mapTo(HashSet(mutations.size * 2)) { it.key }.size == mutations.size) {
             "A commit cannot mutate one runtime component twice"
         }
     }
+
+    /**
+     * [EngineCommitIntegrity.calculate] of this value, kept once computed. The preimage excludes
+     * [commitSha256], so [withComputedDigest] hands the digest it just calculated to its copy, and
+     * the store's verification of that copy compares instead of hashing the commit again. The
+     * commit is a value: its lists are never mutated after construction. Not a constructor
+     * property, so equality, hashing and `copy` are unchanged, and every other copy starts empty.
+     */
+    @Volatile
+    internal var contentSha256: String? = null
 }
 
 /**
@@ -216,8 +229,12 @@ data class PendingEngineInput(
 ) {
     init {
         require(submissions.size in 1..MAX_PENDING_SUBMISSIONS) { "Pending submission count is out of range" }
-        require(SHA256.matches(encodedSha256)) { "Invalid pending input digest" }
+        require(encodedSha256.isLowercaseSha256()) { "Invalid pending input digest" }
     }
+
+    /** [EngineCommitIntegrity.calculate] of this value, kept as [EngineCommit.contentSha256] is. */
+    @Volatile
+    internal var contentSha256: String? = null
 
     private companion object {
         const val MAX_PENDING_SUBMISSIONS = 4_096
@@ -250,24 +267,24 @@ data class RuntimeDocument(
 ) {
     init {
         require(layoutVersion == LAYOUT_VERSION) { "Unsupported runtime storage layout" }
-        require(ID.matches(experimentId) && ID.matches(configurationId)) { "Invalid study ID" }
-        require(SHA256.matches(configurationSha256)) { "Invalid configuration digest" }
-        require(UUID_PATTERN.matches(participantInstanceId)) { "Invalid participant instance ID" }
+        require(experimentId.isStudyId() && configurationId.isStudyId()) { "Invalid study ID" }
+        require(configurationSha256.isLowercaseSha256()) { "Invalid configuration digest" }
+        require(participantInstanceId.isLowercaseUuid()) { "Invalid participant instance ID" }
         assignedParticipantId?.let {
-            require(ASSIGNED_ID.matches(it) && it.toByteArray().size <= 64) {
+            require(it.isAssignedParticipantId() && it.toByteArray().size <= 64) {
                 "Invalid assigned participant ID"
             }
         }
         require(revision >= 0) { "Revision must be non-negative" }
         require(nextCommitSequence == revision + 1) { "Next commit must follow revision" }
         require(nextObservationSequence > 0 && nextEventSequence > 0) { "Invalid next sequence" }
-        require(lastCommitSha256 == GENESIS_DIGEST || SHA256.matches(lastCommitSha256)) {
+        require(lastCommitSha256 == GENESIS_DIGEST || lastCommitSha256.isLowercaseSha256()) {
             "Invalid last commit digest"
         }
         require(sourceCheckpoints.all { (key, value) -> key == value.sourceId }) {
             "Source checkpoint key mismatch"
         }
-        require(components.values.all { it.toByteArray().size <= MAX_COMPONENT_BYTES }) {
+        require(components.values.all { it.utf8LengthAtMost(MAX_COMPONENT_BYTES) }) {
             "Runtime component is too large"
         }
         require(lifetimeDataEventCount >= 0) { "Event count must be non-negative" }
@@ -277,7 +294,7 @@ data class RuntimeDocument(
         require(retainedFromCommit <= minOf(uploadedThroughCommit, evaluatedThroughCommit) + 1) {
             "Retained floor exceeds the safe reclaim watermark"
         }
-        require(ACTIVITY_KEY.matches(activityTokenKeyBase64Url)) { "Invalid activity-token key" }
+        require(activityTokenKeyBase64Url.isActivityTokenKey()) { "Invalid activity-token key" }
     }
 
     companion object {
@@ -333,7 +350,8 @@ data class RuntimeDocument(
     fun advance(commit: EngineCommit): RuntimeDocument {
         require(commit.commitSequence == nextCommitSequence) { "Commit sequence does not follow runtime" }
         require(commit.previousCommitSha256 == lastCommitSha256) { "Commit chain does not follow runtime" }
-        val nextComponents = components.toMutableMap()
+        // Copying a sorted component map is linear; only the commit's few mutations are sorted in.
+        val nextComponents = TreeMap(components)
         commit.mutations.forEach { mutation ->
             when (mutation.operation) {
                 RuntimeMutationOperation.UPSERT ->
@@ -352,12 +370,74 @@ data class RuntimeDocument(
             sourceCheckpoints = projection.sourceCheckpoints,
             clockCheckpoint = projection.clockCheckpoint,
             activeConditionEpoch = projection.activeConditionEpoch,
-            components = nextComponents.toSortedMap(),
+            components = nextComponents,
             lifetimeDataEventCount = projection.lifetimeDataEventCount,
             uploadedThroughCommit = projection.uploadedThroughCommit,
             evaluatedThroughCommit = projection.evaluatedThroughCommit,
             retainedFromCommit = projection.retainedFromCommit,
         )
+    }
+
+    /**
+     * Exactly `successor == advance(commit)`, decided without building that document again: a store
+     * checks every append this way after the runtime has advanced once. It compares each field with
+     * this document's identity or the commit's successor projection, and the components with these
+     * components under the commit's mutations, and rejects a commit that does not follow this runtime
+     * as [advance] does.
+     */
+    fun advancesTo(commit: EngineCommit, successor: RuntimeDocument): Boolean {
+        require(commit.commitSequence == nextCommitSequence) { "Commit sequence does not follow runtime" }
+        require(commit.previousCommitSha256 == lastCommitSha256) { "Commit chain does not follow runtime" }
+        val projection = commit.successorProjection
+        return successor.layoutVersion == layoutVersion &&
+            successor.experimentId == experimentId &&
+            successor.configurationId == configurationId &&
+            successor.configurationSha256 == configurationSha256 &&
+            successor.participantInstanceId == participantInstanceId &&
+            successor.assignedParticipantId == assignedParticipantId &&
+            successor.state == projection.state &&
+            successor.revision == projection.revision &&
+            successor.nextCommitSequence == projection.nextCommitSequence &&
+            successor.nextObservationSequence == projection.nextObservationSequence &&
+            successor.nextEventSequence == projection.nextEventSequence &&
+            successor.lastCommitSha256 == commit.commitSha256 &&
+            successor.sourceCheckpoints == projection.sourceCheckpoints &&
+            successor.clockCheckpoint == projection.clockCheckpoint &&
+            successor.activeConditionEpoch == projection.activeConditionEpoch &&
+            successor.lifetimeDataEventCount == projection.lifetimeDataEventCount &&
+            successor.uploadedThroughCommit == projection.uploadedThroughCommit &&
+            successor.evaluatedThroughCommit == projection.evaluatedThroughCommit &&
+            successor.retainedFromCommit == projection.retainedFromCommit &&
+            successor.activityTokenKeyBase64Url == activityTokenKeyBase64Url &&
+            componentsAdvanceTo(commit.mutations, successor.components)
+    }
+
+    /**
+     * Whether [candidate] equals, as a map, these components with [mutations] applied: every mutated
+     * key holds its new value or is gone, every other component is carried unchanged, and nothing
+     * else is present. A commit's mutation keys are distinct, so the expected size is exact.
+     */
+    private fun componentsAdvanceTo(
+        mutations: List<RuntimeMutation>,
+        candidate: Map<RuntimeComponentKey, String>,
+    ): Boolean {
+        var expectedSize = components.size
+        mutations.forEach { mutation ->
+            val present = components.containsKey(mutation.key)
+            when (mutation.operation) {
+                RuntimeMutationOperation.UPSERT -> {
+                    if (!present) expectedSize++
+                    if (candidate[mutation.key] != mutation.canonicalValue) return false
+                }
+                RuntimeMutationOperation.REMOVE -> {
+                    if (present) expectedSize--
+                    if (candidate.containsKey(mutation.key)) return false
+                }
+            }
+        }
+        if (candidate.size != expectedSize) return false
+        val mutated = mutations.mapTo(HashSet(mutations.size * 2)) { it.key }
+        return components.all { (key, value) -> key in mutated || candidate[key] == value }
     }
 }
 
@@ -429,10 +509,39 @@ fun interface StudyStorageResetter {
 }
 
 private const val MAX_COMPONENT_BYTES = 512 * 1_024
+
+/** `zipWithNext().all { (left, right) -> ... }` without allocating the pairs. */
+private inline fun <T> List<T>.adjacentPairsAll(predicate: (T, T) -> Boolean): Boolean {
+    for (index in 1 until size) {
+        if (!predicate(this[index - 1], this[index])) return false
+    }
+    return true
+}
+
+/**
+ * Whether `toByteArray().size <= limit`, without encoding. A UTF-16 unit encodes to at most three
+ * bytes, so short values need no scan; longer ones are counted exactly as the platform encoder
+ * does, including one replacement byte for an unpaired surrogate.
+ */
+private fun String.utf8LengthAtMost(limit: Int): Boolean {
+    if (length.toLong() * 3 <= limit) return true
+    var bytes = 0L
+    var index = 0
+    while (index < length) {
+        val character = this[index]
+        bytes += when {
+            character.code < 0x80 -> 1
+            character.code < 0x800 -> 2
+            character.isHighSurrogate() && index + 1 < length && this[index + 1].isLowSurrogate() -> {
+                index++
+                4
+            }
+            character.isSurrogate() -> 1
+            else -> 3
+        }
+        if (bytes > limit) return false
+        index++
+    }
+    return true
+}
 const val GENESIS_DIGEST = "0000000000000000000000000000000000000000000000000000000000000000"
-private val ID = Regex("[a-z0-9][a-z0-9-]{2,63}")
-private val ASSIGNED_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
-private val COMPONENT_ID = Regex("[A-Za-z0-9][A-Za-z0-9._:@/-]{0,191}")
-private val UUID_PATTERN = Regex("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
-private val ACTIVITY_KEY = Regex("[A-Za-z0-9_-]{43}")
-private val SHA256 = Regex("[0-9a-f]{64}")

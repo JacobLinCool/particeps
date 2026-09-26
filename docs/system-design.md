@@ -153,6 +153,19 @@ Each encrypted frame contains:
 - reducer/checkpoint digest;
 - previous/current commit digests and authenticated footer.
 
+Before writing a frame, the store verifies the commit digest and requires the runtime document it is
+handed to equal the previous document advanced by the commit's mutations and successor projection.
+It compares field by field and component by component rather than building that successor a second
+time. Each derived digest or encoding of an immutable value is computed once per value: a commit or
+pending input sealed by `withComputedDigest` keeps the digest it was sealed with, so the store's
+verification of that same value is a comparison, while any other value, such as a decoded frame or
+an edited copy, is hashed in full. A reducer checkpoint builds its digest preimage and its component
+encoding once, and each durable timer keeps its preimage component while it is carried unchanged.
+The compiled automation program resolves its static configuration once: state keys, condition-timer
+identities, local times, predicate literals, the study zone, and each study-local window's dates
+for the current study start. `CommitDerivationGuardTest` runs a multi-commit study and checks every
+commit, pending input, checkpoint, and successor against a plain re-derivation of the same bytes.
+
 A commit never crosses a segment. A torn uncommitted final tail is truncated; corruption anywhere
 else makes open/read/export fail closed. Export, upload, and eviction boundaries align to complete commits.
 Reclamation is bounded by `min(uploaded_through_commit, evaluated_through_commit)` so neither
@@ -467,6 +480,14 @@ the fixed inline paragraph next to the existing Access completion control; Done/
 Android 17 local network permission and system VPN consent. No VPN card/status/history or second
 ongoing notification is added. `CollectionService` and the VPN service share one neutral
 notification identity while either foreground service remains active.
+
+`StudyViewModel` builds the projection only while `MainActivity` is started. It stops five seconds
+after the screen stops, which is long enough that a configuration change does not restart it, and
+it rebuilds the model only when the session snapshot changes, so export progress and busy or message
+changes reuse the model. The live clocks on the running screen and *Study and my data* tick only
+while the Activity is started. Checks made outside composition read `StudySessionManager.snapshot`
+rather than the last projection: the traffic-shaping safety pause on resume, and whether Access
+completion, Start, and Resume need the VPN and local-network prerequisites first.
 
 Under the default policy, Particeps-generated/derived UI never reveals treatment control. Researcher-authored study title,
 purpose, researcher name/contact, consent, notification, and survey strings remain verbatim. These

@@ -59,6 +59,62 @@ class EngineCommitIntegrityTest {
     }
 
     @Test
+    fun onlyTheSealedCopyReusesItsComputedDigest() {
+        val draft = commit(emptyMap())
+        val sealed = draft.withComputedDigest()
+        EngineCommitIntegrity.verify(sealed)
+
+        // Any other value is hashed again: a changed digest or a changed field is still refused.
+        assertThrows(IllegalArgumentException::class.java) {
+            EngineCommitIntegrity.verify(sealed.copy(commitSha256 = "f".repeat(64)))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            EngineCommitIntegrity.verify(draft.copy(commitSha256 = "f".repeat(64)))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            EngineCommitIntegrity.verify(sealed.copy(committedAt = ResearchTime(1_001, 2_000, "boot-a")))
+        }
+        assertEquals(sealed.commitSha256, EngineCommitIntegrity.calculate(sealed.copy()))
+        assertEquals(sealed, draft.copy(commitSha256 = sealed.commitSha256))
+    }
+
+    @Test
+    fun pendingInputReusesOnlyItsOwnComputedDigest() {
+        val draft = PendingEngineInput(
+            conditionEpochId = ConditionEpochId("123e4567-e89b-42d3-a456-426614174010"),
+            submissions = listOf(
+                PendingSourceSubmission(
+                    sourceId = EventSourceId("battery_state.v1"),
+                    schemaVersion = 1,
+                    resourceGeneration = 1,
+                    producerOrdinal = 0,
+                    admissionKind = ObservationAdmissionKind.NORMAL,
+                    events = listOf(
+                        EventDraft(
+                            EventTypeKey(EventSourceId("battery_state.v1"), 1, "BATTERY_STATE"),
+                            ResearchTime(1_000, 2_000, "boot-a"),
+                            mapOf("percentage" to "42"),
+                        ),
+                    ),
+                    coverage = null,
+                ),
+            ),
+            stagedAt = ResearchTime(1_000, 2_000, "boot-a"),
+            encodedSha256 = GENESIS_DIGEST,
+        )
+        val sealed = draft.withComputedDigest()
+        EngineCommitIntegrity.verify(sealed)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            EngineCommitIntegrity.verify(sealed.copy(encodedSha256 = "f".repeat(64)))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            EngineCommitIntegrity.verify(sealed.copy(stagedAt = ResearchTime(1_001, 2_000, "boot-a")))
+        }
+        assertEquals(sealed.encodedSha256, EngineCommitIntegrity.calculate(sealed.copy()))
+    }
+
+    @Test
     fun clockZoneIsCanonicalAndBoundIntoCommitIntegrity() {
         assertThrows(IllegalArgumentException::class.java) {
             StudyClockCheckpoint(2_000, 1_000, ResearchTime(1_000, 2_000, "boot-a"), 9_000, true, "GMT+08:00")

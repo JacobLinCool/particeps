@@ -62,6 +62,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import cool.jacoblin.particeps.core.application.StartupStage
 import cool.jacoblin.particeps.core.collector.AccessKind
 import cool.jacoblin.particeps.core.collector.SetupAction
@@ -545,12 +548,21 @@ internal fun wallClockLabel(millis: Long): String {
     )
 }
 
-/** The wall clock, advancing only while the caller is on screen. */
+/**
+ * The wall clock, advancing only while the caller is on screen. A composition outlives its stopped
+ * Activity, so the tick waits for the lifecycle to be started again and reads the clock afresh when
+ * it is.
+ */
 @Composable
-internal fun rememberWallClockMillis(): State<Long> = produceState(System.currentTimeMillis()) {
-    while (true) {
-        delay(TICK_MILLIS)
-        value = System.currentTimeMillis()
+internal fun rememberWallClockMillis(): State<Long> {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    return produceState(System.currentTimeMillis(), lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                value = System.currentTimeMillis()
+                delay(TICK_MILLIS)
+            }
+        }
     }
 }
 

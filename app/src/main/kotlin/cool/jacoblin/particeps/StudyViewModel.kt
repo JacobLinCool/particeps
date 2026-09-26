@@ -19,11 +19,14 @@ import cool.jacoblin.particeps.core.protocol.JoinLink
 import cool.jacoblin.particeps.core.protocol.SignedConfigurationCodec
 import java.io.OutputStream
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -71,31 +74,13 @@ class StudyViewModel(
         reportDiagnostic = { Log.i("ParticepsExport", it) },
     )
 
-    val state: StateFlow<StudyUiState> = combine(
-        session.snapshot,
-        localMessage,
-        operationBusy,
-        exportController.state,
-    ) { snapshot, message, operating, export ->
-        val recovery = snapshot.recoveryStatus.toParticipantRecoveryState()
-        val visibleMessage = message ?: when (snapshot.recoveryStatus) {
-            StudyRecoveryStatus.RECOVERED_PAUSED -> ParticipantMessage.STUDY_PAUSED_FOR_SAFETY
-            StudyRecoveryStatus.NONE,
-            StudyRecoveryStatus.ACTION_REQUIRED,
-            -> null
-        }
-        when {
-            !snapshot.initialized -> StudyUiState.Initializing(snapshot.startupStage)
-            snapshot.study == null -> StudyUiState.NoStudy(visibleMessage, operating, recovery)
-            else -> StudyUiState.ActiveStudy(
-                model = snapshot.toParticipantUiModel(),
-                export = export,
-                message = visibleMessage,
-                busy = operating,
-                recoveryStatus = recovery,
-            )
-        }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, StudyUiState.Initializing(null))
+    val state: StateFlow<StudyUiState> = participantUiState(
+        scope = viewModelScope,
+        snapshots = session.snapshot,
+        messages = localMessage,
+        busy = operationBusy,
+        export = exportController.state,
+    )
 
     fun importSignedConfiguration(load: () -> ByteArray) = operation(
         ParticipantMessage.CONFIGURATION_IMPORT_FAILED,
@@ -176,6 +161,18 @@ class StudyViewModel(
         }
     }
 
+    /**
+     * Whether Complete access, Start, and Resume must first pass Android's VPN and local-network
+     * prerequisites. This and [collectsWithTrafficShaping] read the session, not [state], because
+     * they are asked outside composition, where [state] may not have been collected for a while.
+     */
+    fun needsTrafficPrerequisites(): Boolean = session.snapshot.value.mayAdjustAppTransferSpeed()
+
+    /** Whether collection is running for a study that may adjust app transfer speed. */
+    fun collectsWithTrafficShaping(): Boolean = session.snapshot.value.let {
+        it.mayAdjustAppTransferSpeed() && it.runtime.state == ExperimentState.RUNNING
+    }
+
     fun reportMessage(message: ParticipantMessage) {
         localMessage.value = message
     }
@@ -229,6 +226,70 @@ class StudyViewModel(
         }
     }
 }
+
+/**
+ * [StudyUiState] for a screen that is showing it. Projection stops [UI_STATE_STOP_TIMEOUT_MILLIS]
+ * after the last collector leaves, so a stopped Activity soon costs nothing per commit, and the
+ * next collector restarts it from the current snapshot. An Activity recreated for a configuration
+ * change collects again well within the timeout, so recreation does not restart it.
+ *
+ * With no collector, [StateFlow.value] is the last projection, which can be older than the
+ * session. Anything that decides from study state outside composition reads the session instead.
+ *
+ * The participant model is rebuilt only when the session snapshot changes, not on export progress,
+ * busy, or message changes. It stays on the collector's thread: it takes a few microseconds, less
+ * than handing it to another thread and back would.
+ */
+internal fun participantUiState(
+    scope: CoroutineScope,
+    snapshots: Flow<StudySessionSnapshot>,
+    messages: Flow<ParticipantMessage?>,
+    busy: Flow<Boolean>,
+    export: Flow<ParticipantExportState>,
+    project: (StudySessionSnapshot) -> ParticipantStudyUiModel = StudySessionSnapshot::toParticipantUiModel,
+): StateFlow<StudyUiState> = combine(
+    snapshots.map { snapshot ->
+        ProjectedSession(snapshot, snapshot.takeIf { it.initialized && it.study != null }?.let(project))
+    },
+    messages,
+    busy,
+    export,
+) { projected, message, operating, exportState ->
+    val snapshot = projected.snapshot
+    val recovery = snapshot.recoveryStatus.toParticipantRecoveryState()
+    val visibleMessage = message ?: when (snapshot.recoveryStatus) {
+        StudyRecoveryStatus.RECOVERED_PAUSED -> ParticipantMessage.STUDY_PAUSED_FOR_SAFETY
+        StudyRecoveryStatus.NONE,
+        StudyRecoveryStatus.ACTION_REQUIRED,
+        -> null
+    }
+    val model = projected.model
+    when {
+        !snapshot.initialized -> StudyUiState.Initializing(snapshot.startupStage)
+        model == null -> StudyUiState.NoStudy(visibleMessage, operating, recovery)
+        else -> StudyUiState.ActiveStudy(
+            model = model,
+            export = exportState,
+            message = visibleMessage,
+            busy = operating,
+            recoveryStatus = recovery,
+        )
+    }
+}.stateIn(
+    scope,
+    SharingStarted.WhileSubscribed(stopTimeoutMillis = UI_STATE_STOP_TIMEOUT_MILLIS),
+    StudyUiState.Initializing(null),
+)
+
+internal const val UI_STATE_STOP_TIMEOUT_MILLIS = 5_000L
+
+private class ProjectedSession(
+    val snapshot: StudySessionSnapshot,
+    val model: ParticipantStudyUiModel?,
+)
+
+private fun StudySessionSnapshot.mayAdjustAppTransferSpeed(): Boolean =
+    initialized && study?.mayAdjustAppTransferSpeed == true
 
 internal fun StudySessionSnapshot.toParticipantUiModel(): ParticipantStudyUiModel {
     val summary = checkNotNull(study) { "Participant study summary is unavailable" }

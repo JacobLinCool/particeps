@@ -993,7 +993,11 @@ class StudySessionManager(
                 throw result.cause
             }
             is RuntimeInitializationResult.Ready -> {
-                val document = checkNotNull(nextStore.loadRuntime()) { "Runtime initialization did not persist state" }
+                // Initialization already authenticated every retained commit once; its acknowledged
+                // document is the durable one, so the log is not recovered a second time.
+                val document = checkNotNull(nextAssembly.runtime.committedDocument()) {
+                    "Runtime initialization did not persist state"
+                }
                 nextAssembly.bindRuntimeSecrets(document)
                 if (result.snapshot.state == ExperimentState.IMPORTED) {
                     require(nextAssembly.runtime.markConfigurationVerified() == RuntimeCommandResult.Success) {

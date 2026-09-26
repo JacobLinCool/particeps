@@ -57,6 +57,7 @@ class EncryptedExperimentStore internal constructor(
     private val fileSystem: AcknowledgedFileSystem = AndroidAcknowledgedFileSystem,
     private val appendFrame: (File, ByteArray) -> Unit = ::appendFrameDurably,
     private val snapshotPolicy: SnapshotCheckpointPolicy = SnapshotCheckpointPolicy(),
+    private val maximumSegmentBytes: Long = MAXIMUM_SEGMENT_BYTES,
 ) : StudyStore {
     constructor(
         context: Context,
@@ -72,6 +73,7 @@ class EncryptedExperimentStore internal constructor(
     private val mutex = Mutex()
     private val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
     private val opaqueId = sha256(experimentId.toByteArray()).toHex()
+    private val opaqueIdBytes = opaqueId.toByteArray(Charsets.US_ASCII)
     private val keyAlias = "$ENGINE_KEY_ALIAS_PREFIX$opaqueId"
     private val rootDirectory = context.noBackupFilesDir.resolve(STORAGE_DIRECTORY)
     private val snapshotFile = AcknowledgedAtomicFile(
@@ -87,9 +89,22 @@ class EncryptedExperimentStore internal constructor(
     private var pending: PendingEngineInput? = null
     private var activeReadSnapshots = 0
 
+    // Open-store caches, used only under [mutex]. Every open looks the Keystore handle up again and
+    // clear drops it. The byte total and writable segment are reconciled from disk on first use and
+    // then advanced only by this store's own acknowledged appends; any other mutation, failure or
+    // recovery forgets them, so the next quota decision scans the directory again.
+    private var engineKey: SecretKey? = null
+    private var snapshotBytes: Long? = null
+    private var pendingBytes: Long? = null
+    private var commitLogBytes: Long? = null
+    private var writable: WritableSegment? = null
+
     init {
         require(maximumLocalBytes in MINIMUM_LOCAL_BYTES..MAXIMUM_LOCAL_BYTES) {
             "Invalid storage quota"
+        }
+        require(maximumSegmentBytes in SEGMENT_HEADER_BYTES + 1..MAXIMUM_SEGMENT_BYTES) {
+            "Invalid commit segment bound"
         }
     }
 
@@ -97,6 +112,8 @@ class EncryptedExperimentStore internal constructor(
         observeRetained: (EngineCommit) -> Unit,
     ): RuntimeDocument? = withContext(Dispatchers.IO) {
         mutex.withLock {
+            engineKey = null
+            forgetStorageLayout()
             if (!snapshotFile.exists()) {
                 if (legacyStorageExists()) {
                     throw StudyStoreRecoveryException(StudyStoreRecoveryFailure.UNSUPPORTED_LAYOUT)
@@ -110,13 +127,30 @@ class EncryptedExperimentStore internal constructor(
             val key = existingKey()
                 ?: throw StudyStoreRecoveryException(StudyStoreRecoveryFailure.KEY_UNAVAILABLE)
             val snapshot = recoverSnapshot(key)
+            // A staged input is resolved by the same authentication pass: replay notes every retained
+            // commit that consumed a pending input, so the log is not read a second time for it.
+            // Only containment commits consume one, so the list stays short without probing the slot.
+            val pendingConsumers = mutableListOf<PendingConsumer>()
             val recovered = try {
-                replayAfter(snapshot, key, recoverTail = true, observeRetained)
+                replayAfter(snapshot, key, recoverTail = true) { commit ->
+                    commit.consumedPendingInputSha256?.let { digest ->
+                        pendingConsumers += PendingConsumer(commit.commitSequence, digest)
+                    }
+                    observeRetained(commit)
+                }
             } catch (failure: Throwable) {
                 if (failure is StudyStoreRecoveryException) throw failure
                 throw StudyStoreRecoveryException(StudyStoreRecoveryFailure.COMMIT_LOG_INVALID, failure)
             }
-            val recoveredPending = recoverPending(key, recovered)
+            // Replay observed every commit from the snapshot floor to the tail. That covers the
+            // recovered retained range unless a commit lowered the floor, which reads the log again.
+            val recoveredPending = recoverPending(
+                key,
+                recovered,
+                replayedConsumers = pendingConsumers.takeIf {
+                    recovered.retainedFromCommit >= snapshot.retainedFromCommit
+                },
+            )
             if (recovered != snapshot || snapshotFile.hasUnresolvedWrite()) {
                 writeSnapshot(recovered, key)
             }
@@ -129,6 +163,8 @@ class EncryptedExperimentStore internal constructor(
 
     override suspend fun initialize(runtime: RuntimeDocument) = withContext(Dispatchers.IO) {
         mutex.withLock {
+            engineKey = null
+            forgetStorageLayout()
             require(runtime.revision == 0L) { "Initial runtime must be at the genesis revision" }
             require(runtime.experimentId == experimentId) { "Experiment ID mismatch" }
             require(!snapshotFile.exists() && !pendingFile.exists() && segmentEntries().isEmpty()) {
@@ -162,6 +198,7 @@ class EncryptedExperimentStore internal constructor(
             val encoded = EngineDataJsonCodec.encodePending(input)
             require(encoded.size <= MAXIMUM_PENDING_BYTES) { "Pending input exceeds its bounded slot" }
             val key = existingKey() ?: error("Encrypted experiment key is unavailable")
+            pendingBytes = null
             pendingFile.write(encryptDocument(encoded, key, PENDING_HEADER))
             pending = input
         }
@@ -187,6 +224,7 @@ class EncryptedExperimentStore internal constructor(
             val encoded = EngineDataJsonCodec.encodePending(input)
             require(encoded.size <= MAXIMUM_PENDING_BYTES) { "Pending input exceeds its bounded slot" }
             val key = existingKey() ?: error("Encrypted experiment key is unavailable")
+            pendingBytes = null
             pendingFile.write(encryptDocument(encoded, key, PENDING_HEADER))
             pending = input
         }
@@ -308,6 +346,7 @@ class EncryptedExperimentStore internal constructor(
             // prefix frames, never a floor that references missing unacknowledged data.
             writeSnapshot(updated, key)
             this@EncryptedExperimentStore.runtime = updated
+            forgetCommitLogLayout()
             for (summary in removable) {
                 try {
                     if (summary.segment.file.exists() &&
@@ -327,6 +366,8 @@ class EncryptedExperimentStore internal constructor(
     override suspend fun clear() = withContext(Dispatchers.IO) {
         mutex.withLock {
             check(activeReadSnapshots == 0) { "Cannot clear storage while a read snapshot is open" }
+            engineKey = null
+            forgetStorageLayout()
             snapshotFile.delete()
             pendingFile.delete()
             segmentEntries().forEach { entry ->
@@ -367,15 +408,20 @@ class EncryptedExperimentStore internal constructor(
         val encoded = EngineDataJsonCodec.encodeCommit(commit)
         require(encoded.size <= MAXIMUM_COMMIT_BYTES) { "Engine commit exceeds the frame contract" }
         val key = existingKeyOrThrow()
-        val encrypted = encryptCommit(encoded, commit, key)
-        val frame = encodeFrame(commit, encrypted)
+        val commitDigest = commit.commitSha256.hexToBytes()
+        val encrypted = encryptCommit(encoded, commit.commitSequence, commitDigest, key)
+        val frame = encodeFrame(commit.commitSequence, encrypted, commitDigest)
         require(storageBytes() + frame.size <= maximumLocalBytes - SNAPSHOT_RESERVE_BYTES) {
             "Study commit quota exceeded"
         }
         val segment = writableSegment(frame.size)
+        var appendedExactly = true
         try {
-            appendFrame(segment.file, frame)
+            appendFrame(segment.segment.file, frame)
         } catch (failure: Throwable) {
+            // A failed append can leave a torn tail, and the readback below can truncate it.
+            appendedExactly = false
+            forgetCommitLogLayout()
             var acknowledged = false
             runCatching {
                 scanFrames(
@@ -390,6 +436,7 @@ class EncryptedExperimentStore internal constructor(
             }.onFailure { acknowledged = false }
             if (!acknowledged) throw failure
         }
+        if (appendedExactly) recordAppended(segment, frame.size)
 
         // The frame is now acknowledged. A cache write or pending-slot cleanup may not turn that
         // durable fact into a reported append failure that invites a duplicate reducer input.
@@ -405,6 +452,7 @@ class EncryptedExperimentStore internal constructor(
             runCatching { writeSnapshot(successor, key) }
         }
         if (consumePending) {
+            pendingBytes = null
             runCatching { pendingFile.delete() }
             pending = null
         }
@@ -418,7 +466,7 @@ class EncryptedExperimentStore internal constructor(
         EngineCommitIntegrity.verify(commit)
         require(commit.commitSequence == current.nextCommitSequence) { "Non-contiguous commit append" }
         require(commit.previousCommitSha256 == current.lastCommitSha256) { "Commit chain mismatch" }
-        require(successor == current.advance(commit)) { "Runtime is not the exact commit successor" }
+        require(current.advancesTo(commit, successor)) { "Runtime is not the exact commit successor" }
         require(successor.projection() == commit.successorProjection) { "Successor projection mismatch" }
         require(successor.experimentId == experimentId) { "Experiment ID mismatch" }
         validateCommitRanges(current, commit, successor)
@@ -494,6 +542,7 @@ class EncryptedExperimentStore internal constructor(
     private fun recoverPending(
         key: SecretKey,
         current: RuntimeDocument,
+        replayedConsumers: List<PendingConsumer>? = null,
     ): PendingEngineInput? {
         if (!pendingFile.exists()) return null
         val candidates = try {
@@ -512,8 +561,16 @@ class EncryptedExperimentStore internal constructor(
             throw StudyStoreRecoveryException(StudyStoreRecoveryFailure.PENDING_INPUT_INVALID)
         }
         val input = newest.single()
-        val consumed = findCommitByConsumedPendingDigest(input.encodedSha256, current, key)
+        val consumed = if (replayedConsumers != null) {
+            replayedConsumers.any { consumer ->
+                consumer.digest == input.encodedSha256 &&
+                    consumer.sequence in current.retainedFromCommit..current.revision
+            }
+        } else {
+            findCommitByConsumedPendingDigest(input.encodedSha256, current, key)
+        }
         if (consumed) {
+            pendingBytes = null
             runCatching { pendingFile.delete() }
             return null
         }
@@ -630,6 +687,8 @@ class EncryptedExperimentStore internal constructor(
         consume: (FrameResult) -> Boolean,
     ) {
         val selectedSegments = capturedSegments ?: run {
+            // Residue repair and tail truncation change the directory beneath the cached layout.
+            forgetCommitLogLayout()
             repairSegmentResidue()
             segments().map { CapturedSegment(it, it.file.length()) }
         }
@@ -638,6 +697,9 @@ class EncryptedExperimentStore internal constructor(
         }
         var previousSequence: Long? = null
         var reachedUpperBound = false
+        // Every selected segment is walked from its first frame, including those wholly before
+        // [decryptFromSequence]: their headers are only read and skipped, never decrypted, but each
+        // still has to be whole and contiguous, so damage anywhere in the retained log fails closed.
         selectedSegments.forEachIndexed { segmentPosition, captured ->
             if (reachedUpperBound) return@forEachIndexed
             checkCancellation()
@@ -672,32 +734,34 @@ class EncryptedExperimentStore internal constructor(
                         }
                         throw EOFException("Commit frame is torn")
                     }
-                    val iv = ByteArray(IV_BYTES).also(input::readFully)
                     val shouldDecrypt = sequence >= decryptFromSequence &&
                         (throughSequenceInclusive == null || sequence <= throughSequenceInclusive)
-                    val ciphertext = if (shouldDecrypt) {
-                        ByteArray(ciphertextBytes).also(input::readFully)
+                    val sealed = if (shouldDecrypt) {
+                        SealedFrame(
+                            iv = ByteArray(IV_BYTES).also(input::readFully),
+                            ciphertext = ByteArray(ciphertextBytes).also(input::readFully),
+                            digest = ByteArray(COMMIT_DIGEST_BYTES).also(input::readFully),
+                        )
                     } else {
-                        input.skipFully(ciphertextBytes)
+                        input.skipFully(IV_BYTES + ciphertextBytes + COMMIT_DIGEST_BYTES)
                         null
                     }
-                    val footer = ByteArray(COMMIT_DIGEST_BYTES).also(input::readFully)
                     offset += remainingBytes
-                    val footerHex = footer.toHex()
                     previousSequence?.let { previous ->
                         require(sequence == previous + 1) { "Commit sequence is not contiguous" }
                     }
                     previousSequence = sequence
-                    val commit = ciphertext?.let {
-                        val plaintext = decryptCommit(iv, it, sequence, footerHex, key)
+                    val commit = sealed?.let { frame ->
+                        val digestHex = frame.digest.toHex()
+                        val plaintext = decryptCommit(frame.iv, frame.ciphertext, sequence, frame.digest, key)
                         EngineDataJsonCodec.decodeCommit(plaintext).also { decoded ->
-                            require(decoded.commitSequence == sequence && decoded.commitSha256 == footerHex) {
+                            require(decoded.commitSequence == sequence && decoded.commitSha256 == digestHex) {
                                 "Encrypted commit frame identity mismatch"
                             }
                             EngineCommitIntegrity.verify(decoded)
                         }
                     }
-                    if (!consume(FrameResult(sequence, footerHex, commit)) ||
+                    if (!consume(FrameResult(sequence, commit)) ||
                         (throughSequenceInclusive != null && sequence >= throughSequenceInclusive)
                     ) {
                         reachedUpperBound = true
@@ -709,16 +773,34 @@ class EncryptedExperimentStore internal constructor(
         }
     }
 
-    private fun writableSegment(frameBytes: Int): Segment {
-        fileSystem.ensureDirectory(commitDirectory)
-        var segment = segments().lastOrNull() ?: createSegment(1)
-        if (segment.file.length() + frameBytes > MAXIMUM_SEGMENT_BYTES) {
-            segment = createSegment(segment.index + 1)
+    private fun writableSegment(frameBytes: Int): WritableSegment {
+        var segment = writable ?: run {
+            fileSystem.ensureDirectory(commitDirectory)
+            segments().lastOrNull()?.let { WritableSegment(it, it.file.length()) } ?: createSegment(1)
+        }
+        if (segment.bytes + frameBytes > maximumSegmentBytes) {
+            segment = createSegment(segment.segment.index + 1)
         }
         return segment
     }
 
-    private fun createSegment(index: Int): Segment {
+    /** Advances the cached layout by one exactly acknowledged append; a forgotten one stays forgotten. */
+    private fun recordAppended(segment: WritableSegment, frameBytes: Int) {
+        val bytes = commitLogBytes
+        if (bytes == null) {
+            forgetCommitLogLayout()
+            return
+        }
+        commitLogBytes = Math.addExact(bytes, frameBytes.toLong())
+        writable = segment.copy(bytes = Math.addExact(segment.bytes, frameBytes.toLong()))
+    }
+
+    /**
+     * A new segment may leave an atomic-write witness beside it, which the next append's directory
+     * listing must still refuse, so creating one forgets the cached layout.
+     */
+    private fun createSegment(index: Int): WritableSegment {
+        forgetCommitLogLayout()
         require(index in 1..MAXIMUM_SEGMENT_INDEX) { "Commit segment index exhausted" }
         val file = commitDirectory.resolve("commits-${index.toString().padStart(8, '0')}.ptcs")
         require(!file.exists()) { "Commit segment already exists" }
@@ -727,7 +809,7 @@ class EncryptedExperimentStore internal constructor(
             .putInt(index)
             .array()
         AcknowledgedAtomicFile(file, fileSystem).write(header)
-        return Segment(index, file)
+        return WritableSegment(Segment(index, file), header.size.toLong())
     }
 
     private fun segmentSummaries(): List<SegmentSummary> = segments().map { segment ->
@@ -798,21 +880,22 @@ class EncryptedExperimentStore internal constructor(
         return checkNotNull(fileSystem.listFiles(commitDirectory)) { "Cannot enumerate commit storage" }.toList()
     }
 
-    private fun encodeFrame(commit: EngineCommit, encrypted: EncryptedCommit): ByteArray =
+    private fun encodeFrame(sequence: Long, encrypted: EncryptedCommit, commitDigest: ByteArray): ByteArray =
         ByteBuffer.allocate(FRAME_FIXED_BYTES + encrypted.ciphertext.size)
-            .putLong(commit.commitSequence)
+            .putLong(sequence)
             .putInt(encrypted.ciphertext.size)
             .put(encrypted.iv)
             .put(encrypted.ciphertext)
-            .put(commit.commitSha256.hexToBytes())
+            .put(commitDigest)
             .array()
 
     private fun encryptCommit(
         plaintext: ByteArray,
-        commit: EngineCommit,
+        sequence: Long,
+        commitDigest: ByteArray,
         key: SecretKey,
     ): EncryptedCommit {
-        val aad = commitAad(commit.commitSequence, commit.commitSha256)
+        val aad = commitAad(sequence, commitDigest)
         val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION).apply {
             init(Cipher.ENCRYPT_MODE, key)
             updateAAD(aad)
@@ -825,21 +908,21 @@ class EncryptedExperimentStore internal constructor(
         iv: ByteArray,
         ciphertext: ByteArray,
         sequence: Long,
-        commitSha256: String,
+        commitDigest: ByteArray,
         key: SecretKey,
     ): ByteArray = Cipher.getInstance(CIPHER_TRANSFORMATION).run {
         init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-        updateAAD(commitAad(sequence, commitSha256))
+        updateAAD(commitAad(sequence, commitDigest))
         doFinal(ciphertext)
     }
 
-    private fun commitAad(sequence: Long, commitSha256: String): ByteArray = ByteBuffer.allocate(
-        SEGMENT_HEADER.size + opaqueId.length + Long.SIZE_BYTES + COMMIT_DIGEST_BYTES,
+    private fun commitAad(sequence: Long, commitDigest: ByteArray): ByteArray = ByteBuffer.allocate(
+        SEGMENT_HEADER.size + opaqueIdBytes.size + Long.SIZE_BYTES + COMMIT_DIGEST_BYTES,
     )
         .put(SEGMENT_HEADER)
-        .put(opaqueId.toByteArray(Charsets.US_ASCII))
+        .put(opaqueIdBytes)
         .putLong(sequence)
-        .put(commitSha256.hexToBytes())
+        .put(commitDigest)
         .array()
 
     private fun encryptDocument(
@@ -880,18 +963,35 @@ class EncryptedExperimentStore internal constructor(
         }.also { require(it.size <= maximumPlaintextBytes) { "Decrypted document is too large" } }
     }
 
-    private fun documentAad(header: ByteArray): ByteArray = header + opaqueId.toByteArray(Charsets.US_ASCII)
+    private fun documentAad(header: ByteArray): ByteArray = header + opaqueIdBytes
 
     private fun writeSnapshot(value: RuntimeDocument, key: SecretKey) {
         val encoded = EngineDataJsonCodec.encodeRuntime(value)
         require(encoded.size <= MAXIMUM_SNAPSHOT_BYTES) { "Runtime snapshot exceeds its bound" }
-        snapshotFile.write(encryptDocument(encoded, key, RUNTIME_HEADER))
+        val document = encryptDocument(encoded, key, RUNTIME_HEADER)
+        snapshotBytes = null
+        snapshotFile.write(document)
         snapshotPolicy.checkpointAcknowledged()
     }
 
+    /** Exactly what a fresh scan of every candidate and commit entry would count, from the ledger. */
     private fun storageBytes(): Long {
-        return snapshotFile.storageBytes() + pendingFile.storageBytes() +
-            segmentEntries().sumOf(fileSystem::regularFileSize)
+        val snapshot = snapshotBytes ?: snapshotFile.storageBytes().also { snapshotBytes = it }
+        val staged = pendingBytes ?: pendingFile.storageBytes().also { pendingBytes = it }
+        val commits = commitLogBytes
+            ?: segmentEntries().sumOf(fileSystem::regularFileSize).also { commitLogBytes = it }
+        return snapshot + staged + commits
+    }
+
+    private fun forgetStorageLayout() {
+        snapshotBytes = null
+        pendingBytes = null
+        forgetCommitLogLayout()
+    }
+
+    private fun forgetCommitLogLayout() {
+        commitLogBytes = null
+        writable = null
     }
 
     private fun legacyStorageExists(): Boolean =
@@ -899,7 +999,8 @@ class EncryptedExperimentStore internal constructor(
             rootDirectory.resolve("$opaqueId.transaction.ptc").exists() ||
             rootDirectory.resolve("$opaqueId.events").exists()
 
-    private fun existingKey(): SecretKey? = keyStore.getKey(keyAlias, null) as? SecretKey
+    private fun existingKey(): SecretKey? =
+        engineKey ?: (keyStore.getKey(keyAlias, null) as? SecretKey)?.also { engineKey = it }
     private fun existingKeyOrThrow(): SecretKey = existingKey() ?: error("Encrypted experiment key is unavailable")
 
     private fun getOrCreateKey(): SecretKey = existingKey() ?: KeyGenerator
@@ -917,6 +1018,7 @@ class EncryptedExperimentStore internal constructor(
             )
         }
         .generateKey()
+        .also { engineKey = it }
 
     private fun validateSegmentHeader(input: DataInputStream, expectedIndex: Int) {
         val header = ByteArray(SEGMENT_HEADER.size).also(input::readFully)
@@ -956,12 +1058,14 @@ class EncryptedExperimentStore internal constructor(
             "Invalid SHA-256 hex"
         }
         return ByteArray(COMMIT_DIGEST_BYTES) { index ->
-            substring(index * 2, index * 2 + 2).toInt(16).toByte()
+            ((Character.digit(this[index * 2], 16) shl 4) or Character.digit(this[index * 2 + 1], 16)).toByte()
         }
     }
 
     private data class Segment(val index: Int, val file: File)
     private data class CapturedSegment(val segment: Segment, val length: Long)
+    private data class WritableSegment(val segment: Segment, val bytes: Long)
+    private data class PendingConsumer(val sequence: Long, val digest: String)
     private data class SegmentSummary(
         val segment: Segment,
         val firstCommit: Long,
@@ -969,11 +1073,8 @@ class EncryptedExperimentStore internal constructor(
         val bytes: Long,
     )
     private data class EncryptedCommit(val iv: ByteArray, val ciphertext: ByteArray)
-    private data class FrameResult(
-        val sequence: Long,
-        val commitSha256: String,
-        val commit: EngineCommit?,
-    )
+    private class SealedFrame(val iv: ByteArray, val ciphertext: ByteArray, val digest: ByteArray)
+    private data class FrameResult(val sequence: Long, val commit: EngineCommit?)
 
     private companion object {
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
@@ -1003,6 +1104,7 @@ class EncryptedExperimentStore internal constructor(
         val SEGMENT_REPLACEMENT_PATTERN = Regex("\\.commits-([0-9]{8})\\.ptcs\\.replacement")
         val SEGMENT_HEADER_BYTES = SEGMENT_HEADER.size + Int.SIZE_BYTES
         val FRAME_FIXED_BYTES = Long.SIZE_BYTES + Int.SIZE_BYTES + IV_BYTES + COMMIT_DIGEST_BYTES
+        val HEX_DIGITS = "0123456789abcdef".toCharArray()
 
         fun appendFrameDurably(file: File, frame: ByteArray) {
             RandomAccessFile(file, "rw").use { output ->
@@ -1013,6 +1115,15 @@ class EncryptedExperimentStore internal constructor(
         }
 
         fun sha256(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
-        fun ByteArray.toHex(): String = joinToString("") { byte -> "%02x".format(byte) }
+        /** Lowercase hex from a digit table; per-byte string formatting would dominate a long scan. */
+        fun ByteArray.toHex(): String {
+            val digits = CharArray(size * 2)
+            forEachIndexed { index, byte ->
+                val value = byte.toInt() and 0xff
+                digits[index * 2] = HEX_DIGITS[value ushr 4]
+                digits[index * 2 + 1] = HEX_DIGITS[value and 0x0f]
+            }
+            return String(digits)
+        }
     }
 }

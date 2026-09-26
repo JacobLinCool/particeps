@@ -374,6 +374,47 @@ class StudySessionManagerTest {
         fixture.manager.shutdownProcess()
     }
 
+    @Test
+    fun eachActivationRecoversTheRetainedLogOnceAndBindsTheRecoveredDocument() = runTest {
+        val fixture = fixture(studyConfiguration = configuration(withUpload = true))
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        assertEquals(1, fixture.store.recoveryReads)
+        assertEquals(fixture.store.runtime, fixture.runtimeFactory.last?.runtime?.committedDocument())
+        fixture.manager.reviewStudy()
+        fixture.manager.acceptConsent()
+        fixture.manager.completeAccessSetup()
+        fixture.manager.start()
+        val receipt = requireNotNull(fixture.manager.prepareAutomaticUpload(ByteArrayOutputStream(), UUID.randomUUID()))
+        assertEquals(StudyCommandResult.Success, fixture.manager.acknowledgeAutomaticUpload(receipt))
+        val uploadedThrough = requireNotNull(fixture.store.runtime).uploadedThroughCommit
+        assertTrue(uploadedThrough > 0)
+        assertEquals(1, fixture.store.recoveryReads)
+        fixture.manager.shutdownProcess()
+
+        // Recovery itself is unchanged: an interrupted RUNNING study still commits its fail-closed
+        // pause during initialization, and the manager binds that post-recovery document.
+        val restarted = fixture.newManager()
+        restarted.initialize()
+        runCurrent()
+        assertEquals(2, fixture.store.recoveryReads)
+        assertEquals(StudyRecoveryStatus.RECOVERED_PAUSED, restarted.snapshot.value.recoveryStatus)
+        assertEquals(ExperimentState.PAUSED, requireNotNull(fixture.store.runtime).state)
+        assertEquals(fixture.store.runtime, fixture.runtimeFactory.last?.runtime?.committedDocument())
+        assertEquals(uploadedThrough, fixture.uploadCoordinator.reconciliations.last().uploadedThroughCommit)
+        restarted.shutdownProcess()
+
+        val retried = fixture.newManager()
+        fixture.acceptedFailure = IllegalStateException("key temporarily unavailable")
+        retried.initialize()
+        assertEquals(StudyRecoveryStatus.ACTION_REQUIRED, retried.snapshot.value.recoveryStatus)
+        fixture.acceptedFailure = null
+        retried.retryRecovery()
+        assertEquals(3, fixture.store.recoveryReads)
+        assertEquals(ExperimentState.PAUSED, retried.snapshot.value.runtime.state)
+        retried.shutdownProcess()
+    }
+
     private fun assertProjectionMatchesCommit(fixture: Fixture) {
         val document = requireNotNull(fixture.store.runtime)
         val clock = requireNotNull(document.clockCheckpoint)

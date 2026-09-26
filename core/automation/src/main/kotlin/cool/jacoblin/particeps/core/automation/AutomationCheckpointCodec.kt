@@ -3,31 +3,33 @@ package cool.jacoblin.particeps.core.automation
 import cool.jacoblin.particeps.core.resource.ResourceGeneration
 import cool.jacoblin.particeps.core.resource.ResourceKey
 import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
-import java.io.DataOutputStream
 import java.math.BigInteger
 import java.util.Base64
+import java.util.SortedMap
 
 /** Exact public wire codec for the reducer checkpoint persisted in EngineCommit mutations. */
 object AutomationCheckpointCodec {
     private const val VERSION = 1
     private const val PREFIX = "automation-checkpoint-v1:"
 
-    fun encode(checkpoint: AutomationCheckpoint): String = encodePayload {
+    fun encode(checkpoint: AutomationCheckpoint): String = checkpoint.encoded
+
+    /** Builds the encoding; [AutomationCheckpoint] keeps the result, so each value encodes once. */
+    internal fun encodeFields(checkpoint: AutomationCheckpoint): String = encodePayload {
         writeInt(VERSION)
         writeLong(checkpoint.evaluatedThroughSequence)
         writeString(checkpoint.lifecycle.name)
         writeNullableLong(checkpoint.studyStartUtcMillis)
         writeLong(checkpoint.lastActiveElapsedNanos)
         writeLong(checkpoint.lastCalendarElapsedNanos)
-        writeMap(checkpoint.latchValues.toSortedMap(), { writeString(it) }) { writeBoolean(it) }
-        writeMap(checkpoint.presenceKeys.toSortedMap(), { writeString(it) }) { values ->
+        writeMap(checkpoint.latchValues.inKeyOrder(), { writeString(it) }) { writeBoolean(it) }
+        writeMap(checkpoint.presenceKeys.inKeyOrder(), { writeString(it) }) { values ->
             writeList(values.sorted()) { writeString(it) }
         }
-        writeMap(checkpoint.heldSinceNanos.toSortedMap(), { writeString(it) }) { writeLong(it) }
-        writeMap(checkpoint.priorConditionValues.toSortedMap(), { writeString(it) }) { writeBoolean(it) }
-        writeMap(checkpoint.windows.toSortedMap(), { writeString(it) }) { entries ->
+        writeMap(checkpoint.heldSinceNanos.inKeyOrder(), { writeString(it) }) { writeLong(it) }
+        writeMap(checkpoint.priorConditionValues.inKeyOrder(), { writeString(it) }) { writeBoolean(it) }
+        writeMap(checkpoint.windows.inKeyOrder(), { writeString(it) }) { entries ->
             writeList(entries) { entry ->
                 writeLong(entry.sequenceNumber)
                 writeLong(entry.timeNanos)
@@ -35,7 +37,7 @@ object AutomationCheckpointCodec {
                 writeString(entry.numericValue.toString())
             }
         }
-        writeMap(checkpoint.sequences.toSortedMap(), { writeString(it) }) { partials ->
+        writeMap(checkpoint.sequences.inKeyOrder(), { writeString(it) }) { partials ->
             writeList(partials) { partial ->
                 writeInt(partial.nextStep)
                 writeLong(partial.firstSequenceNumber)
@@ -44,18 +46,18 @@ object AutomationCheckpointCodec {
                 writeString(partial.bootSessionId)
             }
         }
-        writeMap(checkpoint.activationCounts.toSortedMap(), { writeString(it) }) { writeInt(it) }
-        writeMap(checkpoint.cooldownMarks.toSortedMap(), { writeString(it) }) { mark ->
+        writeMap(checkpoint.activationCounts.inKeyOrder(), { writeString(it) }) { writeInt(it) }
+        writeMap(checkpoint.cooldownMarks.inKeyOrder(), { writeString(it) }) { mark ->
             writeLong(mark.activeElapsedNanos)
             writeLong(mark.calendarElapsedNanos)
         }
-        writeMap(checkpoint.desiredResources.toSortedMap(), { writeResourceKey(it) }) { desired ->
+        writeMap(checkpoint.desiredResources.inKeyOrder(), { writeResourceKey(it) }) { desired ->
             writeULong(desired.generation.value)
             writeNullableString(desired.profileId)
         }
-        writeMap(checkpoint.timers.toSortedMap(), { writeString(it) }, { writeTimer(it) })
-        writeMap(checkpoint.timerGenerations.toSortedMap(), { writeString(it) }, { writeULong(it) })
-        writeMap(checkpoint.materializedTimers.toSortedMap(), { writeString(it) }) { summaries ->
+        writeMap(checkpoint.timers.inKeyOrder(), { writeString(it) }, { writeTimer(it) })
+        writeMap(checkpoint.timerGenerations.inKeyOrder(), { writeString(it) }, { writeULong(it) })
+        writeMap(checkpoint.materializedTimers.inKeyOrder(), { writeString(it) }) { summaries ->
             writeList(summaries) { summary ->
                 writeString(summary.producerKey)
                 writeLong(summary.selectedUtcMillis)
@@ -99,12 +101,52 @@ object AutomationCheckpointCodec {
         return checkpoint
     }
 
-    private fun encodePayload(block: DataOutputStream.() -> Unit): String {
-        val bytes = ByteArrayOutputStream().use { buffer ->
-            DataOutputStream(buffer).use { output -> output.block() }
-            buffer.toByteArray()
-        }
+    private fun encodePayload(block: PayloadWriter.() -> Unit): String {
+        val bytes = PayloadWriter().apply(block).toByteArray()
         return PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+    }
+
+    /**
+     * The `DataOutputStream` big-endian layout into one growable array, without the per-write
+     * locking of `DataOutputStream` over `ByteArrayOutputStream`. Checkpoints encode every commit.
+     */
+    private class PayloadWriter {
+        private var buffer = ByteArray(INITIAL_PAYLOAD_BYTES)
+        private var size = 0
+
+        fun writeByte(value: Int) {
+            reserve(1)
+            buffer[size++] = value.toByte()
+        }
+
+        fun writeBoolean(value: Boolean) = writeByte(if (value) 1 else 0)
+
+        fun writeInt(value: Int) {
+            reserve(Int.SIZE_BYTES)
+            buffer[size] = (value ushr 24).toByte()
+            buffer[size + 1] = (value ushr 16).toByte()
+            buffer[size + 2] = (value ushr 8).toByte()
+            buffer[size + 3] = value.toByte()
+            size += Int.SIZE_BYTES
+        }
+
+        fun writeLong(value: Long) {
+            writeInt((value ushr 32).toInt())
+            writeInt(value.toInt())
+        }
+
+        fun write(bytes: ByteArray) {
+            reserve(bytes.size)
+            bytes.copyInto(buffer, size)
+            size += bytes.size
+        }
+
+        fun toByteArray(): ByteArray = buffer.copyOf(size)
+
+        private fun reserve(bytes: Int) {
+            if (buffer.size - size >= bytes) return
+            buffer = buffer.copyOf(maxOf(Math.multiplyExact(buffer.size, 2), Math.addExact(size, bytes)))
+        }
     }
 
     private fun <T> decodePayload(encoded: String, block: DataInputStream.() -> T): T {
@@ -119,7 +161,7 @@ object AutomationCheckpointCodec {
         }
     }
 
-    private fun DataOutputStream.writeString(value: String) {
+    private fun PayloadWriter.writeString(value: String) {
         val bytes = value.toByteArray(Charsets.UTF_8)
         require(bytes.size <= MAX_STRING_BYTES) { "Automation checkpoint string is too large" }
         writeInt(bytes.size)
@@ -132,31 +174,31 @@ object AutomationCheckpointCodec {
         return ByteArray(size).also(::readFully).toString(Charsets.UTF_8)
     }
 
-    private fun DataOutputStream.writeNullableString(value: String?) {
+    private fun PayloadWriter.writeNullableString(value: String?) {
         writeBoolean(value != null)
         if (value != null) writeString(value)
     }
 
     private fun DataInputStream.readNullableString(): String? = if (readBoolean()) readString() else null
 
-    private fun DataOutputStream.writeNullableLong(value: Long?) {
+    private fun PayloadWriter.writeNullableLong(value: Long?) {
         writeBoolean(value != null)
         if (value != null) writeLong(value)
     }
 
     private fun DataInputStream.readNullableLong(): Long? = if (readBoolean()) readLong() else null
 
-    private fun DataOutputStream.writeULong(value: ULong) = writeString(value.toString())
+    private fun PayloadWriter.writeULong(value: ULong) = writeString(value.toString())
     private fun DataInputStream.readULong(): ULong = readString().toULong()
 
-    private fun DataOutputStream.writeResourceKey(key: ResourceKey) {
+    private fun PayloadWriter.writeResourceKey(key: ResourceKey) {
         writeString(key.kind.name)
         writeString(key.id)
     }
 
     private fun DataInputStream.readResourceKey(): ResourceKey = ResourceKey(enumValueOf(readString()), readString())
 
-    private fun DataOutputStream.writeTimer(timer: DurableTimer) {
+    private fun PayloadWriter.writeTimer(timer: DurableTimer) {
         writeString(timer.id)
         writeString(timer.automationId)
         writeULong(timer.generation)
@@ -205,10 +247,10 @@ object AutomationCheckpointCodec {
         )
     }
 
-    private fun <K, V> DataOutputStream.writeMap(
+    private fun <K, V> PayloadWriter.writeMap(
         values: Map<K, V>,
-        writeKey: DataOutputStream.(K) -> Unit,
-        writeValue: DataOutputStream.(V) -> Unit,
+        writeKey: PayloadWriter.(K) -> Unit,
+        writeValue: PayloadWriter.(V) -> Unit,
     ) {
         require(values.size <= MAX_COLLECTION_SIZE) { "Automation checkpoint map is too large" }
         writeInt(values.size)
@@ -233,9 +275,9 @@ object AutomationCheckpointCodec {
         }
     }
 
-    private fun <T> DataOutputStream.writeList(
+    private fun <T> PayloadWriter.writeList(
         values: List<T>,
-        writeValue: DataOutputStream.(T) -> Unit,
+        writeValue: PayloadWriter.(T) -> Unit,
     ) {
         require(values.size <= MAX_COLLECTION_SIZE) { "Automation checkpoint list is too large" }
         writeInt(values.size)
@@ -248,7 +290,15 @@ object AutomationCheckpointCodec {
         return List(size) { readValue() }
     }
 
+    private const val INITIAL_PAYLOAD_BYTES = 1_024
     private const val MAX_STRING_BYTES = 512 * 1_024
     private const val MAX_COMPONENT_BYTES = 512 * 1_024
     private const val MAX_COLLECTION_SIZE = 4_096
 }
+
+/**
+ * The map in ascending natural key order: itself when it is already naturally sorted, as every
+ * reducer-built checkpoint map is, otherwise a sorted copy. Both iterate exactly as `toSortedMap()`.
+ */
+internal fun <K : Comparable<K>, V> Map<K, V>.inKeyOrder(): Map<K, V> =
+    if (this is SortedMap<K, V> && comparator() == null) this else toSortedMap()

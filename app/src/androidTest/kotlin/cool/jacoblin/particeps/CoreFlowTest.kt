@@ -15,13 +15,18 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ViewModelProvider
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import cool.jacoblin.particeps.core.application.StudyCommandResult
 import cool.jacoblin.particeps.core.collector.AccessKind
 import cool.jacoblin.particeps.core.model.ExperimentState
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.After
 import org.junit.Before
@@ -233,7 +238,70 @@ class CoreFlowTest {
         composeRule.onNodeWithText(composeRule.activity.getString(R.string.message_study_removed)).assertExists()
     }
 
+    /**
+     * Once the screen has been stopped for longer than the sharing timeout, commits are not
+     * projected at all, and a lifecycle change made meanwhile is what the participant sees on
+     * return, with no stale controls and no error from acting on the old state.
+     */
+    @Test
+    fun aStudyChangedWhileTheScreenWasStoppedIsCurrentWhenItReturns() {
+        val session = session()
+        waitUntilExactlyOneNode(hasTestTag(UiTags.IMPORT_DEMO))
+        composeRule.onNodeWithTag(UiTags.IMPORT_DEMO).performScrollTo().performClick()
+        composeRule.waitUntil(TIMEOUT_MILLIS) {
+            session.snapshot.value.runtime.state == ExperimentState.CONFIG_VERIFIED
+        }
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.uiAutomation.grantRuntimePermission(
+            instrumentation.targetContext.packageName,
+            Manifest.permission.POST_NOTIFICATIONS,
+        )
+        runBlocking {
+            assertEquals(StudyCommandResult.Success, session.reviewStudy())
+            assertEquals(StudyCommandResult.Success, session.acceptConsent())
+            session.reconcileAccess()
+            assertEquals(StudyCommandResult.Success, session.completeAccessSetup())
+            assertEquals(StudyCommandResult.Success, session.start())
+        }
+        val running = composeRule.activity.getString(R.string.state_running)
+        waitUntilExactlyOneNode(hasTestTag(UiTags.STATE) and hasText(running))
+        val viewModel = viewModel()
+
+        composeRule.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        // Composition effects run on the test clock here, so the stopped collector only leaves
+        // once the clock idles; on a phone it leaves as soon as the Activity stops.
+        composeRule.waitForIdle()
+        Thread.sleep(UI_STATE_STOP_TIMEOUT_MILLIS + STOP_MARGIN_MILLIS)
+        val shownAtStop = viewModel.state.value
+        val commitsAtStop = session.snapshot.value.runtime.durableThroughCommit
+        runBlocking {
+            assertEquals(StudyCommandResult.Success, session.pause())
+            withTimeout(TIMEOUT_MILLIS) { session.snapshot.first { it.runtime.state == ExperimentState.PAUSED } }
+        }
+        assertTrue(session.snapshot.value.runtime.durableThroughCommit > commitsAtStop)
+        assertSame("A stopped screen projected a commit", shownAtStop, viewModel.state.value)
+
+        composeRule.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        val paused = composeRule.activity.getString(R.string.state_paused)
+        waitUntilExactlyOneNode(hasTestTag(UiTags.STATE) and hasText(paused))
+        composeRule.onNodeWithTag(UiTags.RESUME).assertExists()
+        composeRule.onNodeWithTag(UiTags.PAUSE).assertDoesNotExist()
+        composeRule.onNodeWithText(composeRule.activity.getString(R.string.message_operation_failed))
+            .assertDoesNotExist()
+        val shown = viewModel.state.value as StudyUiState.ActiveStudy
+        assertEquals(session.snapshot.value.runtime.durableThroughCommit, shown.model.durableThroughCommit)
+    }
+
     private fun session() = (composeRule.activity.application as CollectorApplication).session
+
+    /** The Activity's own instance; the factory is never used because the instance already exists. */
+    private fun viewModel(): StudyViewModel {
+        var viewModel: StudyViewModel? = null
+        composeRule.activityRule.scenario.onActivity { activity ->
+            viewModel = ViewModelProvider(activity, StudyViewModel.Factory(session()))[StudyViewModel::class.java]
+        }
+        return checkNotNull(viewModel)
+    }
 
     private fun waitUntilExactlyOneNode(
         matcher: SemanticsMatcher,
@@ -259,5 +327,6 @@ class CoreFlowTest {
 
     private companion object {
         const val TIMEOUT_MILLIS = 40_000L
+        const val STOP_MARGIN_MILLIS = 2_000L
     }
 }

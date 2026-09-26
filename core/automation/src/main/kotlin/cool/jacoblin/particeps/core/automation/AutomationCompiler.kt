@@ -27,7 +27,9 @@ class CompiledAutomationProgram internal constructor(
     val resourceBindings: List<ResourceBindingAutomation>,
     internal val referencedEvents: Set<EventTypeKey>,
     internal val contracts: Map<EventTypeKey, EventTypeContract>,
-)
+) {
+    internal val plan = ReducerPlan(input, occurrenceAutomations, resourceBindings, contracts)
+}
 
 class AutomationCompiler(private val registry: EventContractRegistry) {
     fun compile(input: AutomationCompilerInput): CompilationResult {

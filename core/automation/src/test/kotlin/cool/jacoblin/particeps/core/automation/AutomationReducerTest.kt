@@ -575,6 +575,54 @@ class AutomationReducerTest {
         assertEquals("baseline", stale.checkpoint.desiredResources.getValue(trafficResource).profileId)
     }
 
+    @Test
+    fun compiledPlanNamesEveryConditionTimerSoInputsHashNoStaticConfiguration() {
+        val program = trafficProgram(
+            StateCondition.All(
+                listOf(
+                    StateCondition.HeldFor(
+                        StateCondition.KeyedPresence(
+                            enterWhen = listOf(EventMatcher(resumed)),
+                            exitWhen = listOf(EventMatcher(paused)),
+                            keyField = "activity_component_token",
+                        ),
+                        durationSeconds = 120,
+                        clock = DurationClock.ACTIVE_RUNNING_TIME,
+                    ),
+                    StateCondition.Not(StateCondition.ElapsedAtLeast(1_800, DurationClock.CALENDAR_TIME)),
+                    StateCondition.Any(
+                        listOf(
+                            StateCondition.StudyLocalWindow(1, 1, "00:05", "00:50"),
+                            StateCondition.WindowThreshold(
+                                EventMatcher(resumed),
+                                300,
+                                EvaluationClock.OBSERVED_RESEARCH_TIME,
+                                Aggregate.Count,
+                                NumericComparison(FieldOperator.GTE, "2"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        var checkpoint = start(program).checkpoint
+        val producerKeys = mutableSetOf<String>()
+        listOf(
+            eventInput(3, resumed, 1_000, 1_000, "component-a"),
+            eventInput(4, resumed, 2_000, 2_000, "component-b"),
+            eventInput(5, paused, 3_000, 3_000, "component-a"),
+        ).forEach { input ->
+            val result = reducer.reduceBatch(program, checkpoint, listOf(input))
+            checkpoint = result.checkpoint
+            producerKeys += checkpoint.timers.values.map(DurableTimer::producerKey)
+        }
+
+        // Held-for, elapsed, local-window and window-threshold timers all ran, and each came from
+        // the compiled plan rather than from two SHA-256 digests of its state path per input.
+        assertEquals(4, producerKeys.size)
+        assertTrue(producerKeys.all { it in program.plan.conditionProducerKeys() })
+    }
+
     private fun start(program: CompiledAutomationProgram): ReductionResult = reducer.reduceBatch(
         program,
         AutomationCheckpoint(),

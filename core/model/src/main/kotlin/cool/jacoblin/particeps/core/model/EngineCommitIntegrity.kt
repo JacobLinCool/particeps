@@ -1,7 +1,5 @@
 package cool.jacoblin.particeps.core.model
 
-import java.io.ByteArrayOutputStream
-import java.io.DataOutputStream
 import java.security.MessageDigest
 
 /** Canonical, language-neutral preimages for the authenticated runtime log. */
@@ -9,7 +7,15 @@ object EngineCommitIntegrity {
     const val FORMAT = "particeps-engine-commit-v1"
     const val PENDING_FORMAT = "particeps-pending-input-v1"
 
-    fun calculate(commit: EngineCommit): String = digest {
+    /** The digest of [commit]'s content, hashed at most once per commit value. */
+    fun calculate(commit: EngineCommit): String =
+        commit.contentSha256 ?: calculateContent(commit).also { commit.contentSha256 = it }
+
+    /** The digest of [input]'s content, hashed at most once per pending-input value. */
+    fun calculate(input: PendingEngineInput): String =
+        input.contentSha256 ?: calculateContent(input).also { input.contentSha256 = it }
+
+    private fun calculateContent(commit: EngineCommit): String = digest {
         string(FORMAT)
         long(commit.commitSequence)
         string(commit.previousCommitSha256)
@@ -23,7 +29,7 @@ object EngineCommitIntegrity {
         string(commit.resultingCheckpointSha256)
     }
 
-    fun calculate(input: PendingEngineInput): String = digest {
+    private fun calculateContent(input: PendingEngineInput): String = digest {
         string(PENDING_FORMAT)
         string(input.conditionEpochId.value)
         list(input.submissions) { submission ->
@@ -47,23 +53,65 @@ object EngineCommitIntegrity {
     }
 
     private fun digest(block: CanonicalWriter.() -> Unit): String {
-        val output = ByteArrayOutputStream()
-        DataOutputStream(output).use { stream -> CanonicalWriter(stream).block() }
-        return MessageDigest.getInstance("SHA-256")
-            .digest(output.toByteArray())
-            .joinToString("") { byte -> "%02x".format(byte) }
+        val writer = CanonicalWriter(MessageDigest.getInstance("SHA-256"))
+        writer.block()
+        return writer.finish().toLowerHex()
     }
 
-    private class CanonicalWriter(private val output: DataOutputStream) {
-        fun int(value: Int) = output.writeInt(value)
-        fun long(value: Long) = output.writeLong(value)
-        fun boolean(value: Boolean) = output.writeBoolean(value)
+    /**
+     * Writes the preimage in `DataOutputStream` big-endian layout straight into the digest through
+     * a small buffer, so a large commit is neither copied into a growing array nor held in memory.
+     */
+    private class CanonicalWriter(private val sha256: MessageDigest) {
+        private val buffer = ByteArray(BUFFER_BYTES)
+        private var buffered = 0
+
+        fun int(value: Int) {
+            reserve(Int.SIZE_BYTES)
+            buffer[buffered] = (value ushr 24).toByte()
+            buffer[buffered + 1] = (value ushr 16).toByte()
+            buffer[buffered + 2] = (value ushr 8).toByte()
+            buffer[buffered + 3] = value.toByte()
+            buffered += Int.SIZE_BYTES
+        }
+
+        fun long(value: Long) {
+            int((value ushr 32).toInt())
+            int(value.toInt())
+        }
+
+        fun boolean(value: Boolean) {
+            reserve(1)
+            buffer[buffered++] = if (value) 1 else 0
+        }
 
         fun string(value: String) {
             val bytes = value.toByteArray(Charsets.UTF_8)
             require(bytes.size <= MAX_CANONICAL_STRING_BYTES) { "Canonical string is too large" }
             int(bytes.size)
-            output.write(bytes)
+            if (bytes.size > buffer.size - buffered) {
+                drain()
+                if (bytes.size >= buffer.size) {
+                    sha256.update(bytes)
+                    return
+                }
+            }
+            bytes.copyInto(buffer, buffered)
+            buffered += bytes.size
+        }
+
+        fun finish(): ByteArray {
+            drain()
+            return sha256.digest()
+        }
+
+        private fun reserve(bytes: Int) {
+            if (buffer.size - buffered < bytes) drain()
+        }
+
+        private fun drain() {
+            sha256.update(buffer, 0, buffered)
+            buffered = 0
         }
 
         fun <T : Enum<T>> enum(value: T) = string(value.name)
@@ -93,7 +141,7 @@ object EngineCommitIntegrity {
         }
 
         fun fields(values: Map<String, String>) {
-            val sorted = values.toSortedMap()
+            val sorted = values.inKeyOrder()
             int(sorted.size)
             sorted.forEach { (key, value) ->
                 string(key)
@@ -189,12 +237,43 @@ object EngineCommitIntegrity {
     }
 
     private const val MAX_CANONICAL_STRING_BYTES = 8 * 1024 * 1024
+    private const val BUFFER_BYTES = 8 * 1024
 }
 
-fun EngineCommit.withComputedDigest(): EngineCommit = copy(
-    commitSha256 = EngineCommitIntegrity.calculate(this),
-).also(EngineCommitIntegrity::verify)
+/**
+ * The digest preimage excludes the digest field itself, so the copy carries exactly the digest of
+ * its own content, and keeps that digest as its computed content digest. Stores still verify every
+ * commit and pending input they are asked to persist; for this copy that is a comparison.
+ */
+fun EngineCommit.withComputedDigest(): EngineCommit {
+    val digest = EngineCommitIntegrity.calculate(this)
+    return copy(commitSha256 = digest).also { it.contentSha256 = digest }
+}
 
-fun PendingEngineInput.withComputedDigest(): PendingEngineInput = copy(
-    encodedSha256 = EngineCommitIntegrity.calculate(this),
-).also(EngineCommitIntegrity::verify)
+fun PendingEngineInput.withComputedDigest(): PendingEngineInput {
+    val digest = EngineCommitIntegrity.calculate(this)
+    return copy(encodedSha256 = digest).also { it.contentSha256 = digest }
+}
+
+/** The map in ascending key order: itself when it already iterates that way, else a sorted copy. */
+private fun Map<String, String>.inKeyOrder(): Map<String, String> {
+    var previous: String? = null
+    keys.forEach { key ->
+        if (previous != null && previous >= key) return toSortedMap()
+        previous = key
+    }
+    return this
+}
+
+private val LOWER_HEX = "0123456789abcdef".toCharArray()
+
+/** Lowercase hexadecimal, byte for byte the same text as `"%02x"` per byte. */
+internal fun ByteArray.toLowerHex(): String {
+    val characters = CharArray(size * 2)
+    forEachIndexed { index, byte ->
+        val value = byte.toInt() and 0xff
+        characters[index * 2] = LOWER_HEX[value ushr 4]
+        characters[index * 2 + 1] = LOWER_HEX[value and 0x0f]
+    }
+    return String(characters)
+}

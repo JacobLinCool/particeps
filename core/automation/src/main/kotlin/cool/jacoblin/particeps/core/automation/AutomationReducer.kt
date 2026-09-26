@@ -16,6 +16,7 @@ import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.core.resource.ResourceGeneration
 import cool.jacoblin.particeps.core.resource.ResourceKey
 import java.math.BigInteger
+import java.security.MessageDigest
 import java.time.ZoneId
 
 enum class StudySessionState { READY, ACTIVATING, RUNNING, PAUSING, PAUSED, COMPLETED, WITHDRAWN }
@@ -41,10 +42,14 @@ data class AutomationEvent(
     init {
         require(sequenceNumber > 0) { "Automation event sequence must be positive" }
         require(fields.size <= 32) { "Automation event has too many fields" }
-        require(fields.keys.all(FIELD_NAME::matches)) { "Invalid automation event field" }
+        require(fields.keys.all(::isFieldName)) { "Invalid automation event field" }
     }
 
-    private companion object { val FIELD_NAME = Regex("[a-z][a-z0-9_]{0,63}") }
+    private companion object {
+        /** Exactly `[a-z][a-z0-9_]{0,63}`, checked for every field of every input without a regex. */
+        fun isFieldName(value: String): Boolean = value.length in 1..64 && value[0] in 'a'..'z' &&
+            value.all { it in 'a'..'z' || it in '0'..'9' || it == '_' }
+    }
 }
 
 sealed interface ReducerInput { val sequenceNumber: Long; val clock: ReducerClock
@@ -156,12 +161,24 @@ data class AutomationCheckpoint(
                 it.producerKey.length in 1..160 && it.selectedUtcMillis >= 0
             }
         }) { "Invalid materialized timer summaries" }
-        require(CheckpointDigester.encodedBytes(this) <= MAX_CHECKPOINT_BYTES) {
+    }
+
+    // A checkpoint is a value, so its digest preimage is built once: the pass that bounds its size
+    // also hashes it. The public component encoding is built at most once, on first use. Neither is
+    // a constructor property, so equality, hashing, and copy are unchanged.
+    private val canonical = CheckpointDigester.canonical(this)
+
+    internal val encoded: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        AutomationCheckpointCodec.encodeFields(this)
+    }
+
+    init {
+        require(canonical.encodedBytes <= MAX_CHECKPOINT_BYTES) {
             "Automation checkpoint exceeds 512 KiB"
         }
     }
 
-    fun digest(): String = CheckpointDigester.digest(this)
+    fun digest(): String = canonical.digest()
 
     private companion object {
         const val MAX_CHECKPOINT_BYTES = 512 * 1_024
@@ -246,17 +263,17 @@ class AutomationReducer {
                 }
             }
 
-            program.occurrenceAutomations.forEach { automation ->
-                val rootPath = "occurrence:${automation.id}"
+            program.occurrenceAutomations.forEachIndexed { automationIndex, automation ->
+                val paths = program.plan.occurrencePaths[automationIndex]
                 val guardValue = automation.guard?.let {
-                    mutable.evaluateCondition(program, it, "$rootPath:guard", input, timerIntents, automation.id)
+                    mutable.evaluateCondition(program, it, paths.guard, input, timerIntents, automation.id)
                 } ?: true
                 val matches = if (
                     mutable.lifecycle == StudySessionState.RUNNING &&
                     input !is ReducerInput.QualityGap &&
                     input !is ReducerInput.ClockDiscontinuity
                 ) {
-                    mutable.evaluateTrigger(program, automation, rootPath, input, dueTimer, timerIntents)
+                    mutable.evaluateTrigger(program, automation, paths, input, dueTimer, timerIntents)
                 } else {
                     emptyList()
                 }
@@ -268,8 +285,9 @@ class AutomationReducer {
             }
 
             program.resourceBindings.forEach { binding ->
+                val casePaths = program.plan.casePaths(binding)
                 binding.cases.forEachIndexed { caseIndex, case ->
-                    val path = "binding:${binding.id}:case:$caseIndex"
+                    val path = casePaths[caseIndex]
                     val value = mutable.evaluateCondition(
                         program,
                         case.condition,
@@ -406,7 +424,7 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
     }
 
     fun restartResources(program: CompiledAutomationProgram, resources: Set<ResourceKey>) {
-        val declared = program.input.resources.mapTo(hashSetOf()) { it.key }
+        val declared = program.plan.declaredResources
         require(resources.all(declared::contains)) { "Clock discontinuity references an undeclared resource" }
         forcedResourceRestarts += resources
     }
@@ -489,7 +507,7 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
     fun evaluateTrigger(
         program: CompiledAutomationProgram,
         automation: OccurrenceAutomation,
-        rootPath: String,
+        paths: OccurrencePaths,
         input: ReducerInput,
         dueTimer: DurableTimer?,
         timerIntents: MutableList<TimerIntent>,
@@ -500,11 +518,11 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
                 listOf(eventMatch(event, trigger.evaluationClock, "event_match"))
             } else emptyList()
         }
-        is Trigger.Sequence -> processSequence(program, automation.id, trigger, input)
+        is Trigger.Sequence -> processSequence(program, paths.triggerSequence, trigger, input)
         is Trigger.WindowThreshold -> {
             val condition = updateWindow(
                 program,
-                "$rootPath:trigger:window",
+                paths.triggerWindow,
                 trigger.selector,
                 trigger.windowSeconds,
                 trigger.evaluationClock,
@@ -514,10 +532,10 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
                 timerIntents,
                 automation.id,
             )
-            val previous = priorConditionValues.put("$rootPath:trigger:window-edge", condition) ?: false
+            val previous = priorConditionValues.put(paths.triggerWindowEdge, condition) ?: false
             if (!previous && condition) {
                 val event = (input as? ReducerInput.Event)?.event
-                val entries = windows["$rootPath:trigger:window"].orEmpty()
+                val entries = windows[paths.triggerWindow].orEmpty()
                 if (event == null || entries.isEmpty()) emptyList() else listOf(
                     windowMatch(event, trigger.evaluationClock, entries.first().sequenceNumber),
                 )
@@ -527,12 +545,12 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
             val value = evaluateCondition(
                 program,
                 trigger.condition,
-                "$rootPath:trigger:condition",
+                paths.triggerCondition,
                 input,
                 timerIntents,
                 automation.id,
             )
-            val previous = priorConditionValues.put("$rootPath:trigger:condition-edge", value) ?: false
+            val previous = priorConditionValues.put(paths.triggerConditionEdge, value) ?: false
             if (!previous && value) listOf(conditionMatch(input, dueTimer)) else emptyList()
         }
         is Trigger.Schedule -> if (dueTimer?.automationId == automation.id && !dueTimer.producerKey.startsWith(CONDITION_TIMER_PREFIX)) {
@@ -597,13 +615,13 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
             val nowNanos = durationClockNanos(condition.clock, input.clock)
             if (!child) {
                 heldSinceNanos.remove(path)
-                retireConditionTimer(path, timerIntents)
+                retireConditionTimer(program, path, timerIntents)
                 false
             } else {
                 val since = heldSinceNanos.getOrPut(path) { nowNanos }
                 val due = Math.addExact(since, secondsToNanos(condition.durationSeconds))
                 if (nowNanos >= due) {
-                    retireConditionTimer(path, timerIntents)
+                    retireConditionTimer(program, path, timerIntents)
                     true
                 } else {
                     ensureConditionTimer(program, automationId, path, condition.clock, due, timerIntents)
@@ -612,8 +630,13 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
             }
         }
         is StateCondition.StudyLocalWindow -> {
-            val window = studyLocalWindow(condition, studyStartUtcMillis, input.clock.now.wallTimeUtcMillis, input.clock.zoneId)
-            if (window.nextBoundaryUtcMillis == null) retireConditionTimer(path, timerIntents)
+            val window = program.plan.studyLocalWindow(
+                condition,
+                studyStartUtcMillis,
+                input.clock.now.wallTimeUtcMillis,
+                input.clock.zoneId,
+            )
+            if (window.nextBoundaryUtcMillis == null) retireConditionTimer(program, path, timerIntents)
             else ensureConditionTimerTarget(program, automationId, path, TimerTarget.CalendarUtc(window.nextBoundaryUtcMillis), timerIntents)
             window.active
         }
@@ -621,7 +644,7 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
             val nowNanos = durationClockNanos(condition.clock, input.clock)
             val due = secondsToNanos(condition.durationSeconds)
             if (nowNanos >= due) {
-                retireConditionTimer(path, timerIntents)
+                retireConditionTimer(program, path, timerIntents)
                 true
             } else {
                 ensureConditionTimer(program, automationId, path, condition.clock, due, timerIntents)
@@ -715,10 +738,11 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
         program: CompiledAutomationProgram,
     ): Map<ResourceKey, DesiredProfile> {
         val changes = linkedMapOf<ResourceKey, DesiredProfile>()
-        program.resourceBindings.sortedBy { it.resource }.forEach { binding ->
+        program.plan.bindingsByResource.forEach { binding ->
             val selected = if (lifecycle in ACTIVE_SESSION_STATES) {
-                val selectedCase = binding.cases.withIndex().firstOrNull { (index, case) ->
-                    latestConditionResults.getValue("binding:${binding.id}:case:$index")
+                val casePaths = program.plan.casePaths(binding)
+                val selectedCase = binding.cases.withIndex().firstOrNull { (index, _) ->
+                    latestConditionResults.getValue(casePaths[index])
                 }
                 if (selectedCase == null) binding.defaultProfileId else selectedCase.value.profileId
             } else null
@@ -785,13 +809,12 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
 
     private fun processSequence(
         program: CompiledAutomationProgram,
-        automationId: String,
+        path: String,
         trigger: Trigger.Sequence,
         input: ReducerInput,
     ): List<TriggerMatch> {
         val event = (input as? ReducerInput.Event)?.event ?: return emptyList()
         val occurrenceTime = eventTime(event, trigger.evaluationClock)
-        val path = "occurrence:$automationId:trigger:sequence"
         val retained = sequences.getOrPut(path, ::mutableListOf)
         val windowNanos = secondsToNanos(trigger.withinSeconds)
         val next = mutableListOf<SequencePartial>()
@@ -880,16 +903,33 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
                 ),
                 timerIntents,
             )
-        } ?: retireConditionTimer(path, timerIntents)
+        } ?: retireConditionTimer(program, path, timerIntents)
         val aggregateValue = when (aggregate) {
             Aggregate.Count -> BigInteger.valueOf(entries.size.toLong())
             is Aggregate.Sum -> entries.fold(BigInteger.ZERO) { total, entry -> total + entry.numericValue }
         }
-        return compareInteger(aggregateValue, comparison)
+        return compareInteger(aggregateValue, comparison.operator, program.plan.threshold(comparison))
     }
 
     private fun matches(program: CompiledAutomationProgram, matcher: EventMatcher, event: AutomationEvent): Boolean {
         if (event.key != matcher.event) return false
+        val compiled = program.plan.matcher(matcher) ?: return matchesUncompiled(program, matcher, event)
+        return compiled.predicates.all { predicate ->
+            val actualCanonical = event.fields[predicate.field] ?: return@all false
+            val actual = TypedFieldDecoder.decodeEventWire(predicate.contract, actualCanonical)
+            if (predicate.operator == FieldOperator.IN) {
+                predicate.literals.any { expected -> compareTyped(actual, expected, FieldOperator.EQ) }
+            } else {
+                compareTyped(actual, predicate.literals.single(), predicate.operator)
+            }
+        }
+    }
+
+    private fun matchesUncompiled(
+        program: CompiledAutomationProgram,
+        matcher: EventMatcher,
+        event: AutomationEvent,
+    ): Boolean {
         val contract = requireNotNull(program.contracts[matcher.event])
         return matcher.predicates.all { predicate ->
             val actualCanonical = event.fields[predicate.field] ?: return@all false
@@ -956,8 +996,9 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
         timerIntents: MutableList<TimerIntent>,
     ) {
         if (lifecycle !in ACTIVE_SESSION_STATES) return
-        val producerKey = conditionProducerKey(path)
-        val timerId = DeterministicIds.timerId(program.input.configurationSha256, automationId, producerKey)
+        val identity = program.plan.conditionTimer(path, automationId)
+        val producerKey = identity.producerKey
+        val timerId = identity.timerId
         val existing = timers[timerId]
         if (existing?.target == target) return
         if (existing != null) {
@@ -980,8 +1021,12 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
         timerIntents += TimerIntent.Schedule(timer)
     }
 
-    private fun retireConditionTimer(path: String, timerIntents: MutableList<TimerIntent>) {
-        val producerKey = conditionProducerKey(path)
+    private fun retireConditionTimer(
+        program: CompiledAutomationProgram,
+        path: String,
+        timerIntents: MutableList<TimerIntent>,
+    ) {
+        val producerKey = program.plan.conditionProducerKey(path)
         val timer = timers.values.singleOrNull { it.producerKey == producerKey } ?: return
         timers.remove(timer.id)
         timerIntents += TimerIntent.Retire(timer.id, timer.generation)
@@ -1076,81 +1121,128 @@ private class MutableCheckpoint(checkpoint: AutomationCheckpoint) {
     }
 }
 
+/**
+ * The size and digest of the checkpoint's canonical preimage, `DeterministicIds.digest` over its
+ * components. A component containing NUL cannot be digested; that failure is kept for [digest].
+ */
+private class CanonicalCheckpoint(val encodedBytes: Long, private val sha256: String?) {
+    fun digest(): String = requireNotNull(sha256) { "Digest component contains NUL" }
+}
+
 private object CheckpointDigester {
-    fun digest(checkpoint: AutomationCheckpoint): String {
-        val components = components(checkpoint)
-        return DeterministicIds.digest("particeps-automation-checkpoint-v1", components)
-    }
+    private const val DOMAIN = "particeps-automation-checkpoint-v1"
+    private const val SEPARATOR = '\u0000'
+    private const val PREIMAGE_CAPACITY = 4_096
 
-    fun encodedBytes(checkpoint: AutomationCheckpoint): Int {
-        val components = components(checkpoint)
-        return "particeps-automation-checkpoint-v1".toByteArray(Charsets.UTF_8).size +
-            components.sumOf { it.toByteArray(Charsets.UTF_8).size + 1 }
-    }
-
-    private fun components(checkpoint: AutomationCheckpoint): List<String> {
-        val components = mutableListOf<String>()
-        components += "evaluated=${checkpoint.evaluatedThroughSequence}"
-        components += "lifecycle=${checkpoint.lifecycle.name}"
-        components += "start=${checkpoint.studyStartUtcMillis ?: ""}"
-        components += "active=${checkpoint.lastActiveElapsedNanos}"
-        components += "calendar=${checkpoint.lastCalendarElapsedNanos}"
-        checkpoint.latchValues.toSortedMap().forEach { (key, value) -> components += "latch:${escape(key)}=$value" }
-        checkpoint.presenceKeys.toSortedMap().forEach { (key, values) ->
-            values.sorted().forEach { value -> components += "presence:${escape(key)}:${escape(value)}" }
+    /**
+     * Builds the preimage `DeterministicIds.digest` hashes, the domain and each component joined by
+     * NUL as one UTF-8 text, in a single builder and encodes it once. A NUL separator can never
+     * complete a surrogate pair, so the joined encoding is byte for byte the per-component one.
+     */
+    fun canonical(checkpoint: AutomationCheckpoint): CanonicalCheckpoint {
+        val preimage = StringBuilder(PREIMAGE_CAPACITY).append(DOMAIN)
+        fun component(): StringBuilder = preimage.append(SEPARATOR)
+        component().append("evaluated=").append(checkpoint.evaluatedThroughSequence)
+        component().append("lifecycle=").append(checkpoint.lifecycle.name)
+        component().append("start=").apply { checkpoint.studyStartUtcMillis?.let { append(it) } }
+        component().append("active=").append(checkpoint.lastActiveElapsedNanos)
+        component().append("calendar=").append(checkpoint.lastCalendarElapsedNanos)
+        checkpoint.latchValues.inKeyOrder().forEach { (key, value) ->
+            component().append("latch:").appendEscaped(key).append('=').append(value)
         }
-        checkpoint.heldSinceNanos.toSortedMap().forEach { (key, value) -> components += "held:${escape(key)}=$value" }
-        checkpoint.priorConditionValues.toSortedMap().forEach { (key, value) -> components += "prior:${escape(key)}=$value" }
-        checkpoint.windows.toSortedMap().forEach { (key, values) ->
+        checkpoint.presenceKeys.inKeyOrder().forEach { (key, values) ->
+            values.sorted().forEach { value ->
+                component().append("presence:").appendEscaped(key).append(':').appendEscaped(value)
+            }
+        }
+        checkpoint.heldSinceNanos.inKeyOrder().forEach { (key, value) ->
+            component().append("held:").appendEscaped(key).append('=').append(value)
+        }
+        checkpoint.priorConditionValues.inKeyOrder().forEach { (key, value) ->
+            component().append("prior:").appendEscaped(key).append('=').append(value)
+        }
+        checkpoint.windows.inKeyOrder().forEach { (key, values) ->
             values.forEach { entry ->
-                components += "window:${escape(key)}:${entry.sequenceNumber}:${entry.timeNanos}:${escape(entry.bootSessionId)}:${entry.numericValue}"
+                component().append("window:").appendEscaped(key).append(':').append(entry.sequenceNumber)
+                    .append(':').append(entry.timeNanos).append(':').appendEscaped(entry.bootSessionId)
+                    .append(':').append(entry.numericValue.toString())
             }
         }
-        checkpoint.sequences.toSortedMap().forEach { (key, values) ->
+        checkpoint.sequences.inKeyOrder().forEach { (key, values) ->
             values.forEach { partial ->
-                components += "sequence:${escape(key)}:${partial.nextStep}:${partial.firstSequenceNumber}:${partial.lastSequenceNumber}:${partial.firstTimeNanos}:${escape(partial.bootSessionId)}"
+                component().append("sequence:").appendEscaped(key).append(':').append(partial.nextStep)
+                    .append(':').append(partial.firstSequenceNumber).append(':').append(partial.lastSequenceNumber)
+                    .append(':').append(partial.firstTimeNanos).append(':').appendEscaped(partial.bootSessionId)
             }
         }
-        checkpoint.activationCounts.toSortedMap().forEach { (key, value) -> components += "activation:${escape(key)}=$value" }
-        checkpoint.cooldownMarks.toSortedMap().forEach { (key, value) ->
-            components += "cooldown:${escape(key)}:${value.activeElapsedNanos}:${value.calendarElapsedNanos}"
+        checkpoint.activationCounts.inKeyOrder().forEach { (key, value) ->
+            component().append("activation:").appendEscaped(key).append('=').append(value)
         }
-        checkpoint.desiredResources.toSortedMap().forEach { (key, value) ->
-            components += "resource:${key.kind.name}:${escape(key.id)}:${value.generation}:${escape(value.profileId.orEmpty())}"
+        checkpoint.cooldownMarks.inKeyOrder().forEach { (key, value) ->
+            component().append("cooldown:").appendEscaped(key).append(':').append(value.activeElapsedNanos)
+                .append(':').append(value.calendarElapsedNanos)
         }
-        checkpoint.timers.toSortedMap().forEach { (_, timer) -> components += timerComponent(timer) }
-        checkpoint.timerGenerations.toSortedMap().forEach { (key, value) -> components += "timer-generation:${escape(key)}:$value" }
-        checkpoint.materializedTimers.toSortedMap().forEach { (key, values) ->
+        checkpoint.desiredResources.inKeyOrder().forEach { (key, value) ->
+            component().append("resource:").append(key.kind.name).append(':').appendEscaped(key.id)
+                .append(':').append(value.generation.toString()).append(':').appendEscaped(value.profileId.orEmpty())
+        }
+        checkpoint.timers.inKeyOrder().forEach { (_, timer) ->
+            val text = timer.checkpointComponent
+                ?: StringBuilder().appendTimer(timer).toString().also { timer.checkpointComponent = it }
+            component().append(text)
+        }
+        checkpoint.timerGenerations.inKeyOrder().forEach { (key, value) ->
+            component().append("timer-generation:").appendEscaped(key).append(':').append(value.toString())
+        }
+        checkpoint.materializedTimers.inKeyOrder().forEach { (key, values) ->
             values.forEach { timer ->
-                components += "materialized:${escape(key)}:${escape(timer.producerKey)}:${timer.selectedUtcMillis}:${timer.terminal}"
+                component().append("materialized:").appendEscaped(key).append(':').appendEscaped(timer.producerKey)
+                    .append(':').append(timer.selectedUtcMillis).append(':').append(timer.terminal)
             }
         }
-        return components
+        // Every free-text part is escaped (NUL becomes %00) and every other part is a number, flag or
+        // enum name, except the raw timer IDs; so a component holds NUL exactly when a timer ID does.
+        val digestible = checkpoint.timers.values.none { SEPARATOR in it.id }
+        val bytes = preimage.toString().toByteArray(Charsets.UTF_8)
+        val sha256 = MessageDigest.getInstance("SHA-256").digest(bytes).toLowerHex()
+        return CanonicalCheckpoint(bytes.size.toLong(), sha256.takeIf { digestible })
     }
 
-    private fun timerComponent(timer: DurableTimer): String = buildString {
-        append("timer:").append(timer.id).append(':').append(escape(timer.automationId)).append(':')
-        append(timer.generation).append(':').append(timer.causalSequence).append(':')
-            .append(escape(timer.producerKey)).append(':')
+    private fun StringBuilder.appendTimer(timer: DurableTimer): StringBuilder {
+        append("timer:").append(timer.id).append(':').appendEscaped(timer.automationId).append(':')
+        append(timer.generation.toString()).append(':').append(timer.causalSequence).append(':')
+            .appendEscaped(timer.producerKey).append(':')
         when (val target = timer.target) {
             is TimerTarget.CalendarUtc -> append("calendar:").append(target.utcMillis)
             is TimerTarget.ActiveElapsed -> append("active:").append(target.elapsedNanos)
-            is TimerTarget.SameBootMonotonic -> append("monotonic:").append(escape(target.bootSessionId)).append(':')
+            is TimerTarget.SameBootMonotonic -> append("monotonic:").appendEscaped(target.bootSessionId).append(':')
                 .append(target.elapsedRealtimeNanos)
         }
-        append(':').append(timer.logicalDeadlineUtcMillis ?: "").append(':').append(timer.expiresAtUtcMillis ?: "")
+        append(':')
+        timer.logicalDeadlineUtcMillis?.let { append(it) }
+        append(':')
+        timer.expiresAtUtcMillis?.let { append(it) }
+        return this
     }
 
-    private fun escape(value: String): String = buildString {
-        value.forEach { character ->
-            when (character) {
-                '%' -> append("%25")
-                '\u0000' -> append("%00")
-                ':' -> append("%3a")
-                '=' -> append("%3d")
-                else -> append(character)
+    /** Appends [value] with `%`, NUL, `:` and `=` percent-escaped, copying the runs between them whole. */
+    private fun StringBuilder.appendEscaped(value: String): StringBuilder {
+        var run = 0
+        for (index in value.indices) {
+            val character = value[index]
+            // Every escaped character sorts at or below '=', so letters skip the match.
+            if (character > '=') continue
+            val escaped = when (character) {
+                '%' -> "%25"
+                '\u0000' -> "%00"
+                ':' -> "%3a"
+                '=' -> "%3d"
+                else -> continue
             }
+            append(value, run, index).append(escaped)
+            run = index + 1
         }
+        return append(value, run, value.length)
     }
 }
 
@@ -1167,9 +1259,8 @@ private fun compareTyped(actual: TypedFieldValue, expected: TypedFieldValue, ope
     }
 }
 
-private fun compareInteger(actual: BigInteger, comparison: NumericComparison): Boolean {
-    val expected = comparison.value.toBigInteger()
-    return when (comparison.operator) {
+private fun compareInteger(actual: BigInteger, operator: FieldOperator, expected: BigInteger): Boolean {
+    return when (operator) {
         FieldOperator.EQ -> actual == expected
         FieldOperator.NE -> actual != expected
         FieldOperator.LT -> actual < expected
@@ -1186,6 +1277,3 @@ private fun durationClockNanos(clock: DurationClock, input: ReducerClock): Long 
 }
 
 private fun secondsToNanos(seconds: Int): Long = Math.multiplyExact(seconds.toLong(), 1_000_000_000L)
-
-private fun conditionProducerKey(path: String): String =
-    "condition:" + DeterministicIds.digest("particeps-condition-timer-key-v1", listOf(path)).take(40)
