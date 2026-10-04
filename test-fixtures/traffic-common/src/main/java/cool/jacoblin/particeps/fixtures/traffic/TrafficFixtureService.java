@@ -8,6 +8,9 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.SystemClock;
+import android.system.ErrnoException;
+import android.util.AtomicFile;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -18,6 +21,8 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Keeps the host-only saturation workload runnable while its launcher activity is backgrounded. */
@@ -77,24 +82,58 @@ public final class TrafficFixtureService extends Service {
         long attemptedBytes = 0L;
         int succeeded = 0;
         byte[] payload = new byte[PAYLOAD_BYTES];
+        SaturationProgress progress = new SaturationProgress();
+        ScheduledExecutorService sampler = Executors.newSingleThreadScheduledExecutor();
+        persistProgress(progress);
+        sampler.scheduleAtFixedRate(() -> persistProgress(progress), 1, 1, TimeUnit.SECONDS);
+        String errorType = null;
+        Integer errorErrno = null;
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(InetAddress.getByName("10.0.2.2"), port), 5_000);
             socket.setTcpNoDelay(true);
             socket.setSoTimeout(70_000);
             InputStream input = socket.getInputStream();
             OutputStream output = socket.getOutputStream();
+            progress.awaitingBarrier();
             if (input.read() != 1) {
                 throw new IllegalStateException("Fixture barrier was not released");
             }
             while (!Thread.currentThread().isInterrupted()) {
+                progress.beginWrite(SystemClock.elapsedRealtimeNanos());
                 output.write(payload);
+                progress.completeWrite(SystemClock.elapsedRealtimeNanos(), payload.length);
                 attemptedBytes += payload.length;
                 succeeded += 1;
             }
-        } catch (Exception ignored) {
+        } catch (Exception failure) {
             // The host closes the socket at the exact measurement boundary.
+            errorType = failure.getClass().getSimpleName();
+            Throwable cause = failure;
+            for (int depth = 0; cause != null && depth < 8; depth++, cause = cause.getCause()) {
+                if (cause instanceof ErrnoException) {
+                    errorErrno = ((ErrnoException) cause).errno;
+                    break;
+                }
+            }
+        } finally {
+            progress.finish(errorType, errorErrno, SystemClock.elapsedRealtimeNanos());
+            sampler.shutdownNow();
+            persistProgress(progress);
         }
         writeMetrics(succeeded, attemptedBytes);
+    }
+
+    private synchronized void persistProgress(SaturationProgress progress) {
+        AtomicFile destination = new AtomicFile(new File(getFilesDir(), "saturation-progress.json"));
+        FileOutputStream output = null;
+        try {
+            output = destination.startWrite();
+            output.write(progress.json(SystemClock.elapsedRealtimeNanos()).getBytes(StandardCharsets.UTF_8));
+            destination.finishWrite(output);
+        } catch (Exception failure) {
+            if (output != null) destination.failWrite(output);
+            throw new IllegalStateException("Unable to persist saturation progress", failure);
+        }
     }
 
     private void writeMetrics(int succeeded, long attemptedBytes) {

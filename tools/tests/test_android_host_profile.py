@@ -104,9 +104,54 @@ class ProfileHarnessControlFlowTest(unittest.TestCase):
         declaration = f"{name}() {{"
         return declaration + script.split(declaration, 1)[1].split("\n}", 1)[0] + "\n}\n"
 
+    def test_diagnostic_arguments_do_not_change_the_default_release_measurement(self) -> None:
+        source = (ROOT / "tools/android-host-harness.sh").read_text()
+        parse = source[source.index("skip_build=false"):source.index('adb_binary=')]
+        script = "set -euo pipefail\n" + parse + '\nprintf "%s|%s|%s\\n" "$fixed_512_repetitions" "$measurement_duration_seconds" "$capture_throughput_diagnostics"\n'
+        for arguments, expected in (
+            ([], "0|60|false"),
+            (["--capture-throughput-diagnostics"], "0|60|true"),
+            (["--fixed-512-repetitions", "5"], "5|60|true"),
+            (["--fixed-512-repetitions", "1", "--fixed-512-duration-seconds", "300"], "1|300|true"),
+            (["--no-throughput-diagnostics", "--fixed-512-repetitions", "1", "--fixed-512-duration-seconds", "300"], "1|300|false"),
+            (["--fixed-512-duration-seconds", "300"], None),
+            (["--fixed-512-repetitions", "6"], None),
+            (["--fixed-512-repetitions", "1", "--fixed-512-duration-seconds", "600"], None),
+            (["--capture-throughput-diagnostics", "--no-throughput-diagnostics"], None),
+        ):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(["bash", "-c", script, "harness", *arguments], capture_output=True, text=True)
+                if expected is None:
+                    self.assertEqual(2, result.returncode, result.stderr)
+                else:
+                    self.assertEqual(0, result.returncode, result.stderr)
+                    self.assertEqual(expected, result.stdout.strip())
+
+    def test_diagnostic_lane_requires_shared_uid_peer_removal_before_measurement(self) -> None:
+        for success in (True, False):
+            with self.subTest(success=success), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                adb = directory / "adb"
+                calls = directory / "calls.txt"
+                adb.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$*" > "$calls"\necho ' + ("Success" if success else "Failure") + '\n')
+                adb.chmod(0o755)
+                script = "set -euo pipefail\n" + self.function("prepare_fixed_512_diagnostic") + '\nprepare_fixed_512_diagnostic\necho measure >> "$calls"\n'
+                result = subprocess.run(["bash", "-s"], input=script, text=True, capture_output=True, env={**os.environ, "adb_binary": str(adb), "harness_temporary": temporary, "shared_peer_package": "fixture.peer", "calls": str(calls)})
+                self.assertEqual(success, result.returncode == 0)
+                self.assertEqual(["uninstall fixture.peer"] + (["measure"] if success else []), calls.read_text().splitlines())
+
+    def test_diagnostic_monitor_exit_is_retained_without_aborting_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            result_file = directory / "result.json"
+            script = 'set -euo pipefail\n' + self.function("stop_diagnostics") + '\n(exit 7) &\ndiagnostics_pid=$!\nstop_diagnostics\n'
+            result = subprocess.run(["bash", "-s"], input=script, text=True, capture_output=True, env={**os.environ, "diagnostics_result": str(result_file), "diagnostics_stop": str(directory / "stop")})
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual({"monitor_exit_code": 7}, json.loads(result_file.read_text()))
+
     def test_rate_failure_keeps_after_proof_without_hiding_the_failed_command(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            script = "set -euo pipefail\n" + self.function("case_three_profile_throughput_and_control_bypass") + """
+            script = "set -euo pipefail\n" + self.function("case_fixed_profile_measurement") + self.function("case_three_profile_throughput_and_control_bypass") + """
 provision_running_study() { echo provision >> "$calls"; }
 capture_live_particeps_pid() { echo 42; }
 await_applied_profile() { echo proof >> "$calls"; }

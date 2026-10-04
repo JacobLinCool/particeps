@@ -204,6 +204,7 @@ def run(args: argparse.Namespace) -> bool:
                 # deadline origin. Missing buckets contain zero bytes. A blocking recv
                 # may finish after the deadline; preserve that tail in its actual bucket.
                 "timing_basis": "host_monotonic_since_all_connections_accepted",
+                "started_host_monotonic_ns": int(started_at * 1_000_000_000),
                 "bytes_bucket_width_seconds": 1,
                 "lower_bound_bytes": lower,
                 "passed": passed,
@@ -224,7 +225,7 @@ def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description=__doc__)
     value.add_argument("--cap-kbps", type=int, required=True, choices=(64, 512, 4096))
     value.add_argument("--control-port", type=int, required=True)
-    value.add_argument("--duration-seconds", type=int, default=60, choices=(60,))
+    value.add_argument("--duration-seconds", type=int, default=60, choices=(60, 300))
     value.add_argument("--output", required=True)
     value.add_argument("--ready", required=True)
     value.add_argument("--target-port", type=int, required=True)

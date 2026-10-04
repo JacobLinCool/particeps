@@ -56,9 +56,10 @@ The API 37 case accepts only two platform-defined outcomes: a same-process permi
 a system process kill followed by fail-closed durable recovery. Its metrics record only whether
 process continuity was preserved, never either process identifier.
 
-Fixture output contains only role, version, aggregate operation counts, attempted byte count, and
-whether the competing VPN established. It never records packets, addresses, ports, hostnames, DNS
-names, or exceptions.
+Fixture output contains role, version, aggregate operation counts, attempted byte count, and
+whether the competing VPN established. Saturation diagnostics also record aggregate write progress,
+write duration, and exception class/errno without exception messages. They never record packets,
+addresses, ports, hostnames, or DNS names.
 
 Run the complete suite against an already booted API 34 or API 37 emulator:
 
@@ -69,3 +70,20 @@ tools/android-host-harness.sh
 The script writes `android-host-harness.xml`, `fixture-metrics.ndjson`, and sanitized
 `applied-profiles/*.json` observations under `build/reports/android-host-harness/`.
 CI uploads that directory.
+
+With `--capture-throughput-diagnostics`, each measurement additionally samples native Layer-3 counters, fixture write progress,
+kernel TCP/TUN counters when accessible, and selected process-state fields into
+`throughput-diagnostics/`. Every observation has host monotonic timestamps; the server records its
+measurement origin in the same clock domain. Unavailable counters, command failures and timeouts
+remain explicit, never zero-filled. Fixture writes count bytes accepted by the socket API; the
+host counts delivered TCP payload. Failed cases capture bounded synthetic-emulator logcat before
+reset or reboot can erase the failure window, including in the default suite without periodic sampling.
+
+For a bounded diagnostic run, `tools/android-host-harness.sh --skip-build --fixed-512-repetitions 5`
+records all five independent 60-second attempts with the same throughput bounds and enables sampling.
+Add `--fixed-512-duration-seconds 300` for five-minute connections; this option is valid only in the
+focused diagnostic lane. Use `--no-throughput-diagnostics` for a comparison without periodic host
+queries. The regular CI invocation still runs all 13 scenarios with 60-second measurements and no
+periodic sampling. Debug broadcasts can affect process scheduling/importance; a passing instrumented
+run alone does not establish that an intermittent stall has been fixed. The sampler has a hard
+duration-plus-60-second limit and records command failures or missing observations explicitly.

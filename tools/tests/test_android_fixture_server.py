@@ -49,6 +49,7 @@ class AndroidFixtureServerTest(unittest.TestCase):
         self.assertEqual((408_000, 505_500), throughput_bounds(64, 60))
         self.assertEqual((3_264_000, 4_033_500), throughput_bounds(512, 60))
         self.assertEqual((26_112_000, 32_257_500), throughput_bounds(4096, 60))
+        self.assertEqual((16_320_000, 20_161_500), throughput_bounds(512, 300))
 
     def test_target_must_reach_payload_floor_stay_below_cap_and_control_must_bypass(self) -> None:
         self.assertEqual((True, 408_000, 505_500), validate_measurement(64, 60, 480_000, 900_000))

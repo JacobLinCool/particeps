@@ -1,6 +1,8 @@
 package cool.jacoblin.particeps
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import cool.jacoblin.particeps.actuator.trafficshaping.TrafficShapingCounterSnapshot
+import cool.jacoblin.particeps.core.resource.Sha256Digest
 import java.math.BigInteger
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -37,6 +39,52 @@ class HostHarnessAppliedProfileAndroidTest {
         assertTrue(parsed.getBoolean("admission_open"))
         assertEquals(7L, parsed.getLong("revision"))
         assertEquals(31_234L, parsed.getLong("active_running_elapsed_millis"))
+        assertFalse(parsed.has("native_counters"))
+    }
+
+    @Test
+    fun nativeCountersUseExactIntegerTokensAndExplicitVpnAndProfileIdentity() {
+        val profileSha = "b".repeat(64)
+        val vpn = "123e4567-e89b-42d3-a456-426614174001"
+        val counters = HostHarnessNativeCounters(
+            sampleStartedElapsedRealtimeNanos = 9_000_000_000,
+            sampleCompletedElapsedRealtimeNanos = 9_000_000_100,
+            counters = TrafficShapingCounterSnapshot(
+                nativeGeneration = 3,
+                vpnGenerationId = vpn,
+                profileSha256 = Sha256Digest(profileSha),
+                uplinkBytes = Long.MAX_VALUE,
+                uplinkPackets = 48,
+                downlinkBytes = 2_880,
+                downlinkPackets = 24,
+                uplinkThrottledNanos = 1_000_000_000,
+                downlinkThrottledNanos = 0,
+            ),
+        )
+        val encoded = HostHarnessAppliedProfile(
+            "VERIFIED", "RUNNING", true, 7, 31_234,
+            "123e4567-e89b-42d3-a456-426614174000", "a".repeat(64),
+            "cap-512", profileSha, BigInteger("2"), counters,
+        ).toJson()
+        val parsed = JSONObject(encoded).getJSONObject("native_counters")
+
+        assertEquals(11, parsed.length())
+        assertEquals(vpn, parsed.getString("vpn_generation_id"))
+        assertEquals(profileSha, parsed.getString("profile_sha256"))
+        for ((key, value) in mapOf(
+            "sample_started_elapsed_realtime_nanos" to 9_000_000_000L,
+            "sample_completed_elapsed_realtime_nanos" to 9_000_000_100L,
+            "native_generation" to 3L,
+            "uplink_bytes" to Long.MAX_VALUE,
+            "uplink_packets" to 48L,
+            "downlink_bytes" to 2_880L,
+            "downlink_packets" to 24L,
+            "uplink_throttled_nanos" to 1_000_000_000L,
+            "downlink_throttled_nanos" to 0L,
+        )) {
+            assertTrue(encoded, Regex("\"$key\":$value(?=[,}])").containsMatchIn(encoded))
+            assertEquals(value, parsed.getLong(key))
+        }
     }
 
     @Test

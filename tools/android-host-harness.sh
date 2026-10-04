@@ -5,14 +5,37 @@ repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
 
 skip_build=false
-if [[ "${1:-}" == "--skip-build" ]]; then
-  skip_build=true
-  shift
-fi
-if (( $# != 0 )); then
-  echo "usage: tools/android-host-harness.sh [--skip-build]" >&2
+fixed_512_repetitions=0
+fixed_512_duration_seconds=60
+diagnostic_duration_requested=false
+diagnostics_mode=auto
+while (( $# != 0 )); do
+  case "$1" in
+    --skip-build) skip_build=true; shift ;;
+    --fixed-512-repetitions)
+      [[ "${2:-}" =~ ^[1-5]$ ]] || { echo "Expected 1..5 repetitions" >&2; exit 2; }
+      fixed_512_repetitions="$2"; shift 2 ;;
+    --fixed-512-duration-seconds)
+      [[ "${2:-}" == 60 || "${2:-}" == 300 ]] || { echo "Expected 60 or 300 seconds" >&2; exit 2; }
+      fixed_512_duration_seconds="$2"; diagnostic_duration_requested=true; shift 2 ;;
+    --capture-throughput-diagnostics|--no-throughput-diagnostics)
+      [[ "$diagnostics_mode" == auto ]] || { echo "Choose one diagnostics option" >&2; exit 2; }
+      if [[ "$1" == --capture-throughput-diagnostics ]]; then diagnostics_mode=on; else diagnostics_mode=off; fi
+      shift ;;
+    *) echo "usage: tools/android-host-harness.sh [--skip-build] [--fixed-512-repetitions 1..5 [--fixed-512-duration-seconds 60|300]] [--capture-throughput-diagnostics|--no-throughput-diagnostics]" >&2; exit 2 ;;
+  esac
+done
+if [[ "$diagnostic_duration_requested" == true ]] && (( fixed_512_repetitions == 0 )); then
+  echo "Diagnostic duration requires --fixed-512-repetitions" >&2
   exit 2
 fi
+measurement_duration_seconds=60
+capture_throughput_diagnostics=false
+if (( fixed_512_repetitions > 0 )); then
+  measurement_duration_seconds="$fixed_512_duration_seconds"
+  [[ "$diagnostics_mode" != off ]] && capture_throughput_diagnostics=true
+fi
+[[ "$diagnostics_mode" != on ]] || capture_throughput_diagnostics=true
 
 adb_binary="${ADB:-adb}"
 report_directory="${PARTICEPS_HOST_REPORT_DIR:-$repository_root/build/reports/android-host-harness}"
@@ -27,7 +50,20 @@ printf '%s\n' \
 
 harness_temporary="$(mktemp -d "${TMPDIR:-/tmp}/particeps-host-harness.XXXXXX")"
 server_pid=""
+diagnostics_pid=""
+diagnostics_stop=""
+diagnostics_result=""
+stop_diagnostics() {
+  if [[ -n "$diagnostics_pid" ]]; then
+    local result=0
+    touch "$diagnostics_stop"
+    wait "$diagnostics_pid" || result=$?
+    printf '{"monitor_exit_code":%d}\n' "$result" > "$diagnostics_result"
+    diagnostics_pid=""
+  fi
+}
 cleanup() {
+  stop_diagnostics
   if [[ -n "$server_pid" ]]; then
     kill "$server_pid" >/dev/null 2>&1 || true
     wait "$server_pid" >/dev/null 2>&1 || true
@@ -45,6 +81,7 @@ case_cleanup() {
     wait "$server_pid" >/dev/null 2>&1 || true
     server_pid=""
   fi
+  stop_diagnostics
   stop_traffic_fixtures
 }
 
@@ -100,6 +137,8 @@ for artifact in \
 done
 
 "$adb_binary" get-state | grep -qx "device"
+device_serial="$("$adb_binary" get-serialno | tr -d '\r\n')"
+[[ "$device_serial" =~ ^emulator-[0-9]+$ ]]
 
 install_apk() {
   # Fixtures deliberately exercise package replacement with a higher version.
@@ -416,11 +455,26 @@ run_saturation_measurement() {
   # each measurement from fresh fixture processes so no prior startId or
   # cached-app freezer state can suppress the next finite workload.
   stop_traffic_fixtures
+  for package_name in "$target_a_package" "$target_b_package" "$control_package"; do
+    "$adb_binary" shell run-as "$package_name" rm -f files/saturation-progress.json
+  done
+  if [[ "$capture_throughput_diagnostics" == true ]]; then
+    mkdir -p "$report_directory/throughput-diagnostics"
+    diagnostics_stop="$harness_temporary/diagnostics-$sequence.stop"
+    diagnostics_result="$report_directory/throughput-diagnostics/measurement-$sequence-result.json"
+    rm -f "$diagnostics_stop"
+    python3 -m tools.android_host_diagnostics --adb "$adb_binary" --serial "$device_serial" monitor \
+      --expected "$report_directory/applied-profiles/fixed-$cap_kbps-before.json" \
+      --output "$report_directory/throughput-diagnostics/measurement-$sequence.ndjson" \
+      --maximum-seconds "$((measurement_duration_seconds + 60))" \
+      --stop-file "$diagnostics_stop" &
+    diagnostics_pid="$!"
+  fi
 
   python3 tools/android_fixture_server.py \
     --cap-kbps "$cap_kbps" \
     --control-port "$control_port" \
-    --duration-seconds 60 \
+    --duration-seconds "$measurement_duration_seconds" \
     --output "$output" \
     --ready "$ready" \
     --target-port "$target_port" &
@@ -443,6 +497,11 @@ run_saturation_measurement() {
   server_pid=""
   test -f "$output"
   cat "$output" >> "$metrics_file"
+  stop_diagnostics
+  if (( result != 0 )); then
+    python3 -m tools.android_host_diagnostics --adb "$adb_binary" --serial "$device_serial" capture \
+      --output "$report_directory/throughput-diagnostics/measurement-$sequence-failure"
+  fi
   stop_traffic_fixtures
   (( result == 0 ))
 }
@@ -508,29 +567,45 @@ case_protocol_matrix_through_verified_vpn() {
   reset_study
 }
 
-case_three_profile_throughput_and_control_bypass() {
-  local sequence=0 cap profile envelope_asset live_pid before after measurement_status
+case_fixed_profile_measurement() {
+  local cap="$1" sequence="$2" profile envelope_asset live_pid before after measurement_status
   mkdir -p "$report_directory/applied-profiles"
+  printf -v profile 'cap-%04d' "$cap"
+  envelope_asset="app/src/androidTest/assets/host_fixed_${cap}_study_envelope.txt"
+  provision_running_study "$envelope_asset"
+  live_pid="$(capture_live_particeps_pid)"
+  before="$report_directory/applied-profiles/fixed-$cap-before.json"
+  after="$report_directory/applied-profiles/fixed-$cap-after.json"
+  await_applied_profile "$profile" "$live_pid" "$envelope_asset" "$before"
+  # Record the applied condition at both ends even when the byte-count gate fails. Keep errexit
+  # inside the measurement, so a setup failure cannot be hidden by its later cleanup.
+  set +e
+  (trap case_cleanup EXIT; set -euo pipefail; run_saturation_measurement "$cap" "$sequence")
+  measurement_status=$?
+  set -e
+  await_applied_profile "$profile" "$live_pid" "$envelope_asset" "$after"
+  python3 tools/android_host_profile.py compare --before "$before" --after "$after"
+  (( measurement_status == 0 ))
+  reset_study
+}
+
+case_three_profile_throughput_and_control_bypass() {
+  local sequence=0 cap
   for cap in 64 512 4096; do
     sequence=$((sequence + 1))
-    printf -v profile 'cap-%04d' "$cap"
-    envelope_asset="app/src/androidTest/assets/host_fixed_${cap}_study_envelope.txt"
-    provision_running_study "$envelope_asset"
-    live_pid="$(capture_live_particeps_pid)"
-    before="$report_directory/applied-profiles/fixed-$cap-before.json"
-    after="$report_directory/applied-profiles/fixed-$cap-after.json"
-    await_applied_profile "$profile" "$live_pid" "$envelope_asset" "$before"
-    # Record the applied condition at both ends even when the byte-count gate fails. Keep errexit
-    # inside the measurement, so a setup failure cannot be hidden by its later cleanup.
-    set +e
-    (trap case_cleanup EXIT; set -euo pipefail; run_saturation_measurement "$cap" "$sequence")
-    measurement_status=$?
-    set -e
-    await_applied_profile "$profile" "$live_pid" "$envelope_asset" "$after"
-    python3 tools/android_host_profile.py compare --before "$before" --after "$after"
-    (( measurement_status == 0 ))
-    reset_study
+    case_fixed_profile_measurement "$cap" "$sequence"
   done
+}
+
+case_fixed_512_diagnostic() {
+  case_fixed_profile_measurement 512 "$diagnostic_iteration"
+}
+
+prepare_fixed_512_diagnostic() {
+  # The full suite removes this intentionally unselected shared-UID peer in its inventory case.
+  # The focused lane must establish the same signed-target precondition before the first attempt.
+  "$adb_binary" uninstall "$shared_peer_package" > "$harness_temporary/uninstall-diagnostic-peer.txt"
+  grep -qx "Success" "$harness_temporary/uninstall-diagnostic-peer.txt"
 }
 
 case_dynamic_verified_profile_transitions() {
@@ -711,6 +786,8 @@ run_case() {
       result="failed"
       failure_count=$((failure_count + 1))
       printf 'Host scenario failed: %s\n' "$name" >&2
+      python3 -m tools.android_host_diagnostics --adb "$adb_binary" --serial "$device_serial" capture \
+        --output "$report_directory/failure-$name" || true
       "$adb_binary" shell cmd connectivity airplane-mode disable >/dev/null 2>&1 || true
       "$adb_binary" shell am force-stop "$competing_vpn_package" >/dev/null 2>&1 || true
       "$adb_binary" install --no-streaming -r -d -t "$target_a_base_apk" > "$harness_temporary/restore.txt" 2>&1 || true
@@ -727,6 +804,14 @@ run_case() {
   case_durations+=("$((ended - started))")
 }
 
+if (( fixed_512_repetitions > 0 )); then
+  prepare_fixed_512_diagnostic
+  for diagnostic_iteration in $(seq 1 "$fixed_512_repetitions"); do
+    run_case "fixed_512_diagnostic_$diagnostic_iteration" case_fixed_512_diagnostic
+    # A separate study and proof history for every bounded attempt, including failures.
+    mv "$report_directory/applied-profiles" "$report_directory/applied-profiles-$diagnostic_iteration"
+  done
+else
 run_case "all_apps_capped_tcp_round_trip" case_all_apps_tcp_round_trip
 run_case "fixture_inventory_protocol_attempts_and_shared_uid" case_fixture_inventory_and_protocols
 run_case "protocol_attempts_preserve_verified_vpn" case_protocol_matrix_through_verified_vpn
@@ -740,6 +825,7 @@ run_case "unselected_shared_uid_peer_install_safety_pauses" case_shared_uid_peer
 run_case "competing_vpn_revokes_and_safety_pauses" case_competing_vpn_revoke
 run_case "underlying_network_handover_remains_running" case_underlying_network_handover
 run_case "api37_local_network_permission_revoke_safety_pauses" case_api37_local_network_permission_revoke
+fi
 
 junit_temporary="$junit_file.tmp"
 {
@@ -750,7 +836,7 @@ junit_temporary="$junit_file.tmp"
     printf '  <testcase classname="particeps.android.host" name="%s" time="%s">' \
       "${case_names[$index]}" "${case_durations[$index]}"
     if [[ "${case_results[$index]}" == "failed" ]]; then
-      printf '<failure message="Host scenario failed; raw device output intentionally not retained." />'
+      printf '<failure message="Host scenario failed; see bounded synthetic-device diagnostics." />'
     elif [[ "${case_results[$index]}" == "not_applicable" ]]; then
       printf '<skipped message="Requires the Android 17 local-network runtime permission (API 37)." />'
     fi

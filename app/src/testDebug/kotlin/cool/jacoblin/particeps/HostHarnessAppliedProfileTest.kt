@@ -1,6 +1,7 @@
 package cool.jacoblin.particeps
 
 import cool.jacoblin.particeps.actuator.trafficshaping.TrafficShapingActuator
+import cool.jacoblin.particeps.actuator.trafficshaping.TrafficShapingCounterSnapshot
 import cool.jacoblin.particeps.core.model.ConditionEpoch
 import cool.jacoblin.particeps.core.model.ConditionEpochId
 import cool.jacoblin.particeps.core.model.ExperimentState
@@ -13,6 +14,8 @@ import cool.jacoblin.particeps.core.resource.AppliedResourceState
 import cool.jacoblin.particeps.core.resource.AppliedResourceStatus
 import cool.jacoblin.particeps.core.resource.AppliedResourceVector
 import cool.jacoblin.particeps.core.resource.ResourceGeneration
+import cool.jacoblin.particeps.core.resource.ResourceHealth
+import cool.jacoblin.particeps.core.resource.ResourceHealthStatus
 import cool.jacoblin.particeps.core.resource.ResourceKey
 import cool.jacoblin.particeps.core.resource.ResourceKind
 import cool.jacoblin.particeps.core.resource.Sha256Digest
@@ -149,6 +152,86 @@ class HostHarnessAppliedProfileTest {
         assertEquals(BigInteger("18446744073709551615"), result.resourceGeneration)
     }
 
+    @Test
+    fun liveCountersRetainTheirActualGenerationAndMonotonicReadInterval() {
+        val result = nativeSample()
+
+        assertEquals(counters, result.counters)
+        assertEquals(100L, result.sampleStartedElapsedRealtimeNanos)
+        assertEquals(120L, result.sampleCompletedElapsedRealtimeNanos)
+    }
+
+    @Test
+    fun missingNativeSnapshotIsRejectedInsteadOfInventingZeroTraffic() {
+        assertThrows(IllegalStateException::class.java) { nativeSample(counters = null) }
+    }
+
+    @Test
+    fun nativeCountersCannotBeAttributedToAnotherCommittedProfile() {
+        assertThrows(IllegalStateException::class.java) {
+            nativeSample(counters = counters.copy(profileSha256 = Sha256Digest("c".repeat(64))))
+        }
+    }
+
+    @Test
+    fun cachedCountersFromAnUnverifiedOrReplacedVpnAreRejected() {
+        assertThrows(IllegalStateException::class.java) { nativeSample(vpnBefore = null) }
+        assertThrows(IllegalStateException::class.java) { nativeSample(vpnAfter = OTHER_VPN) }
+        assertThrows(IllegalStateException::class.java) {
+            nativeSample(counters = counters.copy(vpnGenerationId = OTHER_VPN))
+        }
+    }
+
+    @Test
+    fun terminalFailureBeforeOrDuringSnapshotRejectsRetainedCounters() {
+        val failed = health.copy(
+            status = ResourceHealthStatus.FAILED,
+            appliedProfileSha256 = null,
+            failureReason = "TUN_IO_FAILURE",
+        )
+        assertThrows(IllegalStateException::class.java) { nativeSample(healthBefore = failed) }
+        assertThrows(IllegalStateException::class.java) { nativeSample(healthAfter = failed) }
+    }
+
+    @Test
+    fun nativeHealthMustStillMatchTheCommittedResourceGeneration() {
+        assertThrows(IllegalStateException::class.java) {
+            nativeSample(healthAfter = health.copy(generation = ResourceGeneration(3uL)))
+        }
+        assertThrows(IllegalStateException::class.java) {
+            nativeSample(healthAfter = health.copy(profileId = "other-profile"))
+        }
+    }
+
+    @Test
+    fun pendingStateOrAdmissionClosedDuringSnapshotCannotReturnLiveCounters() {
+        assertThrows(IllegalStateException::class.java) {
+            nativeSample(profile = project(admissionOpen = false))
+        }
+        assertThrows(IllegalStateException::class.java) { nativeSample(admissionOpenAfterSample = false) }
+    }
+
+    @Test
+    fun invertedOrNegativeMonotonicReadIntervalsAreRejected() {
+        assertThrows(IllegalStateException::class.java) { nativeSample(startedAt = -1) }
+        assertThrows(IllegalStateException::class.java) { nativeSample(completedAt = 99) }
+    }
+
+    private fun nativeSample(
+        profile: HostHarnessAppliedProfile = project(),
+        counters: TrafficShapingCounterSnapshot? = this.counters,
+        healthBefore: ResourceHealth = health,
+        healthAfter: ResourceHealth = health,
+        vpnBefore: String? = VPN,
+        vpnAfter: String? = VPN,
+        admissionOpenAfterSample: Boolean = true,
+        startedAt: Long = 100,
+        completedAt: Long = 120,
+    ) = HostHarnessNativeCounters.fromVerified(
+        profile, counters, healthBefore, healthAfter, vpnBefore, vpnAfter,
+        admissionOpenAfterSample, startedAt, completedAt,
+    )
+
     private fun project(
         document: RuntimeDocument = this.document,
         snapshot: RuntimeSnapshot = this.snapshot,
@@ -170,6 +253,21 @@ class HostHarnessAppliedProfileTest {
     private val collector = AppliedResourceState(
         ResourceKey(ResourceKind.COLLECTOR, "battery_state.v1"),
         ResourceGeneration(1uL), "default", Sha256Digest("b".repeat(64)), AppliedResourceStatus.APPLIED, null,
+    )
+    private val health = ResourceHealth(
+        traffic.key, ResourceHealthStatus.APPLIED, traffic.desiredGeneration, traffic.profileId,
+        traffic.appliedProfileSha256, traffic.appliedProfileSha256, null,
+    )
+    private val counters = TrafficShapingCounterSnapshot(
+        nativeGeneration = 3,
+        vpnGenerationId = VPN,
+        profileSha256 = Sha256Digest(PROFILE_SHA),
+        uplinkBytes = 72_000,
+        uplinkPackets = 48,
+        downlinkBytes = 2_880,
+        downlinkPackets = 48,
+        uplinkThrottledNanos = 1_000_000_000,
+        downlinkThrottledNanos = 0,
     )
     private val vector = AppliedResourceVector(listOf(traffic, collector).sortedBy(AppliedResourceState::key))
     private val epoch = ConditionEpoch(EPOCH_ID, CONFIG_SHA, vector.conditionDigest.value, NOW)
@@ -198,5 +296,7 @@ class HostHarnessAppliedProfileTest {
         val EPOCH_ID = ConditionEpochId("123e4567-e89b-42d3-a456-426614174000")
         val NOW = ResearchTime(1_000_000, 60_000_000_000, "test-boot")
         const val ELAPSED = 31_234_567_890L
+        const val VPN = "123e4567-e89b-42d3-a456-426614174001"
+        const val OTHER_VPN = "123e4567-e89b-42d3-a456-426614174002"
     }
 }
