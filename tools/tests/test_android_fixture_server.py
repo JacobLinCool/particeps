@@ -15,6 +15,14 @@ from tools import android_fixture_server as server
 from tools.android_fixture_server import throughput_bounds, validate_measurement
 
 
+def steady_targets(duration: int = 60) -> list[server.ConnectionMetrics]:
+    targets = [server.ConnectionMetrics("target", index) for index in range(2)]
+    for target in targets:
+        for second in range(duration):
+            target.received(4_000, second + 0.5)
+    return targets
+
+
 class AndroidFixtureServerTest(unittest.TestCase):
     def test_all_apps_server_publishes_ready_port_and_returns_exact_payload(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -52,10 +60,94 @@ class AndroidFixtureServerTest(unittest.TestCase):
         self.assertEqual((16_320_000, 20_161_500), throughput_bounds(512, 300))
 
     def test_target_must_reach_payload_floor_stay_below_cap_and_control_must_bypass(self) -> None:
-        self.assertEqual((True, 408_000, 505_500), validate_measurement(64, 60, 480_000, 900_000))
-        self.assertFalse(validate_measurement(64, 60, 407_999, 900_000)[0])
-        self.assertFalse(validate_measurement(64, 60, 505_501, 900_000)[0])
-        self.assertFalse(validate_measurement(64, 60, 480_000, 505_500)[0])
+        result = validate_measurement(64, 60, 480_000, 900_000, steady_targets())
+        self.assertTrue(result.passed)
+        self.assertEqual((408_000, 505_500), (result.lower_bound_bytes, result.upper_bound_bytes))
+        for target_bytes, control_bytes, reason in (
+            (407_999, 900_000, "target_below_payload_floor"),
+            (505_501, 900_000, "target_above_payload_ceiling"),
+            (480_000, 505_500, "control_did_not_bypass"),
+        ):
+            with self.subTest(reason=reason):
+                result = validate_measurement(64, 60, target_bytes, control_bytes, steady_targets())
+                self.assertFalse(result.passed)
+                self.assertFalse(result.rate_passed)
+                self.assertTrue(result.liveness_passed)
+                self.assertEqual((reason,), result.failure_reasons)
+
+    def test_each_target_may_have_five_but_not_six_consecutive_zero_buckets(self) -> None:
+        for gap, expected in ((5, True), (6, False)):
+            with self.subTest(gap=gap):
+                targets = steady_targets()
+                for second in range(20, 20 + gap):
+                    del targets[1].bytes_by_second[second]
+                    targets[1].received_bytes -= 4_000
+                result = validate_measurement(
+                    64, 60, sum(target.received_bytes for target in targets), 900_000, targets,
+                )
+                self.assertTrue(result.rate_passed)
+                self.assertEqual(expected, result.liveness_passed)
+                self.assertEqual(expected, result.passed)
+                self.assertEqual([0, gap], [
+                    target.longest_zero_payload_seconds_after_warmup
+                    for target in result.target_liveness
+                ])
+                self.assertEqual(
+                    () if expected else ("target_1_zero_payload_run_exceeded",),
+                    result.failure_reasons,
+                )
+
+    def test_warmup_and_deadline_tail_do_not_change_complete_bucket_liveness(self) -> None:
+        targets = steady_targets()
+        # Ten startup zero buckets plus five in-window zeros must not become 15.
+        targets[0].bytes_by_second = {second: 4_000 for second in range(15, 60)}
+        # Bucket 59 is complete and included; tail buckets 60+ cannot hide the gap.
+        targets[1].bytes_by_second = {second: 4_000 for second in range(54)}
+        targets[1].received(20_000, 60.01)
+        targets[1].received(20_000, 61.01)
+        result = validate_measurement(64, 60, 480_000, 900_000, targets)
+        self.assertEqual([5, 6], [
+            target.longest_zero_payload_seconds_after_warmup for target in result.target_liveness
+        ])
+        self.assertFalse(result.passed)
+        self.assertEqual({
+            "warmup_seconds": 10,
+            "start_second_inclusive": 10,
+            "end_second_exclusive": 60,
+            "max_consecutive_zero_payload_seconds": 5,
+        }, result.document()["liveness_window"])
+
+    def test_positive_bucket_resets_run_and_empty_target_cannot_pass_via_other_target(self) -> None:
+        targets = steady_targets()
+        for second in list(range(10, 15)) + list(range(16, 21)):
+            targets[0].bytes_by_second[second] = 0
+        targets[1].bytes_by_second.clear()
+        result = validate_measurement(64, 60, 480_000, 900_000, targets)
+        self.assertTrue(result.rate_passed)
+        self.assertEqual([5, 50], [
+            target.longest_zero_payload_seconds_after_warmup for target in result.target_liveness
+        ])
+        self.assertFalse(result.liveness_passed)
+
+    def test_five_minute_liveness_checks_last_complete_bucket(self) -> None:
+        targets = steady_targets(300)
+        for second in range(294, 300):
+            del targets[0].bytes_by_second[second]
+        result = validate_measurement(64, 300, 2_400_000, 9_000_000, targets)
+        self.assertTrue(result.rate_passed)
+        self.assertFalse(result.passed)
+        self.assertEqual(6, result.target_liveness[0].longest_zero_payload_seconds_after_warmup)
+        self.assertEqual(300, result.document()["liveness_window"]["end_second_exclusive"])
+
+    def test_liveness_rejects_missing_duplicate_or_wrong_role_targets(self) -> None:
+        for targets in ([], steady_targets()[:1], [steady_targets()[0]] * 2, [
+            server.ConnectionMetrics("target", 0), server.ConnectionMetrics("control", 1),
+        ]):
+            with self.subTest(targets=targets):
+                with self.assertRaisesRegex(ValueError, "every distinct target"):
+                    validate_measurement(64, 60, 480_000, 900_000, targets)
+        with self.assertRaisesRegex(ValueError, "after liveness warmup"):
+            validate_measurement(64, 10, 80_000, 90_000, steady_targets(10))
 
     def test_received_bytes_are_partitioned_by_recv_completion_second(self) -> None:
         connection = Mock()
@@ -163,6 +255,12 @@ class AndroidFixtureServerTest(unittest.TestCase):
                 document["lower_bound_bytes"], document["upper_bound_bytes"],
             ))
             self.assertEqual(1, document["bytes_bucket_width_seconds"])
+            self.assertFalse(document["rate_passed"])
+            self.assertFalse(document["liveness_passed"])
+            self.assertEqual([50, 50], [
+                item["longest_zero_payload_seconds_after_warmup"]
+                for item in document["target_liveness"]
+            ])
             self.assertEqual(
                 [("target", 0), ("target", 1), ("control", 0)],
                 [(item["role"], item["index"]) for item in document["connections"]],

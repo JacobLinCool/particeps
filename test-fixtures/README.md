@@ -23,6 +23,12 @@ Layer-3 cap and stays below the cap plus 5% and one MTU. The payload floor accou
 headers and virtual-device scheduling jitter; it does not relax the upper limit. A simultaneous
 unselected control connection must exceed that upper bound, proving it bypasses both the local VPN
 and limiter.
+Every selected connection must also make progress: after the first 10 seconds, no target may have
+more than five consecutive complete one-second buckets with zero delivered payload. For a 60-second
+measurement, this examines buckets 10 through 59; sparse missing buckets are zero and deadline-tail
+buckets are excluded. This guards against starvation under the fixture's continuous local demand,
+not Internet latency or equal throughput shares. Metrics report `rate_passed`, `liveness_passed`,
+each target's longest zero-payload run, the fixed window and failure reasons; both checks must pass.
 A separate dynamic-profile case observes the signed 64 → 512 → 4,096 kbps changes at 30 and 60
 active seconds. It waits for each durably verified applied profile with open admission and requires
 new epochs and advancing resource generations in the original App process. This checks live profile
