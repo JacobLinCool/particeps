@@ -26,6 +26,21 @@ adb_binary="${ADB:-adb}"
 report_directory="build/reports/android-host-harness"
 mkdir -p "$report_directory"
 
+capture_api34_evidence() {
+  local status="$?"
+  local evidence_directory="$report_directory/api34-product-lane"
+  trap - EXIT
+  # Diagnostics must not replace the original test/precondition failure or stop at a dead device.
+  set +e
+  mkdir -p "$evidence_directory"
+  printf '%s\n' "$status" > "$evidence_directory/exit-status.txt"
+  python3 tools/android_ui_test_device.py capture --adb "$adb_binary" \
+    --evidence-directory "$evidence_directory" \
+    --serial-file "$report_directory/api34-ui-precondition/device-serial.txt" \
+    --repository "$repository_root"
+  exit "$status"
+}
+
 await_api37_services() {
   local timeout_seconds="$1"
   local deadline state boot_completed package_service activity_service package_probe user_unlocked
@@ -215,6 +230,9 @@ if [[ "$require_16k" == true ]]; then
   run_api37_quarantined_host_harness
 else
   # API 34 remains the complete blocking product-behaviour lane.
+  trap capture_api34_evidence EXIT
+  python3 tools/android_ui_test_device.py prepare --adb "$adb_binary" \
+    --evidence-directory "$report_directory/api34-ui-precondition"
   ./gradlew --no-daemon --max-workers=1 \
     -PinstrumentedTestAbi=x86_64 \
     connectedDebugAndroidTest

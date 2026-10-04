@@ -17,6 +17,12 @@ permission contracts, source-built native loading, and instrumentation that does
 task snapshots must pass. Four-ABI packaging and 16 KiB ELF alignment remain blocking in the release
 verifier. Successful runs retain the debug APK as an artifact for 14 days.
 
+Before API 34 UI tests, the launcher verifies that its target is the isolated API 34 emulator,
+wakes it, dismisses the unsecured keyguard through Android's normal command, and checks the
+interactive, unlocked state. It does not change power policy or bypass system Back assertions.
+The lane retains before/after state and, on either success or failure, connected test reports,
+window/power state, logcat and a screenshot. Diagnostic timeouts preserve the original test result.
+
 The complete API 37 host harness is temporarily quarantined for one exact preview-emulator defect:
 the evidence must identify `mapper.ranchu.so`, the `SurfaceFlinger` process, and
 `Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma`. The classifier first rejects any
@@ -34,8 +40,9 @@ backed by the emulator's [shared-slot allocator implementation](https://android.
 The [Android 17 guest mapper](https://android.googlesource.com/device/generic/goldfish/+/296e55aa0244e8929e393e00e34471fef2a5d662/hals/gralloc/mapper.cpp#619)
 calls `LOG_ALWAYS_FATAL_IF(!hasReadColorBufferDma)`: this macro aborts when the condition is true,
 so the capability must be present. Disabling it was an incorrect interpretation of the log's
-assertion wording. Explicit host flags are a controlled compatibility experiment, not evidence
-that this assertion is repaired; a complete successful compatibility run is still required.
+assertion wording. With both features enabled, [CI run 37220885638](https://github.com/JacobLinCool/particeps/actions/runs/37220885638)
+passed the complete API 37 compatibility suite and all 12 host scenarios without quarantine on
+image revision 7 and emulator 37.2.12. Every release still requires its own successful gate run.
 Verbose startup output and both host and guest `advancedFeatures.ini` files are retained to show
 the installed defaults and applied overrides. The runner requires image revision 6 or newer and
 retains the installed revision's SDK metadata with the test evidence.
