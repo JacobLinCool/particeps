@@ -107,20 +107,25 @@ class ProfileHarnessControlFlowTest(unittest.TestCase):
     def test_diagnostic_arguments_do_not_change_the_default_release_measurement(self) -> None:
         source = (ROOT / "tools/android-host-harness.sh").read_text()
         parse = source[source.index("skip_build=false"):source.index('adb_binary=')]
-        script = "set -euo pipefail\n" + parse + '\nprintf "%s|%s|%s\\n" "$fixed_512_repetitions" "$measurement_duration_seconds" "$capture_throughput_diagnostics"\n'
+        script = "set -euo pipefail\n" + parse + '\nprintf "%s|%s|%s|%s\\n" "$fixed_cap_kbps" "$diagnostic_repetitions" "$measurement_duration_seconds" "$capture_throughput_diagnostics"\n'
         for arguments, expected in (
-            ([], "0|60|false"),
-            (["--capture-throughput-diagnostics"], "0|60|true"),
-            (["--duplex-only"], "0|60|false"),
-            (["--duplex-only", "--fixed-512-repetitions", "1"], None),
-            (["--duplex-only", "--capture-throughput-diagnostics"], None),
-            (["--duplex-only", "--fixed-512-duration-seconds", "300"], None),
-            (["--fixed-512-repetitions", "5"], "5|60|true"),
-            (["--fixed-512-repetitions", "1", "--fixed-512-duration-seconds", "300"], "1|300|true"),
-            (["--no-throughput-diagnostics", "--fixed-512-repetitions", "1", "--fixed-512-duration-seconds", "300"], "1|300|false"),
+            ([], "0|0|60|false"),
+            (["--capture-throughput-diagnostics"], "0|0|60|true"),
+            (["--duplex-only"], "0|0|60|false"),
+            (["--duplex-only", "--capture-throughput-diagnostics"], "0|0|60|true"),
+            (["--fixed-cap-kbps", "64", "--repetitions", "5"], "64|5|60|true"),
+            (["--fixed-cap-kbps", "512", "--repetitions", "1", "--duration-seconds", "300"], "512|1|300|true"),
+            (["--no-throughput-diagnostics", "--fixed-cap-kbps", "4096", "--repetitions", "1", "--duration-seconds", "300"], "4096|1|300|false"),
+            (["--duplex-only", "--fixed-cap-kbps", "64", "--repetitions", "1"], None),
+            (["--duplex-only", "--duration-seconds", "300"], None),
+            (["--duration-seconds", "300"], None),
+            (["--fixed-cap-kbps", "64"], None),
+            (["--repetitions", "1"], None),
+            (["--fixed-cap-kbps", "65", "--repetitions", "1"], None),
+            (["--fixed-cap-kbps", "64", "--repetitions", "6"], None),
+            (["--fixed-cap-kbps", "64", "--repetitions", "1", "--duration-seconds", "600"], None),
+            (["--fixed-512-repetitions", "1"], None),
             (["--fixed-512-duration-seconds", "300"], None),
-            (["--fixed-512-repetitions", "6"], None),
-            (["--fixed-512-repetitions", "1", "--fixed-512-duration-seconds", "600"], None),
             (["--capture-throughput-diagnostics", "--no-throughput-diagnostics"], None),
         ):
             with self.subTest(arguments=arguments):
@@ -139,10 +144,21 @@ class ProfileHarnessControlFlowTest(unittest.TestCase):
                 calls = directory / "calls.txt"
                 adb.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$*" > "$calls"\necho ' + ("Success" if success else "Failure") + '\n')
                 adb.chmod(0o755)
-                script = "set -euo pipefail\n" + self.function("prepare_fixed_512_diagnostic") + '\nprepare_fixed_512_diagnostic\necho measure >> "$calls"\n'
+                script = "set -euo pipefail\n" + self.function("prepare_fixed_diagnostic") + '\nprepare_fixed_diagnostic\necho measure >> "$calls"\n'
                 result = subprocess.run(["bash", "-s"], input=script, text=True, capture_output=True, env={**os.environ, "adb_binary": str(adb), "harness_temporary": temporary, "shared_peer_package": "fixture.peer", "calls": str(calls)})
                 self.assertEqual(success, result.returncode == 0)
                 self.assertEqual(["uninstall fixture.peer"] + (["measure"] if success else []), calls.read_text().splitlines())
+
+    def test_fixed_diagnostic_routes_requested_cap_and_attempt_to_signed_profile_measurement(self) -> None:
+        for cap in (64, 512, 4096):
+            script = "set -euo pipefail\n" + self.function("case_fixed_diagnostic") + """
+case_fixed_profile_measurement() { printf '%s|%s' "$1" "$2"; }
+case_fixed_diagnostic
+"""
+            result = subprocess.run(["bash", "-s"], input=script, text=True, capture_output=True,
+                env={**os.environ, "fixed_cap_kbps": str(cap), "diagnostic_iteration": "3"})
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(f"{cap}|3", result.stdout)
 
     def test_diagnostic_monitor_exit_is_retained_without_aborting_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

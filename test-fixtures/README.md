@@ -47,7 +47,7 @@ counts are diagnostic only. Both received directions must meet the same rate and
 using only chunks completed inside their respective 60-second windows. Receiver EOF/errors, an
 early sender stop, stale IDs, or truncated windows fail the case; a sender error after the receiver's
 normal deadline closure is expected and retained as a diagnostic. Applied-profile and process
-proofs bracket the transfer; it makes no periodic device queries. Run this case alone with
+proofs bracket the transfer; by default it makes no periodic device queries. Run this case alone with
 `tools/android-host-harness.sh --skip-build --duplex-only`.
 
 `host-study.json` is the dynamic source fixture. Regenerate its signed asset and the three fixed
@@ -100,11 +100,18 @@ remain explicit, never zero-filled. Fixture writes count bytes accepted by the s
 host counts delivered TCP payload. Failed cases capture bounded synthetic-emulator logcat before
 reset or reboot can erase the failure window, including in the default suite without periodic sampling.
 
-For a bounded diagnostic run, `tools/android-host-harness.sh --skip-build --fixed-512-repetitions 5`
+For a bounded diagnostic run, `tools/android-host-harness.sh --skip-build --fixed-cap-kbps 512 --repetitions 5`
 records all five independent 60-second attempts with the same throughput bounds and enables sampling.
-Add `--fixed-512-duration-seconds 300` for five-minute connections; this option is valid only in the
-focused diagnostic lane. Use `--no-throughput-diagnostics` for a comparison without periodic host
+The cap must be 64, 512 or 4,096 kbps, paired with one to five repetitions. Add `--duration-seconds 300`
+for five-minute connections; this option is valid only in the focused fixed-cap lane.
+Use `--no-throughput-diagnostics` for a comparison without periodic host
 queries. The regular CI invocation runs all 14 scenarios with 60-second measurements and no
 periodic sampling. Debug broadcasts can affect process scheduling/importance; a passing instrumented
 run alone does not establish that an intermittent stall has been fixed. The sampler has a hard
 duration-plus-60-second limit and records command failures or missing observations explicitly.
+
+For duplex diagnosis, explicitly combine `--duplex-only --capture-throughput-diagnostics`. Its
+`duplex/diagnostics.ndjson` contains the same native/kernel observations and upload progress from A
+and the control only. Target B's download evidence is still read once after its window; a prior B
+upload-progress file is never sampled as if it described the current download. Fixed-cap and duplex
+diagnostic modes are mutually exclusive.

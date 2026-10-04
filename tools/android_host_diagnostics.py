@@ -19,6 +19,12 @@ PACKAGES = (
     ("target", 1, "cool.jacoblin.particeps.fixture.targetb"),
     ("control", 0, "cool.jacoblin.particeps.fixture.control"),
 )
+PROGRESS_PACKAGES = {
+    "upload": PACKAGES,
+    # Target B receives downloads and publishes its bounded receiver evidence only
+    # after the window. Never misread an earlier B upload's progress as live data.
+    "duplex": (PACKAGES[0], PACKAGES[2]),
+}
 COUNTER_FIELDS = (
     "sample_started_elapsed_realtime_nanos", "sample_completed_elapsed_realtime_nanos",
     "native_generation", "uplink_bytes", "uplink_packets", "downlink_bytes",
@@ -125,7 +131,8 @@ def observed(command: list[str], parser, *, timeout: float = 5.0) -> dict:
     return result
 
 
-def monitor(adb: list[str], expected: dict, output: Path, stop_file: Path, *, maximum_seconds: float = 120.0) -> None:
+def monitor(adb: list[str], expected: dict, output: Path, stop_file: Path, *, maximum_seconds: float = 120.0, traffic_mode: str = "upload") -> None:
+    packages = PROGRESS_PACKAGES[traffic_mode]
     stopped = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stopped.set())
     signal.signal(signal.SIGINT, lambda *_: stopped.set())
@@ -148,14 +155,14 @@ def monitor(adb: list[str], expected: dict, output: Path, stop_file: Path, *, ma
                 "--ez", "include_applied_profile", "true", "--ez", "include_native_counters", "true",
             ], lambda value: native_observation(value, expected))
             fixtures = []
-            for role, index, package in PACKAGES:
+            for role, index, package in packages:
                 fixtures.append({"role": role, "index": index, **read(
                     adb + ["shell", "run-as", package, "cat", "files/saturation-progress.json"],
                     progress_observation,
                 )})
             kernel = read(adb + ["shell", "cat /proc/net/snmp; cat /proc/net/dev | sed -n '/tun[0-9]:/s/^[[:space:]]*//p'"], kernel_observation)
             process = read(adb + ["shell", "dumpsys", "activity", "processes"], process_observation)
-            stream.write(json.dumps({"native": native, "fixtures": fixtures, "kernel": kernel, "process": process}, sort_keys=True, separators=(",", ":")) + "\n")
+            stream.write(json.dumps({"traffic_mode": traffic_mode, "native": native, "fixtures": fixtures, "kernel": kernel, "process": process}, sort_keys=True, separators=(",", ":")) + "\n")
             stream.flush()
             if stop_file.exists():
                 break
@@ -194,6 +201,7 @@ def main() -> None:
     sample.add_argument("--output", type=Path, required=True)
     sample.add_argument("--stop-file", type=Path, required=True)
     sample.add_argument("--maximum-seconds", type=int, choices=(120, 360), required=True)
+    sample.add_argument("--traffic-mode", choices=tuple(PROGRESS_PACKAGES), default="upload")
     snapshot = commands.add_parser("capture")
     snapshot.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -201,7 +209,8 @@ def main() -> None:
         parser.error("Synthetic diagnostics require an explicit emulator serial")
     adb = [args.adb, "-s", args.serial]
     if args.operation == "monitor":
-        monitor(adb, json.loads(args.expected.read_text()), args.output, args.stop_file, maximum_seconds=args.maximum_seconds)
+        monitor(adb, json.loads(args.expected.read_text()), args.output, args.stop_file,
+            maximum_seconds=args.maximum_seconds, traffic_mode=args.traffic_mode)
     else:
         capture(adb, args.output)
 

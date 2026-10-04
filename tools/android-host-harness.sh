@@ -6,39 +6,47 @@ cd "$repository_root"
 
 skip_build=false
 duplex_only=false
-fixed_512_repetitions=0
-fixed_512_duration_seconds=60
+fixed_cap_kbps=0
+diagnostic_repetitions=0
+diagnostic_duration_seconds=60
 diagnostic_duration_requested=false
 diagnostics_mode=auto
 while (( $# != 0 )); do
   case "$1" in
     --skip-build) skip_build=true; shift ;;
     --duplex-only) duplex_only=true; shift ;;
-    --fixed-512-repetitions)
+    --fixed-cap-kbps)
+      [[ "${2:-}" == 64 || "${2:-}" == 512 || "${2:-}" == 4096 ]] || { echo "Expected 64, 512 or 4096 kbps" >&2; exit 2; }
+      fixed_cap_kbps="$2"; shift 2 ;;
+    --repetitions)
       [[ "${2:-}" =~ ^[1-5]$ ]] || { echo "Expected 1..5 repetitions" >&2; exit 2; }
-      fixed_512_repetitions="$2"; shift 2 ;;
-    --fixed-512-duration-seconds)
+      diagnostic_repetitions="$2"; shift 2 ;;
+    --duration-seconds)
       [[ "${2:-}" == 60 || "${2:-}" == 300 ]] || { echo "Expected 60 or 300 seconds" >&2; exit 2; }
-      fixed_512_duration_seconds="$2"; diagnostic_duration_requested=true; shift 2 ;;
+      diagnostic_duration_seconds="$2"; diagnostic_duration_requested=true; shift 2 ;;
     --capture-throughput-diagnostics|--no-throughput-diagnostics)
       [[ "$diagnostics_mode" == auto ]] || { echo "Choose one diagnostics option" >&2; exit 2; }
       if [[ "$1" == --capture-throughput-diagnostics ]]; then diagnostics_mode=on; else diagnostics_mode=off; fi
       shift ;;
-    *) echo "usage: tools/android-host-harness.sh [--skip-build] [--duplex-only|--fixed-512-repetitions 1..5 [--fixed-512-duration-seconds 60|300]] [--capture-throughput-diagnostics|--no-throughput-diagnostics]" >&2; exit 2 ;;
+    *) echo "usage: tools/android-host-harness.sh [--skip-build] [--duplex-only|--fixed-cap-kbps 64|512|4096 --repetitions 1..5 [--duration-seconds 60|300]] [--capture-throughput-diagnostics|--no-throughput-diagnostics]" >&2; exit 2 ;;
   esac
 done
-if [[ "$duplex_only" == true ]] && { (( fixed_512_repetitions > 0 )) || [[ "$diagnostics_mode" == on ]]; }; then
-  echo "Duplex-only cannot combine with repetitions or periodic diagnostics" >&2
+if (( (fixed_cap_kbps == 0) != (diagnostic_repetitions == 0) )); then
+  echo "--fixed-cap-kbps and --repetitions are required together" >&2
   exit 2
 fi
-if [[ "$diagnostic_duration_requested" == true ]] && (( fixed_512_repetitions == 0 )); then
-  echo "Diagnostic duration requires --fixed-512-repetitions" >&2
+if [[ "$duplex_only" == true ]] && (( diagnostic_repetitions > 0 )); then
+  echo "Duplex-only cannot combine with fixed-cap repetitions" >&2
+  exit 2
+fi
+if [[ "$diagnostic_duration_requested" == true ]] && (( diagnostic_repetitions == 0 )); then
+  echo "Diagnostic duration requires --fixed-cap-kbps and --repetitions" >&2
   exit 2
 fi
 measurement_duration_seconds=60
 capture_throughput_diagnostics=false
-if (( fixed_512_repetitions > 0 )); then
-  measurement_duration_seconds="$fixed_512_duration_seconds"
+if (( diagnostic_repetitions > 0 )); then
+  measurement_duration_seconds="$diagnostic_duration_seconds"
   [[ "$diagnostics_mode" != off ]] && capture_throughput_diagnostics=true
 fi
 [[ "$diagnostics_mode" != on ]] || capture_throughput_diagnostics=true
@@ -519,6 +527,19 @@ run_duplex_measurement() {
   ready="$harness_temporary/duplex.ready"
   stop_traffic_fixtures
   "$adb_binary" shell run-as "$target_b_package" rm -f files/duplex-download.json
+  if [[ "$capture_throughput_diagnostics" == true ]]; then
+    for package_name in "$target_a_package" "$control_package"; do
+      "$adb_binary" shell run-as "$package_name" rm -f files/saturation-progress.json
+    done
+    diagnostics_stop="$harness_temporary/duplex-diagnostics.stop"
+    diagnostics_result="$directory/monitor-result.json"
+    rm -f "$diagnostics_stop"
+    python3 -m tools.android_host_diagnostics --adb "$adb_binary" --serial "$device_serial" monitor \
+      --traffic-mode duplex --maximum-seconds 120 \
+      --expected "$report_directory/applied-profiles/duplex-512-before.json" \
+      --output "$directory/diagnostics.ndjson" --stop-file "$diagnostics_stop" &
+    diagnostics_pid="$!"
+  fi
   python3 -m tools.android_duplex_fixture serve \
     --measurement-id "$identity" --upload-port 19120 --download-port 19121 --control-port 19122 \
     --ready "$ready" --output "$directory/host.json" &
@@ -537,8 +558,9 @@ run_duplex_measurement() {
     --es mode saturate --ei port 19122 > "$harness_temporary/duplex-control.txt"
   wait "$server_pid" || server_result=$?
   server_pid=""
+  stop_diagnostics
   # One post-window adb call waits for AtomicFile publication and reads it once.
-  # There are no periodic device queries during this duplex measurement.
+  # The default duplex gate has no periodic queries; explicit diagnostics opt in.
   "$adb_binary" shell run-as "$target_b_package" sh -c \
     "'for n in 1 2 3 4 5 6 7 8 9 10; do if [ -f files/duplex-download.json ]; then cat files/duplex-download.json; exit 0; fi; sleep 0.2; done; exit 1'" \
     > "$directory/android-download.json"
@@ -664,11 +686,11 @@ case_duplex_fixed_512() {
   reset_study
 }
 
-case_fixed_512_diagnostic() {
-  case_fixed_profile_measurement 512 "$diagnostic_iteration"
+case_fixed_diagnostic() {
+  case_fixed_profile_measurement "$fixed_cap_kbps" "$diagnostic_iteration"
 }
 
-prepare_fixed_512_diagnostic() {
+prepare_fixed_diagnostic() {
   # The full suite removes this intentionally unselected shared-UID peer in its inventory case.
   # The focused lane must establish the same signed-target precondition before the first attempt.
   "$adb_binary" uninstall "$shared_peer_package" > "$harness_temporary/uninstall-diagnostic-peer.txt"
@@ -872,12 +894,12 @@ run_case() {
 }
 
 if [[ "$duplex_only" == true ]]; then
-  prepare_fixed_512_diagnostic
+  prepare_fixed_diagnostic
   run_case "simultaneous_512_upload_download_and_control_bypass" case_duplex_fixed_512
-elif (( fixed_512_repetitions > 0 )); then
-  prepare_fixed_512_diagnostic
-  for diagnostic_iteration in $(seq 1 "$fixed_512_repetitions"); do
-    run_case "fixed_512_diagnostic_$diagnostic_iteration" case_fixed_512_diagnostic
+elif (( diagnostic_repetitions > 0 )); then
+  prepare_fixed_diagnostic
+  for diagnostic_iteration in $(seq 1 "$diagnostic_repetitions"); do
+    run_case "fixed_${fixed_cap_kbps}_diagnostic_$diagnostic_iteration" case_fixed_diagnostic
     # A separate study and proof history for every bounded attempt, including failures.
     mv "$report_directory/applied-profiles" "$report_directory/applied-profiles-$diagnostic_iteration"
   done

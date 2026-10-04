@@ -100,6 +100,21 @@ class AndroidHostDiagnosticsTest(unittest.TestCase):
         self.assertTrue(all(call.kwargs["timeout"] == 15 for call in run.call_args_list))
         self.assertTrue(all(call.args[0][:3] == ["adb", "-s", "emulator-5584"] for call in run.call_args_list))
 
+    def test_duplex_monitor_never_reads_stale_download_target_upload_progress(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "samples.ndjson"
+            stop = Path(temporary) / "stop"
+            stop.touch()
+            with patch("tools.android_host_diagnostics.signal.signal"), patch(
+                "tools.android_host_diagnostics.observed", return_value={"status": "timeout"},
+            ) as observe:
+                monitor(["adb", "-s", "emulator-5584"], self.observation(), output, stop, traffic_mode="duplex")
+            sample = json.loads(output.read_text())
+        self.assertEqual("duplex", sample["traffic_mode"])
+        self.assertEqual(5, observe.call_count)
+        self.assertEqual([("target", 0), ("control", 0)], [(v["role"], v["index"]) for v in sample["fixtures"]])
+        self.assertNotIn("cool.jacoblin.particeps.fixture.targetb", str(observe.call_args_list))
+
     def test_monitor_deadline_does_not_launch_more_commands_after_budget_expires(self):
         def consume_budget(command, parser, *, timeout):
             self.assertLessEqual(timeout, 0.03)
