@@ -6,7 +6,8 @@ import hashlib
 import os
 import tempfile
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -14,16 +15,22 @@ from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+from .commit_store import CommitSpool
 from .configuration import validate_configuration
 from .crypto import open_base, public_key
 from .encoding import base64url_decode, protocol_id, uuid4_text, uuid_text
 from .engine import EngineCommit, EngineCommitParser
 from .errors import ValidationError
 from .filesystem import private_directory
-from .jcs import canonicalize, exact_object, parse
-from .limits import AUTOMATIC_UPLOAD_MAX_BYTES, MANUAL_EXPORT_MAX_BYTES
+from .jcs import canonicalize, exact_object
+from .limits import (
+    AUTOMATIC_UPLOAD_MAX_BYTES,
+    MANUAL_EXPORT_MAX_BYTES,
+    SIGNED_CONFIGURATION_MAX_BYTES,
+)
 from .models import InventoryObject, VerifiedBundle
 from .registry import EventSourceRegistry
+from .streaming_json import BoundedObjectBuilder, CanonicalJsonEvents
 
 MAGIC = b"PTCEXP01"
 ROOT_KEYS = {
@@ -67,15 +74,21 @@ class BundleVerifier:
             raise ValidationError("ciphertext size is outside its source bound")
         fd, name = tempfile.mkstemp(prefix="particeps-plaintext-", suffix=".json", dir=self.staging)
         path = Path(name)
+        commits = None
         try:
-            os.fchmod(fd, 0o600)
-            with source.cache_path.open("rb", buffering=0) as encoded, os.fdopen(fd, "wb", buffering=0) as plaintext:
+            with os.fdopen(fd, "wb", buffering=0) as plaintext, source.cache_path.open("rb", buffering=0) as encoded:
+                os.fchmod(plaintext.fileno(), 0o600)
                 outer, private_key, digest, byte_count = self._decrypt_to(encoded, plaintext, source)
                 plaintext.flush()
                 os.fsync(plaintext.fileno())
             if path.stat().st_mode & 0o077:
                 raise ValidationError("plaintext staging permissions are not private")
-            return self._validate_document(path, digest, byte_count, outer, source, private_key)
+            commits = CommitSpool(self.staging, self.registry)
+            return self._validate_document(path, digest, byte_count, outer, source, private_key, commits)
+        except BaseException:
+            if commits is not None:
+                commits.close()
+            raise
         finally:
             path.unlink(missing_ok=True)
 
@@ -163,11 +176,9 @@ class BundleVerifier:
         outer: Mapping[str, Any],
         source: InventoryObject,
         private_key: bytes,
+        commits: CommitSpool,
     ) -> VerifiedBundle:
-        data = path.read_bytes()
-        if len(data) != plaintext_bytes or hashlib.sha256(data).hexdigest() != plaintext_sha256:
-            raise ValidationError("plaintext staging integrity changed")
-        root = exact_object(parse(data), ROOT_KEYS, "research bundle")
+        root = self._stream_document(path, plaintext_sha256, plaintext_bytes, commits)
         if root["format"] != "particeps-research-bundle-v1":
             raise ValidationError("unsupported research bundle format")
         if uuid4_text(root["bundle_id"], "bundle ID") != outer["bundle_id"]:
@@ -216,6 +227,42 @@ class BundleVerifier:
             experiment["state"], experiment["commits"], source,
         )
 
+    def _stream_document(
+        self, path: Path, digest: str, byte_count: int, commits: CommitSpool,
+    ) -> dict[str, Any]:
+        parser = EngineCommitParser(self.registry)
+        with closing(iter(CanonicalJsonEvents(path, digest, byte_count))) as events:
+            _expect_event(events, "start_map")
+            root: dict[str, Any] = {}
+            while (token := _next_event(events))[1] != "end_map":
+                if token[1] != "map_key" or token[2] not in ROOT_KEYS or token[2] in root:
+                    raise ValidationError("research bundle keys mismatch")
+                key = token[2]
+                if key != "experiment":
+                    root[key] = _read_subtree(events, SIGNED_CONFIGURATION_MAX_BYTES)
+                    continue
+                _expect_event(events, "start_map")
+                experiment: dict[str, Any] = {}
+                while (member := _next_event(events))[1] != "end_map":
+                    if member[1] != "map_key" or member[2] not in EXPERIMENT_KEYS or member[2] in experiment:
+                        raise ValidationError("experiment snapshot keys mismatch")
+                    field = member[2]
+                    if field != "commits":
+                        experiment[field] = _read_subtree(events, SIGNED_CONFIGURATION_MAX_BYTES)
+                        continue
+                    _expect_event(events, "start_array")
+                    while (item := _next_event(events))[1] != "end_array":
+                        # Android's authenticated EngineCommit frame is bounded to 32 MiB.
+                        value = _read_subtree(events, 32 * 1024 * 1024, first=item)
+                        commits.append(parser.parse(value))
+                    experiment[field] = commits
+                root[key] = exact_object(experiment, EXPERIMENT_KEYS, "experiment snapshot")
+            # Exhaustion proves the document digest and canonical bytes, including its suffix.
+            if next(events, None) is not None:
+                raise ValidationError("research bundle has trailing values")
+        commits.seal()
+        return exact_object(root, ROOT_KEYS, "research bundle")
+
     def _experiment(self, value: Any, configuration: Mapping[str, Any], configuration_sha256: str, kind: str) -> dict[str, Any]:
         root = exact_object(value, EXPERIMENT_KEYS, "experiment snapshot")
         if root["experiment_id"] != configuration["experiment_id"] or root["configuration_id"] != configuration["configuration_id"]:
@@ -245,11 +292,9 @@ class BundleVerifier:
         expected_last = first - 1 if count == 0 else first + count - 1
         if last != expected_last:
             raise ValidationError("bundle commit range/count mismatch")
-        commits_value = root["commits"]
-        if not isinstance(commits_value, list) or len(commits_value) != count:
+        commits = root["commits"]
+        if len(commits) != count:
             raise ValidationError("bundle commit array count mismatch")
-        parser = EngineCommitParser(self.registry)
-        commits = tuple(parser.parse(item) for item in commits_value)
         configured = {item["id"] for item in configuration["collectors"]}
         prior: EngineCommit | None = None
         actual_events = 0
@@ -293,10 +338,10 @@ class BundleVerifier:
             raise ValidationError("bundle event count mismatch")
         if lifetime < collector_events:
             raise ValidationError("lifetime data count is smaller than exported collector data")
-        if commits and commits[-1].commit_sequence != last:
+        if prior is not None and prior.commit_sequence != last:
             raise ValidationError("last exported commit does not match range")
-        if last == durable and commits:
-            projection = commits[-1].successor_projection
+        if last == durable and prior is not None:
+            projection = prior.successor_projection
             if (
                 projection["state"] != state
                 or projection["next_commit_sequence"] != next_commit
@@ -366,3 +411,28 @@ def _bundle_context(outer: Mapping[str, Any]) -> bytes:
         + outer["configuration_sha256"] + '","researcher_key_id":"'
         + outer["researcher_key_id"] + '"}'
     ).encode()
+
+
+def _next_event(events: Iterator[tuple[str, str, Any]]) -> tuple[str, str, Any]:
+    try:
+        return next(events)
+    except StopIteration as error:
+        raise ValidationError("JSON document is incomplete") from error
+
+
+def _expect_event(events: Iterator[tuple[str, str, Any]], kind: str) -> None:
+    if _next_event(events)[1] != kind:
+        raise ValidationError(f"JSON requires {kind}")
+
+
+def _read_subtree(
+    events: Iterator[tuple[str, str, Any]], maximum_bytes: int,
+    *, first: tuple[str, str, Any] | None = None,
+) -> Any:
+    builder = BoundedObjectBuilder(maximum_bytes)
+    token = _next_event(events) if first is None else first
+    while True:
+        builder.feed(token[1], token[2])
+        if builder.complete:
+            return builder.value
+        token = _next_event(events)

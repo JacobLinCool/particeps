@@ -55,8 +55,11 @@ def decrypt_bundle(
                 path.as_uri(), hashlib.sha256(data).hexdigest(), len(data), path, None
             )
         )
-    commits = tuple(json.loads(commit.canonical_bytes) for commit in bundle.commits)
-    return dict(bundle.configuration), bundle.configuration_sha256, commits
+        try:
+            commits = tuple(json.loads(commit.canonical_bytes) for commit in bundle.commits)
+            return dict(bundle.configuration), bundle.configuration_sha256, commits
+        finally:
+            bundle.commits.close()
 
 
 @cache

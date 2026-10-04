@@ -5,6 +5,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 from particeps_analysis.errors import ValidationError
 from particeps_analysis.models import InventoryObject
@@ -24,7 +26,7 @@ class _Verifier:
     def verify(self, source):
         if source.source_uri.endswith("invalid.partexp"):
             raise ValidationError("invalid authenticated bundle")
-        return object()
+        return SimpleNamespace(commits=SimpleNamespace(close=Mock()))
 
 
 class _Sink:

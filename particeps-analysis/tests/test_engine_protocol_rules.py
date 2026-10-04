@@ -419,14 +419,17 @@ class RetrospectiveCoverageIntervalTest(unittest.TestCase):
         verifier.epoch_preparation_bounds[EPOCH] = ResearchTime(9_000, 4_000_000, "boot-one")
         if closed:
             verifier.closed_epochs[EPOCH] = (epoch, self.CLOSED)
-        verifier.observations_by_epoch[EPOCH] = [
+        verifier.history.add_observation(
             SourceObservation(
                 1, "usage_events.v1", 1, 1, admission, 0, EPOCH, events,
                 1 if events else None, events if events else None,
                 SourceCoverage(basis, start, end), "c" * 64,
             )
-        ]
-        verifier._verify_closed_observation_coverage()
+        )
+        try:
+            verifier._verify_closed_observation_coverage()
+        finally:
+            verifier.history.close()
 
     def test_the_barrier_flush_at_the_close_may_be_empty(self) -> None:
         self.check("BARRIER_FLUSH", "20000", "20000")

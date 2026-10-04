@@ -5,7 +5,10 @@ plugins {
 android {
     namespace = "cool.jacoblin.particeps.collector.usageevents"
     compileSdk = 37
-    defaultConfig { minSdk = 34 }
+    defaultConfig {
+        minSdk = 34
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -25,4 +28,6 @@ dependencies {
     implementation(project(":core:study-definition"))
     implementation(libs.coroutines.android)
     testImplementation(libs.junit4)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.junit)
 }

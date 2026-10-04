@@ -62,7 +62,8 @@ import org.junit.Test
  * and barrier flushes that advance its cursor, the noon and 17:00 window barriers fired by their
  * timers, pause and resume, a survey requested at the 17:00 barrier and answered, process death
  * and recovery in the same boot, a phone clock change while running and another while paused, a
- * reboot while traffic shaping is applied and recovery in the new boot, and the signed-duration
+ * reboot after a usage batch is durably staged while traffic shaping is applied, recovery that
+ * consumes the old-boot batch in the new boot, and the signed-duration
  * deadline stop. A second phone starts inside the gyroscope window and ends with participant
  * Complete from RUNNING. The pilot configuration has no upload endpoint, so its data leaves the
  * phone as manual exports. Each export, and a partial export of the retained range starting at
@@ -165,7 +166,7 @@ class RealRuntimeBundleInteropTest {
         const val BOOT_THREE = "0c7d3f9e21b84a55a6e0f1d2c3b4a596"
         const val PILOT_SCENARIO =
             "Setup, Start, window barriers, pauses, a survey at the 17:00 barrier, same-boot process recovery, " +
-                "clock changes while running and while paused, a reboot while traffic shaping is applied, " +
+                "clock changes while running and while paused, a reboot with a durable pending usage batch while traffic shaping is applied, " +
                 "then the signed-duration deadline stop"
         const val COMPLETE_SCENARIO =
             "Setup, Start inside the gyroscope window, a pause, then participant Complete from RUNNING"
@@ -358,19 +359,38 @@ private class InteropPhone(
         advanceTo(local("2026-09-16", "17:03:00"))
         command("pause day 3 evening") { manager.pause() }
 
-        // Day 4: the phone reboots while the limited profile is applied. Recovery in the new boot
-        // closes the epoch the old boot opened.
+        // Day 4: a real boundary flush becomes durable, then the process dies before its consuming
+        // commit. New-boot recovery must retain those old-boot events and close their original epoch.
         clocks.advanceToWall(local("2026-09-17", "12:58:00"))
         command("resume day 4") { manager.resume() }
         clocks.advanceMillis(1_000)
         gyroscope(3)
         usageActivity(local("2026-09-17", "12:58:20"), "ACTIVITY_RESUMED", READER)
         advanceTo(local("2026-09-17", "13:01:00"))
+        val commitCountBeforePending = store.commits.size
+        store.interruptCommitsAfterNextPendingWrite()
+        assertEquals(StudyCommandResult.FailedClosed, manager.pause())
+        val pending = checkNotNull(store.loadPendingInput()) { "The runtime did not stage the boundary flush" }
+        assertEquals(commitCountBeforePending, store.commits.size)
+        assertEquals(ExperimentState.RUNNING, store.document?.state)
+        assertEquals(BOOT_ONE, pending.stagedAt.bootSessionId)
+        assertTrue(pending.submissions.any { it.sourceId.value == USAGE_EVENTS && it.events.isNotEmpty() })
         processDeath()
         clocks.reboot(downtimeMillis = 60_000, elapsedAfterBootNanos = 45_000_000_000L, nextBootSessionId = BOOT_TWO)
+        store.reopenAfterProcessDeath()
         startProcess()
         command("initialize after reboot") { manager.initialize(); StudyCommandResult.Success }
         check(manager.snapshot.value.runtime.state == ExperimentState.PAUSED) { "Recovery did not pause the study" }
+        assertNull(store.loadPendingInput())
+        val recoveredPending = store.commits.single { it.consumedPendingInputSha256 == pending.encodedSha256 }
+        assertEquals(EngineInputKind.RECOVERY, recoveredPending.inputKind)
+        assertEquals(BOOT_TWO, recoveredPending.committedAt.bootSessionId)
+        assertEquals(pending.conditionEpochId, recoveredPending.sourceObservations.single().conditionEpochId)
+        assertEquals(pending.submissions.single().coverage, recoveredPending.sourceObservations.single().coverage)
+        assertTrue(recoveredPending.events.filter { it.type.sourceId.value == USAGE_EVENTS }.all {
+            it.observedTime.bootSessionId == BOOT_ONE
+        })
+        assertNull(recoveredPending.successorProjection.sourceCheckpoints[EventSourceId(USAGE_EVENTS)])
         clocks.advanceMillis(5_000)
         command("reconcile access after reboot") { manager.reconcileAccess(); StudyCommandResult.Success }
         command("resume after reboot") { manager.resume() }
@@ -487,7 +507,9 @@ private class InteropPhone(
     private fun assertSetupAndCursorShapes(commits: List<EngineCommit>) {
         val setup = commits.takeWhile { it.successorProjection.state in RealRuntimeBundleInteropTest.SETUP_STATES }
         assertTrue("setup commits precede Start", setup.size >= 4)
-        val flushes = commits.indices.filter { index -> index > 0 && commits[index].flushes(USAGE_EVENTS) }
+        val flushes = commits.indices.filter { index ->
+            index > 0 && commits[index].inputKind != EngineInputKind.RECOVERY && commits[index].flushes(USAGE_EVENTS)
+        }
         assertTrue("usage events flush at a barrier", flushes.isNotEmpty())
         flushes.forEach { index ->
             val before = commits[index - 1].successorProjection.sourceCheckpoints[EventSourceId(USAGE_EVENTS)]?.cursor
@@ -644,6 +666,7 @@ private class InteropPhone(
             resetStore = resetStore,
             storageResetter = StudyStorageResetter { store.clear() },
             recoveryReporter = object : RecoveryReporter {
+                override fun collectionPaused() = true
                 override fun actionRequired(failure: Throwable?) {
                     throw AssertionError("Recovery requires action", failure)
                 }

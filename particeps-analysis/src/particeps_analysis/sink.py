@@ -112,9 +112,11 @@ class ParquetSink:
                 result.events,
                 self.registry.source_clock_fields,
             )
-            _write_file(temporary / "quality-summary.json", canonicalize(quality))
+            quality_bytes = canonicalize(quality)
+            _write_file(temporary / "quality-summary.json", quality_bytes)
             manifest = {
                 "dataset_format": "particeps-parquet-dataset-v1",
+                "quality_summary_sha256": hashlib.sha256(quality_bytes).hexdigest(),
                 "event_source_registry_sha256": self.registry.digest,
                 "parser_version": __version__,
                 "partitions": partitions,

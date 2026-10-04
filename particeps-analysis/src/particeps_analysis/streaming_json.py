@@ -13,7 +13,7 @@ from ijson.common import JSONError, ObjectBuilder
 
 from .errors import ValidationError
 from .jcs import canonicalize
-from .limits import JSON_MAX_DEPTH, JSON_STRING_TOKEN_MAX_BYTES
+from .limits import JSON_INTEGER_MAX_DIGITS, JSON_MAX_DEPTH, JSON_STRING_TOKEN_MAX_BYTES
 
 
 class CanonicalJsonEvents:
@@ -83,6 +83,8 @@ class _BoundedJsonReader:
         self.in_string = False
         self.escaped = False
         self.string_bytes = 0
+        self.in_number = False
+        self.number_digits = 0
         self.digest = hashlib.sha256()
         self.count = 0
 
@@ -96,10 +98,22 @@ class _BoundedJsonReader:
     def _scan(self, data: bytes) -> None:
         for byte in data:
             if not self.in_string:
+                if self.in_number:
+                    if 0x30 <= byte <= 0x39:
+                        self.number_digits += 1
+                        if self.number_digits > JSON_INTEGER_MAX_DIGITS:
+                            raise ValidationError("JSON integer exceeds the protocol digit bound")
+                        continue
+                    if byte in {0x2E, 0x45, 0x65, 0x2B, 0x2D}:
+                        raise ValidationError("Protocol JSON numbers must be integral decimal tokens")
+                    self.in_number = False
                 if byte == 0x22:
                     self.in_string = True
                     self.escaped = False
                     self.string_bytes = 0
+                elif byte == 0x2D or 0x30 <= byte <= 0x39:
+                    self.in_number = True
+                    self.number_digits = 0 if byte == 0x2D else 1
                 continue
             if self.escaped:
                 self.escaped = False

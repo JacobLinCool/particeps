@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import tempfile
 import unittest
@@ -8,10 +9,26 @@ from pathlib import Path
 
 from particeps_analysis.errors import ValidationError
 from particeps_analysis.filesystem import private_directory, rename_noreplace
-from particeps_analysis.streaming_json import CanonicalJsonEvents
+from particeps_analysis.streaming_json import CanonicalJsonEvents, _BoundedJsonReader
 
 
 class StreamingAndFilesystemTest(unittest.TestCase):
+    def test_numeric_tokens_are_bounded_before_native_parsing_across_read_boundaries(self):
+        for number in (b"9" * 5000, b"-" + b"9" * 5000, b"1e" + b"9" * 5000, b"1.0"):
+            with self.subTest(number=number[:24]):
+                reader = _BoundedJsonReader(io.BytesIO(b"[" + number + b"]"))
+                with self.assertRaises(ValidationError):
+                    while reader.read(7):
+                        pass
+
+    def test_signed_int64_numeric_boundaries_and_digit_strings_remain_valid(self):
+        canonical = b'[-9223372036854775808,0,9223372036854775807,"' + b"9" * 5000 + b'"]'
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "document.json"
+            path.write_bytes(canonical)
+            events = list(CanonicalJsonEvents(path, hashlib.sha256(canonical).hexdigest(), len(canonical)))
+            self.assertEqual([-9223372036854775808, 0, 9223372036854775807], [v for _, e, v in events if e == "number"])
+
     def test_streaming_jcs_accepts_exact_bytes_and_rejects_other_encodings(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "document.json"

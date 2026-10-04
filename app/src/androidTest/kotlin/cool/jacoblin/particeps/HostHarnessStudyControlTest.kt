@@ -1,5 +1,6 @@
 package cool.jacoblin.particeps
 
+import android.app.NotificationManager
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -50,6 +51,7 @@ class HostHarnessStudyControlTest {
         requireHostHarnessInvocation()
         val session = initializedSession()
         awaitState(session, ExperimentState.PAUSED)
+        awaitPauseNotification()
         assertAdmissionQuiescent(session)
     }
 
@@ -63,7 +65,22 @@ class HostHarnessStudyControlTest {
             StudyRecoveryStatus.NONE,
             session.snapshot.value.recoveryStatus,
         )
+        awaitPauseNotification()
         assertAdmissionQuiescent(session)
+    }
+
+    private suspend fun awaitPauseNotification() {
+        val context = ApplicationProvider.getApplicationContext<CollectorApplication>()
+        val manager = context.getSystemService(NotificationManager::class.java)
+        withTimeout(TIMEOUT_MILLIS) {
+            while (manager.activeNotifications.none {
+                it.tag == AndroidRecoveryReporter.NOTIFICATION_TAG &&
+                    it.notification.extras.getCharSequence("android.text")?.toString() ==
+                    context.getString(R.string.collection_paused_notification_body)
+            }) {
+                delay(50)
+            }
+        }
     }
 
     private suspend fun assertAdmissionQuiescent(

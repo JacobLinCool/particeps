@@ -282,7 +282,7 @@
 
     <string name="access_notifications_settings_description">Android settings are required when the permission dialog can no longer grant access or a required Particeps notification channel is off.</string>
     <string name="access_notifications_settings_step_enable">Turn on Allow notifications.</string>
-    <string name="access_notifications_settings_step_channels">Keep Active research collection and Daily study reminder enabled. If this study has scheduled activities, keep Research activities enabled too.</string>
+    <string name="access_notifications_settings_step_channels">Keep Active research collection, Daily study reminder, and Study recovery enabled. If this study has scheduled activities, keep Research activities enabled too.</string>
     <string name="access_notifications_settings_step_return">Return to Particeps; it checks the permission and required channels automatically.</string>
 
     <string name="access_usage_access_description">Android treats app and network usage as special access, so a normal permission dialog cannot enable it.</string>
@@ -376,6 +376,8 @@
     <string name="recovery_channel_description">Important actions needed to safely restore research collection.</string>
     <string name="recovery_notification_title">Research collection needs attention</string>
     <string name="recovery_notification_body">Open Particeps to safely restore collection.</string>
+    <string name="collection_paused_notification_title">Research collection is paused</string>
+    <string name="collection_paused_notification_body">Automatic research collection is paused. Open Particeps to review the study status and resume when you are ready.</string>
     <string name="recovery_panel_title">Collection is safely paused</string>
     <string name="recovery_panel_body">Particeps could not finish automatic recovery. Fix any requested Android access, then try again.</string>
     <string name="action_retry_recovery">Try again</string>

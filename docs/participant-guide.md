@@ -220,6 +220,12 @@ that the study’s timeline stays correct. **Resume** checks required access aga
 Resume is always a participant action; Particeps does not automatically continue after a reboot,
 process loss, or safety failure.
 
+When Particeps detects that collection is paused, it posts a reminder to open the app and review
+the study status. The reminder stays until you resume or end the study; opening it does not resume
+collection. Android must allow the app's notifications and recovery notification channel for the
+reminder to appear. If you restore notification access while paused, Particeps restores the reminder
+when it next checks access. After force-stopping the app, open it yourself to check the study status.
+
 After a phone restart, Particeps discards the interval it could not verify and does not retrieve
 missed App-use or network history. Resume may remain unavailable until the phone can establish a
 trustworthy current time. You can still choose **Complete** or **Withdraw** while the study is

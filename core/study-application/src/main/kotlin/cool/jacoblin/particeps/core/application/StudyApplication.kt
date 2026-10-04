@@ -262,6 +262,8 @@ class StudyAssemblyException(
 interface RecoveryReporter {
     /** Diagnostic sinks may retain [failure]; participant UI receives only a generic status. */
     fun actionRequired(failure: Throwable?)
+    /** Ensure the durable pause is visible; false means Android access prevents notification. */
+    fun collectionPaused(): Boolean
     fun clear()
 }
 
@@ -559,6 +561,7 @@ class StudySessionManager(
     private var assembly: StudyRuntimeAssembly? = null
     private var runtimeObservation: Job? = null
     private var activeEnvelopeBytes: ByteArray? = null
+    private var reportedCollectionPaused: Boolean? = null
 
     /**
      * A started study whose upload chain could not be armed. Start keeps its own result, and the
@@ -720,6 +723,9 @@ class StudySessionManager(
         ) {
             assembly?.runtime?.safetyPause(SafetyPauseReason.REQUIRED_ACCESS_MISSING)
         }
+        // A notification can disappear while the durable state stays PAUSED (for example, after
+        // changing Android channel access). Reconcile its platform delivery when access returns.
+        reportCollectionStateLocked(assembly?.runtime?.snapshot?.value?.state, recheckPaused = true)
         access
     }
 
@@ -1042,12 +1048,15 @@ class StudySessionManager(
                     study = participantStudySummary(configuration),
                     runtime = participantRuntime(nextAssembly.runtime.snapshot.value),
                     access = access,
-                    recoveryStatus = if (result.recoveredFailClosed) {
+                    recoveryStatus = if (result.recoveredFailClosed &&
+                        nextAssembly.runtime.snapshot.value.state == ExperimentState.PAUSED
+                    ) {
                         StudyRecoveryStatus.RECOVERED_PAUSED
                     } else {
                         StudyRecoveryStatus.NONE
                     },
                 )
+                reportCollectionStateLocked(nextAssembly.runtime.snapshot.value.state)
                 uploadArmingPending = false
                 configuration.uploadPlan()?.let { plan ->
                     uploadCoordinator.reconcile(
@@ -1058,7 +1067,6 @@ class StudySessionManager(
                         uploadScheduler.ensureScheduled(plan)
                     }
                 }
-                recoveryReporter.clear()
             }
         }
     }
@@ -1120,12 +1128,15 @@ class StudySessionManager(
     private fun observeRuntimeLocked(current: ExperimentRuntime) {
         runtimeObservation?.cancel()
         runtimeObservation = scope.launch {
-            current.snapshot.collect { next ->
+            current.snapshot.collect {
                 sessionMutex.withLock {
                     if (assembly?.runtime === current) {
+                        // A command may have advanced while this observer waited for the mutex.
+                        val next = current.snapshot.value
                         mutableSnapshot.update {
                             it.copy(runtime = participantRuntime(next))
                         }
+                        reportCollectionStateLocked(next.state)
                     }
                 }
             }
@@ -1196,10 +1207,31 @@ class StudySessionManager(
         stateEnteredCalendarElapsedMillis = runtime.stateEnteredCalendarElapsedNanos?.div(NANOS_PER_MILLISECOND),
     )
 
-    private fun mapCommand(result: RuntimeCommandResult): StudyCommandResult = when (result) {
-        RuntimeCommandResult.Success -> StudyCommandResult.Success
-        is RuntimeCommandResult.Rejected -> StudyCommandResult.InvalidState
-        is RuntimeCommandResult.FailedClosed -> StudyCommandResult.FailedClosed
+    private fun mapCommand(result: RuntimeCommandResult): StudyCommandResult {
+        reportCollectionStateLocked(assembly?.runtime?.snapshot?.value?.state)
+        return when (result) {
+            RuntimeCommandResult.Success -> StudyCommandResult.Success
+            is RuntimeCommandResult.Rejected -> StudyCommandResult.InvalidState
+            is RuntimeCommandResult.FailedClosed -> StudyCommandResult.FailedClosed
+        }
+    }
+
+    private fun reportCollectionStateLocked(state: ExperimentState?, recheckPaused: Boolean = false) {
+        val paused = when (state) {
+            ExperimentState.PAUSED -> true
+            null, ExperimentState.ACTIVATING, ExperimentState.PAUSING -> return
+            else -> false
+        }
+        if (!paused && mutableSnapshot.value.recoveryStatus == StudyRecoveryStatus.RECOVERED_PAUSED) {
+            mutableSnapshot.update { it.copy(recoveryStatus = StudyRecoveryStatus.NONE) }
+        }
+        if (reportedCollectionPaused == paused && !(paused && recheckPaused)) return
+        if (paused && !recoveryReporter.collectionPaused()) {
+            reportedCollectionPaused = null
+            return
+        }
+        if (!paused) recoveryReporter.clear()
+        reportedCollectionPaused = paused
     }
 
     private suspend fun completePendingDeletionLocked(record: ActiveStudyRecord.DeletionPending) {
@@ -1234,6 +1266,7 @@ class StudySessionManager(
 
     private fun clearSessionFieldsLocked() {
         closeAssemblyLocked()
+        reportedCollectionPaused = null
         uploadArmingPending = false
         verified = null
         store = null

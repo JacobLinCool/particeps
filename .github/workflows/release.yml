@@ -18,6 +18,7 @@ jobs:
     timeout-minutes: 25
     env:
       PARTICEPS_KOTLIN_EXPORT_INTEROP_DIR: ${{ github.workspace }}/build/protocol-interop/kotlin-export
+      PARTICEPS_REAL_RUNTIME_INTEROP_DIR: ${{ github.workspace }}/build/protocol-interop/real-runtime
 
     steps:
       - name: Check out source
@@ -74,6 +75,12 @@ jobs:
           ./gradlew --no-daemon
           :core:export:test
           --tests cool.jacoblin.particeps.core.export.ResearchExportTest.kotlinExporterWritesEncryptedPythonInteropFixtureWhenExplicitlyRequested
+
+      - name: Produce real-runtime bundles for cross-language replay
+        run: >-
+          ./gradlew --no-daemon
+          :core:study-application:test
+          --tests cool.jacoblin.particeps.core.application.RealRuntimeBundleInteropTest
 
       - name: Set up locked Python analysis environment
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0

@@ -80,6 +80,8 @@ class AnalysisPipeline:
         finally:
             if result is not None:
                 result.events.close()
+            for bundle in bundles:
+                bundle.commits.close()
 
     def _quarantine(self, source, reason: str) -> dict[str, str]:
         directory = self.workspace / "quarantine" / source.sha256[:2]

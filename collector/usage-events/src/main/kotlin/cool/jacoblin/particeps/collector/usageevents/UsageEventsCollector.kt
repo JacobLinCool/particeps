@@ -1,9 +1,6 @@
 package cool.jacoblin.particeps.collector.usageevents
 
-import android.app.usage.UsageEvents
-import android.app.usage.UsageStatsManager
 import android.content.Context
-import cool.jacoblin.particeps.collector.usagecommon.isUsageAccessGranted
 import cool.jacoblin.particeps.core.collector.AccessKind
 import cool.jacoblin.particeps.core.collector.Collector
 import cool.jacoblin.particeps.core.collector.CollectorContext
@@ -57,20 +54,18 @@ class UsageEventsCollectorPlugin(
         configuration: CollectorProfileConfiguration,
         context: CollectorContext,
     ): Collector = UsageEventsCollector(
-        applicationContext,
+        AndroidUsageEventsQuery(applicationContext),
         configuration as? UsageEventsV1ProfileConfiguration
             ?: throw IllegalArgumentException("Invalid usage-events configuration"),
         context,
     )
 }
 
-private class UsageEventsCollector(
-    context: Context,
+internal class UsageEventsCollector(
+    private val query: UsageEventsQuery,
     private val configuration: UsageEventsV1ProfileConfiguration,
     private val collectorContext: CollectorContext,
 ) : Collector {
-    private val applicationContext = context.applicationContext
-    private val usageStatsManager = context.getSystemService(UsageStatsManager::class.java)
     private val mutableHealth = MutableStateFlow(CollectorHealth(CollectorStatus.STOPPED))
     override val health: StateFlow<CollectorHealth> = mutableHealth.asStateFlow()
     override val observationMode: CollectorObservationMode = CollectorObservationMode.RETROSPECTIVE
@@ -81,9 +76,17 @@ private class UsageEventsCollector(
 
     override suspend fun start() {
         check(pollingJob == null) { "Usage-events collector is already started" }
-        if (!isUsageAccessGranted(applicationContext)) {
-            mutableHealth.value = CollectorHealth(CollectorStatus.BLOCKED_ACCESS, "USAGE_ACCESS_REQUIRED")
-            throw SecurityException("Usage access is required")
+        val unavailable = query.unavailableReason()
+        if (unavailable != null) {
+            mutableHealth.value = CollectorHealth(
+                if (unavailable == UsageEventsUnavailableReason.ACCESS_DENIED) {
+                    CollectorStatus.BLOCKED_ACCESS
+                } else {
+                    CollectorStatus.FAILED
+                },
+                unavailable.reasonCode,
+            )
+            throw IllegalStateException(unavailable.reasonCode)
         }
         queryStartUtcMillis = collectorContext.clocks.now().wallTimeUtcMillis
         startPolling()
@@ -99,6 +102,7 @@ private class UsageEventsCollector(
 
     override suspend fun resume() {
         check(pollingJob == null) { "Usage-events collector is already active" }
+        check(mutableHealth.value.status == CollectorStatus.PAUSED) { "Failed usage source cannot resume" }
         startPolling()
     }
 
@@ -115,6 +119,9 @@ private class UsageEventsCollector(
             return CollectorFlushResult.Failed(CollectorFlushFailureReason.SOURCE_QUALITY_GAP)
         }
         val completed = observationMutex.withLock {
+            if (mutableHealth.value.status == CollectorStatus.FAILED || !checkAvailability()) {
+                return@withLock false
+            }
             if (boundary.wallTimeUtcMillis == queryStartUtcMillis) {
                 advanceEmptyCoverage(boundary)
             } else {
@@ -135,6 +142,7 @@ private class UsageEventsCollector(
             while (isActive) {
                 delay(interval)
                 observationMutex.withLock { collectThrough(collectorContext.clocks.now(), barrierFlush = false) }
+                if (mutableHealth.value.status == CollectorStatus.FAILED) break
             }
         }
     }
@@ -146,6 +154,7 @@ private class UsageEventsCollector(
     }
 
     private suspend fun collectThrough(observed: ResearchTime, barrierFlush: Boolean): Boolean {
+        if (mutableHealth.value.status == CollectorStatus.FAILED) return false
         val token = if (barrierFlush) {
             collectorContext.eventSink.captureBarrierFlushToken(observed)
         } else {
@@ -158,23 +167,13 @@ private class UsageEventsCollector(
         }
         try {
             val sourceEvents = withContext(Dispatchers.IO) {
-                val result = mutableListOf<SourceEvent>()
-                val events = usageStatsManager.queryEvents(queryStartUtcMillis, end)
-                val event = UsageEvents.Event()
-                while (events.hasNextEvent()) {
-                    events.getNextEvent(event)
-                    event.typeName()?.let { type ->
-                        val activityComponent = if (type in ACTIVITY_EVENT_TYPES) {
-                            event.className?.takeIf(String::isNotBlank)
-                                ?: throw IllegalStateException("Activity event has no component")
-                        } else {
-                            null
-                        }
-                        result += SourceEvent(type, event.timeStamp, event.packageName, activityComponent)
-                    }
-                }
+                // Android returns an empty iterator for denied access and some service failures.
+                // Never interpret an unavailable query as a successful zero-event interval.
+                if (!checkAvailability()) return@withContext null
+                val result = query.events(queryStartUtcMillis, end)
+                if (!checkAvailability()) return@withContext null
                 result
-            }
+            } ?: return false
             if (sourceEvents.size > MAX_OBSERVATION_EVENTS) {
                 mutableHealth.value = CollectorHealth(CollectorStatus.FAILED, "EVENT_BATCH_LIMIT_EXCEEDED")
                 return false
@@ -274,29 +273,22 @@ private class UsageEventsCollector(
         }
     }
 
-    private fun UsageEvents.Event.typeName(): String? = when (eventType) {
-        UsageEvents.Event.ACTIVITY_RESUMED -> "ACTIVITY_RESUMED"
-        UsageEvents.Event.ACTIVITY_PAUSED -> "ACTIVITY_PAUSED"
-        UsageEvents.Event.ACTIVITY_STOPPED -> "ACTIVITY_STOPPED"
-        UsageEvents.Event.SCREEN_INTERACTIVE -> "SCREEN_INTERACTIVE"
-        UsageEvents.Event.SCREEN_NON_INTERACTIVE -> "SCREEN_NON_INTERACTIVE"
-        UsageEvents.Event.KEYGUARD_SHOWN -> "KEYGUARD_SHOWN"
-        UsageEvents.Event.KEYGUARD_HIDDEN -> "KEYGUARD_HIDDEN"
-        UsageEvents.Event.DEVICE_STARTUP -> "DEVICE_STARTUP"
-        UsageEvents.Event.DEVICE_SHUTDOWN -> "DEVICE_SHUTDOWN"
-        else -> null
+    private fun checkAvailability(): Boolean {
+        val reason = try {
+            query.unavailableReason()?.reasonCode ?: return true
+        } catch (_: SecurityException) {
+            "USAGE_ACCESS_REVOKED"
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (_: RuntimeException) {
+            "USAGE_EVENTS_QUERY_FAILED"
+        }
+        mutableHealth.value = CollectorHealth(CollectorStatus.FAILED, reason)
+        return false
     }
-
-    private data class SourceEvent(
-        val type: String,
-        val timestamp: Long,
-        val packageName: String?,
-        val activityComponent: String?,
-    )
 
     private companion object {
         const val ACTIVITY_TOKEN_DOMAIN = "usage-events.activity-component.v1"
-        val ACTIVITY_EVENT_TYPES = setOf("ACTIVITY_RESUMED", "ACTIVITY_PAUSED", "ACTIVITY_STOPPED")
         val SHA256 = Regex("[0-9a-f]{64}")
     }
 }

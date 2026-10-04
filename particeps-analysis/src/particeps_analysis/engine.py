@@ -8,10 +8,13 @@ import hashlib
 import io
 import re
 import struct
+import tempfile
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import closing
 from dataclasses import dataclass, replace
 from itertools import pairwise
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -36,6 +39,7 @@ from .automation_model import (
     ResearchTime as AutomationResearchTime,
 )
 from .automation_reducer import reduce_automation_batch
+from .commit_store import ReplayHistory
 from .errors import ValidationError
 from .jcs import canonicalize, exact_object, parse_embedded_json
 from .registry import EventSourceRegistry
@@ -392,7 +396,7 @@ class EngineCommitParser:
 class EngineReplayVerifier:
     """Stateful fail-closed verification over one participant's complete commit chain."""
 
-    def __init__(self, registry: EventSourceRegistry, configuration: Mapping[str, Any], configuration_sha256: str):
+    def __init__(self, registry: EventSourceRegistry, configuration: Mapping[str, Any], configuration_sha256: str, *, evidence_directory: Path | None = None):
         self.registry = registry
         self.configuration = configuration
         self.configuration_sha256 = configuration_sha256
@@ -426,8 +430,14 @@ class EngineReplayVerifier:
         self.expected_commit_sequence: int | None = None
         self.expected_event_sequence: int | None = None
         self.expected_observation_sequence: int | None = None
-        self.observation_epoch_by_event: dict[int, str] = {}
-        self.observations_by_epoch: dict[str, list[SourceObservation]] = {}
+        self._history_directory = (
+            tempfile.TemporaryDirectory(prefix="particeps-replay-")
+            if evidence_directory is None else None
+        )
+        self.history = ReplayHistory(
+            evidence_directory if evidence_directory is not None
+            else Path(self._history_directory.name)
+        )
         self.current_checkpoint_digest: str | None = None
         self.pending_components: Mapping[tuple[str, str], str] | None = None
         self.pending_checkpoint: Mapping[str, Any] | None = None
@@ -451,9 +461,34 @@ class EngineReplayVerifier:
         self.deadline_retired_by_terminal_request = False
 
     def replay(self, commits: Iterable[EngineCommit]) -> tuple[RecordedEvent, ...]:
-        output: list[RecordedEvent] = []
-        for commit in commits:
-            output.extend(self.accept(commit))
+        """Convenience for small callers; materialization uses iter_replay."""
+        return tuple(self.iter_replay(commits))
+
+    def iter_replay(self, commits: Iterable[EngineCommit]) -> Iterator[RecordedEvent]:
+        """Replay into private evidence, then finalize events; exhaust before publication."""
+        try:
+            for commit in commits:
+                for event in self.accept(commit):
+                    self.history.add_event(event)
+            self.finish()
+            with closing(self.history.events(self.registry)) as events:
+                for event in events:
+                    yield self.finalize_event(event)
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        history = getattr(self, "history", None)
+        if history is not None:
+            history.close()
+        directory = getattr(self, "_history_directory", None)
+        if directory is not None:
+            directory.cleanup()
+
+    def __del__(self) -> None:
+        self.close()
+
+    def finish(self) -> None:
         if self.active_epoch is not None:
             projection = self.previous_projection
             if projection is None or projection["state"] != "RUNNING":
@@ -488,29 +523,15 @@ class EngineReplayVerifier:
                     "closed study resource vector is not fully inactive"
                 )
         self._verify_closed_observation_coverage()
-        finalized = []
-        for event in output:
-            source_epoch = self._source_epoch(event)
-            if (
-                self.registry.source(event.source_id, event.schema_version)["source_kind"] == "COLLECTOR"
-                and source_epoch != event.condition_epoch_id
-            ):
-                raise ValidationError("source interval crosses or disagrees with condition epoch")
-            finalized.append(
-                RecordedEvent(
-                    event.sequence_number,
-                    event.source_id,
-                    event.schema_version,
-                    event.event_type,
-                    event.observed_time,
-                    event.condition_epoch_id,
-                    event.wire_fields,
-                    event.typed_fields,
-                    event.canonical_bytes,
-                    source_epoch,
-                )
-            )
-        return tuple(finalized)
+
+    def finalize_event(self, event: RecordedEvent) -> RecordedEvent:
+        source_epoch = self._source_epoch(event)
+        if (
+            self.registry.source(event.source_id, event.schema_version)["source_kind"] == "COLLECTOR"
+            and source_epoch != event.condition_epoch_id
+        ):
+            raise ValidationError("source interval crosses or disagrees with condition epoch")
+        return replace(event, source_condition_epoch_id=source_epoch)
 
     def accept(self, commit: EngineCommit) -> tuple[RecordedEvent, ...]:
         if self.expected_commit_sequence is None:
@@ -728,7 +749,7 @@ class EngineReplayVerifier:
                         raise ValidationError("observation event condition epoch mismatch")
                     covered.add(sequence)
                     events.append(event)
-                    self.observation_epoch_by_event[sequence] = observation.condition_epoch_id
+                    self.history.set_event_epoch(sequence, observation.condition_epoch_id)
             if _observation_digest(observation, events) != observation.encoded_sha256:
                 raise ValidationError("source observation digest mismatch")
             expected_checkpoints[observation.source_id] = {
@@ -740,9 +761,7 @@ class EngineReplayVerifier:
                 else (prior["coverage"] if prior is not None else None),
                 "cursor": prior["cursor"] if prior is not None else None,
             }
-            self.observations_by_epoch.setdefault(
-                observation.condition_epoch_id, []
-            ).append(observation)
+            self.history.add_observation(observation)
         for source_id in flushed_sources:
             # The cursor is the collector's opaque resume token. It changes only in the commit
             # that carries that source's completed flush, which stores the value it returned.
@@ -1679,7 +1698,7 @@ class EngineReplayVerifier:
             raise ValidationError("resource audit timer fired before its monotonic target")
 
     def _source_epoch(self, event: RecordedEvent) -> str | None:
-        observation_epoch = self.observation_epoch_by_event.get(event.sequence_number)
+        observation_epoch = self.history.event_epoch(event.sequence_number)
         if observation_epoch is not None:
             return observation_epoch
         if event.source_id == "interventions.v1":
@@ -1727,7 +1746,8 @@ class EngineReplayVerifier:
         return occurrence[3]
 
     def _verify_closed_observation_coverage(self) -> None:
-        for epoch_id, observations in self.observations_by_epoch.items():
+        for observation in self.history.observations():
+            epoch_id = observation.condition_epoch_id
             epoch = self.known_epochs.get(epoch_id)
             if epoch is None:
                 raise ValidationError("source observation references an orphan epoch")
@@ -1747,48 +1767,47 @@ class EngineReplayVerifier:
                 if closed is not None and closed[1].boot_session_id == boot
                 else None
             )
-            for observation in observations:
-                coverage = observation.coverage
-                if coverage is None:
-                    continue
-                if coverage.clock_basis == "SOURCE_WALL_TIME":
-                    start = _coverage_coordinate(coverage.start_inclusive)
-                    end = _coverage_coordinate(coverage.end_exclusive)
-                    lower = bound.wall_time_utc_millis
-                    upper = closed[1].wall_time_utc_millis if closed else None
-                elif coverage.clock_basis == "SOURCE_MONOTONIC_TIME":
-                    start = _coverage_coordinate(coverage.start_inclusive)
-                    end = _coverage_coordinate(coverage.end_exclusive)
-                    lower = monotonic_lower
-                    upper = monotonic_upper
-                else:
-                    start_time = _embedded_time(coverage.start_inclusive)
-                    end_time = _embedded_time(coverage.end_exclusive)
-                    if (
-                        start_time.boot_session_id != end_time.boot_session_id
-                        or start_time.boot_session_id != epoch.activated_at.boot_session_id
-                    ):
-                        raise ValidationError("coverage cannot be assigned across reboot")
-                    start = start_time.elapsed_realtime_nanos
-                    end = end_time.elapsed_realtime_nanos
-                    lower = monotonic_lower
-                    upper = monotonic_upper
-                if start == end and not (
-                    # A barrier whose boundary falls on the collector's query start flushes
-                    # the empty wall-clock interval [t, t) at the deactivation boundary.
-                    observation.admission_kind == "BARRIER_FLUSH"
-                    and observation.event_count == 0
-                    and coverage.clock_basis == "SOURCE_WALL_TIME"
-                    and closed is not None
-                    and end == closed[1].wall_time_utc_millis
+            coverage = observation.coverage
+            if coverage is None:
+                continue
+            if coverage.clock_basis == "SOURCE_WALL_TIME":
+                start = _coverage_coordinate(coverage.start_inclusive)
+                end = _coverage_coordinate(coverage.end_exclusive)
+                lower = bound.wall_time_utc_millis
+                upper = closed[1].wall_time_utc_millis if closed else None
+            elif coverage.clock_basis == "SOURCE_MONOTONIC_TIME":
+                start = _coverage_coordinate(coverage.start_inclusive)
+                end = _coverage_coordinate(coverage.end_exclusive)
+                lower = monotonic_lower
+                upper = monotonic_upper
+            else:
+                start_time = _embedded_time(coverage.start_inclusive)
+                end_time = _embedded_time(coverage.end_exclusive)
+                if (
+                    start_time.boot_session_id != end_time.boot_session_id
+                    or start_time.boot_session_id != epoch.activated_at.boot_session_id
                 ):
-                    raise ValidationError(
-                        "retrospective coverage is empty outside a boundary flush"
-                    )
-                if start > end or start < lower or (upper is not None and end > upper):
-                    raise ValidationError(
-                        "retrospective coverage crosses a condition epoch boundary"
-                    )
+                    raise ValidationError("coverage cannot be assigned across reboot")
+                start = start_time.elapsed_realtime_nanos
+                end = end_time.elapsed_realtime_nanos
+                lower = monotonic_lower
+                upper = monotonic_upper
+            if start == end and not (
+                # A barrier whose boundary falls on the collector's query start flushes
+                # the empty wall-clock interval [t, t) at the deactivation boundary.
+                observation.admission_kind == "BARRIER_FLUSH"
+                and observation.event_count == 0
+                and coverage.clock_basis == "SOURCE_WALL_TIME"
+                and closed is not None
+                and end == closed[1].wall_time_utc_millis
+            ):
+                raise ValidationError(
+                    "retrospective coverage is empty outside a boundary flush"
+                )
+            if start > end or start < lower or (upper is not None and end > upper):
+                raise ValidationError(
+                    "retrospective coverage crosses a condition epoch boundary"
+                )
 
     def _verify_projection(
         self, commit: EngineCommit, checkpoint: Mapping[str, Any]

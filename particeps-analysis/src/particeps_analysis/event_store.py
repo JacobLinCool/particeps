@@ -42,6 +42,8 @@ class EventDatabase:
         self.connection.execute("PRAGMA trusted_schema = OFF")
         self.connection.execute("PRAGMA synchronous = FULL")
         self.connection.execute("PRAGMA journal_mode = DELETE")
+        self.connection.execute("PRAGMA cache_size = -2048")
+        self.connection.execute("PRAGMA temp_store = FILE")
         self.connection.execute(f"CREATE TABLE candidates ({_column_definitions()})")
 
     def add(self, event: VerifiedEvent) -> None:
@@ -177,7 +179,7 @@ class DiskEventCollection:
     def _query(self, ordering: str) -> Iterator[VerifiedEvent]:
         if self.closed:
             raise ValidationError("reassembled event store is closed")
-        connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
+        connection = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True)
         try:
             for row in connection.execute(f"SELECT {EVENT_COLUMNS} FROM accepted ORDER BY {ordering}"):
                 yield _row_event(row)
@@ -187,7 +189,7 @@ class DiskEventCollection:
     def _raw_query(self, query: str):
         if self.closed:
             raise ValidationError("reassembled event store is closed")
-        connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
+        connection = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True)
         try:
             yield from connection.execute(query)
         finally:

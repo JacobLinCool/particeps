@@ -75,6 +75,20 @@ Ciphertext routing metadata and object paths are untrusted until the encrypted b
 Decrypted bytes are staged only in owner-private workspace files and are removed on every handled
 success or failure. The analyzer never contacts participants or changes a study.
 
+Bundle JSON is authenticated and validated incrementally, with one bounded commit in memory.
+Verified commits, duplicate resolution, observation history and replayed events use private SQLite
+spools; materialization does not retain the cohort's commit or event payloads in RAM. Memory still
+depends on the largest commit, the signed configuration, Parquet write batches, and the number of
+bundles, participants, condition epochs, source-coverage intervals and intervention actions.
+The 8 GiB manual-file limit is an input bound, not a promise that any workstation can process
+that much data. Allow disk space for the
+ciphertext cache, plaintext staging, commit/replay spools and the dataset to coexist, and measure
+the full study's expected volume on the research workstation before participant distribution.
+
+`BundleVerifier.verify()` returns a bundle whose `commits` owns a temporary disk spool. API callers
+must keep its staging directory available while reading it and call `bundle.commits.close()` when
+finished. The CLI owns this lifetime and cleans all spools after success or failure.
+
 ## Install and run
 
 From this directory:
@@ -151,6 +165,12 @@ participant it also lists every condition epoch's `preparation_bound`, `activate
 `deactivated_at`: retrospective rows may begin at the preparation bound, before the epoch's
 resources were confirmed, so rows whose source time precedes `activated_at` can be excluded. These
 artifacts describe evidence quality; they do not infer missing participant behavior.
+
+Participant quality records also include the final commit's `latest_committed_at` and merged
+`usage_coverage` intervals. Usage coverage proves the collector committed a query of that source
+interval; it does not prove Android supplied every lifecycle event. Each interval's boot belongs
+to its verified source epoch, including pending observations committed after a reboot. The dataset
+manifest's `quality_summary_sha256` binds the exact quality-summary bytes to that materialization.
 
 ## Real runtime fixtures
 

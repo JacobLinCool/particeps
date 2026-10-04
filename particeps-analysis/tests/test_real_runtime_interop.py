@@ -28,6 +28,7 @@ from runtime_fixtures import (
 
 from particeps_analysis.encoding import base64url_decode
 from particeps_analysis.registry import EventSourceRegistry
+from particeps_analysis.usage_report import usage_report
 
 INTEROP_DIRECTORY_ENV = "PARTICEPS_REAL_RUNTIME_INTEROP_DIR"
 INTEROP_FORMAT = "particeps-real-runtime-interop-v1"
@@ -132,6 +133,47 @@ class RealRuntimeInteropTest(unittest.TestCase):
                 self.assertEqual(bundle["commit_count"], len(commits))
                 self.assertEqual(bundle["state"], commits[-1]["successor_projection"]["state"])
                 self.assertLessEqual(EXPECTED_SHAPES[bundle["file"]], detect_shapes(list(commits)))
+
+    def test_pending_usage_recovered_in_new_boot_keeps_its_verified_source_boot(self) -> None:
+        path = self.root / "pilot-deadline.partexp"
+        _configuration, _digest, commits = decrypt_bundle(path, self.keys)
+        activations = {
+            event["fields"]["condition_epoch_id"]: json.loads(event["fields"]["boundary_research_time"])
+            for commit in commits for event in commit["events"]
+            if event["event_type"] == "CONDITION_EPOCH_ACTIVATED"
+        }
+        recovered = [
+            (commit, observation)
+            for commit in commits
+            if commit["input_kind"] == "RECOVERY" and commit["consumed_pending_input_sha256"] is not None
+            for observation in commit["source_observations"]
+            if observation["source_id"] == "usage_events.v1"
+            and commit["committed_at"]["boot_session_id"]
+            != activations[observation["condition_epoch_id"]]["boot_session_id"]
+        ]
+        self.assertTrue(recovered, "runtime fixture must recover durable pending usage from the prior boot")
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            inbox = work / "inbox"
+            inbox.mkdir()
+            shutil.copyfile(path, inbox / path.name)
+            dataset = materialize_directory(inbox, self._keys_file(work), work)
+            quality = json.loads((dataset / "quality-summary.json").read_text())
+            participant = quality["commit_chain_verification"]["participants"][0]
+            for _commit, observation in recovered:
+                epoch_id = observation["condition_epoch_id"]
+                source = observation["coverage"]
+                intervals = [
+                    interval for interval in participant["usage_coverage"]
+                    if interval["condition_epoch_id"] == epoch_id
+                    and int(interval["start_utc_millis"]) <= int(source["start_inclusive"])
+                    and int(interval["end_utc_millis"]) >= int(source["end_exclusive"])
+                ]
+                self.assertEqual(1, len(intervals))
+                self.assertEqual(activations[epoch_id]["boot_session_id"], intervals[0]["boot_session_id"])
+            report = usage_report(dataset, work / "usage-report", "Asia/Taipei")
+            summary = json.loads((report / "participants.jsonl").read_text())
+            self.assertGreater(summary["query_covered_millis"], 0)
 
     def _assert_columns(self, tables: dict[str, Any]) -> None:
         for key, table in tables.items():

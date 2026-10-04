@@ -16,7 +16,7 @@ from factories import (
 
 from particeps_analysis.bundle import BundleVerifier
 from particeps_analysis.encoding import base64url_decode
-from particeps_analysis.engine import EngineReplayVerifier
+from particeps_analysis.engine import EngineCommitParser, EngineReplayVerifier
 from particeps_analysis.errors import ValidationError
 from particeps_analysis.models import InventoryObject
 from particeps_analysis.registry import EventSourceRegistry
@@ -26,7 +26,7 @@ def experiment_document() -> dict:
     return {
         "assigned_participant_id": None,
         "commit_count": "1",
-        "commits": [empty_commit_document()],
+        "commits": (EngineCommitParser(EventSourceRegistry()).parse(empty_commit_document()),),
         "configuration_id": "config-one",
         "durable_through_commit": "1",
         "evaluated_through_commit": "1",
@@ -115,13 +115,14 @@ class BundleContractTest(unittest.TestCase):
                     None,
                 )
             )
-        events = EngineReplayVerifier(
-            EventSourceRegistry(),
-            bundle.configuration,
-            bundle.configuration_sha256,
-        ).replay(bundle.commits)
-        self.assertEqual(5, len(events))
-        self.assertEqual("battery_state.v1", events[-1].source_id)
+            events = EngineReplayVerifier(
+                EventSourceRegistry(),
+                bundle.configuration,
+                bundle.configuration_sha256,
+            ).replay(bundle.commits)
+            self.assertEqual(5, len(events))
+            self.assertEqual("battery_state.v1", events[-1].source_id)
+            bundle.commits.close()
 
     def test_kotlin_exported_encrypted_bundle_decrypts_and_replays(self) -> None:
         fixture_directory = os.environ.get(
@@ -163,13 +164,14 @@ class BundleContractTest(unittest.TestCase):
                     None,
                 )
             )
-        events = EngineReplayVerifier(
-            EventSourceRegistry(),
-            bundle.configuration,
-            bundle.configuration_sha256,
-        ).replay(bundle.commits)
-        self.assertEqual(int(expected["event_count"]), len(events))
-        self.assertEqual(expected["last_source_id"], events[-1].source_id)
+            events = EngineReplayVerifier(
+                EventSourceRegistry(),
+                bundle.configuration,
+                bundle.configuration_sha256,
+            ).replay(bundle.commits)
+            self.assertEqual(int(expected["event_count"]), len(events))
+            self.assertEqual(expected["last_source_id"], events[-1].source_id)
+            bundle.commits.close()
 
 
 if __name__ == "__main__":

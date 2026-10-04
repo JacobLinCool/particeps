@@ -27,6 +27,7 @@ import cool.jacoblin.particeps.core.model.StudyStore
 import cool.jacoblin.particeps.core.protocol.ActiveStudyRecord
 import cool.jacoblin.particeps.core.protocol.ActiveStudyStore
 import cool.jacoblin.particeps.core.protocol.VerifiedConfiguration
+import cool.jacoblin.particeps.core.model.SafetyPauseReason
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.OutputStream
@@ -709,6 +710,135 @@ class StudySessionManagerTest {
         fixture.manager.shutdownProcess()
     }
 
+    @Test
+    fun recoveredPauseImmediatelyNotifiesAndPersistsUntilExplicitResume() = runTest {
+        val fixture = fixture()
+        fixture.startStudy()
+        fixture.manager.shutdownProcess()
+        val recovered = fixture.newManager()
+
+        recovered.initialize()
+
+        // Initialization must notify even before the asynchronous snapshot observer gets a turn.
+        assertEquals(listOf("paused"), fixture.reporter.calls.filter { it == "paused" })
+        assertEquals(StudyRecoveryStatus.RECOVERED_PAUSED, recovered.snapshot.value.recoveryStatus)
+        val callsAfterRecovery = fixture.reporter.calls.toList()
+        recovered.reconcileAccess()
+        runCurrent()
+        assertEquals(callsAfterRecovery, fixture.reporter.calls)
+        assertEquals(ExperimentState.PAUSED, fixture.store.runtime?.state)
+
+        assertEquals(StudyCommandResult.Success, recovered.resume())
+        assertEquals("clear", fixture.reporter.calls.last())
+        assertEquals(StudyRecoveryStatus.NONE, recovered.snapshot.value.recoveryStatus)
+        assertEquals(ExperimentState.RUNNING, fixture.store.runtime?.state)
+        runCurrent()
+        assertEquals(callsAfterRecovery.size + 1, fixture.reporter.calls.size)
+        recovered.shutdownProcess()
+    }
+
+    @Test
+    fun safetyPauseNotifiesOnceAndCompletionClearsWithoutRequiringResume() = runTest {
+        val fixture = fixture()
+        fixture.startStudy()
+        fixture.reporter.calls.clear()
+
+        assertEquals(StudyCommandResult.FailedClosed, fixture.manager.safetyPauseForPlatformAccessLoss())
+        assertEquals(listOf("paused"), fixture.reporter.calls)
+        fixture.manager.reconcileAccess()
+        runCurrent()
+        assertEquals(listOf("paused"), fixture.reporter.calls)
+
+        assertEquals(StudyCommandResult.Success, fixture.manager.complete())
+        runCurrent()
+        assertEquals(listOf("paused", "clear"), fixture.reporter.calls)
+        fixture.manager.shutdownProcess()
+    }
+
+    @Test
+    fun asynchronousSafetyPauseIsObservedAndAnAlreadyPausedRestartKeepsTheNotice() = runTest {
+        val fixture = fixture()
+        fixture.startStudy()
+        fixture.reporter.calls.clear()
+        requireNotNull(fixture.runtimeFactory.last).runtime.safetyPause(SafetyPauseReason.REQUIRED_ACCESS_MISSING)
+        runCurrent()
+        assertEquals(listOf("paused"), fixture.reporter.calls)
+        fixture.manager.shutdownProcess()
+
+        val restarted = fixture.newManager()
+        restarted.initialize()
+        runCurrent()
+        assertEquals(listOf("paused"), fixture.reporter.calls)
+        assertTrue(fixture.reporter.pausedVisible)
+        assertEquals(ExperimentState.PAUSED, restarted.snapshot.value.runtime.state)
+        assertEquals(StudyCommandResult.Success, restarted.withdraw())
+        assertEquals("clear", fixture.reporter.calls.last())
+        restarted.shutdownProcess()
+    }
+
+    @Test
+    fun setupNeverReportsAPauseAndAStaleObservedPauseCannotReplaceAResumedNotice() = runTest {
+        val fixture = fixture()
+        fixture.startStudy()
+        assertFalse(fixture.reporter.calls.contains("paused"))
+        fixture.reporter.calls.clear()
+
+        fixture.manager.pause()
+        fixture.manager.resume()
+        runCurrent()
+
+        assertEquals(listOf("paused", "clear"), fixture.reporter.calls)
+        assertEquals(ExperimentState.RUNNING, fixture.manager.snapshot.value.runtime.state)
+        fixture.manager.shutdownProcess()
+    }
+
+    private suspend fun Fixture.startStudy() {
+        manager.initialize()
+        manager.importSignedConfiguration(ENVELOPE)
+        manager.reviewStudy()
+        manager.acceptConsent()
+        manager.completeAccessSetup()
+        assertEquals(StudyCommandResult.Success, manager.start())
+    }
+
+    @Test
+    fun pausedNotificationRetriesAfterAccessReturnsWithoutResumingCollection() = runTest {
+        val fixture = fixture()
+        fixture.startStudy()
+        fixture.reporter.calls.clear()
+        fixture.reporter.available = false
+        fixture.manager.safetyPauseForPlatformAccessLoss()
+        runCurrent()
+        assertFalse(fixture.reporter.pausedVisible)
+        assertEquals(emptyList<String>(), fixture.reporter.calls)
+
+        fixture.reporter.available = true
+        fixture.manager.reconcileAccess()
+        runCurrent()
+
+        assertEquals(listOf("paused"), fixture.reporter.calls)
+        assertTrue(fixture.reporter.pausedVisible)
+        assertEquals(ExperimentState.PAUSED, fixture.manager.snapshot.value.runtime.state)
+        fixture.manager.shutdownProcess()
+    }
+
+    @Test
+    fun accessReconciliationRestoresAPauseNotificationRemovedByAndroid() = runTest {
+        val fixture = fixture()
+        fixture.startStudy()
+        fixture.manager.pause()
+        runCurrent()
+        fixture.reporter.calls.clear()
+        // Disabling a channel can remove the notification without changing the study state.
+        fixture.reporter.pausedVisible = false
+        fixture.manager.reconcileAccess()
+        assertEquals(listOf("paused"), fixture.reporter.calls)
+        fixture.manager.reconcileAccess()
+        assertEquals(listOf("paused"), fixture.reporter.calls)
+        assertEquals(ExperimentState.PAUSED, fixture.manager.snapshot.value.runtime.state)
+        fixture.manager.shutdownProcess()
+    }
+
     private fun TestScope.fixture(
         activeRecord: ActiveStudyRecord? = null,
         studyConfiguration: StudyConfiguration = configuration(),
@@ -750,6 +880,7 @@ class StudySessionManagerTest {
         val clocks: IncrementingClocks,
     ) {
         var acceptedFailure: Throwable? = null
+        val reporter = RecordingRecoveryReporter()
         lateinit var manager: StudySessionManager
 
         fun newManager() = StudySessionManager(
@@ -765,7 +896,7 @@ class StudySessionManagerTest {
             accessGateway = GrantedAccessGateway,
             resetStore = FakeResetStore(),
             storageResetter = cool.jacoblin.particeps.core.model.StudyStorageResetter { store.clear() },
-            recoveryReporter = NoOpRecoveryReporter,
+            recoveryReporter = reporter,
             accessPolicy = StudyAccessPolicy(),
             uploadCoordinator = uploadCoordinator,
             uploadScheduler = uploadScheduler,
@@ -816,9 +947,24 @@ class StudySessionManagerTest {
         )
     }
 
-    private object NoOpRecoveryReporter : RecoveryReporter {
-        override fun actionRequired(failure: Throwable?) = Unit
-        override fun clear() = Unit
+    private class RecordingRecoveryReporter : RecoveryReporter {
+        val calls = mutableListOf<String>()
+        var available = true
+        var pausedVisible = false
+        override fun actionRequired(failure: Throwable?) {
+            pausedVisible = false
+            calls += "actionRequired"
+        }
+        override fun collectionPaused(): Boolean {
+            if (!available) return false
+            if (!pausedVisible) calls += "paused"
+            pausedVisible = true
+            return true
+        }
+        override fun clear() {
+            pausedVisible = false
+            calls += "clear"
+        }
     }
 
     private class FakeUploadCoordinator : StudyUploadCoordinator {

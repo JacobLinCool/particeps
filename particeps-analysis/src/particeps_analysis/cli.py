@@ -12,6 +12,7 @@ from .pipeline import AnalysisPipeline, load_private_keys
 from .registry import EventSourceRegistry
 from .sink import ParquetSink
 from .sources import BundleSource, LocalBundleSource, S3BundleSource
+from .usage_report import usage_report
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -38,6 +39,15 @@ def build_parser() -> argparse.ArgumentParser:
     materialize.add_argument("--workspace", type=Path, required=True)
     materialize.add_argument("--keys", type=Path, required=True)
     materialize.add_argument("--output", type=Path, required=True)
+    usage = commands.add_parser(
+        "usage-report", help="summarize observed foreground use and query coverage"
+    )
+    usage.add_argument("--dataset", type=Path, required=True)
+    usage.add_argument("--output", type=Path, required=True)
+    usage.add_argument(
+        "--timezone", required=True, help="explicit IANA analysis reference timezone"
+    )
+    usage.add_argument("--duration-hours", type=int, default=120)
     return parser
 
 
@@ -45,6 +55,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "usage-report":
+            print(
+                usage_report(
+                    args.dataset, args.output, args.timezone, args.duration_hours
+                )
+            )
+            return 0
         if args.command == "inventory":
             sources: list[BundleSource] = []
             if args.local:
@@ -67,13 +84,17 @@ def main(argv: list[str] | None = None) -> int:
             ):
                 raise AnalysisError("S3 options require --s3-bucket")
             if not sources:
-                raise AnalysisError("at least one of --local or --s3-bucket is required")
+                raise AnalysisError(
+                    "at least one of --local or --s3-bucket is required"
+                )
             objects = CiphertextInventory(args.workspace).ingest(sources)
             print(f"inventoried {len(objects)} ciphertext object(s)")
             return 0
         registry = EventSourceRegistry()
         keys = load_private_keys(args.keys)
-        pipeline = AnalysisPipeline(args.workspace, registry, keys, ParquetSink(registry))
+        pipeline = AnalysisPipeline(
+            args.workspace, registry, keys, ParquetSink(registry)
+        )
         output = pipeline.materialize(args.output)
         print(output)
         return 0

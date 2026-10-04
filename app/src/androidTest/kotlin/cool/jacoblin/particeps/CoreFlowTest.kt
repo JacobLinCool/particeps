@@ -1,6 +1,7 @@
 package cool.jacoblin.particeps
 
 import android.Manifest
+import android.app.Notification
 import android.app.NotificationManager
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
@@ -27,6 +28,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.After
@@ -159,6 +162,7 @@ class CoreFlowTest {
         composeRule.waitUntil(TIMEOUT_MILLIS) {
             session.snapshot.value.runtime.state == ExperimentState.PAUSED
         }
+        assertPausedNotificationPosted()
         val countAtPause = session.snapshot.value.runtime.lifetimeDataEventCount
         composeRule.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         composeRule.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
@@ -192,6 +196,7 @@ class CoreFlowTest {
         composeRule.waitUntil(TIMEOUT_MILLIS) {
             session.snapshot.value.runtime.state == ExperimentState.RUNNING
         }
+        assertPausedNotificationCleared()
         val commitsBeforeWithdraw = session.snapshot.value.runtime.durableThroughCommit
         waitUntilExactlyOneNode(hasTestTag(UiTags.WITHDRAW) and isEnabled())
         composeRule.onNodeWithTag(UiTags.WITHDRAW).performScrollTo().performClick()
@@ -287,6 +292,7 @@ class CoreFlowTest {
         }
         assertTrue(session.snapshot.value.runtime.durableThroughCommit > commitsAtStop)
         assertSame("A stopped screen projected a commit", shownAtStop, viewModel.state.value)
+        assertPausedNotificationPosted()
 
         composeRule.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         val paused = composeRule.activity.getString(R.string.state_paused)
@@ -300,6 +306,47 @@ class CoreFlowTest {
     }
 
     private fun session() = (composeRule.activity.application as CollectorApplication).session
+
+    /** Reads Android's posted notification, including when the participant screen is stopped. */
+    private fun assertPausedNotificationPosted() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = context.getSystemService(NotificationManager::class.java)
+        composeRule.waitUntil(TIMEOUT_MILLIS) {
+            manager.activeNotifications.any { it.tag == AndroidRecoveryReporter.NOTIFICATION_TAG }
+        }
+        val posted = manager.activeNotifications.single { it.tag == AndroidRecoveryReporter.NOTIFICATION_TAG }
+        val notification = posted.notification
+        assertEquals(context.packageName, posted.packageName)
+        assertEquals(ParticepsNotificationChannels.RECOVERY, notification.channelId)
+        // Exact platform copy prevents the reminder from revealing treatment, package, or failure details.
+        assertEquals(
+            context.getString(R.string.collection_paused_notification_title),
+            notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
+        )
+        assertEquals(
+            context.getString(R.string.collection_paused_notification_body),
+            notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString(),
+        )
+        assertEquals(
+            context.getString(R.string.collection_paused_notification_body),
+            notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString(),
+        )
+        assertEquals(Notification.VISIBILITY_SECRET, notification.visibility)
+        assertTrue(notification.flags and Notification.FLAG_ONGOING_EVENT != 0)
+        assertFalse(notification.flags and Notification.FLAG_AUTO_CANCEL != 0)
+        assertNotNull("Paused reminder must open the participant app", notification.contentIntent)
+        assertTrue(notification.contentIntent.isActivity)
+        assertTrue(notification.contentIntent.isImmutable)
+        assertEquals(context.packageName, notification.contentIntent.creatorPackage)
+    }
+
+    private fun assertPausedNotificationCleared() {
+        val manager = InstrumentationRegistry.getInstrumentation().targetContext
+            .getSystemService(NotificationManager::class.java)
+        composeRule.waitUntil(TIMEOUT_MILLIS) {
+            manager.activeNotifications.none { it.tag == AndroidRecoveryReporter.NOTIFICATION_TAG }
+        }
+    }
 
     /** The Activity's own instance; the factory is never used because the instance already exists. */
     private fun viewModel(): StudyViewModel {

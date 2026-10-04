@@ -237,7 +237,7 @@
 
     <string name="access_notifications_settings_description">如果權限對話框已無法授權，或 Particeps 必要的通知類別被關閉，就必須從 Android 設定恢復。</string>
     <string name="access_notifications_settings_step_enable">開啟「允許通知」。</string>
-    <string name="access_notifications_settings_step_channels">保持「研究資料收集中」與「每日研究提醒」開啟；若本研究有排程活動，也請保持「研究活動」開啟。</string>
+    <string name="access_notifications_settings_step_channels">保持「研究資料收集中」、「每日研究提醒」與「研究恢復」開啟；若本研究有排程活動，也請保持「研究活動」開啟。</string>
     <string name="access_notifications_settings_step_return">返回 Particeps；App 會自動檢查權限與必要通知類別。</string>
 
     <string name="access_usage_access_description">Android 將 App 與網路使用情況視為特殊存取權，因此無法透過一般權限對話框啟用。</string>
@@ -313,6 +313,8 @@
     <string name="recovery_channel_description">安全恢復研究收集所需的重要處理通知。</string>
     <string name="recovery_notification_title">研究收集需要處理</string>
     <string name="recovery_notification_body">請開啟 Particeps 以安全恢復收集。</string>
+    <string name="collection_paused_notification_title">研究收集已暫停</string>
+    <string name="collection_paused_notification_body">研究資料的自動收集已暫停。請開啟 Particeps，確認研究狀態並在準備好時繼續。</string>
     <string name="recovery_panel_title">資料收集已安全暫停</string>
     <string name="recovery_panel_body">Particeps 無法完成自動恢復。請處理 Android 顯示的權限需求後再試一次。</string>
     <string name="action_retry_recovery">再次嘗試</string>

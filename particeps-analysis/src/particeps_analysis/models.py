@@ -16,6 +16,14 @@ class VerifiedEvents(Protocol):
     def close(self) -> None: ...
 
 
+class VerifiedCommits(Protocol):
+    """Reiterable authenticated commits with explicit temporary-storage ownership."""
+
+    def __iter__(self) -> Iterator[EngineCommit]: ...
+    def __len__(self) -> int: ...
+    def close(self) -> None: ...
+
+
 class PartitionedVerifiedEvents(VerifiedEvents, Protocol):
     def iter_partitioned(self) -> Iterator[VerifiedEvent]: ...
     def iter_boot_sessions(self) -> Iterator[BootSession]: ...
@@ -169,5 +177,5 @@ class VerifiedBundle:
     next_commit_sequence: int
     lifetime_data_event_count: int
     state: str
-    commits: tuple[EngineCommit, ...]
+    commits: VerifiedCommits
     source: InventoryObject

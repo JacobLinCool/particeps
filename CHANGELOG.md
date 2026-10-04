@@ -7,10 +7,19 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
-## Unreleased
+## v1.0.0-rc.14 — 2026-10-05
 
-Changes on top of `v1.0.0-rc.13` that no release build includes yet. Nothing below has a signed
-APK, a version code, or release-gate evidence.
+This release improves participant disclosure, collection recovery, and verification of five-day
+study exports. Physical-device admission checks and daily data return remain necessary; these
+changes do not establish a completed 120-hour physical-device endurance run.
+
+- Usage-event queries now check Usage Access and the unlocked-user state before and after each
+  query, including an empty barrier flush. Lost access fails the collector without advancing its
+  successful-query coverage, rather than recording an empty result as successful collection.
+- A paused study immediately posts a neutral, persistent reminder to open Particeps and check
+  its status. Resume or study removal clears it. Notification delivery blocked by permissions or
+  channel settings is retried during access reconciliation; it is not cached as delivered.
+  Recovery remains paused until the participant explicitly resumes.
 
 - Participants who have started a study get one **Study and my data** entry, identical in every
   study arm, on the collection panel and on the access panel shown while required access is
@@ -89,6 +98,17 @@ APK, a version code, or release-gate evidence.
 
 **Analysis tools (no app change):**
 
+- Authenticated bundle JSON, commit reassembly and replay now use streaming reads and private
+  SQLite staging rather than keeping the complete commit history in memory. The pipeline verifies
+  the whole participant chain before publishing Parquet, bounds individual commit and JSON tokens,
+  and removes temporary plaintext on handled failures. Metadata still grows with participants,
+  epochs and actions; this is not a constant-memory guarantee for every input.
+- Materialization retains successful usage-query coverage and hashes its quality summary in the
+  dataset manifest. The new `usage-report` command verifies that dataset and reports foreground
+  intervals, resumed events, censoring and coverage before, during and after the 12:00–17:00
+  reference window. Missing collection is not counted as zero use. Traffic receipts and snapshots
+  produce a separate report of applied limited, unlimited and unknown intervals; these intervals
+  are not evidence of achieved network speed or a causal treatment effect.
 - Before this change, no export from RC13 could be verified or analyzed, including the running
   five-day pilot's, with either RC13's or this tree's offline tools. Decryption succeeded and the
   files are intact, but verification stopped at commit 1. `researcher-tools decrypt` failed with
@@ -149,12 +169,12 @@ APK, a version code, or release-gate evidence.
   week includes barriers, pauses, a survey, process death, a reboot, clock changes, and the
   deadline stop. A change to the published pilot configuration now also runs the Android CI
   workflow, whose real-runtime test reads it.
-- The app needs no update. The runtime, event-source registry, bundle format, and reducer are
-  unchanged, and existing RC13 exports verify as they are. Keep the original `.partexp` files and
+- The RC13 export-verification correction itself needs no phone update. It does not require a
+  different event-source registry, bundle format, or reducer; existing RC13 exports verify as they are. Keep the original `.partexp` files and
   analyze them with this tree's `particeps-analysis` and `researcher-tools`. Keep the pilot phones
   on RC13 until the pilot ends: the fix is in the offline tools only.
 
-**Application update from `v1.0.0-rc.13`:** install a signed build of this tree over the existing
+**Application update from `v1.0.0-rc.13`:** install the signed RC14 APK over the existing
 app without uninstalling or clearing its data; it does not change the application ID.
 
 **Local studies and exported data:** there is no local-store migration, mandatory reset,
@@ -211,16 +231,20 @@ access checks, and explicitly Resume the study.
   re-armed and retired. One whose target passes while the study runs retries until the next pause
   under RC13; after the update it ends at its next attempt.
 
-**Fresh install:** install a signed build of this tree, then scan a research-team QR code or import
+**Fresh install:** install the signed RC14 APK, then scan a research-team QR code or import
 its signed study file. Review the study and data collection, provide consent, complete required
 access setup, and explicitly Start.
 
-**Verification so far:** on the working tree only, `./gradlew test testDebugUnitTest`,
-`./gradlew lintDebug assembleDebug`, the Kotlin protocol and automation-reducer conformance tests,
-the Web unit tests and type check, the `particeps-analysis` unit tests, and the app and storage
-instrumentation tests on an API 34 emulator passed locally. Six instrumentation tests that need the
-host harness or its local TCP test server were skipped. No release gate, API 37 lane, or
-physical-device measurement has run.
+**Pre-release verification:** local unit, lint, protocol and consumer checks passed. Android 14
+app, storage, usage-access and host-harness checks passed; the host harness's API 37-only permission
+case was inapplicable there. Android 17 compatibility, targeted app/usage checks and all 12 host
+scenarios passed locally, including local-network permission revocation. The signed RC14 candidate
+was installed and started on API 34 and API 37 (16 KiB). Its ordinary participant UI completed
+import, consent, Android access, Start and file export; the formal research key and the installed
+analysis wheel authenticated and materialized that export, and the known foreground-app interval
+matched the usage report. The complete installed-wheel suite passed 171 tests. These are emulator,
+deterministic-runtime and synthetic-data checks; a 120-hour physical-device study has not been
+completed. Publication additionally requires the release workflow's device and consumer gates.
 
 **Verification of the analysis-tool change:** on the working tree only,
 `./gradlew test testDebugUnitTest`, the Kotlin protocol and automation-reducer conformance tests,

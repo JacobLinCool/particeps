@@ -59,6 +59,7 @@ import cool.jacoblin.particeps.core.runtime.ActionOutboxNotifier
 import cool.jacoblin.particeps.core.runtime.RuntimeEntropyKind
 import cool.jacoblin.particeps.core.runtime.RuntimeEntropySource
 import cool.jacoblin.particeps.core.runtime.TimerWakeupAdapter
+import java.io.IOException
 import java.security.MessageDigest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -141,8 +142,21 @@ internal class InteropEntropy(private val deviceOrdinal: Int) : RuntimeEntropySo
 internal class InteropStudyStore : StudyStore {
     private var runtime: RuntimeDocument? = null
     private var pending: PendingEngineInput? = null
+    private var stopCommitsAfterPendingWrite = false
+    private var commitsInterrupted = false
     val commits = mutableListOf<EngineCommit>()
     val document: RuntimeDocument? get() = runtime
+
+    /** Crash boundary: accept the next durable pending batch, then refuse every commit write. */
+    fun interruptCommitsAfterNextPendingWrite() {
+        check(pending == null && !commitsInterrupted)
+        stopCommitsAfterPendingWrite = true
+    }
+
+    fun reopenAfterProcessDeath() {
+        check(commitsInterrupted && pending != null)
+        commitsInterrupted = false
+    }
 
     override suspend fun loadRuntime(observeRetained: (EngineCommit) -> Unit): RuntimeDocument? =
         runtime?.also { current ->
@@ -161,6 +175,10 @@ internal class InteropStudyStore : StudyStore {
     override suspend fun stagePendingInput(input: PendingEngineInput) {
         check(pending == null) { "A pending input is already staged" }
         pending = input
+        if (stopCommitsAfterPendingWrite) {
+            stopCommitsAfterPendingWrite = false
+            commitsInterrupted = true
+        }
     }
 
     override suspend fun replacePendingInput(expectedSha256: String, input: PendingEngineInput) {
@@ -171,12 +189,14 @@ internal class InteropStudyStore : StudyStore {
     override suspend fun loadPendingInput(): PendingEngineInput? = pending
 
     override suspend fun appendCommitConsumingPending(commit: EngineCommit, successor: RuntimeDocument) {
-        checkNotNull(pending) { "No pending input to consume" }
+        val staged = checkNotNull(pending) { "No pending input to consume" }
+        check(commit.consumedPendingInputSha256 == staged.encodedSha256) { "Pending input digest mismatch" }
         append(commit, successor)
         pending = null
     }
 
     private fun append(commit: EngineCommit, successor: RuntimeDocument) {
+        if (commitsInterrupted) throw IOException("Simulated process death after durable pending write")
         val current = checkNotNull(runtime) { "Append before initialize" }
         check(current.advance(commit) == successor) { "Successor does not equal runtime.advance(commit)" }
         commits += commit
