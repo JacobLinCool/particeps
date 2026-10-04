@@ -18,7 +18,6 @@ from tools.android_fixture_server import (
 )
 
 DURATION_SECONDS = 60
-CAP_KBPS = 512
 MAX_BARRIER_ACK_SECONDS = 1.0
 SENDER_LIMIT_SECONDS = 61.5
 
@@ -152,7 +151,9 @@ def connection_metrics(document: dict, role: str, *, complete_buckets: bool) -> 
     return ConnectionMetrics(role, 0, received_bytes=document["received_bytes"], bytes_by_second=by_second)
 
 
-def validate_duplex(host: dict, download: dict, measurement_id: str) -> dict[str, object]:
+def validate_duplex(host: dict, download: dict, measurement_id: str, cap_kbps: int) -> dict[str, object]:
+    if type(cap_kbps) is not int or cap_kbps not in (64, 512):
+        raise ValueError("Duplex cap must be explicitly 64 or 512 kbps")
     for document in (host, download):
         if (
             type(document.get("schema_version")) is not int or document.get("schema_version") != 1
@@ -186,7 +187,7 @@ def validate_duplex(host: dict, download: dict, measurement_id: str) -> dict[str
     upload = connection_metrics(host["upload"], "target", complete_buckets=False)
     received_download = connection_metrics(download, "target", complete_buckets=True)
     control = connection_metrics(host["control"], "control", complete_buckets=False)
-    lower, upper = throughput_bounds(CAP_KBPS, DURATION_SECONDS)
+    lower, upper = throughput_bounds(cap_kbps, DURATION_SECONDS)
     directions = {}
     reasons = []
     for direction, metrics in (("upload", upload), ("download", received_download)):
@@ -207,7 +208,7 @@ def validate_duplex(host: dict, download: dict, measurement_id: str) -> dict[str
         reasons.append("control_did_not_bypass")
     return {
         "kind": "duplex", "measurement_id": measurement_id, "duration_seconds": DURATION_SECONDS,
-        "cap_kbps": CAP_KBPS, "passed": not reasons, "directions": directions,
+        "cap_kbps": cap_kbps, "passed": not reasons, "directions": directions,
         "lower_bound_bytes": lower, "upper_bound_bytes": upper,
         "control_bytes": control.received_bytes, "control_passed": control_passed,
         "download_barrier_ack_seconds": ack, "maximum_barrier_ack_seconds": MAX_BARRIER_ACK_SECONDS,
@@ -228,6 +229,7 @@ def main() -> int:
     validate = sub.add_parser("validate")
     validate.add_argument("--host", required=True)
     validate.add_argument("--download", required=True)
+    validate.add_argument("--cap-kbps", type=int, choices=(64, 512), required=True)
     for command in (serve, validate):
         command.add_argument("--measurement-id", required=True)
         command.add_argument("--output", required=True)
@@ -235,9 +237,9 @@ def main() -> int:
     if args.command == "serve":
         return 0 if run_server(args) else 1
     try:
-        result = validate_duplex(json.loads(Path(args.host).read_text()), json.loads(Path(args.download).read_text()), args.measurement_id)
+        result = validate_duplex(json.loads(Path(args.host).read_text()), json.loads(Path(args.download).read_text()), args.measurement_id, args.cap_kbps)
     except (ValueError, KeyError, TypeError) as error:
-        result = {"kind": "duplex", "measurement_id": args.measurement_id, "passed": False,
+        result = {"kind": "duplex", "measurement_id": args.measurement_id, "cap_kbps": args.cap_kbps, "passed": False,
             "failure_reasons": [str(error)]}
     atomic_json(Path(args.output), result)
     return 0 if result["passed"] else 1

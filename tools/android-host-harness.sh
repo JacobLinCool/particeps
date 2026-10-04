@@ -6,6 +6,8 @@ cd "$repository_root"
 
 skip_build=false
 duplex_only=false
+duplex_cap_kbps=512
+duplex_cap_requested=false
 fixed_cap_kbps=0
 diagnostic_repetitions=0
 diagnostic_duration_seconds=60
@@ -15,6 +17,9 @@ while (( $# != 0 )); do
   case "$1" in
     --skip-build) skip_build=true; shift ;;
     --duplex-only) duplex_only=true; shift ;;
+    --duplex-cap-kbps)
+      [[ "$duplex_cap_requested" == false && ( "${2:-}" == 64 || "${2:-}" == 512 ) ]] || { echo "Choose one duplex cap: 64 or 512 kbps" >&2; exit 2; }
+      duplex_cap_kbps="$2"; duplex_cap_requested=true; shift 2 ;;
     --fixed-cap-kbps)
       [[ "${2:-}" == 64 || "${2:-}" == 512 || "${2:-}" == 4096 ]] || { echo "Expected 64, 512 or 4096 kbps" >&2; exit 2; }
       fixed_cap_kbps="$2"; shift 2 ;;
@@ -28,9 +33,13 @@ while (( $# != 0 )); do
       [[ "$diagnostics_mode" == auto ]] || { echo "Choose one diagnostics option" >&2; exit 2; }
       if [[ "$1" == --capture-throughput-diagnostics ]]; then diagnostics_mode=on; else diagnostics_mode=off; fi
       shift ;;
-    *) echo "usage: tools/android-host-harness.sh [--skip-build] [--duplex-only|--fixed-cap-kbps 64|512|4096 --repetitions 1..5 [--duration-seconds 60|300]] [--capture-throughput-diagnostics|--no-throughput-diagnostics]" >&2; exit 2 ;;
+    *) echo "usage: tools/android-host-harness.sh [--skip-build] [--duplex-only [--duplex-cap-kbps 64|512]|--fixed-cap-kbps 64|512|4096 --repetitions 1..5 [--duration-seconds 60|300]] [--capture-throughput-diagnostics|--no-throughput-diagnostics]" >&2; exit 2 ;;
   esac
 done
+if [[ "$duplex_cap_requested" == true && "$duplex_only" != true ]]; then
+  echo "--duplex-cap-kbps requires --duplex-only" >&2
+  exit 2
+fi
 if (( (fixed_cap_kbps == 0) != (diagnostic_repetitions == 0) )); then
   echo "--fixed-cap-kbps and --repetitions are required together" >&2
   exit 2
@@ -516,6 +525,7 @@ run_saturation_measurement() {
 }
 
 run_duplex_measurement() {
+  local cap_kbps="$1"
   local directory="$report_directory/duplex" identity ready result=0 server_result=0
   mkdir -p "$directory"
   identity="$(python3 -c 'import uuid; print(uuid.uuid4())')"
@@ -532,7 +542,7 @@ run_duplex_measurement() {
     python3 -m tools.android_host_diagnostics --adb "$adb_binary" --serial "$device_serial" monitor \
       --identity-file "$harness_temporary/particeps-process.json" \
       --traffic-mode duplex --maximum-seconds 120 \
-      --expected "$report_directory/applied-profiles/duplex-512-before.json" \
+      --expected "$report_directory/applied-profiles/duplex-$cap_kbps-before.json" \
       --output "$directory/diagnostics.ndjson" --stop-file "$diagnostics_stop" &
     diagnostics_pid="$!"
   fi
@@ -561,7 +571,7 @@ run_duplex_measurement() {
     "'for n in 1 2 3 4 5 6 7 8 9 10; do if [ -f files/duplex-download.json ]; then cat files/duplex-download.json; exit 0; fi; sleep 0.2; done; exit 1'" \
     > "$directory/android-download.json"
   python3 -m tools.android_duplex_fixture validate \
-    --measurement-id "$identity" --host "$directory/host.json" \
+    --measurement-id "$identity" --cap-kbps "$cap_kbps" --host "$directory/host.json" \
     --download "$directory/android-download.json" --output "$directory/result.json" || result=$?
   cat "$directory/result.json" >> "$metrics_file"
   if (( result != 0 || server_result != 0 )); then
@@ -675,20 +685,21 @@ case_three_profile_throughput_and_control_bypass() {
   done
 }
 
-case_duplex_fixed_512() {
-  local live_pid before after measurement_status
-  local envelope_asset="app/src/androidTest/assets/host_fixed_512_study_envelope.txt"
+case_duplex_fixed() {
+  local live_pid before after measurement_status profile_id cap_kbps="$duplex_cap_kbps"
+  local envelope_asset="app/src/androidTest/assets/host_fixed_${cap_kbps}_study_envelope.txt"
+  printf -v profile_id 'cap-%04d' "$cap_kbps"
   mkdir -p "$report_directory/applied-profiles"
   provision_running_study "$envelope_asset"
   live_pid="$(capture_live_particeps_pid)"
-  before="$report_directory/applied-profiles/duplex-512-before.json"
-  after="$report_directory/applied-profiles/duplex-512-after.json"
-  await_applied_profile cap-0512 "$live_pid" "$envelope_asset" "$before"
+  before="$report_directory/applied-profiles/duplex-$cap_kbps-before.json"
+  after="$report_directory/applied-profiles/duplex-$cap_kbps-after.json"
+  await_applied_profile "$profile_id" "$live_pid" "$envelope_asset" "$before"
   set +e
-  (trap case_cleanup EXIT; set -euo pipefail; run_duplex_measurement)
+  (trap case_cleanup EXIT; set -euo pipefail; run_duplex_measurement "$cap_kbps")
   measurement_status=$?
   set -e
-  await_applied_profile cap-0512 "$live_pid" "$envelope_asset" "$after"
+  await_applied_profile "$profile_id" "$live_pid" "$envelope_asset" "$after"
   python3 tools/android_host_profile.py compare --before "$before" --after "$after"
   (( measurement_status == 0 ))
   reset_study
@@ -903,7 +914,7 @@ run_case() {
 
 if [[ "$duplex_only" == true ]]; then
   prepare_fixed_diagnostic
-  run_case "simultaneous_512_upload_download_and_control_bypass" case_duplex_fixed_512
+  run_case "simultaneous_${duplex_cap_kbps}_upload_download_and_control_bypass" case_duplex_fixed
 elif (( diagnostic_repetitions > 0 )); then
   prepare_fixed_diagnostic
   for diagnostic_iteration in $(seq 1 "$diagnostic_repetitions"); do
@@ -916,7 +927,7 @@ run_case "all_apps_capped_tcp_round_trip" case_all_apps_tcp_round_trip
 run_case "fixture_inventory_protocol_attempts_and_shared_uid" case_fixture_inventory_and_protocols
 run_case "protocol_attempts_preserve_verified_vpn" case_protocol_matrix_through_verified_vpn
 run_case "aggregate_64_512_4096_kbps_and_control_bypass" case_three_profile_throughput_and_control_bypass
-run_case "simultaneous_512_upload_download_and_control_bypass" case_duplex_fixed_512
+run_case "simultaneous_512_upload_download_and_control_bypass" case_duplex_fixed
 run_case "dynamic_profiles_advance_verified_epochs_without_process_restart" case_dynamic_verified_profile_transitions
 run_case "process_kill_recovers_safety_paused" case_process_kill_recovery
 run_case "reboot_recovers_safety_paused" case_reboot_recovery

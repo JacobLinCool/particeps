@@ -127,6 +127,11 @@ class ProfileHarnessControlFlowTest(unittest.TestCase):
             (["--fixed-512-repetitions", "1"], None),
             (["--fixed-512-duration-seconds", "300"], None),
             (["--capture-throughput-diagnostics", "--no-throughput-diagnostics"], None),
+            (["--duplex-cap-kbps", "64"], None),
+            (["--duplex-cap-kbps", "512"], None),
+            (["--duplex-only", "--duplex-cap-kbps", "4096"], None),
+            (["--duplex-only", "--duplex-cap-kbps"], None),
+            (["--duplex-only", "--duplex-cap-kbps", "64", "--duplex-cap-kbps", "512"], None),
         ):
             with self.subTest(arguments=arguments):
                 result = subprocess.run(["bash", "-c", script, "harness", *arguments], capture_output=True, text=True)
@@ -135,6 +140,21 @@ class ProfileHarnessControlFlowTest(unittest.TestCase):
                 else:
                     self.assertEqual(0, result.returncode, result.stderr)
                     self.assertEqual(expected, result.stdout.strip())
+
+    def test_explicit_duplex_cap_is_confined_to_focused_lane(self) -> None:
+        source = (ROOT / "tools/android-host-harness.sh").read_text()
+        parse = source[source.index("skip_build=false"):source.index('adb_binary=')]
+        script = "set -euo pipefail\n" + parse + '\nprintf "%s|%s|%s\\n" "$duplex_cap_kbps" "$measurement_duration_seconds" "$capture_throughput_diagnostics"\n'
+        for arguments, expected in (
+            ([], "512|60|false"),
+            (["--duplex-only"], "512|60|false"),
+            (["--duplex-only", "--duplex-cap-kbps", "64"], "64|60|false"),
+            (["--duplex-only", "--duplex-cap-kbps", "512"], "512|60|false"),
+            (["--duplex-only", "--duplex-cap-kbps", "64", "--capture-throughput-diagnostics"], "64|60|true"),
+        ):
+            result = subprocess.run(["bash", "-c", script, "harness", *arguments], capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(expected, result.stdout.strip())
 
     def test_diagnostic_lane_requires_shared_uid_peer_removal_before_measurement(self) -> None:
         for success in (True, False):
@@ -214,26 +234,30 @@ await_applied_profile cap-0064 42 unused "$proof_file"
             self.assertFalse(proof.exists())
 
     def test_duplex_failure_keeps_after_proof_and_does_not_reset_before_evidence(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            script = "set -euo pipefail\n" + self.function("case_duplex_fixed_512") + """
-provision_running_study() { echo provision >> "$calls"; }
+        for cap in (64, 512):
+            with self.subTest(cap=cap), tempfile.TemporaryDirectory() as temporary:
+                script = f"set -euo pipefail\nduplex_cap_kbps={cap}\n" + self.function("case_duplex_fixed") + """
+provision_running_study() { echo "provision|$1" >> "$calls"; }
 capture_live_particeps_pid() { echo 42; }
-await_applied_profile() { echo proof >> "$calls"; }
+await_applied_profile() { echo "proof|$1|$2|$3|$4" >> "$calls"; }
 case_cleanup() { :; }
 run_duplex_measurement() {
-  echo measure >> "$calls"
+  echo "measure|$1" >> "$calls"
   false
   echo accidentally-ignored-errexit >> "$calls"
 }
 python3() { echo compare >> "$calls"; }
 reset_study() { echo reset >> "$calls"; }
-case_duplex_fixed_512
+case_duplex_fixed
 """
-            calls = Path(temporary) / "calls.txt"
-            result = subprocess.run(["bash", "-s"], input=script, text=True, capture_output=True,
-                env={**os.environ, "report_directory": temporary, "calls": str(calls)})
-            self.assertNotEqual(0, result.returncode)
-            self.assertEqual(["provision", "proof", "measure", "proof", "compare"], calls.read_text().splitlines())
+                calls = Path(temporary) / "calls.txt"
+                result = subprocess.run(["bash", "-s"], input=script, text=True, capture_output=True,
+                    env={**os.environ, "report_directory": temporary, "calls": str(calls)})
+                self.assertNotEqual(0, result.returncode)
+                asset = f"app/src/androidTest/assets/host_fixed_{cap}_study_envelope.txt"
+                proof = f"proof|cap-{cap:04d}|42|{asset}|{temporary}/applied-profiles/duplex-{cap}"
+                self.assertEqual([f"provision|{asset}", f"{proof}-before.json", f"measure|{cap}",
+                                  f"{proof}-after.json", "compare"], calls.read_text().splitlines())
 
 
 if __name__ == "__main__":

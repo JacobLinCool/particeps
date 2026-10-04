@@ -49,6 +49,12 @@ early sender stop, stale IDs, or truncated windows fail the case; a sender error
 normal deadline closure is expected and retained as a diagnostic. Applied-profile and process
 proofs bracket the transfer; by default it makes no periodic device queries. Run this case alone with
 `tools/android-host-harness.sh --skip-build --duplex-only`.
+For the same case at 64/64 kbps, add `--duplex-cap-kbps 64`; the cap option accepts only
+64 or 512 and requires `--duplex-only`. It selects the existing signed fixed-cap study and
+brackets the transfer with that profile's verified receipts. Both caps use the same 60-second
+window, 85–105% payload bounds (with the existing one-MTU upper allowance), control bypass,
+and at most five consecutive zero-payload seconds after the ten-second warmup. The default
+14-case release suite retains its 512/512 duplex case.
 
 `host-study.json` is the dynamic source fixture. Regenerate its signed asset and the three fixed
 variants with `./gradlew :researcher-tools:installDist` followed by

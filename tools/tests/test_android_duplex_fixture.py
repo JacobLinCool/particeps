@@ -2,6 +2,7 @@ import argparse
 import json
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -16,17 +17,17 @@ ROOT = Path(__file__).resolve().parents[2]
 IDENTITY = "6e45c574-6f83-4f13-9f89-9c087d54c9ca"
 
 
-def observation():
+def observation(cap_kbps=512):
     def connection(role, amount):
         return {"role": role, "index": 0, "received_bytes": amount * 60,
             "end_reason": "deadline", "error_errno": None,
             "bytes_by_second": [{"second": second, "bytes": amount} for second in range(60)]}
     shared = {"schema_version": 1, "measurement_id": IDENTITY, "duration_seconds": 60}
     host = {**shared, "completed": True, "download_barrier_ack_seconds": 0.2,
-        "upload": connection("target", 64_000), "control": connection("control", 100_000),
+        "upload": connection("target", cap_kbps * 1000 // 8), "control": connection("control", 100_000),
         "download_sender": {"socket_accepted_bytes": 9_000_000, "end_reason": "error",
             "error_errno": 32, "ended_host_seconds": 60.2}}
-    download = {**shared, **connection("target", 64_000), "direction": "download",
+    download = {**shared, **connection("target", cap_kbps * 1000 // 8), "direction": "download",
         "payload_valid": True, "error_type": None, "fixture_role": "target_b",
         "timing_basis": "android_elapsed_realtime_since_validated_barrier",
         "started_elapsed_realtime_nanos": 1_000_000_000,
@@ -37,11 +38,11 @@ def observation():
 class AndroidDuplexFixtureTest(unittest.TestCase):
     def test_only_receiver_payload_counts_decide_both_direction_bounds(self):
         host, download = observation()
-        result = duplex.validate_duplex(host, download, IDENTITY)
+        result = duplex.validate_duplex(host, download, IDENTITY, 512)
         self.assertTrue(result["passed"])
         self.assertEqual((3_264_000, 4_033_500), (result["lower_bound_bytes"], result["upper_bound_bytes"]))
         host["download_sender"]["socket_accepted_bytes"] = 0
-        self.assertEqual(result, duplex.validate_duplex(host, download, IDENTITY))
+        self.assertEqual(result, duplex.validate_duplex(host, download, IDENTITY, 512))
         for direction in ("upload", "download"):
             for amount in (50_000, 70_000):
                 host, download = observation()
@@ -49,28 +50,73 @@ class AndroidDuplexFixtureTest(unittest.TestCase):
                 for bucket in target["bytes_by_second"]:
                     bucket["bytes"] = amount
                 target["received_bytes"] = amount * 60
-                result = duplex.validate_duplex(host, download, IDENTITY)
+                result = duplex.validate_duplex(host, download, IDENTITY, 512)
                 self.assertFalse(result["passed"])
                 self.assertEqual([f"{direction}_outside_payload_bounds"], result["failure_reasons"])
 
     def test_each_direction_requires_progress_and_control_requires_bypass(self):
-        for direction in ("upload", "download"):
-            for gap, expected in ((5, True), (6, False)):
-                with self.subTest(direction=direction, gap=gap):
-                    host, download = observation()
-                    target = host["upload"] if direction == "upload" else download
-                    for second in range(20, 20 + gap):
-                        target["bytes_by_second"][second]["bytes"] = 0
-                        target["received_bytes"] -= 64_000
-                    result = duplex.validate_duplex(host, download, IDENTITY)
-                    self.assertTrue(result["directions"][direction]["rate_passed"])
-                    self.assertEqual(expected, result["passed"])
-                    self.assertEqual(gap, result["directions"][direction]["longest_zero_payload_seconds_after_warmup"])
+        for cap in (64, 512):
+            for direction in ("upload", "download"):
+                for gap, expected in ((5, True), (6, False)):
+                    with self.subTest(cap=cap, direction=direction, gap=gap):
+                        host, download = observation(cap)
+                        target = host["upload"] if direction == "upload" else download
+                        for second in range(20, 20 + gap):
+                            target["bytes_by_second"][second]["bytes"] = 0
+                            target["received_bytes"] -= cap * 1000 // 8
+                        result = duplex.validate_duplex(host, download, IDENTITY, cap)
+                        self.assertTrue(result["directions"][direction]["rate_passed"])
+                        self.assertEqual(expected, result["passed"])
+                        self.assertEqual(gap, result["directions"][direction]["longest_zero_payload_seconds_after_warmup"])
         host, download = observation()
         for bucket in host["control"]["bytes_by_second"]:
             bucket["bytes"] = 64_000
         host["control"]["received_bytes"] = 3_840_000
-        self.assertEqual(["control_did_not_bypass"], duplex.validate_duplex(host, download, IDENTITY)["failure_reasons"])
+        self.assertEqual(["control_did_not_bypass"], duplex.validate_duplex(host, download, IDENTITY, 512)["failure_reasons"])
+
+    def test_explicit_caps_use_same_exact_bounds_for_both_directions(self):
+        for cap, lower, upper in ((64, 408_000, 505_500), (512, 3_264_000, 4_033_500)):
+            for direction in ("upload", "download"):
+                for total, passed in ((lower - 1, False), (lower, True), (upper, True), (upper + 1, False)):
+                    with self.subTest(cap=cap, direction=direction, total=total):
+                        host, download = observation(cap)
+                        target = host["upload"] if direction == "upload" else download
+                        amount, remainder = divmod(total, 60)
+                        target["bytes_by_second"] = [
+                            {"second": second, "bytes": amount + (remainder if second == 59 else 0)}
+                            for second in range(60)
+                        ]
+                        target["received_bytes"] = total
+                        result = duplex.validate_duplex(host, download, IDENTITY, cap)
+                        self.assertEqual((lower, upper), (result["lower_bound_bytes"], result["upper_bound_bytes"]))
+                        self.assertEqual(cap, result["cap_kbps"])
+                        self.assertEqual(passed, result["passed"])
+            host, download = observation(cap)
+            amount, remainder = divmod(upper, 60)
+            host["control"]["received_bytes"] = upper
+            host["control"]["bytes_by_second"] = [
+                {"second": second, "bytes": amount + (remainder if second == 59 else 0)} for second in range(60)
+            ]
+            self.assertEqual(["control_did_not_bypass"], duplex.validate_duplex(host, download, IDENTITY, cap)["failure_reasons"])
+        for invalid in (0, 65, 4096, True, 64.0):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "Duplex cap"):
+                duplex.validate_duplex(*observation(), IDENTITY, invalid)
+
+    def test_validator_cli_requires_explicit_supported_cap(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            host, download = observation(64)
+            (directory / "host.json").write_text(json.dumps(host))
+            (directory / "download.json").write_text(json.dumps(download))
+            command = [sys.executable, "-m", "tools.android_duplex_fixture", "validate",
+                       "--measurement-id", IDENTITY, "--host", str(directory / "host.json"),
+                       "--download", str(directory / "download.json"), "--output", str(directory / "result.json")]
+            for arguments, status in (([], 2), (["--cap-kbps", "4096"], 2), (["--cap-kbps", "64"], 0)):
+                result = subprocess.run(command + arguments, cwd=ROOT, capture_output=True, text=True)
+                self.assertEqual(status, result.returncode, result.stderr)
+            result = json.loads((directory / "result.json").read_text())
+            self.assertEqual(64, result["cap_kbps"])
+            self.assertTrue(result["passed"])
 
     def test_host_deadline_tail_cannot_satisfy_upload_floor_or_control_bypass(self):
         for role, total, reason in (
@@ -85,7 +131,7 @@ class AndroidDuplexFixtureTest(unittest.TestCase):
             ] + [{"second": 60, "bytes": 1_500}]
             host[role]["received_bytes"] = total + 1_500
             with self.assertRaisesRegex(ValueError, "Invalid bounded receive buckets"):
-                duplex.validate_duplex(host, download, IDENTITY)
+                duplex.validate_duplex(host, download, IDENTITY, 512)
 
     def test_stale_malformed_incomplete_or_corrupt_receiver_evidence_is_rejected(self):
         mutations = (
@@ -113,7 +159,7 @@ class AndroidDuplexFixtureTest(unittest.TestCase):
             host, download = observation()
             mutate(host, download)
             with self.subTest(mutate=mutate), self.assertRaises(ValueError):
-                duplex.validate_duplex(host, download, IDENTITY)
+                duplex.validate_duplex(host, download, IDENTITY, 512)
 
     def test_protocol_frame_requires_exact_identity_and_nonempty_complete_read(self):
         reader = Mock()
