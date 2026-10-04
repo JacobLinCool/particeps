@@ -577,7 +577,12 @@ wait_for_boot() {
   "$adb_binary" wait-for-device
   for _ in $(seq 1 90); do
     boot_completed="$($adb_binary shell getprop sys.boot_completed | tr -d '\r')"
-    user_state="$($adb_binary shell am get-started-user-state 0 | tr -d '\r')"
+    # ADB and getprop are available before ActivityManager registers its service.
+    # Query its user state only after Android has published boot completion.
+    user_state="NOT_QUERIED"
+    if [[ "$boot_completed" == "1" ]]; then
+      user_state="$($adb_binary shell am get-started-user-state 0 | tr -d '\r')"
+    fi
     printf 'boot_completed=%s user_0=%s\n' "$boot_completed" "$user_state" >> "$report_directory/reboot-readiness.txt"
     if [[ "$boot_completed" == "1" && "$user_state" == "RUNNING_UNLOCKED" ]]; then
       ready_samples=$((ready_samples + 1))

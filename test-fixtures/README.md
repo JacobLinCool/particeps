@@ -114,7 +114,9 @@ The report also retains every instrumentation invocation's combined output and, 
 bounded `dumpsys activity lastanr` and `lastanr-traces` reads. Missing, empty or failed diagnostic
 reads do not establish the absence of an ANR and never change the scenario result. After reboot,
 the harness requires two consecutive boot-complete and user-0 `RUNNING_UNLOCKED` observations
-before instrumenting the App; this readiness check does not waive application startup failures.
+before instrumenting the App. It queries ActivityManager only after boot completion, since ADB
+becomes available before that service; later command errors still fail the gate. This readiness
+check does not waive application startup failures.
 
 For a bounded diagnostic run, `tools/android-host-harness.sh --skip-build --fixed-cap-kbps 512 --repetitions 5`
 records all five independent 60-second attempts with the same throughput bounds and enables sampling.

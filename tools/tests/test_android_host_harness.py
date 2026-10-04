@@ -95,6 +95,7 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
         declaration = "wait_for_boot() {"
         body = harness.split(declaration, 1)[1].split("\n}", 1)[0]
         for states, expected in (
+            ([('0', 'SERVICE_NOT_READY'), ('1', 'RUNNING_UNLOCKED'), ('1', 'RUNNING_UNLOCKED')], 0),
             ([('1', 'RUNNING_LOCKED'), ('1', 'RUNNING_UNLOCKED'), ('1', 'RUNNING_UNLOCKED')], 0),
             ([('1', 'RUNNING_UNLOCKED'), ('0', 'RUNNING_UNLOCKED'), ('1', 'RUNNING_UNLOCKED')], 1),
             ([('1', 'RUNNING_LOCKED')] * 3, 1),
@@ -110,9 +111,12 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
                     'p=pathlib.Path(os.environ["FAKE_STATES"]); states=json.loads(p.read_text())\n'
                     'i=p.with_suffix(".index"); n=int(i.read_text()) if i.exists() else 0\n'
                     'if sys.argv[1:]==["wait-for-device"]: pass\n'
-                    'elif sys.argv[1:]==["shell","getprop","sys.boot_completed"]: print(states[n][0])\n'
+                    'elif sys.argv[1:]==["shell","getprop","sys.boot_completed"]:\n'
+                    ' print(states[n][0]); i.write_text(str(n+1))\n'
                     'elif sys.argv[1:]==["shell","am","get-started-user-state","0"]:\n'
-                    ' print(states[n][1]); i.write_text(str(n+1))\n'
+                    ' if states[n-1][0]!="1": raise SystemExit("activity service is not registered")\n'
+                    ' print(states[n-1][1])\n'
+                    ' with p.with_suffix(".queries").open("a") as out: out.write(str(n-1)+"\\n")\n'
                     'else: raise SystemExit(2)\n'
                 )
                 adb.chmod(0o755)
@@ -124,6 +128,29 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
                     env={**os.environ, 'adb_binary': str(adb), 'report_directory': temporary, 'FAKE_STATES': str(fixture)})
                 self.assertEqual(expected, result.returncode, result.stderr)
                 self.assertEqual(3, len((directory / 'reboot-readiness.txt').read_text().splitlines()))
+                self.assertEqual([str(i) for i, state in enumerate(states) if state[0] == '1'],
+                                 fixture.with_suffix('.queries').read_text().splitlines())
+
+    def test_reboot_does_not_swallow_activity_errors_after_boot_completed(self) -> None:
+        harness = (ROOT / "tools/android-host-harness.sh").read_text()
+        declaration = "wait_for_boot() {"
+        body = harness.split(declaration, 1)[1].split("\n}", 1)[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            adb = Path(temporary) / 'adb'
+            adb.write_text(
+                '#!/usr/bin/env bash\n'
+                'case "$*" in\n'
+                ' wait-for-device) exit 0;;\n'
+                ' "shell getprop sys.boot_completed") echo 1;;\n'
+                ' "shell am get-started-user-state 0") echo "unexpected activity failure" >&2; exit 23;;\n'
+                ' *) exit 2;;\nesac\n'
+            )
+            adb.chmod(0o755)
+            result = subprocess.run(['bash', '-s'], input=f'set -euo pipefail\n{declaration}{body}\n}}\nwait_for_boot\n',
+                text=True, capture_output=True, env={**os.environ, 'adb_binary': str(adb), 'report_directory': temporary})
+            self.assertEqual(23, result.returncode)
+            self.assertIn('unexpected activity failure', result.stderr)
+            self.assertFalse((Path(temporary) / 'reboot-readiness.txt').exists())
 
     def run_api37_classifier(
         self,
