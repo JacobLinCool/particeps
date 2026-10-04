@@ -101,15 +101,17 @@ func newEngine(tunFD int, mtu int, protector Protector, listener TerminalListene
 		suspended: true,
 	}
 	state.shaped = &shapedTun{
-		ctx:      ctx,
-		device:   owned,
-		mtu:      mtu,
-		uplink:   state.uplink,
-		downlink: state.downlink,
-		counters: state.counters,
-		gate:     &state.gate,
-		fail:     state.failTerminal,
-		stopping: func() bool { return state.stopping.Load() },
+		ctx:        ctx,
+		device:     owned,
+		mtu:        mtu,
+		uplink:     state.uplink,
+		downlink:   state.downlink,
+		counters:   state.counters,
+		gate:       &state.gate,
+		fail:       state.failTerminal,
+		stopping:   func() bool { return state.stopping.Load() },
+		queue:      newUplinkPacketQueue(clock),
+		readerDone: make(chan struct{}),
 	}
 	success = true
 	return &mobileEngine{state: state}, nil
@@ -143,6 +145,7 @@ func (e *engineState) applyProfile(canonicalProfile []byte) (_ *ProfileReceipt, 
 	e.generation++
 	e.uplink.apply(profile.uplinkKbps)
 	e.downlink.apply(profile.downlinkKbps)
+	e.shaped.queue.apply(profile.uplinkKbps != nil)
 	e.counters.reset()
 	e.profile = profile
 	return receiptFor(profile, e.generation), nil
@@ -160,11 +163,13 @@ func (e *engineState) start() (err error) {
 		if recover() != nil {
 			e.startFailed()
 			cleanupNetworkStack(endpoint, networkStack, forwarder, tcpForwarder)
+			e.shaped.waitReader()
 			err = errNativeStack
 			return
 		}
 		if !committed && (endpoint != nil || networkStack != nil || forwarder != nil || tcpForwarder != nil) {
 			cleanupNetworkStack(endpoint, networkStack, forwarder, tcpForwarder)
+			e.shaped.waitReader()
 		}
 	}()
 
@@ -272,6 +277,7 @@ func (e *engineState) suspend() (err error) {
 	e.mu.Unlock()
 	e.uplink.suspend()
 	e.downlink.suspend()
+	e.shaped.queue.pause()
 	e.gate.Lock()
 	e.gate.Unlock()
 	e.mu.Lock()
@@ -321,6 +327,7 @@ func (e *engineState) resume() (err error) {
 		e.uplink.suspend()
 		return errEngineTerminal
 	}
+	e.shaped.queue.resume()
 	e.suspended = false
 	return nil
 }
@@ -354,8 +361,10 @@ func (e *engineState) stop() {
 	e.cancel()
 	e.uplink.close()
 	e.downlink.close()
+	e.shaped.queue.close(errEngineStopped)
 	_ = e.tun.Close()
 	cleanupNetworkStack(endpoint, networkStack, forwarder, tcpForwarder)
+	e.shaped.waitReader()
 }
 
 func (e *engineState) failTerminal(code string) {
@@ -372,6 +381,7 @@ func (e *engineState) failTerminal(code string) {
 	e.cancel()
 	e.uplink.close()
 	e.downlink.close()
+	e.shaped.queue.close(errEngineTerminal)
 	_ = e.tun.Close()
 	notifyTerminal(listener, code)
 }

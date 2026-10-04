@@ -28,25 +28,39 @@ and wake the runtime; it must not call back into the engine.
 
 ## Shaping semantics
 
-- TUN read/write is the aggregate Layer-3 accounting, shaping, and resource-
-  barrier boundary. TUN read is uplink and TUN write is downlink. Rate credit
-  is consumed before the packet crosses that boundary, so the traffic counted
-  by the audit contract is exactly the traffic subject to the cap.
+- Delivery from the uplink queue into the network stack, and successful TUN
+  writes on downlink, are the aggregate Layer-3 accounting, shaping, and
+  resource-barrier boundaries. Rate credit is consumed before delivery, so
+  audit counters contain exactly the packets admitted under the cap.
 - `1 kbps` is 1,000 aggregate Layer-3 bits per second, including IP and
-  transport headers and any retransmitted packets observed at the TUN.
+  transport headers and admitted retransmitted packets.
 - Each direction owns one token bucket with capacity
   `max(1500 bytes, floor(rate * 2 s / 8))`. The two-second initial credit is
   large enough for TCP's initial congestion window at the minimum supported
   rate while keeping a saturated 60-second interval below the protocol's 105%
   upper bound.
 - A new profile starts with one full bucket and inherits no prior credit.
-- Suspension and profile replacement interrupt waits. At most the one packet
-  held by the synchronous TUN call waits for admission and is reconsidered
-  under the newest profile; Particeps creates no additional packet queue and
-  does not deliberately drop a packet.
+- One uplink reader drains the kernel TUN independently from paced delivery.
+  Its aggregate FIFO has 128 fixed 1500-byte slots and a separate 64 KiB
+  payload-occupancy limit, plus at most one packet held by each of the reader
+  and consumer. It does not classify flows or retain packet identities.
+- Limited uplink profiles use RFC 8289 CoDel (5 ms target, 100 ms interval)
+  and tail drop at the hard capacity limit. CoDel suppresses drops when at
+  most one MTU remains queued, preserving utilization at low rates. Discarded
+  packets consume no credit and enter no successful-delivery audit counters.
+  TCP and UDP share this policy; no loss, latency, or per-flow fairness
+  guarantee is made. Queue-drop diagnostics remain process-local aggregates.
+- Unlimited uplink profiles use bounded FIFO backpressure without CoDel or
+  capacity drops. A mode change wakes a producer waiting for queue capacity.
+- Suspension and profile replacement interrupt waits. Queued and held packets
+  remain bounded and must obtain the current profile's permit before delivery.
+  Suspension blocks queue admission and delivery, excludes paused time from
+  sojourn measurements, and resets CoDel's congestion history. Profile changes
+  also reset that history. Stop closes the descriptor and queue, then joins
+  the single reader; terminal failures close forwarding admission immediately.
 
 The direct proxy is intentionally thin: it opens raw TCP/UDP sockets and
-synchronously protects each descriptor. Shaping remains at the TUN boundary,
+synchronously protects each descriptor. Shaping remains at the Layer-3 boundary,
 with the pinned tun2socks/gVisor stack handling IP and transport packets.
 
 TCP forwarding connects the protected upstream socket before acknowledging

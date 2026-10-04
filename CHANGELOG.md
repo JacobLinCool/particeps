@@ -7,15 +7,28 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
-## v1.0.0-rc.15 — 2026-10-05
+## v1.0.0-rc.16 — Unreleased
 
-This release improves participant disclosure, collection recovery, and verification of five-day
-study exports. Physical-device admission checks and daily data return remain necessary; these
-changes do not establish a completed 120-hour physical-device endurance run.
+This queued release improves participant disclosure, collection recovery, and verification of
+five-day study exports. Physical-device admission checks and daily data return remain necessary;
+these changes do not establish a completed 120-hour physical-device endurance run.
 
-The RC14 tag did not produce a public release because its CI gates failed. RC15 is the next
-distributed release after RC13.
+The RC14 and RC15 tags did not produce public releases because their CI gates failed. RC16 is
+the queued candidate after RC13 and has not yet been published.
 
+- Limited uplink traffic now drains Android's TUN into one bounded aggregate queue before
+  paced Layer-3 admission. Previously, waiting for rate credit stopped TUN reads; sustained
+  transfers filled the kernel queue, lost packets and stalled TCP delivery during retransmission,
+  even when their 60-second average passed the rate check. The new queue uses CoDel and a hard
+  128-packet / 64 KiB payload limit. Congestion can discard TCP or UDP packets before admission;
+  counters still include only admitted packets, including admitted retransmissions. Unlimited
+  profiles use queue backpressure without these drops. Suspension, profile replacement and
+  shutdown retain the existing admission fence, and queued packets use the current profile
+  when delivered. This is an aggregate FIFO, not per-flow fairness or a lossless-network promise.
+- Emulator throughput diagnostics can explicitly sample native counters, fixture write progress
+  and kernel drop/retransmission counters, or run a bounded 300-second stress interval. Routine
+  release gates retain their 60-second duration and original rate bounds, without periodic
+  foreground diagnostic broadcasts changing the app's process priority.
 - Usage-event queries now check Usage Access and the unlocked-user state before and after each
   query, including an empty barrier flush. Lost access fails the collector without advancing its
   successful-query coverage, rather than recording an empty result as successful collection.
@@ -177,7 +190,7 @@ distributed release after RC13.
   analyze them with this tree's `particeps-analysis` and `researcher-tools`. Keep the pilot phones
   on RC13 until the pilot ends: the fix is in the offline tools only.
 
-**Application update from `v1.0.0-rc.13`:** install the signed RC15 APK over the existing
+**Application update from `v1.0.0-rc.13`:** install the signed RC16 APK over the existing
 app without uninstalling or clearing its data; it does not change the application ID.
 
 **Local studies and exported data:** there is no local-store migration, mandatory reset,
@@ -234,7 +247,7 @@ access checks, and explicitly Resume the study.
   re-armed and retired. One whose target passes while the study runs retries until the next pause
   under RC13; after the update it ends at its next attempt.
 
-**Fresh install:** install the signed RC15 APK, then scan a research-team QR code or import
+**Fresh install:** install the signed RC16 APK, then scan a research-team QR code or import
 its signed study file. Review the study and data collection, provide consent, complete required
 access setup, and explicitly Start.
 

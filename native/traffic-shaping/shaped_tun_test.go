@@ -15,13 +15,18 @@ type memoryTun struct {
 	written    bytes.Buffer
 	closed     int
 	readErr    error
+	closedCh   chan struct{}
 }
 
 func (tun *memoryTun) Read(target []byte) (int, error) {
 	if tun.readErr != nil {
 		return 0, tun.readErr
 	}
-	return tun.readBuffer.Read(target)
+	n, err := tun.readBuffer.Read(target)
+	if err == io.EOF && tun.closedCh != nil {
+		<-tun.closedCh
+	}
+	return n, err
 }
 
 func (tun *memoryTun) Write(source []byte) (int, error) {
@@ -33,13 +38,16 @@ func (tun *memoryTun) Write(source []byte) (int, error) {
 func (tun *memoryTun) Close() error {
 	tun.mu.Lock()
 	tun.closed++
+	if tun.closedCh != nil {
+		close(tun.closedCh)
+	}
 	tun.mu.Unlock()
 	return nil
 }
 
 func TestShapedTunCountsOnlyAggregateSuccessfulPackets(t *testing.T) {
 	payload := make([]byte, 128)
-	memory := &memoryTun{readBuffer: bytes.NewReader(payload)}
+	memory := &memoryTun{readBuffer: bytes.NewReader(payload), closedCh: make(chan struct{})}
 	owned := &ownedTun{device: memory}
 	clock := newFakeClock()
 	waiter := &advancingWaiter{clock: clock}
@@ -55,8 +63,12 @@ func TestShapedTunCountsOnlyAggregateSuccessfulPackets(t *testing.T) {
 	}
 	counters := &aggregateCounters{}
 	var gate sync.RWMutex
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	queue := newUplinkPacketQueue(clock)
+	queue.resume()
 	device := &shapedTun{
-		ctx:      context.Background(),
+		ctx:      ctx,
 		device:   owned,
 		mtu:      protocolMTU,
 		uplink:   uplink,
@@ -65,6 +77,7 @@ func TestShapedTunCountsOnlyAggregateSuccessfulPackets(t *testing.T) {
 		gate:     &gate,
 		fail:     func(code string) { t.Fatalf("unexpected terminal failure %s", code) },
 		stopping: func() bool { return false },
+		queue:    queue, readerDone: make(chan struct{}),
 	}
 	readTarget := make([]byte, protocolMTU)
 	read, err := device.Read(readTarget)
@@ -81,9 +94,11 @@ func TestShapedTunCountsOnlyAggregateSuccessfulPackets(t *testing.T) {
 	if counters.downlinkBytes.Load() != 128 || counters.downlinkPackets.Load() != 1 {
 		t.Fatal("downlink counters are not aggregate TUN counters")
 	}
+	cancel()
 	if err := owned.Close(); err != nil {
 		t.Fatal(err)
 	}
+	device.waitReader()
 	if err := owned.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -110,13 +125,16 @@ func TestShapedTunReportsNonSensitiveTerminalCodeOnceAtEngineBoundary(t *testing
 		ctx: context.Background(), device: owned, mtu: protocolMTU,
 		uplink: uplink, downlink: downlink, counters: &aggregateCounters{}, gate: &gate,
 		fail: func(code string) { failures <- code }, stopping: func() bool { return false },
+		queue: newUplinkPacketQueue(clock), readerDone: make(chan struct{}),
 	}
+	device.queue.resume()
 	if _, err := device.Read(make([]byte, protocolMTU)); !errors.Is(err, io.EOF) {
 		t.Fatalf("read error = %v", err)
 	}
 	if code := <-failures; code != TerminalTunEOF {
 		t.Fatalf("terminal code = %q", code)
 	}
+	device.waitReader()
 }
 
 func TestShapedTunRejectsConcurrentDirectionIOInsteadOfQueueing(t *testing.T) {
