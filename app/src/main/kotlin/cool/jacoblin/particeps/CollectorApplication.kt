@@ -3,6 +3,7 @@ package cool.jacoblin.particeps
 import android.app.Application
 import android.os.SystemClock
 import android.util.Log
+import androidx.work.Configuration
 import cool.jacoblin.particeps.actuator.trafficshaping.TrafficShapingActuator
 import cool.jacoblin.particeps.collector.accelerometer.AccelerometerCollectorPlugin
 import cool.jacoblin.particeps.collector.ambientlight.AmbientLightCollectorPlugin
@@ -60,8 +61,13 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
-class CollectorApplication : Application() {
+class CollectorApplication : Application(), Configuration.Provider {
     internal val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    // WorkManager opens its database on first use, outside the process-bind startup path.
+    // Runtime timer/action/upload work remains responsible for requesting durable scheduling.
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder().build()
 
     lateinit var session: StudySessionManager
         private set

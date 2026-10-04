@@ -278,7 +278,7 @@ class AndroidTimerWakeupAdapter(
 /** A committed action ID is the sole WorkManager input and idempotency key. */
 class AndroidActionOutboxNotifier(context: Context) : ActionOutboxNotifier {
     private val applicationContext = context.applicationContext
-    private val workManager = WorkManager.getInstance(applicationContext)
+    private val workManager by lazy { WorkManager.getInstance(applicationContext) }
     private val notifications = applicationContext.getSystemService(NotificationManager::class.java)
     private val visibleActions = SerializedActionDisplayGate()
 
@@ -374,7 +374,8 @@ class AndroidStudyUploadPlatform(
     context: Context,
     private val uploader: OkHttpStudyUploader,
 ) : StudyUploadCoordinator, StudyUploadScheduler {
-    private val workManager = WorkManager.getInstance(context.applicationContext)
+    private val applicationContext = context.applicationContext
+    private val workManager by lazy { WorkManager.getInstance(applicationContext) }
     private val mutex = Mutex()
     private val plans = mutableMapOf<String, StudyUploadPlan>()
 
