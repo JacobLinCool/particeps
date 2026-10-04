@@ -21,15 +21,18 @@ the queued candidate after RC13 and has not yet been published.
   retired only after recovery succeeds. Invalid bases, authenticated conflicting documents, damaged
   retained commits and pending-input failures still stop recovery; process recovery remains paused
   until the participant explicitly resumes.
-- Limited uplink traffic now drains Android's TUN into bounded flow queues before
-  paced Layer-3 admission. Previously, waiting for rate credit stopped TUN reads; sustained
+- Limited traffic uses separate bounded flow queues in both directions before
+  paced Layer-3 admission. Previously, waiting for uplink credit stopped TUN reads; sustained
   transfers filled the kernel queue, lost packets and stalled TCP delivery during retransmission,
-  even when their 60-second average passed the rate check. FQ-CoDel shares a hard 128-packet /
-  64 KiB payload limit across 1024 fixed hash buckets, with byte-deficit scheduling and a
-  congestion target that accommodates an MTU at low rates. Classification keys are temporary;
+  even when their 60-second average passed the rate check. The former downlink FIFO also let
+  download data delay upload acknowledgements and reduce simultaneous upload throughput.
+  In each direction, FQ-CoDel shares a hard 128-packet / 64 KiB payload limit across 1024 fixed hash
+  buckets, with byte-deficit scheduling and a congestion target that accommodates an MTU at
+  low rates. The reaction interval remains 100 ms. Classification keys are temporary;
   no separate flow identities or hashes are recorded or exported. Congestion can discard TCP
   or UDP packets before admission;
-  counters still include only admitted packets, including admitted retransmissions. Unlimited
+  counters still include only admitted packets, including admitted retransmissions; downlink
+  admission requires a successful TUN write. Unlimited
   profiles use queue backpressure without these drops. Suspension, profile replacement and
   shutdown retain the existing admission fence, and queued packets use the current profile
   when delivered. Hash collisions and fragmented or opaque traffic can share a bucket;

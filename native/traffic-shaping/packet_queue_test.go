@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-func readyUplinkQueue(limited bool) (*uplinkPacketQueue, *fakeClock) {
+func readyUplinkQueue(limited bool) (*packetQueue, *fakeClock) {
 	clock := newFakeClock()
-	queue := newUplinkPacketQueue(clock)
+	queue := newPacketQueue(clock)
 	var rate *uint64
 	if limited {
 		rate = queueTestRate(4096)
@@ -22,7 +22,7 @@ func readyUplinkQueue(limited bool) (*uplinkPacketQueue, *fakeClock) {
 	return queue, clock
 }
 
-func putQueuePacket(t *testing.T, queue *uplinkPacketQueue, size int, id byte) {
+func putQueuePacket(t *testing.T, queue *packetQueue, size int, id byte) {
 	t.Helper()
 	packet := queueTestPacket(size, id, 1)
 	if err := queue.enqueue(context.Background(), packet); err != nil {
@@ -30,7 +30,7 @@ func putQueuePacket(t *testing.T, queue *uplinkPacketQueue, size int, id byte) {
 	}
 }
 
-func takeQueuePacket(t *testing.T, queue *uplinkPacketQueue) queuedUplinkPacket {
+func takeQueuePacket(t *testing.T, queue *packetQueue) queuedPacket {
 	t.Helper()
 	packet, err := queue.dequeue(context.Background())
 	if err != nil {
@@ -57,7 +57,7 @@ func TestUplinkQueueEnforcesBothBoundsAcrossConcurrentSources(t *testing.T) {
 		}
 		senders.Wait()
 		stats := queue.snapshot()
-		want := min(uplinkQueueMaxPackets, uplinkQueueMaxBytes/size)
+		want := min(packetQueueMaxPackets, packetQueueMaxBytes/size)
 		if stats.queuedPackets <= 0 || stats.queuedPackets > want || stats.queuedBytes != stats.queuedPackets*size ||
 			stats.capacityDropPackets != uint64(200-stats.queuedPackets) || stats.codelDropPackets != 0 {
 			t.Fatalf("size %d: aggregate bounds/accounting = %+v", size, stats)
@@ -86,7 +86,7 @@ func TestUplinkQueueOwnsPacketBytesAndPreservesFIFOWithoutCongestion(t *testing.
 
 func TestUnlimitedQueueBackpressureWakesOnCapacityAndLimitedProfile(t *testing.T) {
 	queue, _ := readyUplinkQueue(false)
-	for i := range uplinkQueueMaxPackets {
+	for i := range packetQueueMaxPackets {
 		putQueuePacket(t, queue, 64, byte(i))
 	}
 	result := make(chan error, 1)
@@ -105,7 +105,7 @@ func TestUnlimitedQueueBackpressureWakesOnCapacityAndLimitedProfile(t *testing.T
 	if err := awaitQueueResult(t, result); err != nil {
 		t.Fatal(err)
 	}
-	if stats := queue.snapshot(); stats.capacityDropPackets == 0 || stats.queuedPackets+int(stats.capacityDropPackets) != uplinkQueueMaxPackets+1 {
+	if stats := queue.snapshot(); stats.capacityDropPackets == 0 || stats.queuedPackets+int(stats.capacityDropPackets) != packetQueueMaxPackets+1 {
 		t.Fatalf("profile switch did not wake the full queue producer: %+v", stats)
 	}
 }
@@ -227,7 +227,7 @@ func TestQueueCloseWakesEmptyConsumerAndFullUnlimitedProducer(t *testing.T) {
 		queue, _ := readyUplinkQueue(false)
 		result := make(chan error, 1)
 		if full {
-			for range uplinkQueueMaxPackets {
+			for range packetQueueMaxPackets {
 				putQueuePacket(t, queue, 64, 0)
 			}
 			go func() { result <- queue.enqueue(context.Background(), queueTestPacket(64, 1, 1)) }()
@@ -280,10 +280,10 @@ func queueTestPacket(size int, id byte, flow uint16) []byte {
 	return packet
 }
 
-func queueTestBucket(q *uplinkPacketQueue, packet []byte) int {
-	key, err := classifyUplinkPacket(packet)
+func queueTestBucket(q *packetQueue, packet []byte) int {
+	key, err := classifyPacketFlow(packet)
 	if err != nil {
 		panic(err)
 	}
-	return int(maphash.Bytes(q.seed, key[:]) % uplinkFlowBuckets)
+	return int(maphash.Bytes(q.seed, key[:]) % flowBuckets)
 }

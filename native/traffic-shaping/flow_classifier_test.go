@@ -17,7 +17,7 @@ func ipv6ClassifierPacket(next byte, payload []byte) []byte {
 
 func classifierKey(t *testing.T, packet []byte) flowKey {
 	t.Helper()
-	key, err := classifyUplinkPacket(packet)
+	key, err := classifyPacketFlow(packet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestClassifierAcceptsOpaqueLegalProtocolsWithoutInspectingPayload(t *testin
 		}
 		v4 := queueTestPacket(64, 0, 1)
 		v4[9] = protocol
-		if _, err := classifyUplinkPacket(v4); err != nil {
+		if _, err := classifyPacketFlow(v4); err != nil {
 			t.Fatal("legal IPv4 opaque protocol rejected")
 		}
 	}
@@ -109,7 +109,7 @@ func TestClassifierRejectsTruncationAndNeverReadsBeyondDeclaredLength(t *testing
 		ipv6ClassifierPacket(0, []byte{59, 0, 0, 0, 0, 0, 0, 0})}
 	for _, packet := range valid {
 		for n := 0; n < len(packet); n++ {
-			if _, err := classifyUplinkPacket(packet[:n]); err == nil {
+			if _, err := classifyPacketFlow(packet[:n]); err == nil {
 				t.Fatalf("accepted truncated packet at %d/%d", n, len(packet))
 			}
 		}
@@ -134,7 +134,7 @@ func TestClassifierRejectsTruncationAndNeverReadsBeyondDeclaredLength(t *testing
 	binary.BigEndian.PutUint16(badUDP[24:26], 7)
 	malformed = append(malformed, badUDP)
 	for i, packet := range malformed {
-		if _, err := classifyUplinkPacket(packet); err == nil {
+		if _, err := classifyPacketFlow(packet); err == nil {
 			t.Fatalf("malformed case %d accepted", i)
 		}
 	}
@@ -144,7 +144,7 @@ func TestClassifierRejectsTruncationAndNeverReadsBeyondDeclaredLength(t *testing
 	}
 }
 
-func FuzzUplinkClassifier(f *testing.F) {
+func FuzzPacketClassifier(f *testing.F) {
 	f.Add(queueTestPacket(64, 0, 1))
 	f.Add(ipv6ClassifierPacket(44, []byte{6, 0, 0, 0, 0, 0, 0, 1}))
 	f.Add([]byte{0x60})
@@ -152,8 +152,8 @@ func FuzzUplinkClassifier(f *testing.F) {
 		if len(packet) > protocolMTU {
 			packet = packet[:protocolMTU]
 		}
-		first, err := classifyUplinkPacket(packet)
-		second, again := classifyUplinkPacket(append([]byte{}, packet...))
+		first, err := classifyPacketFlow(packet)
+		second, again := classifyPacketFlow(append([]byte{}, packet...))
 		if (err == nil) != (again == nil) || first != second {
 			t.Fatal("classification depends on backing storage")
 		}

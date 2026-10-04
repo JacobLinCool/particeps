@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	uplinkQueueMaxPackets = 128
-	uplinkQueueMaxBytes   = 64 * 1024
-	uplinkFlowBuckets     = 1024
+	packetQueueMaxPackets = 128
+	packetQueueMaxBytes   = 64 * 1024
+	flowBuckets           = 1024
 	fqQuantum             = protocolMTU
 	noSlot                = -1
 )
@@ -23,28 +23,28 @@ const (
 	flowOld
 )
 
-type queuedUplinkPacket struct {
+type queuedPacket struct {
 	data     [protocolMTU]byte
 	size     int
 	enqueued time.Time
 }
 
-type uplinkPacketSlot struct {
-	packet                               queuedUplinkPacket
+type packetSlot struct {
+	packet                               queuedPacket
 	nextFlow, previousGlobal, nextGlobal int
 	bucket                               int
 }
 
-type uplinkFlowQueue struct {
+type flowQueue struct {
 	head, tail, packets, bytes, deficit int
 	previous, next, membership          int
 	codel                               codelState
 }
 
-type uplinkFlowList struct{ head, tail int }
+type flowList struct{ head, tail int }
 
 // Diagnostics contain only aggregate counts, never flow identities or hashes.
-type uplinkQueueStats struct {
+type packetQueueStats struct {
 	queuedPackets, queuedBytes            int
 	capacityDropPackets, codelDropPackets uint64
 	capacityDropBytes, codelDropBytes     uint64
@@ -54,15 +54,15 @@ type uplinkQueueStats struct {
 // Packet slots belong to both a per-bucket FIFO and a global arrival FIFO:
 // limited uses FQ-CoDel, unlimited uses lossless FIFO backpressure. Neither
 // mode nor profile changes reorder packets within a bucket.
-type uplinkPacketQueue struct {
+type packetQueue struct {
 	mu                           sync.Mutex
 	clock                        monotonicClock
 	seed                         maphash.Seed
-	slots                        [uplinkQueueMaxPackets]uplinkPacketSlot
-	flows                        [uplinkFlowBuckets]uplinkFlowQueue
+	slots                        [packetQueueMaxPackets]packetSlot
+	flows                        [flowBuckets]flowQueue
 	free, globalHead, globalTail int
-	newFlows, oldFlows           uplinkFlowList
-	stats                        uplinkQueueStats
+	newFlows, oldFlows           flowList
+	stats                        packetQueueStats
 	limited, paused              bool
 	pausedAt                     time.Time
 	parameters                   codelParameters
@@ -70,34 +70,34 @@ type uplinkPacketQueue struct {
 	changed                      chan struct{}
 }
 
-func newUplinkPacketQueue(clock monotonicClock) *uplinkPacketQueue {
-	q := &uplinkPacketQueue{clock: clock, seed: maphash.MakeSeed(), paused: true,
+func newPacketQueue(clock monotonicClock) *packetQueue {
+	q := &packetQueue{clock: clock, seed: maphash.MakeSeed(), paused: true,
 		pausedAt: clock.Now(), changed: make(chan struct{})}
 	q.initializeStorageLocked()
 	return q
 }
 
-func (q *uplinkPacketQueue) initializeStorageLocked() {
+func (q *packetQueue) initializeStorageLocked() {
 	q.globalHead, q.globalTail, q.free = noSlot, noSlot, 0
-	q.slots = [uplinkQueueMaxPackets]uplinkPacketSlot{}
+	q.slots = [packetQueueMaxPackets]packetSlot{}
 	for i := range q.slots {
 		q.slots[i].nextFlow = i + 1
 	}
 	q.slots[len(q.slots)-1].nextFlow = noSlot
-	q.flows = [uplinkFlowBuckets]uplinkFlowQueue{}
+	q.flows = [flowBuckets]flowQueue{}
 	for i := range q.flows {
 		q.flows[i].head, q.flows[i].tail = noSlot, noSlot
 	}
-	q.newFlows, q.oldFlows = uplinkFlowList{noSlot, noSlot}, uplinkFlowList{noSlot, noSlot}
+	q.newFlows, q.oldFlows = flowList{noSlot, noSlot}, flowList{noSlot, noSlot}
 }
 
-func (q *uplinkPacketQueue) signalLocked() {
+func (q *packetQueue) signalLocked() {
 	close(q.changed)
 	q.changed = make(chan struct{})
 }
 
-func (q *uplinkPacketQueue) resetSchedulerLocked() {
-	q.newFlows, q.oldFlows = uplinkFlowList{noSlot, noSlot}, uplinkFlowList{noSlot, noSlot}
+func (q *packetQueue) resetSchedulerLocked() {
+	q.newFlows, q.oldFlows = flowList{noSlot, noSlot}, flowList{noSlot, noSlot}
 	for i := range q.flows {
 		f := &q.flows[i]
 		f.membership, f.deficit, f.codel = flowInactive, fqQuantum, codelState{}
@@ -110,7 +110,7 @@ func (q *uplinkPacketQueue) resetSchedulerLocked() {
 	}
 }
 
-func (q *uplinkPacketQueue) apply(rateKbps *uint64) {
+func (q *packetQueue) apply(rateKbps *uint64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.limited = rateKbps != nil
@@ -119,7 +119,7 @@ func (q *uplinkPacketQueue) apply(rateKbps *uint64) {
 	q.signalLocked()
 }
 
-func (q *uplinkPacketQueue) pause() {
+func (q *packetQueue) pause() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if !q.paused {
@@ -129,7 +129,7 @@ func (q *uplinkPacketQueue) pause() {
 	}
 }
 
-func (q *uplinkPacketQueue) resume() {
+func (q *packetQueue) resume() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.paused {
@@ -145,9 +145,9 @@ func (q *uplinkPacketQueue) resume() {
 	}
 }
 
-func (q *uplinkPacketQueue) close(err error) {
+func (q *packetQueue) close(err error) {
 	if err == nil {
-		panic("closing an uplink queue requires an error")
+		panic("closing a packet queue requires an error")
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -160,15 +160,15 @@ func (q *uplinkPacketQueue) close(err error) {
 	q.signalLocked()
 }
 
-func (q *uplinkPacketQueue) enqueue(ctx context.Context, packet []byte) error {
+func (q *packetQueue) enqueue(ctx context.Context, packet []byte) error {
 	if len(packet) == 0 || len(packet) > protocolMTU {
 		return errInvalidTunPacket
 	}
-	key, err := classifyUplinkPacket(packet)
+	key, err := classifyPacketFlow(packet)
 	if err != nil {
 		return err
 	}
-	bucket := int(maphash.Bytes(q.seed, key[:]) % uplinkFlowBuckets)
+	bucket := int(maphash.Bytes(q.seed, key[:]) % flowBuckets)
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for {
@@ -195,15 +195,15 @@ func (q *uplinkPacketQueue) enqueue(ctx context.Context, packet []byte) error {
 	}
 }
 
-func (q *uplinkPacketQueue) hasRoomLocked(size int) bool {
-	return q.stats.queuedPackets < len(q.slots) && q.stats.queuedBytes+size <= uplinkQueueMaxBytes
+func (q *packetQueue) hasRoomLocked(size int) bool {
+	return q.stats.queuedPackets < len(q.slots) && q.stats.queuedBytes+size <= packetQueueMaxBytes
 }
 
 // Model the incoming packet at its bucket's tail while selecting the fattest
 // bucket. Drop before allocating its slot, so neither hard bound is exceeded
 // even transiently. RFC 8290 Section 4.1 specifies half the packet count (at
 // least one here for singleton queues), capped at 64, dropped from the head.
-func (q *uplinkPacketQueue) makeRoomLocked(incoming, size int) bool {
+func (q *packetQueue) makeRoomLocked(incoming, size int) bool {
 	for !q.hasRoomLocked(size) {
 		fattest, largest := incoming, q.flows[incoming].bytes+size
 		for i := range q.flows {
@@ -232,12 +232,12 @@ func (q *uplinkPacketQueue) makeRoomLocked(incoming, size int) bool {
 	return true
 }
 
-func (q *uplinkPacketQueue) appendPacketLocked(bucket int, packet []byte) {
+func (q *packetQueue) appendPacketLocked(bucket int, packet []byte) {
 	index := q.free
 	slot, flow := &q.slots[index], &q.flows[bucket]
 	q.free = slot.nextFlow
-	*slot = uplinkPacketSlot{bucket: bucket, nextFlow: noSlot, previousGlobal: q.globalTail, nextGlobal: noSlot,
-		packet: queuedUplinkPacket{size: len(packet), enqueued: q.clock.Now()}}
+	*slot = packetSlot{bucket: bucket, nextFlow: noSlot, previousGlobal: q.globalTail, nextGlobal: noSlot,
+		packet: queuedPacket{size: len(packet), enqueued: q.clock.Now()}}
 	copy(slot.packet.data[:], packet)
 	if q.globalTail == noSlot {
 		q.globalHead = index
@@ -261,18 +261,18 @@ func (q *uplinkPacketQueue) appendPacketLocked(bucket int, packet []byte) {
 	}
 }
 
-func (q *uplinkPacketQueue) dequeue(ctx context.Context) (queuedUplinkPacket, error) {
+func (q *packetQueue) dequeue(ctx context.Context) (queuedPacket, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for {
 		if q.err != nil {
-			return queuedUplinkPacket{}, q.err
+			return queuedPacket{}, q.err
 		}
 		if err := ctx.Err(); err != nil {
-			return queuedUplinkPacket{}, err
+			return queuedPacket{}, err
 		}
 		if !q.paused && q.stats.queuedPackets != 0 {
-			var packet queuedUplinkPacket
+			var packet queuedPacket
 			if q.limited {
 				packet = q.dequeueFQLocked(q.clock.Now())
 			} else {
@@ -282,14 +282,14 @@ func (q *uplinkPacketQueue) dequeue(ctx context.Context) (queuedUplinkPacket, er
 			return packet, nil
 		}
 		if err := q.waitLocked(ctx); err != nil {
-			return queuedUplinkPacket{}, err
+			return queuedPacket{}, err
 		}
 	}
 }
 
 // All blocking waits release the queue lock. Profile, lifecycle and capacity
 // changes wake both sides; no wake-up depends on another packet arriving.
-func (q *uplinkPacketQueue) waitLocked(ctx context.Context) error {
+func (q *packetQueue) waitLocked(ctx context.Context) error {
 	changed := q.changed
 	q.mu.Unlock()
 	select {
@@ -302,7 +302,7 @@ func (q *uplinkPacketQueue) waitLocked(ctx context.Context) error {
 	}
 }
 
-func (q *uplinkPacketQueue) popFlowPacketLocked(bucket int) queuedUplinkPacket {
+func (q *packetQueue) popFlowPacketLocked(bucket int) queuedPacket {
 	flow := &q.flows[bucket]
 	index := flow.head
 	slot := &q.slots[index]
@@ -325,19 +325,19 @@ func (q *uplinkPacketQueue) popFlowPacketLocked(bucket int) queuedUplinkPacket {
 	flow.bytes -= packet.size
 	q.stats.queuedPackets--
 	q.stats.queuedBytes -= packet.size
-	*slot = uplinkPacketSlot{nextFlow: q.free}
+	*slot = packetSlot{nextFlow: q.free}
 	q.free = index
 	return packet
 }
 
-func (q *uplinkPacketQueue) flowListLocked(membership int) *uplinkFlowList {
+func (q *packetQueue) flowListLocked(membership int) *flowList {
 	if membership == flowNew {
 		return &q.newFlows
 	}
 	return &q.oldFlows
 }
 
-func (q *uplinkPacketQueue) appendFlowLocked(bucket, membership int) {
+func (q *packetQueue) appendFlowLocked(bucket, membership int) {
 	flow := &q.flows[bucket]
 	list := q.flowListLocked(membership)
 	flow.membership, flow.previous, flow.next = membership, list.tail, noSlot
@@ -349,7 +349,7 @@ func (q *uplinkPacketQueue) appendFlowLocked(bucket, membership int) {
 	list.tail = bucket
 }
 
-func (q *uplinkPacketQueue) removeFlowLocked(bucket int) {
+func (q *packetQueue) removeFlowLocked(bucket int) {
 	flow := &q.flows[bucket]
 	list := q.flowListLocked(flow.membership)
 	if flow.previous == noSlot {
@@ -365,7 +365,7 @@ func (q *uplinkPacketQueue) removeFlowLocked(bucket int) {
 	flow.membership = flowInactive
 }
 
-func (q *uplinkPacketQueue) dequeueFQLocked(now time.Time) queuedUplinkPacket {
+func (q *packetQueue) dequeueFQLocked(now time.Time) queuedPacket {
 	for {
 		bucket := q.newFlows.head
 		if bucket == noSlot {
@@ -394,11 +394,11 @@ func (q *uplinkPacketQueue) dequeueFQLocked(now time.Time) queuedUplinkPacket {
 	}
 }
 
-func (q *uplinkPacketQueue) dequeueCodelLocked(bucket int, now time.Time) (queuedUplinkPacket, bool) {
+func (q *packetQueue) dequeueCodelLocked(bucket int, now time.Time) (queuedPacket, bool) {
 	flow := &q.flows[bucket]
 	if flow.head == noSlot {
 		flow.codel.firstAbove, flow.codel.dropping = time.Time{}, false
-		return queuedUplinkPacket{}, false
+		return queuedPacket{}, false
 	}
 	packet := q.popFlowPacketLocked(bucket)
 	above := flow.codel.aboveTarget(now, packet.enqueued, q.stats.queuedBytes, protocolMTU, q.parameters)
@@ -413,7 +413,7 @@ func (q *uplinkPacketQueue) dequeueCodelLocked(bucket int, now time.Time) (queue
 			}
 			if flow.head == noSlot {
 				flow.codel.firstAbove, flow.codel.dropping = time.Time{}, false
-				return queuedUplinkPacket{}, false
+				return queuedPacket{}, false
 			}
 			packet = q.popFlowPacketLocked(bucket)
 			if !flow.codel.aboveTarget(now, packet.enqueued, q.stats.queuedBytes, protocolMTU, q.parameters) {
@@ -426,7 +426,7 @@ func (q *uplinkPacketQueue) dequeueCodelLocked(bucket int, now time.Time) (queue
 		q.recordCodelDropLocked(packet.size)
 		if flow.head == noSlot {
 			flow.codel.firstAbove, flow.codel.dropping = time.Time{}, false
-			return queuedUplinkPacket{}, false
+			return queuedPacket{}, false
 		}
 		packet = q.popFlowPacketLocked(bucket)
 		flow.codel.aboveTarget(now, packet.enqueued, q.stats.queuedBytes, protocolMTU, q.parameters)
@@ -435,12 +435,12 @@ func (q *uplinkPacketQueue) dequeueCodelLocked(bucket int, now time.Time) (queue
 	return packet, true
 }
 
-func (q *uplinkPacketQueue) recordCodelDropLocked(size int) {
+func (q *packetQueue) recordCodelDropLocked(size int) {
 	q.stats.codelDropPackets++
 	q.stats.codelDropBytes += uint64(size)
 }
 
-func (q *uplinkPacketQueue) snapshot() uplinkQueueStats {
+func (q *packetQueue) snapshot() packetQueueStats {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return q.stats

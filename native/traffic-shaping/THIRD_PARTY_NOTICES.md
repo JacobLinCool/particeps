@@ -63,11 +63,11 @@ POSSIBILITY OF SUCH DAMAGE.
 
 ## CoDel and FQ-CoDel — RFC 8289 and RFC 8290 (2018)
 
-The CoDel algorithm in codel.go and uplink_packet_queue.go is adapted from
+The CoDel algorithm in codel.go and packet_queue.go is adapted from
 RFC 8289, Section 5 (January 2018), by K. Nichols, V. Jacobson, A. McGregor,
 and J. Iyengar: https://www.rfc-editor.org/rfc/rfc8289.html#section-5
 
-The flow scheduler in uplink_packet_queue.go and classification policy in
+The flow scheduler in packet_queue.go and classification policy in
 flow_classifier.go implement RFC 8290, Sections 4 and 5 (January 2018), by
 T. Hoeiland-Joergensen, P. McKenney, D. Taht, J. Gettys, and E. Dumazet:
 https://www.rfc-editor.org/rfc/rfc8290.html

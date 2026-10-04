@@ -99,7 +99,7 @@ def verify_repository_release_contracts(
         raise ReleaseApkVerificationError("cannot inspect the native traffic-shaping engine") from error
     logger_call = engine.find("installSilentLogger()")
     network_calls = [
-        engine.find("iobased.New("),
+        engine.find("newShapedLinkEndpoint("),
         engine.find("tunnel.New("),
         engine.find("core.CreateStack("),
     ]

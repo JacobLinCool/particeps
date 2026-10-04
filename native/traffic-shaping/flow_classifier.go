@@ -11,7 +11,7 @@ import (
 // use address/protocol classification (RFC 8290 Sections 4.1.1 and 8).
 type flowKey [38]byte
 
-func classifyUplinkPacket(packet []byte) (flowKey, error) {
+func classifyPacketFlow(packet []byte) (flowKey, error) {
 	var key flowKey
 	if len(packet) == 0 {
 		return key, errInvalidTunPacket

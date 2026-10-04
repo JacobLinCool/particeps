@@ -51,7 +51,7 @@ func queuedTunFixture(t *testing.T, rate *uint64, clock monotonicClock, waiter i
 	if err := uplink.resume(); err != nil {
 		t.Fatal(err)
 	}
-	queue := newUplinkPacketQueue(clock)
+	queue := newPacketQueue(clock)
 	queue.apply(rate)
 	queue.resume()
 	shaped := &shapedTun{
@@ -155,11 +155,11 @@ func TestPumpJoinsWhenUnlimitedQueueIsFull(t *testing.T) {
 	if _, err := shaped.Read(make([]byte, protocolMTU)); err != nil {
 		t.Fatal(err)
 	}
-	for range uplinkQueueMaxPackets + 1 {
+	for range packetQueueMaxPackets + 1 {
 		device.packets <- queueTestPacket(64, 2, 1)
 	}
 	deadline := time.Now().Add(time.Second)
-	for shaped.queue.snapshot().queuedPackets != uplinkQueueMaxPackets {
+	for shaped.queue.snapshot().queuedPackets != packetQueueMaxPackets {
 		if time.Now().After(deadline) {
 			t.Fatal("pump did not fill its unlimited queue")
 		}
@@ -192,7 +192,7 @@ func TestLimitedPumpDrainsAndDropsWhileConsumerWaitsForCredit(t *testing.T) {
 	for {
 		stats := shaped.queue.snapshot()
 		if uint64(stats.queuedPackets)+stats.capacityDropPackets == 200 {
-			if stats.queuedBytes > uplinkQueueMaxBytes || stats.capacityDropPackets == 0 ||
+			if stats.queuedBytes > packetQueueMaxBytes || stats.capacityDropPackets == 0 ||
 				shaped.counters.uplinkPackets.Load() != 0 {
 				t.Fatalf("paced consumer blocked draining or counted dropped packets: %+v", stats)
 			}
@@ -213,7 +213,7 @@ func TestAggregateQueueAndLimiterKeepAllConformanceRatesSaturated(t *testing.T) 
 	for _, rate := range []uint64{64, 512, 4096} {
 		t.Run(fmt.Sprintf("%d_kbps", rate), func(t *testing.T) {
 			limiter, clock, _ := readyLimiter(&rate)
-			queue := newUplinkPacketQueue(clock)
+			queue := newPacketQueue(clock)
 			queue.apply(&rate)
 			queue.resume()
 			for i := range 20 {
@@ -242,7 +242,7 @@ func TestAggregateQueueAndLimiterKeepAllConformanceRatesSaturated(t *testing.T) 
 				t.Fatalf("60-second aggregate L3 ratio = %.6f", ratio)
 			}
 			if stats := queue.snapshot(); stats.codelDropPackets == 0 ||
-				stats.queuedBytes > uplinkQueueMaxBytes || stats.queuedPackets > uplinkQueueMaxPackets {
+				stats.queuedBytes > packetQueueMaxBytes || stats.queuedPackets > packetQueueMaxPackets {
 				t.Fatalf("saturated queue did not exercise bounded congestion control: %+v", stats)
 			}
 		})

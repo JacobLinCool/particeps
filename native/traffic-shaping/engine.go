@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 
 	"github.com/xjasonlyu/tun2socks/v2/core"
-	"github.com/xjasonlyu/tun2socks/v2/core/device/iobased"
 	tunlog "github.com/xjasonlyu/tun2socks/v2/log"
 	"github.com/xjasonlyu/tun2socks/v2/tunnel"
 	"github.com/xjasonlyu/tun2socks/v2/tunnel/statistic"
@@ -43,13 +42,14 @@ type engineState struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	uplink   *directionLimiter
-	downlink *directionLimiter
-	counters *aggregateCounters
-	gate     sync.RWMutex
-	shaped   *shapedTun
+	uplink        *directionLimiter
+	downlink      *directionLimiter
+	counters      *aggregateCounters
+	gate          sync.RWMutex
+	shaped        *shapedTun
+	downlinkQueue *packetQueue
 
-	endpoint     *iobased.Endpoint
+	endpoint     *shapedLinkEndpoint
 	stack        *stack.Stack
 	tunnel       *tunnel.Tunnel
 	tcpForwarder *tcpForwarder
@@ -89,16 +89,17 @@ func newEngine(tunFD int, mtu int, protector Protector, listener TerminalListene
 	clock := systemClock{}
 	waiter := timerWaiter{}
 	state := &engineState{
-		tun:       owned,
-		protector: protector,
-		listener:  listener,
-		mtu:       mtu,
-		ctx:       ctx,
-		cancel:    cancel,
-		uplink:    newDirectionLimiter(mtu, clock, waiter),
-		downlink:  newDirectionLimiter(mtu, clock, waiter),
-		counters:  &aggregateCounters{},
-		suspended: true,
+		tun:           owned,
+		protector:     protector,
+		listener:      listener,
+		mtu:           mtu,
+		ctx:           ctx,
+		cancel:        cancel,
+		uplink:        newDirectionLimiter(mtu, clock, waiter),
+		downlink:      newDirectionLimiter(mtu, clock, waiter),
+		counters:      &aggregateCounters{},
+		suspended:     true,
+		downlinkQueue: newPacketQueue(clock),
 	}
 	state.shaped = &shapedTun{
 		ctx:        ctx,
@@ -110,7 +111,7 @@ func newEngine(tunFD int, mtu int, protector Protector, listener TerminalListene
 		gate:       &state.gate,
 		fail:       state.failTerminal,
 		stopping:   func() bool { return state.stopping.Load() },
-		queue:      newUplinkPacketQueue(clock),
+		queue:      newPacketQueue(clock),
 		readerDone: make(chan struct{}),
 	}
 	success = true
@@ -146,6 +147,7 @@ func (e *engineState) applyProfile(canonicalProfile []byte) (_ *ProfileReceipt, 
 	e.uplink.apply(profile.uplinkKbps)
 	e.downlink.apply(profile.downlinkKbps)
 	e.shaped.queue.apply(profile.uplinkKbps)
+	e.downlinkQueue.apply(profile.downlinkKbps)
 	e.counters.reset()
 	e.profile = profile
 	return receiptFor(profile, e.generation), nil
@@ -154,7 +156,7 @@ func (e *engineState) applyProfile(canonicalProfile []byte) (_ *ProfileReceipt, 
 func (e *engineState) start() (err error) {
 	e.operationMu.Lock()
 	defer e.operationMu.Unlock()
-	var endpoint *iobased.Endpoint
+	var endpoint *shapedLinkEndpoint
 	var networkStack *stack.Stack
 	var forwarder *tunnel.Tunnel
 	var tcpForwarder *tcpForwarder
@@ -204,11 +206,7 @@ func (e *engineState) start() (err error) {
 		return errNativeStack
 	}
 
-	endpoint, err = iobased.New(e.shaped, uint32(e.mtu), 0)
-	if err != nil {
-		e.startFailed()
-		return errNativeStack
-	}
+	endpoint = newShapedLinkEndpoint(e.shaped, e.downlinkQueue)
 	direct := &protectedDirectProxy{
 		protect: e.protectSocket,
 		fail:    e.failTerminal,
@@ -278,6 +276,7 @@ func (e *engineState) suspend() (err error) {
 	e.uplink.suspend()
 	e.downlink.suspend()
 	e.shaped.queue.pause()
+	e.downlinkQueue.pause()
 	e.gate.Lock()
 	e.gate.Unlock()
 	e.mu.Lock()
@@ -328,6 +327,7 @@ func (e *engineState) resume() (err error) {
 		return errEngineTerminal
 	}
 	e.shaped.queue.resume()
+	e.downlinkQueue.resume()
 	e.suspended = false
 	return nil
 }
@@ -362,6 +362,7 @@ func (e *engineState) stop() {
 	e.uplink.close()
 	e.downlink.close()
 	e.shaped.queue.close(errEngineStopped)
+	e.downlinkQueue.close(errEngineStopped)
 	_ = e.tun.Close()
 	cleanupNetworkStack(endpoint, networkStack, forwarder, tcpForwarder)
 	e.shaped.waitReader()
@@ -382,6 +383,7 @@ func (e *engineState) failTerminal(code string) {
 	e.uplink.close()
 	e.downlink.close()
 	e.shaped.queue.close(errEngineTerminal)
+	e.downlinkQueue.close(errEngineTerminal)
 	_ = e.tun.Close()
 	notifyTerminal(listener, code)
 }
@@ -474,7 +476,7 @@ func installSilentLogger() error {
 }
 
 func cleanupNetworkStack(
-	endpoint *iobased.Endpoint,
+	endpoint *shapedLinkEndpoint,
 	networkStack *stack.Stack,
 	forwarder *tunnel.Tunnel,
 	tcpForwarder *tcpForwarder,

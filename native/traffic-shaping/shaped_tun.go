@@ -19,7 +19,7 @@ type shapedTun struct {
 	gate          *sync.RWMutex
 	fail          func(string)
 	stopping      func() bool
-	queue         *uplinkPacketQueue
+	queue         *packetQueue
 	readerOnce    sync.Once
 	readerStarted atomic.Bool
 	readerDone    chan struct{}

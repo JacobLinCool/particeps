@@ -41,32 +41,36 @@ and wake the runtime; it must not call back into the engine.
   upper bound.
 - A new profile starts with one full bucket and inherits no prior credit.
 - One uplink reader drains the kernel TUN independently from paced delivery.
-  All flows share 128 fixed 1500-byte packet slots and a separate 64 KiB
-  payload-occupancy limit, plus at most one packet held by each of the reader
-  and consumer. A fixed table of 1024 buckets adds bounded scheduling state.
-- Limited uplink profiles use FQ-CoDel (RFC 8290): each bucket has a FIFO and
+  The local link endpoint schedules downlink directly at `WritePackets`, before
+  the paced TUN write, replacing the upstream 1024-packet FIFO shared by
+  download data and upload ACKs. Each direction separately owns 128 fixed
+  1500-byte packet slots, a 64 KiB payload-occupancy limit and 1024 scheduling
+  buckets, plus at most one producer and one consumer packet. Downlink
+  producers serialize before copying packet bytes; the stack retains ownership
+  of its original packet references.
+- Limited profiles use FQ-CoDel (RFC 8290): each bucket has a FIFO and
   CoDel state, with new/old byte-deficit scheduling and a 1500-byte quantum.
   Capacity overload drops from the head of the largest byte-backlog bucket,
   half its packet count per batch (at least one, at most 64), rather than
   preferentially discarding a newly arriving flow. Both occupancy bounds hold
   even while admitting that packet.
 - Flow classification hashes the IP version, addresses, transport protocol and
-  TCP/UDP ports with a per-engine random seed. All fragments, including first
+  TCP/UDP ports with a per-direction random seed fixed for the engine lifetime. All fragments, including first
   and IPv6 atomic fragments, use addresses/protocol with zero ports. Unknown
   protocols and opaque extension headers also use that coarse classification;
   their payload is not parsed. Hash collisions share one FIFO. Classification keys
   are temporary; no separate tuple or hash records are retained or exported.
 - CoDel's target is the larger of 5 ms and one MTU's serialization time at the
-  configured uplink rate. The interval is the larger of 100 ms and ten targets.
-  This interval scaling is an engineering policy based on RFC 8290's low-rate
-  guidance, not a fixed RFC requirement. At 64/512/4096 kbps the targets are
+  configured directional rate. The interval retains the 100 ms default independently
+  of the target; low-rate targets may exceed this reaction interval. At
+  64/512/4096 kbps the targets are
   187.5/23.4375/5 ms, respectively. The remaining **aggregate** backlog at or
   below one MTU suppresses CoDel drops; an empty individual bucket returns to
   the scheduler safely. TCP and UDP share this congestion policy, without ECN
   marking. Discarded packets consume no credit and enter no Layer-3
   admission counters. No loss, latency, strict per-flow fairness or per-application
   fairness guarantee is made. Drop diagnostics are process-local aggregates.
-- Unlimited uplink profiles use bounded FIFO backpressure without CoDel or
+- Unlimited profiles use bounded FIFO backpressure without CoDel or
   capacity drops. A mode change wakes a producer waiting for queue capacity.
   Packets keep both their per-bucket and global arrival order, so mode changes
   preserve per-bucket ordering and unlimited uses the remaining arrival FIFO.
@@ -74,8 +78,10 @@ and wake the runtime; it must not call back into the engine.
   remain bounded and must obtain the current profile's permit before delivery.
   Suspension blocks queue admission and delivery, excludes paused time from
   sojourn measurements, and resets CoDel's congestion history. Profile changes
-  also reset that history. Stop closes the descriptor and queue, then joins
-  the single reader; terminal failures close forwarding admission immediately.
+  also reset that history. Stop closes the descriptor and both queues before joining the uplink pump
+  and two link workers. Detachment also wakes workers before the stack waits;
+  terminal failures close forwarding admission immediately. The packet already
+  held by a paced consumer is not preempted by a newly arriving sparse flow.
 
 The direct proxy is intentionally thin: it opens raw TCP/UDP sockets and
 synchronously protects each descriptor. Shaping remains at the Layer-3 boundary,

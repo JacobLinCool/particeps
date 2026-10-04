@@ -271,7 +271,7 @@ class VerifyReleaseApkTest(unittest.TestCase):
             native.mkdir(parents=True)
             android.mkdir(parents=True)
             (native / "engine.go").write_text(
-                "func start() { installSilentLogger(); iobased.New(); tunnel.New(); "
+                "func start() { installSilentLogger(); newShapedLinkEndpoint(); tunnel.New(); "
                 "core.CreateStack(); fmt.Printf(\"destination=%s\", value) }\n",
                 encoding="utf-8",
             )
@@ -281,6 +281,33 @@ class VerifyReleaseApkTest(unittest.TestCase):
                 "production logging",
             ):
                 verify_release_apk.verify_repository_release_contracts(root, (Path("README.md"),))
+
+    def test_release_source_requires_silent_logging_before_each_network_setup_call(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            native = root / "native/traffic-shaping"
+            android = root / "actuator/traffic-shaping/src/main/example"
+            native.mkdir(parents=True)
+            android.mkdir(parents=True)
+            (android / "Adapter.kt").write_text("package example\n", encoding="utf-8")
+            setup = ("newShapedLinkEndpoint()", "tunnel.New()", "core.CreateStack()")
+            for early in (None, *setup):
+                calls = ["installSilentLogger()", *setup]
+                if early is not None:
+                    calls.remove(early)
+                    calls.insert(0, early)
+                (native / "engine.go").write_text(
+                    "func start() { " + "; ".join(calls) + " }\n", encoding="utf-8",
+                )
+                with self.subTest(early_network_call=early):
+                    if early is None:
+                        verify_release_apk.verify_repository_release_contracts(root, (Path("README.md"),))
+                    else:
+                        with self.assertRaisesRegex(
+                            verify_release_apk.ReleaseApkVerificationError,
+                            "silent upstream logger before network setup",
+                        ):
+                            verify_release_apk.verify_repository_release_contracts(root, (Path("README.md"),))
 
 
 def fixture_manifest() -> str:

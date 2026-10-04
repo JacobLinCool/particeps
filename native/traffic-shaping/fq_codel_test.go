@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func distinctQueueFlows(t *testing.T, q *uplinkPacketQueue, count int) []uint16 {
+func distinctQueueFlows(t *testing.T, q *packetQueue, count int) []uint16 {
 	t.Helper()
 	result := make([]uint16, 0, count)
 	used := make(map[int]bool)
@@ -26,14 +26,14 @@ func distinctQueueFlows(t *testing.T, q *uplinkPacketQueue, count int) []uint16 
 	return result
 }
 
-func enqueueFlowPacket(t *testing.T, q *uplinkPacketQueue, size int, id byte, flow uint16) {
+func enqueueFlowPacket(t *testing.T, q *packetQueue, size int, id byte, flow uint16) {
 	t.Helper()
 	if err := q.enqueue(context.Background(), queueTestPacket(size, id, flow)); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func packetFlow(packet queuedUplinkPacket) uint16 { return binary.BigEndian.Uint16(packet.data[20:22]) }
+func packetFlow(packet queuedPacket) uint16 { return binary.BigEndian.Uint16(packet.data[20:22]) }
 
 func TestFQDeficitSchedulesBytesRatherThanPacketCounts(t *testing.T) {
 	q, _ := readyUplinkQueue(true)
@@ -227,8 +227,8 @@ func TestFQLowRateParametersAndProfileReset(t *testing.T) {
 		rate             uint64
 		target, interval time.Duration
 	}{
-		{64, 187500 * time.Microsecond, 1875 * time.Millisecond},
-		{512, 23437500 * time.Nanosecond, 234375 * time.Microsecond},
+		{64, 187500 * time.Microsecond, 100 * time.Millisecond},
+		{512, 23437500 * time.Nanosecond, 100 * time.Millisecond},
 		{4096, 5 * time.Millisecond, 100 * time.Millisecond},
 	} {
 		q, clock := readyUplinkQueue(true)
@@ -295,12 +295,12 @@ func TestFQPoolAndListsRemainBoundedAcrossReuseDropsAndModeChanges(t *testing.T)
 	assertQueueStructure(t, q)
 }
 
-func assertQueueStructure(t *testing.T, q *uplinkPacketQueue) {
+func assertQueueStructure(t *testing.T, q *packetQueue) {
 	t.Helper()
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	var location [uplinkQueueMaxPackets]uint8
-	var rank [uplinkQueueMaxPackets]int
+	var location [packetQueueMaxPackets]uint8
+	var rank [packetQueueMaxPackets]int
 	count, bytesTotal, previous := 0, 0, noSlot
 	for slot := q.globalHead; slot != noSlot; slot = q.slots[slot].nextGlobal {
 		if slot < 0 || slot >= len(q.slots) || location[slot] != 0 {
@@ -333,8 +333,8 @@ func assertQueueStructure(t *testing.T, q *uplinkPacketQueue) {
 	if freeCount+count != len(q.slots) {
 		t.Fatal("lost packet slot")
 	}
-	var inFlow [uplinkQueueMaxPackets]bool
-	var inList [uplinkFlowBuckets]bool
+	var inFlow [packetQueueMaxPackets]bool
+	var inList [flowBuckets]bool
 	for _, membership := range []int{flowNew, flowOld} {
 		list := q.flowListLocked(membership)
 		previous = noSlot

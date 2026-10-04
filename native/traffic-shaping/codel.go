@@ -22,10 +22,9 @@ func codelParametersForRate(rateKbps *uint64) codelParameters {
 		rate := *rateKbps * 1000
 		serialization := time.Duration((uint64(protocolMTU)*8*uint64(time.Second) + rate - 1) / rate)
 		p.target = max(p.target, serialization)
-		// RFC 8290 recommends at least one MTU's serialization time and a
-		// target around 5–10% of interval. This scaling is our engineering
-		// policy for low-rate profiles, not a fixed interval mandated by RFC.
-		p.interval = max(p.interval, 10*p.target)
+		// Keep the default 100 ms interval independent of the serialization
+		// target. Low-rate targets may exceed the interval; the two parameters
+		// control different things (standing delay versus reaction time).
 	}
 	return p
 }
