@@ -26,13 +26,20 @@ coincide with a scenario failure. CI runs the stock image without root, remount,
 SystemUI disablement, or system-server mutation. The API 37 runner explicitly selects the supported
 [`swiftshader` software renderer](https://developer.android.com/studio/run/emulator-acceleration).
 The image does not support the in-guest renderer selected by `-gpu off`; the emulator otherwise
-automatically substitutes a different graphics backend. The runner enables the emulator's
-`GLDirectMem` acceleration capability, which the [upstream renderer](https://android.googlesource.com/platform/hardware/google/gfxstream/+/d047a57228332d995d36600792fa9ccc26cf8ae6/host/RenderControl.cpp#471)
-requires to advertise `ANDROID_EMU_read_color_buffer_dma`. The [Android 17 guest mapper](https://android.googlesource.com/device/generic/goldfish/+/296e55aa0244e8929e393e00e34471fef2a5d662/hals/gralloc/mapper.cpp#619)
+automatically substitutes a different graphics backend. The runner explicitly enables both
+`GLDirectMem` and `HasSharedSlotsHostMemoryAllocator`: the [upstream renderer](https://android.googlesource.com/platform/hardware/google/gfxstream/+/d047a57228332d995d36600792fa9ccc26cf8ae6/host/RenderControl.cpp#497)
+requires both to advertise `ANDROID_EMU_read_color_buffer_dma`. The latter is a
+[host feature](https://android.googlesource.com/platform/hardware/google/aemu/+/refs/heads/main/host-common/include/host-common/FeatureControlDefHost.h#57)
+backed by the emulator's [shared-slot allocator implementation](https://android.googlesource.com/platform/hardware/google/aemu/+/refs/heads/main/host-common/address_space_device.cpp#384).
+The [Android 17 guest mapper](https://android.googlesource.com/device/generic/goldfish/+/296e55aa0244e8929e393e00e34471fef2a5d662/hals/gralloc/mapper.cpp#619)
 calls `LOG_ALWAYS_FATAL_IF(!hasReadColorBufferDma)`: this macro aborts when the condition is true,
 so the capability must be present. Disabling it was an incorrect interpretation of the log's
-assertion wording. The runner requires the current stable revision 6 image and retains its SDK
-metadata with the test evidence. The stock Android image, 16 KiB page-size check, permission checks,
+assertion wording. Explicit host flags are a controlled compatibility experiment, not evidence
+that this assertion is repaired; a complete successful compatibility run is still required.
+Verbose startup output and both host and guest `advancedFeatures.ini` files are retained to show
+the installed defaults and applied overrides. The runner requires image revision 6 or newer and
+retains the installed revision's SDK metadata with the test evidence.
+The stock Android image, 16 KiB page-size check, permission checks,
 and all product gates remain intact. API 37 graphics options
 live only in `tools/android-api37-emulator-runner.sh`; its workflow matrix has no unused copy.
 The API 37 runner waits until the stock package and activity services required by its non-UI checks

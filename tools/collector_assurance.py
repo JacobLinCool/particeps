@@ -22,6 +22,9 @@ CATALOG_DEPENDENCY = re.compile(r"\b(?:api|implementation|compileOnly|runtimeOnl
 TEST_CATALOG_DEPENDENCY = re.compile(
     r"\btestImplementation\s*\(\s*(libs\.[A-Za-z0-9_.]+)\s*\)"
 )
+ANDROID_TEST_CATALOG_DEPENDENCY = re.compile(
+    r"\bandroidTestImplementation\s*\(\s*(libs\.[A-Za-z0-9_.]+)\s*\)"
+)
 STRING_DEPENDENCY = re.compile(
     r"\b(?:api|implementation|compileOnly|runtimeOnly)\s*\(\s*\"([^\"]+)\"\s*\)"
 )
@@ -31,6 +34,9 @@ DEPENDENCY_DECLARATION = re.compile(
 )
 DESCRIPTOR_CLASS = re.compile(r"L([A-Za-z0-9_$/]+);")
 ALLOWED_TEST_CATALOG_DEPENDENCIES = frozenset({"libs.junit4"})
+ALLOWED_ANDROID_TEST_CATALOG_DEPENDENCIES = frozenset(
+    {"libs.androidx.test.runner", "libs.androidx.test.junit"}
+)
 
 
 class AssuranceError(ValueError):
@@ -219,6 +225,11 @@ def _source_violations(module: Path, policy: dict[str, Any]) -> list[str]:
             dependency = match.group(1)
             if dependency not in ALLOWED_TEST_CATALOG_DEPENDENCIES:
                 result.append(f"{build_file}: forbidden test dependency {dependency}")
+        for match in ANDROID_TEST_CATALOG_DEPENDENCY.finditer(text):
+            recognized_starts.add(match.start())
+            dependency = match.group(1)
+            if dependency not in ALLOWED_ANDROID_TEST_CATALOG_DEPENDENCIES:
+                result.append(f"{build_file}: forbidden Android test dependency {dependency}")
         for match in STRING_DEPENDENCY.finditer(text):
             recognized_starts.add(match.start())
             dependency = match.group(1)

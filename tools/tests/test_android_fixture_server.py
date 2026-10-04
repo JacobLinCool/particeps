@@ -1,11 +1,17 @@
+import argparse
+import errno
+import json
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
+from tools import android_fixture_server as server
 from tools.android_fixture_server import throughput_bounds, validate_measurement
 
 
@@ -49,6 +55,139 @@ class AndroidFixtureServerTest(unittest.TestCase):
         self.assertFalse(validate_measurement(64, 60, 407_999, 900_000)[0])
         self.assertFalse(validate_measurement(64, 60, 505_501, 900_000)[0])
         self.assertFalse(validate_measurement(64, 60, 480_000, 505_500)[0])
+
+    def test_received_bytes_are_partitioned_by_recv_completion_second(self) -> None:
+        connection = Mock()
+        connection.recv.side_effect = [b"abc", b"defg", b""]
+        counter = server.ByteCounter()
+        metrics = server.ConnectionMetrics("target", 0)
+        with patch.object(server.time, "monotonic", side_effect=[
+            100.0, 100.2, 101.0, 101.5, 101.6, 101.7,
+        ]):
+            server.receive_until(connection, 160.0, counter, metrics, 100.0)
+
+        self.assertEqual(7, counter.value)
+        self.assertEqual(counter.value, metrics.received_bytes)
+        self.assertEqual({0: 3, 1: 4}, metrics.bytes_by_second)
+        self.assertEqual(counter.value, sum(metrics.bytes_by_second.values()))
+        self.assertAlmostEqual(0.2, metrics.first_byte_seconds)
+        self.assertAlmostEqual(1.5, metrics.last_byte_seconds)
+        self.assertAlmostEqual(1.7, metrics.ended_seconds)
+        self.assertEqual("eof", metrics.end_reason)
+        self.assertIsNone(metrics.error_errno)
+
+    def test_empty_eof_and_deadline_have_distinct_reasons_without_fabricated_byte_times(self) -> None:
+        for reason, reads, clock in (
+            ("eof", [b""], [100.0, 100.1]),
+            ("deadline", [], [160.0, 160.0]),
+            ("deadline", [TimeoutError()], [159.0, 160.0, 160.0]),
+        ):
+            with self.subTest(reason=reason, reads=reads):
+                connection = Mock()
+                connection.recv.side_effect = reads
+                counter = server.ByteCounter()
+                metrics = server.ConnectionMetrics("target", 0)
+                with patch.object(server.time, "monotonic", side_effect=clock):
+                    server.receive_until(connection, 160.0, counter, metrics, 100.0)
+                self.assertEqual(reason, metrics.end_reason)
+                self.assertEqual(0, counter.value)
+                self.assertEqual(0, metrics.received_bytes)
+                self.assertEqual({}, metrics.bytes_by_second)
+                self.assertIsNone(metrics.first_byte_seconds)
+                self.assertIsNone(metrics.last_byte_seconds)
+                self.assertIsNone(metrics.error_errno)
+
+    def test_socket_error_retains_only_errno_without_endpoint_or_exception_text(self) -> None:
+        connection = Mock()
+        connection.recv.side_effect = OSError(errno.ECONNRESET, "private-endpoint-secret")
+        metrics = server.ConnectionMetrics("control", 0)
+        with patch.object(server.time, "monotonic", side_effect=[100.0, 100.4]):
+            server.receive_until(connection, 160.0, server.ByteCounter(), metrics, 100.0)
+        self.assertEqual("error", metrics.end_reason)
+        self.assertEqual(errno.ECONNRESET, metrics.error_errno)
+        self.assertIsNone(metrics.first_byte_seconds)
+        self.assertNotIn("private-endpoint-secret", json.dumps(metrics.document()))
+
+    def test_existing_boundary_recv_tail_remains_counted_in_its_actual_second(self) -> None:
+        connection = Mock()
+        connection.recv.return_value = b"tail"
+        counter = server.ByteCounter()
+        metrics = server.ConnectionMetrics("target", 0)
+        with patch.object(server.time, "monotonic", side_effect=[
+            159.9, 160.2, 160.2, 160.2,
+        ]):
+            server.receive_until(connection, 160.0, counter, metrics, 100.0)
+        self.assertEqual(4, counter.value)
+        self.assertEqual({60: 4}, metrics.bytes_by_second)
+        self.assertEqual("deadline", metrics.end_reason)
+        connection.recv.assert_called_once()
+
+    def test_three_connection_barrier_publishes_consistent_private_metrics(self) -> None:
+        pairs = [socket.socketpair() for _ in range(3)]
+        clients = [pair[1] for pair in pairs]
+        accepted = [pair[0] for pair in pairs]
+        payloads = [b"a" * 2_003, b"b" * 5_007, b"c" * 11_009]
+        barriers: list[bytes | None] = [None, None, None]
+
+        def send(index: int) -> None:
+            client = clients[index]
+            client.settimeout(5)
+            barriers[index] = client.recv(1)
+            if barriers[index] == b"\x01":
+                client.sendall(payloads[index])
+            client.shutdown(socket.SHUT_WR)
+
+        workers = [threading.Thread(target=send, args=(index,)) for index in range(3)]
+        try:
+            for worker in workers:
+                worker.start()
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                args = argparse.Namespace(
+                    target_port=19092, control_port=19093, duration_seconds=60,
+                    cap_kbps=64, ready=root / "ready", output=root / "metrics.json",
+                )
+                with (
+                    patch.object(server.socket, "create_server", side_effect=[Mock(), Mock()]),
+                    patch.object(server, "accept_connections", side_effect=[accepted[:2], accepted[2:]]),
+                ):
+                    self.assertFalse(server.run(args))
+                document = json.loads(args.output.read_text())
+            for worker in workers:
+                worker.join(5)
+                self.assertFalse(worker.is_alive())
+            self.assertEqual([b"\x01"] * 3, barriers)
+            self.assertEqual(60, document["duration_seconds"])
+            self.assertEqual((408_000, 505_500), (
+                document["lower_bound_bytes"], document["upper_bound_bytes"],
+            ))
+            self.assertEqual(1, document["bytes_bucket_width_seconds"])
+            self.assertEqual(
+                [("target", 0), ("target", 1), ("control", 0)],
+                [(item["role"], item["index"]) for item in document["connections"]],
+            )
+            for item, payload in zip(document["connections"], payloads, strict=True):
+                self.assertEqual(len(payload), item["received_bytes"])
+                self.assertEqual(len(payload), sum(bucket["bytes"] for bucket in item["bytes_by_second"]))
+                self.assertEqual("eof", item["end_reason"])
+                self.assertIsNone(item["error_errno"])
+                self.assertGreaterEqual(item["barrier_sent_seconds"], 0)
+                self.assertLess(item["barrier_sent_seconds"], 60)
+                self.assertGreaterEqual(item["first_byte_seconds"], 0)
+                self.assertLessEqual(item["first_byte_seconds"], item["last_byte_seconds"])
+                self.assertLessEqual(item["last_byte_seconds"], item["ended_seconds"])
+            for role in ("target", "control"):
+                connections = [item for item in document["connections"] if item["role"] == role]
+                self.assertEqual(document[f"{role}_connections"], len(connections))
+                self.assertEqual(document[f"{role}_bytes"], sum(item["received_bytes"] for item in connections))
+            self.assertNotIn("127.0.0.1", json.dumps(document))
+            self.assertNotIn("19092", json.dumps(document))
+        finally:
+            for connection in accepted + clients:
+                connection.close()
+            for worker in workers:
+                if worker.ident is not None:
+                    worker.join(5)
 
 
 if __name__ == "__main__":

@@ -7,11 +7,14 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
-## v1.0.0-rc.14 — 2026-10-05
+## v1.0.0-rc.15 — 2026-10-05
 
 This release improves participant disclosure, collection recovery, and verification of five-day
 study exports. Physical-device admission checks and daily data return remain necessary; these
 changes do not establish a completed 120-hour physical-device endurance run.
+
+The RC14 tag did not produce a public release because its CI gates failed. RC15 is the next
+distributed release after RC13.
 
 - Usage-event queries now check Usage Access and the unlocked-user state before and after each
   query, including an empty barrier flush. Lost access fails the collector without advancing its
@@ -174,7 +177,7 @@ changes do not establish a completed 120-hour physical-device endurance run.
   analyze them with this tree's `particeps-analysis` and `researcher-tools`. Keep the pilot phones
   on RC13 until the pilot ends: the fix is in the offline tools only.
 
-**Application update from `v1.0.0-rc.13`:** install the signed RC14 APK over the existing
+**Application update from `v1.0.0-rc.13`:** install the signed RC15 APK over the existing
 app without uninstalling or clearing its data; it does not change the application ID.
 
 **Local studies and exported data:** there is no local-store migration, mandatory reset,
@@ -231,7 +234,7 @@ access checks, and explicitly Resume the study.
   re-armed and retired. One whose target passes while the study runs retries until the next pause
   under RC13; after the update it ends at its next attempt.
 
-**Fresh install:** install the signed RC14 APK, then scan a research-team QR code or import
+**Fresh install:** install the signed RC15 APK, then scan a research-team QR code or import
 its signed study file. Review the study and data collection, provide consent, complete required
 access setup, and explicitly Start.
 
