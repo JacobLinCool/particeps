@@ -39,6 +39,15 @@ The pending-ANR check follows Android 14's
 [ProcessErrorStateRecord](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android14-release/services/core/java/com/android/server/am/ProcessErrorStateRecord.java),
 which sets `mNotResponding` before trace collection and deferred dialog handling.
 
+API 37 runner cleanup retains its original test exit status. It records the launched Linux child's
+PID, parent and start time, confirms the console's AVD name before requesting shutdown, and uses
+pidfds to signal only that child. Console commands and deletion of its temporary AVD each have a
+five-second deadline; process termination has five seconds before escalation and two more seconds
+to confirm exit. A successful forced termination completes cleanup; intermediate timeouts remain
+recorded. Failure to confirm that its processes stopped and its AVD was deleted fails an otherwise
+successful run. Per-phase results and command output remain in `api37-cleanup/`; teardown cannot
+turn a failed gate into a pass.
+
 The host harness measures each of 64, 512 and 4,096 kbps for 60 seconds in a separately signed,
 fixed-profile study, retaining the original aggregate-rate bounds and unselected control. Before
 and after each measurement it checks the original App process and the same committed resource

@@ -73,12 +73,29 @@ printf 'no\n' | "$avdmanager" create avd \
 
 emulator_pid=""
 cleanup() {
+  local original_status=$?
+  local cleanup_status
+  local -a process_arguments=()
+  trap - EXIT
+  set +e
+  rm -f "$report_directory/api37-cleanup/emulator-ready-to-reap"
   if [[ -n "$emulator_pid" ]]; then
-    "$adb_binary" -s emulator-5554 emu kill >/dev/null 2>&1 || true
-    kill "$emulator_pid" >/dev/null 2>&1 || true
+    process_arguments=(--emulator-pid "$emulator_pid")
+  fi
+  python3 tools/android_emulator_cleanup.py \
+    --adb "$adb_binary" --avdmanager "$avdmanager" --avd-name "$avd_name" \
+    --parent-pid "$$" --identity-file "$report_directory/api37-owned-emulator.stat" \
+    --evidence "$report_directory/api37-cleanup" --original-exit "$original_status" \
+    "${process_arguments[@]}"
+  cleanup_status=$?
+  if [[ -n "$emulator_pid" && -f "$report_directory/api37-cleanup/emulator-ready-to-reap" ]]; then
+    # The helper confirmed this child is gone or a zombie; this wait only reaps it.
     wait "$emulator_pid" >/dev/null 2>&1 || true
   fi
-  "$avdmanager" delete avd --name "$avd_name" >/dev/null 2>&1 || true
+  if (( original_status != 0 )); then
+    exit "$original_status"
+  fi
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
 
@@ -99,6 +116,8 @@ trap cleanup EXIT
   -logcat-output "$emulator_log" \
   >>"$runner_log" 2>&1 &
 emulator_pid=$!
+# Preserve PID/start-time/parent identity before it can exit; cleanup never signals a reused PID.
+cat "/proc/$emulator_pid/stat" > "$report_directory/api37-owned-emulator.stat"
 
 # sys.boot_completed is not a sufficient readiness signal on the revision 5 preview image: it can
 # become 1 before package or activity has registered, or before user 0's credential storage unlocks.
