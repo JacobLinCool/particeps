@@ -26,17 +26,24 @@ the queued candidate after RC13 and has not yet been published.
   transfers filled the kernel queue, lost packets and stalled TCP delivery during retransmission,
   even when their 60-second average passed the rate check. The former downlink FIFO also let
   download data delay upload acknowledgements and reduce simultaneous upload throughput.
-  In each direction, FQ-CoDel shares a hard 128-packet / 64 KiB payload limit across 1024 fixed hash
-  buckets, with byte-deficit scheduling and a congestion target that accommodates an MTU at
-  low rates. The reaction interval remains 100 ms. Classification keys are temporary;
-  no separate flow identities or hashes are recorded or exported. Congestion can discard TCP
-  or UDP packets before admission;
+  Each direction shares a hard 128-packet / 64 KiB payload limit across 1024 fixed hash
+  buckets, with byte-deficit scheduling. Uplink uses CoDel with a congestion target that
+  accommodates an MTU at low rates and a 100 ms reaction interval, and may discard TCP or UDP
+  packets before admission. Downlink waits for queue capacity instead of discarding queued
+  packets for capacity or sojourn time: losses there induced TCP retransmission backoff inside
+  the local gVisor sender and underfed the download limiter. Downlink producers release their
+  admission lock between packets so a stack batch cannot hold it ahead of another flow's ACK.
+  Classification keys are temporary; no separate flow identities or hashes are recorded or exported;
   counters still include only admitted packets, including admitted retransmissions; downlink
   admission requires a successful TUN write. Unlimited
   profiles use queue backpressure without these drops. Suspension, profile replacement and
   shutdown retain the existing admission fence, and queued packets use the current profile
   when delivered. Hash collisions and fragmented or opaque traffic can share a bucket;
   this does not establish strict per-flow fairness or lossless delivery.
+- WorkManager initializes on demand with its existing default configuration. Its database is no
+  longer opened by the eager startup provider, and constructing the action and upload adapters
+  does not initialize it. Durable timer, action and upload scheduling still request the same
+  application-wide WorkManager instance when needed.
 - Emulator throughput diagnostics can explicitly sample native counters, fixture write progress
   and kernel drop/retransmission counters, or run a bounded 300-second stress interval. Routine
   release gates retain their 60-second duration and original rate bounds, without periodic
@@ -268,7 +275,7 @@ access checks, and explicitly Resume the study.
 its signed study file. Review the study and data collection, provide consent, complete required
 access setup, and explicitly Start.
 
-**Pre-release verification:** local unit, lint, protocol and consumer checks passed. Android 14
+**Earlier RC14 verification:** local unit, lint, protocol and consumer checks passed. Android 14
 app, storage, usage-access and host-harness checks passed; the host harness's API 37-only permission
 case was inapplicable there. Android 17 compatibility, targeted app/usage checks and all 12 host
 scenarios passed locally, including local-network permission revocation. The signed RC14 candidate
