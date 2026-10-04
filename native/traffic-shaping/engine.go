@@ -99,7 +99,7 @@ func newEngine(tunFD int, mtu int, protector Protector, listener TerminalListene
 		downlink:      newDirectionLimiter(mtu, clock, waiter),
 		counters:      &aggregateCounters{},
 		suspended:     true,
-		downlinkQueue: newPacketQueue(clock),
+		downlinkQueue: newPacketQueue(clock, queueBackpressure),
 	}
 	state.shaped = &shapedTun{
 		ctx:        ctx,
@@ -111,7 +111,7 @@ func newEngine(tunFD int, mtu int, protector Protector, listener TerminalListene
 		gate:       &state.gate,
 		fail:       state.failTerminal,
 		stopping:   func() bool { return state.stopping.Load() },
-		queue:      newPacketQueue(clock),
+		queue:      newPacketQueue(clock, queueActiveManagement),
 		readerDone: make(chan struct{}),
 	}
 	success = true

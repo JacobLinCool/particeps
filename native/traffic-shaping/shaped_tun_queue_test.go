@@ -51,7 +51,7 @@ func queuedTunFixture(t *testing.T, rate *uint64, clock monotonicClock, waiter i
 	if err := uplink.resume(); err != nil {
 		t.Fatal(err)
 	}
-	queue := newPacketQueue(clock)
+	queue := newPacketQueue(clock, queueActiveManagement)
 	queue.apply(rate)
 	queue.resume()
 	shaped := &shapedTun{
@@ -213,7 +213,7 @@ func TestAggregateQueueAndLimiterKeepAllConformanceRatesSaturated(t *testing.T) 
 	for _, rate := range []uint64{64, 512, 4096} {
 		t.Run(fmt.Sprintf("%d_kbps", rate), func(t *testing.T) {
 			limiter, clock, _ := readyLimiter(&rate)
-			queue := newPacketQueue(clock)
+			queue := newPacketQueue(clock, queueActiveManagement)
 			queue.apply(&rate)
 			queue.resume()
 			for i := range 20 {

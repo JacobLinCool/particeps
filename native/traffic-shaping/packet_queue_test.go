@@ -12,7 +12,7 @@ import (
 
 func readyUplinkQueue(limited bool) (*packetQueue, *fakeClock) {
 	clock := newFakeClock()
-	queue := newPacketQueue(clock)
+	queue := newPacketQueue(clock, queueActiveManagement)
 	var rate *uint64
 	if limited {
 		rate = queueTestRate(4096)

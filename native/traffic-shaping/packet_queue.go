@@ -23,6 +23,15 @@ const (
 	flowOld
 )
 
+// Congestion policy is independent of limited/unlimited scheduling. The local
+// downlink producer can wait for capacity; a kernel TUN reader must keep draining.
+type queueCongestionPolicy uint8
+
+const (
+	queueActiveManagement queueCongestionPolicy = iota + 1
+	queueBackpressure
+)
+
 type queuedPacket struct {
 	data     [protocolMTU]byte
 	size     int
@@ -52,11 +61,13 @@ type packetQueueStats struct {
 
 // All buckets share one fixed packet pool and both hard occupancy limits.
 // Packet slots belong to both a per-bucket FIFO and a global arrival FIFO:
-// limited uses FQ-CoDel, unlimited uses lossless FIFO backpressure. Neither
+// Limited scheduling uses byte-deficit FQ with an explicit congestion policy;
+// unlimited scheduling uses global FIFO with backpressure. Neither scheduling
 // mode nor profile changes reorder packets within a bucket.
 type packetQueue struct {
 	mu                           sync.Mutex
 	clock                        monotonicClock
+	congestion                   queueCongestionPolicy
 	seed                         maphash.Seed
 	slots                        [packetQueueMaxPackets]packetSlot
 	flows                        [flowBuckets]flowQueue
@@ -70,8 +81,13 @@ type packetQueue struct {
 	changed                      chan struct{}
 }
 
-func newPacketQueue(clock monotonicClock) *packetQueue {
-	q := &packetQueue{clock: clock, seed: maphash.MakeSeed(), paused: true,
+func newPacketQueue(clock monotonicClock, congestion queueCongestionPolicy) *packetQueue {
+	switch congestion {
+	case queueActiveManagement, queueBackpressure:
+	default:
+		panic("invalid packet queue congestion policy")
+	}
+	q := &packetQueue{clock: clock, congestion: congestion, seed: maphash.MakeSeed(), paused: true,
 		pausedAt: clock.Now(), changed: make(chan struct{})}
 	q.initializeStorageLocked()
 	return q
@@ -179,7 +195,7 @@ func (q *packetQueue) enqueue(ctx context.Context, packet []byte) error {
 			return err
 		}
 		if !q.paused {
-			if q.limited && !q.makeRoomLocked(bucket, len(packet)) {
+			if q.limited && q.congestion == queueActiveManagement && !q.makeRoomLocked(bucket, len(packet)) {
 				q.signalLocked()
 				return nil
 			}
@@ -378,7 +394,7 @@ func (q *packetQueue) dequeueFQLocked(now time.Time) queuedPacket {
 			q.appendFlowLocked(bucket, flowOld)
 			continue
 		}
-		packet, ok := q.dequeueCodelLocked(bucket, now)
+		packet, ok := q.dequeueFlowLocked(bucket, now)
 		if !ok {
 			wasNew := flow.membership == flowNew
 			q.removeFlowLocked(bucket)
@@ -392,6 +408,18 @@ func (q *packetQueue) dequeueFQLocked(now time.Time) queuedPacket {
 		flow.deficit -= packet.size
 		return packet
 	}
+}
+
+// Both policies use the same deficit scheduler and per-bucket ordering. Local
+// backpressure never turns a long sojourn into a congestion drop.
+func (q *packetQueue) dequeueFlowLocked(bucket int, now time.Time) (queuedPacket, bool) {
+	if q.congestion == queueActiveManagement {
+		return q.dequeueCodelLocked(bucket, now)
+	}
+	if q.flows[bucket].head == noSlot {
+		return queuedPacket{}, false
+	}
+	return q.popFlowPacketLocked(bucket), true
 }
 
 func (q *packetQueue) dequeueCodelLocked(bucket int, now time.Time) (queuedPacket, bool) {

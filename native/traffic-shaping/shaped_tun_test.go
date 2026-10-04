@@ -65,7 +65,7 @@ func TestShapedTunCountsOnlyAggregateSuccessfulPackets(t *testing.T) {
 	var gate sync.RWMutex
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	queue := newPacketQueue(clock)
+	queue := newPacketQueue(clock, queueActiveManagement)
 	queue.resume()
 	device := &shapedTun{
 		ctx:      ctx,
@@ -125,7 +125,7 @@ func TestShapedTunReportsNonSensitiveTerminalCodeOnceAtEngineBoundary(t *testing
 		ctx: context.Background(), device: owned, mtu: protocolMTU,
 		uplink: uplink, downlink: downlink, counters: &aggregateCounters{}, gate: &gate,
 		fail: func(code string) { failures <- code }, stopping: func() bool { return false },
-		queue: newPacketQueue(clock), readerDone: make(chan struct{}),
+		queue: newPacketQueue(clock, queueActiveManagement), readerDone: make(chan struct{}),
 	}
 	device.queue.resume()
 	if _, err := device.Read(make([]byte, protocolMTU)); !errors.Is(err, io.EOF) {

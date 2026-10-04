@@ -38,7 +38,7 @@ func newShapedLinkFixture(t *testing.T, rate *uint64) *shapedLinkFixture {
 	if err := down.resume(); err != nil {
 		t.Fatal(err)
 	}
-	uq, dq := newPacketQueue(clock), newPacketQueue(clock)
+	uq, dq := newPacketQueue(clock, queueActiveManagement), newPacketQueue(clock, queueBackpressure)
 	uq.apply(nil)
 	uq.resume()
 	dq.apply(rate)
@@ -146,45 +146,48 @@ func TestShapedLinkACKBypassesBackloggedDownloadFlow(t *testing.T) {
 	}
 }
 
-func TestShapedLinkUnlimitedBackpressureAndPausedProducerClose(t *testing.T) {
-	for _, paused := range []bool{false, true} {
-		t.Run(fmt.Sprint(paused), func(t *testing.T) {
-			f := newShapedLinkFixture(t, nil)
-			data := queueTestPacket(1500, 1, 1)
-			if paused {
-				f.endpoint.queue.pause()
-			} else {
-				for range packetQueueMaxBytes / 1500 {
-					writeLinkPacket(t, f.endpoint, data)
+func TestShapedLinkBackpressureAndPausedProducerClose(t *testing.T) {
+	for _, rate := range []*uint64{nil, queueTestRate(512)} {
+		for _, paused := range []bool{false, true} {
+			t.Run(fmt.Sprint(rate, paused), func(t *testing.T) {
+				f := newShapedLinkFixture(t, rate)
+				data := queueTestPacket(1500, 1, 1)
+				if paused {
+					f.endpoint.queue.pause()
+				} else {
+					for range packetQueueMaxBytes / 1500 {
+						writeLinkPacket(t, f.endpoint, data)
+					}
 				}
-			}
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				packet := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(data)})
-				defer packet.DecRef()
-				var list stack.PacketBufferList
-				list.PushBack(packet)
-				n, err := f.endpoint.WritePackets(list)
-				if n != 0 || err == nil {
-					t.Errorf("closed blocked enqueue=%d,%v", n, err)
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					packet := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(data)})
+					defer packet.DecRef()
+					var list stack.PacketBufferList
+					list.PushBack(packet)
+					n, err := f.endpoint.WritePackets(list)
+					if n != 0 || err == nil {
+						t.Errorf("closed blocked enqueue=%d,%v", n, err)
+					}
+				}()
+				select {
+				case <-done:
+					t.Fatal("producer bypassed full/paused queue")
+				case <-time.After(10 * time.Millisecond):
 				}
-			}()
-			select {
-			case <-done:
-				t.Fatal("producer bypassed full/paused queue")
-			case <-time.After(10 * time.Millisecond):
-			}
-			f.cancel()
-			f.endpoint.Close()
-			select {
-			case <-done:
-			case <-time.After(time.Second):
-				t.Fatal("Close blocked behind producer")
-			}
-			waitLinkStopped(t, f.endpoint)
-		})
+				f.cancel()
+				f.endpoint.Close()
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Fatal("Close blocked behind producer")
+				}
+				waitLinkStopped(t, f.endpoint)
+			})
+		}
 	}
+
 }
 
 func TestShapedLinkHeldPacketUsesReplacementProfileAfterPause(t *testing.T) {
@@ -333,17 +336,17 @@ func TestEngineSuspendedStartupAndStopBeforeResumeWithBothQueues(t *testing.T) {
 	}
 }
 
-func TestShapedLinkLimitedOverflowAcceptsBoundedDropsWithoutCountingAdmission(t *testing.T) {
+func TestShapedLinkLimitedAcceptanceIsBoundedAndNotCountedAsAdmission(t *testing.T) {
 	f := newShapedLinkFixture(t, queueTestRate(512))
-	for i := range 200 {
+	for i := range packetQueueMaxBytes / protocolMTU {
 		writeLinkPacket(t, f.endpoint, queueTestPacket(1500, byte(i), 1))
 	}
 	stats := f.endpoint.queue.snapshot()
-	if stats.capacityDropPackets == 0 || stats.queuedPackets > packetQueueMaxPackets || stats.queuedBytes > packetQueueMaxBytes {
-		t.Fatalf("limited queue failed to apply bounded congestion policy: %+v", stats)
+	if stats.capacityDropPackets != 0 || stats.codelDropPackets != 0 || stats.queuedPackets != packetQueueMaxBytes/protocolMTU || stats.queuedBytes != (packetQueueMaxBytes/protocolMTU)*protocolMTU {
+		t.Fatalf("limited queue failed to preserve bounded accepted traffic: %+v", stats)
 	}
 	if f.endpoint.shaped.counters.downlinkBytes.Load() != 0 || f.endpoint.shaped.counters.downlinkPackets.Load() != 0 {
-		t.Fatal("queue acceptance/drop was counted as Layer-3 admission")
+		t.Fatal("queue acceptance was counted as Layer-3 admission")
 	}
 	if f.endpoint.NumQueued() != 0 {
 		t.Fatal("packet escaped into the embedded channel FIFO")
@@ -376,5 +379,69 @@ func TestShapedLinkCloseWakesAllSerializedProducers(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("producer serialization prevented close from waking every caller")
+	}
+}
+
+// Bulk batches must relinquish producer admission between packets. Otherwise
+// one full queue can keep a different flow's small ACK outside the FQ scheduler
+// until every packet in the bulk batch has acquired capacity.
+func TestShapedLinkBatchReleasesAdmissionBetweenPackets(t *testing.T) {
+	f := newShapedLinkFixture(t, queueTestRate(512))
+	for range packetQueueMaxBytes / protocolMTU {
+		writeLinkPacket(t, f.endpoint, queueTestPacket(protocolMTU, 1, 1))
+	}
+	bulkDone := make(chan struct{})
+	go func() {
+		defer close(bulkDone)
+		var batch stack.PacketBufferList
+		for range 3 {
+			p := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(queueTestPacket(protocolMTU, 2, 1))})
+			defer p.DecRef()
+			batch.PushBack(p)
+		}
+		_, _ = f.endpoint.WritePackets(batch)
+	}()
+	// The first bulk packet has no capacity. Wait until its producer lock is
+	// held, so the sparse producer really competes with an in-progress batch.
+	deadline := time.Now().Add(time.Second)
+	for f.endpoint.producerMu.TryLock() {
+		f.endpoint.producerMu.Unlock()
+		if time.Now().After(deadline) {
+			t.Fatal("bulk producer did not begin")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	sparseDone := make(chan struct{})
+	go func() {
+		defer close(sparseDone)
+		writeLinkPacket(t, f.endpoint, queueTestPacket(64, 9, 2))
+	}()
+	// Give the waiting mutex contender its normal handoff eligibility, then
+	// make room for at most two of the bulk batch's three packets.
+	time.Sleep(10 * time.Millisecond)
+	for range 2 {
+		takeQueuePacket(t, f.endpoint.queue)
+		select {
+		case <-sparseDone:
+			goto admitted
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	select {
+	case <-sparseDone:
+	case <-time.After(time.Second):
+		t.Fatal("bulk batch retained producer admission ahead of sparse packet")
+	}
+admitted:
+	select {
+	case <-bulkDone:
+		t.Fatal("test did not retain a blocked bulk suffix")
+	default:
+	}
+	f.endpoint.Close()
+	select {
+	case <-bulkDone:
+	case <-time.After(time.Second):
+		t.Fatal("closed queue did not release bulk suffix")
 	}
 }

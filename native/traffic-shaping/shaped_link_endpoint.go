@@ -121,10 +121,6 @@ func (e *shapedLinkEndpoint) WritePackets(packets stack.PacketBufferList) (count
 }
 
 func (e *shapedLinkEndpoint) enqueuePackets(packets stack.PacketBufferList) (int, error) {
-	// Serialize before materializing bytes, keeping at most one producer's
-	// MTU-sized temporary buffer. Close never takes this lock.
-	e.producerMu.Lock()
-	defer e.producerMu.Unlock()
 	count := 0
 	for _, packet := range packets.AsSlice() {
 		if packet.Size() <= 0 || packet.Size() > e.shaped.mtu {
@@ -133,14 +129,19 @@ func (e *shapedLinkEndpoint) enqueuePackets(packets stack.PacketBufferList) (int
 		if err := e.enqueuePacket(packet); err != nil {
 			return count, err
 		}
-		// A deliberate limited-mode AQM drop is accepted by the link, but
-		// never reaches the successful TUN-write admission counter.
+		// Accepted means queued; only successful paced TUN writes are counted
+		// as admitted Layer-3 traffic.
 		count++
 	}
 	return count, nil
 }
 
 func (e *shapedLinkEndpoint) enqueuePacket(packet *stack.PacketBuffer) error {
+	// Hold at most one MTU-sized producer copy. Release between packets so a
+	// large stack batch cannot retain admission ahead of another flow's ACK.
+	// Close never takes this lock and queue closure wakes a blocked producer.
+	e.producerMu.Lock()
+	defer e.producerMu.Unlock()
 	// The caller retains the original packet/list reference. Only this buffer
 	// clone is ours; enqueue copies into fixed storage before it is released.
 	data := packet.ToBuffer()

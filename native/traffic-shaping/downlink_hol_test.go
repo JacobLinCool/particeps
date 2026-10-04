@@ -93,7 +93,7 @@ func measureDownlinkACKDelay(t *testing.T, dataPackets int) time.Duration {
 		t.Fatal(err)
 	}
 	drainInitialCredit(t, downlink)
-	queue := newPacketQueue(clock)
+	queue := newPacketQueue(clock, queueActiveManagement)
 	queue.apply(nil)
 	queue.resume()
 	shaped := &shapedTun{ctx: ctx, device: &ownedTun{device: device}, mtu: protocolMTU,
