@@ -78,8 +78,10 @@ registry-defined closed-world profile schema. `interventions` is a sorted array 
 trigger. `traffic_shaping` is either `{}` (disabled) or exact `{profiles, target_packages}`;
 `target_packages` is either the exact string `"all"` (all apps in the current Android user, including apps installed later) or 1–64 sorted unique Android application IDs. Empty arrays and other strings are invalid. `profiles` contains 1–64
 exact `{downlink_kbps, id, uplink_kbps}` objects. A directional cap is `null` or a JSON integer in
-1–1,000,000 kbps. `1 kbps` means 1,000 aggregate Layer-3 bits per second at the TUN boundary,
-including IP/transport headers and retransmitted packets observed there. A configuration declares
+1–1,000,000 kbps. `1 kbps` means 1,000 aggregate Layer-3 bits per second admitted for forwarding
+at the TUN boundary, including IP/transport headers and admitted retransmitted packets. The cap
+applies to forwarding; packets dropped before admission are excluded from its accounting and
+traffic counter snapshots. A configuration declares
 at most 64 stateful resources in total, including the traffic-shaping actuator. `surveys` contains
 at most 128 survey definitions.
 

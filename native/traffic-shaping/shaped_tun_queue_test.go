@@ -52,7 +52,7 @@ func queuedTunFixture(t *testing.T, rate *uint64, clock monotonicClock, waiter i
 		t.Fatal(err)
 	}
 	queue := newUplinkPacketQueue(clock)
-	queue.apply(rate != nil)
+	queue.apply(rate)
 	queue.resume()
 	shaped := &shapedTun{
 		ctx: ctx, device: &ownedTun{device: device}, mtu: protocolMTU,
@@ -85,7 +85,7 @@ func TestDequeuedPacketWaitsThroughSuspendAndUsesReplacementProfile(t *testing.T
 	waiter := &signalWaiter{entered: make(chan time.Duration, 2)}
 	shaped, device, _ := queuedTunFixture(t, &rate, clock, waiter)
 	drainInitialCredit(t, shaped.uplink)
-	device.packets <- make([]byte, protocolMTU)
+	device.packets <- queueTestPacket(protocolMTU, 0, 1)
 	result := make(chan error, 1)
 	go func() { _, err := shaped.Read(make([]byte, protocolMTU)); result <- err }()
 	select {
@@ -99,7 +99,7 @@ func TestDequeuedPacketWaitsThroughSuspendAndUsesReplacementProfile(t *testing.T
 	shaped.uplink.suspend()
 	shaped.queue.pause()
 	shaped.uplink.apply(nil)
-	shaped.queue.apply(false)
+	shaped.queue.apply(nil)
 	assertQueueBlocked(t, result)
 	if shaped.counters.uplinkPackets.Load() != 0 {
 		t.Fatal("paused or merely dequeued packet was counted")
@@ -128,14 +128,14 @@ func TestReadReturningDuringSuspensionCannotEnqueueOrDeliver(t *testing.T) {
 	}
 	shaped.uplink.suspend()
 	shaped.queue.pause()
-	device.packets <- []byte{1, 2, 3}
+	device.packets <- queueTestPacket(64, 1, 1)
 	assertQueueBlocked(t, result)
 	if shaped.queue.snapshot().queuedPackets != 0 || shaped.counters.uplinkPackets.Load() != 0 {
 		t.Fatal("packet returned from an old TUN read crossed suspended admission")
 	}
 	rate := uint64(64)
 	shaped.uplink.apply(&rate)
-	shaped.queue.apply(true)
+	shaped.queue.apply(&rate)
 	if err := shaped.uplink.resume(); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestReadReturningDuringSuspensionCannotEnqueueOrDeliver(t *testing.T) {
 	if err := awaitQueueResult(t, result); err != nil {
 		t.Fatal(err)
 	}
-	if shaped.counters.uplinkBytes.Load() != 3 {
+	if shaped.counters.uplinkBytes.Load() != 64 {
 		t.Fatal("held packet was not reconsidered under the current profile")
 	}
 }
@@ -151,12 +151,12 @@ func TestReadReturningDuringSuspensionCannotEnqueueOrDeliver(t *testing.T) {
 func TestPumpJoinsWhenUnlimitedQueueIsFull(t *testing.T) {
 	clock := newFakeClock()
 	shaped, device, cleanup := queuedTunFixture(t, nil, clock, &advancingWaiter{clock: clock})
-	device.packets <- []byte{1}
+	device.packets <- queueTestPacket(64, 1, 1)
 	if _, err := shaped.Read(make([]byte, protocolMTU)); err != nil {
 		t.Fatal(err)
 	}
 	for range uplinkQueueMaxPackets + 1 {
-		device.packets <- []byte{2}
+		device.packets <- queueTestPacket(64, 2, 1)
 	}
 	deadline := time.Now().Add(time.Second)
 	for shaped.queue.snapshot().queuedPackets != uplinkQueueMaxPackets {
@@ -177,7 +177,7 @@ func TestLimitedPumpDrainsAndDropsWhileConsumerWaitsForCredit(t *testing.T) {
 	waiter := &signalWaiter{entered: make(chan time.Duration, 2)}
 	shaped, device, cleanup := queuedTunFixture(t, &rate, clock, waiter)
 	drainInitialCredit(t, shaped.uplink)
-	device.packets <- make([]byte, protocolMTU)
+	device.packets <- queueTestPacket(protocolMTU, 0, 1)
 	result := make(chan error, 1)
 	go func() { _, err := shaped.Read(make([]byte, protocolMTU)); result <- err }()
 	select {
@@ -186,7 +186,7 @@ func TestLimitedPumpDrainsAndDropsWhileConsumerWaitsForCredit(t *testing.T) {
 		t.Fatal("consumer did not block for credit")
 	}
 	for range 200 {
-		device.packets <- make([]byte, protocolMTU)
+		device.packets <- queueTestPacket(protocolMTU, 0, 1)
 	}
 	deadline := time.Now().Add(time.Second)
 	for {
@@ -214,10 +214,12 @@ func TestAggregateQueueAndLimiterKeepAllConformanceRatesSaturated(t *testing.T) 
 		t.Run(fmt.Sprintf("%d_kbps", rate), func(t *testing.T) {
 			limiter, clock, _ := readyLimiter(&rate)
 			queue := newUplinkPacketQueue(clock)
-			queue.apply(true)
+			queue.apply(&rate)
 			queue.resume()
 			for i := range 20 {
-				putQueuePacket(t, queue, protocolMTU, byte(i%2))
+				if err := queue.enqueue(context.Background(), queueTestPacket(protocolMTU, byte(i%2), uint16(i%2+1))); err != nil {
+					t.Fatal(err)
+				}
 			}
 			end := clock.Now().Add(time.Minute)
 			var admitted uint64
@@ -229,8 +231,11 @@ func TestAggregateQueueAndLimiterKeepAllConformanceRatesSaturated(t *testing.T) 
 				admitted += uint64(packet.size)
 				// Two independent producers share the same finite queue and
 				// limiter; no flow receives its own rate budget.
-				putQueuePacket(t, queue, protocolMTU, 0)
-				putQueuePacket(t, queue, protocolMTU, 1)
+				for flow := uint16(1); flow <= 2; flow++ {
+					if err := queue.enqueue(context.Background(), queueTestPacket(protocolMTU, 0, flow)); err != nil {
+						t.Fatal(err)
+					}
+				}
 			}
 			ideal := float64(rate*1_000*60) / 8
 			if ratio := float64(admitted) / ideal; ratio < .85 || ratio > 1.05 {
@@ -244,7 +249,17 @@ func TestAggregateQueueAndLimiterKeepAllConformanceRatesSaturated(t *testing.T) 
 	}
 }
 
-func TestEngineOversizedTunReadFailsClosedAndJoinsPump(t *testing.T) {
+func TestEngineInvalidTunReadFailsClosedAndJoinsPump(t *testing.T) {
+	for name, packet := range map[string][]byte{
+		"oversized":           make([]byte, protocolMTU+1),
+		"truncated_ip":        {0x45, 0, 0, 64},
+		"truncated_transport": ipv6ClassifierPacket(6, []byte{1, 2, 3, 4}),
+	} {
+		t.Run(name, func(t *testing.T) { assertEngineInvalidPacketFailsClosed(t, packet) })
+	}
+}
+
+func assertEngineInvalidPacketFailsClosed(t *testing.T, packet []byte) {
 	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_DGRAM, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -265,7 +280,7 @@ func TestEngineOversizedTunReadFailsClosedAndJoinsPump(t *testing.T) {
 	if err := engine.Resume(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := unix.Write(fds[1], make([]byte, protocolMTU+1)); err != nil {
+	if _, err := unix.Write(fds[1], packet); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -274,7 +289,7 @@ func TestEngineOversizedTunReadFailsClosedAndJoinsPump(t *testing.T) {
 			t.Fatalf("invalid TUN packet code = %s", code)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("oversized packet did not fail closed")
+		t.Fatal("invalid packet did not fail closed")
 	}
 	if engine.IsHealthy() || engine.HasOpenTun() || engine.Snapshot().GetUplinkPackets() != 0 {
 		t.Fatal("invalid packet remained healthy or entered the aggregate counters")

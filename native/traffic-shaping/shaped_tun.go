@@ -94,6 +94,9 @@ func (t *shapedTun) drainUplink() {
 			return
 		}
 		if err := t.queue.enqueue(t.ctx, buffer[:count]); err != nil {
+			if errors.Is(err, errInvalidTunPacket) {
+				t.fail(TerminalInvalidTunPacket)
+			}
 			t.queue.close(err)
 			return
 		}

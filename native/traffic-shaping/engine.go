@@ -145,7 +145,7 @@ func (e *engineState) applyProfile(canonicalProfile []byte) (_ *ProfileReceipt, 
 	e.generation++
 	e.uplink.apply(profile.uplinkKbps)
 	e.downlink.apply(profile.downlinkKbps)
-	e.shaped.queue.apply(profile.uplinkKbps != nil)
+	e.shaped.queue.apply(profile.uplinkKbps)
 	e.counters.reset()
 	e.profile = profile
 	return receiptFor(profile, e.generation), nil

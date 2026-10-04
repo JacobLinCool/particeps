@@ -346,8 +346,15 @@ or window conditions; use `study_session_active` for active-session resource bin
 ## Traffic-shaping counters
 
 `traffic_shaping.v1` is the sole source for aggregate traffic forwarded for the selected apps.
-TUN read is uplink and TUN write is downlink. Byte counts include the Layer-3 IP header; packet
-counts and the union of monotonic throttle-wait duration are recorded separately by direction.
+Uplink counters record packets admitted from the TUN to the local forwarding stack after pacing;
+they do not count every raw TUN read. Downlink counters record successful paced TUN writes.
+Byte counts include IP/transport headers and admitted retransmitted packets; packet counts and
+the union of monotonic throttle-wait duration are recorded separately by direction.
+
+Packets dropped before admission, including bounded uplink queue capacity and CoDel drops, are
+excluded from these byte and packet counters. The counters measure forwarding under the cap,
+not all traffic offered by apps or a packet-loss rate, and do not establish lossless delivery or
+payload receipt at the remote endpoint.
 
 The applied event binds the signed configuration, selected profile, resource/VPN generation,
 package-list digest, optional directional caps, and native applied-profile digest. Periodic

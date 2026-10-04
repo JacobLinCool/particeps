@@ -16,19 +16,28 @@ these changes do not establish a completed 120-hour physical-device endurance ru
 The RC14 and RC15 tags did not produce public releases because their CI gates failed. RC16 is
 the queued candidate after RC13 and has not yet been published.
 
-- Limited uplink traffic now drains Android's TUN into one bounded aggregate queue before
+- Limited uplink traffic now drains Android's TUN into bounded flow queues before
   paced Layer-3 admission. Previously, waiting for rate credit stopped TUN reads; sustained
   transfers filled the kernel queue, lost packets and stalled TCP delivery during retransmission,
-  even when their 60-second average passed the rate check. The new queue uses CoDel and a hard
-  128-packet / 64 KiB payload limit. Congestion can discard TCP or UDP packets before admission;
+  even when their 60-second average passed the rate check. FQ-CoDel shares a hard 128-packet /
+  64 KiB payload limit across 1024 fixed hash buckets, with byte-deficit scheduling and a
+  congestion target that accommodates an MTU at low rates. Classification keys are temporary;
+  no separate flow identities or hashes are recorded or exported. Congestion can discard TCP
+  or UDP packets before admission;
   counters still include only admitted packets, including admitted retransmissions. Unlimited
   profiles use queue backpressure without these drops. Suspension, profile replacement and
   shutdown retain the existing admission fence, and queued packets use the current profile
-  when delivered. This is an aggregate FIFO, not per-flow fairness or a lossless-network promise.
+  when delivered. Hash collisions and fragmented or opaque traffic can share a bucket;
+  this does not establish strict per-flow fairness or lossless delivery.
 - Emulator throughput diagnostics can explicitly sample native counters, fixture write progress
   and kernel drop/retransmission counters, or run a bounded 300-second stress interval. Routine
   release gates retain their 60-second duration and original rate bounds, without periodic
   foreground diagnostic broadcasts changing the app's process priority.
+- Throughput gates also require each selected connection to make progress after a ten-second
+  warmup: more than five consecutive complete one-second buckets without payload fails the
+  measurement even if its aggregate rate passes. A simultaneous upload/download case checks
+  actual Android-received download payload under the same fixed 512/512 kbps profile, with
+  bounded start synchronization and the original rate bounds in both directions.
 - Usage-event queries now check Usage Access and the unlocked-user state before and after each
   query, including an empty barrier flush. Lost access fails the collector without advancing its
   successful-query coverage, rather than recording an empty result as successful collection.

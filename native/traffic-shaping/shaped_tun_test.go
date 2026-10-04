@@ -46,7 +46,7 @@ func (tun *memoryTun) Close() error {
 }
 
 func TestShapedTunCountsOnlyAggregateSuccessfulPackets(t *testing.T) {
-	payload := make([]byte, 128)
+	payload := queueTestPacket(128, 0, 1)
 	memory := &memoryTun{readBuffer: bytes.NewReader(payload), closedCh: make(chan struct{})}
 	owned := &ownedTun{device: memory}
 	clock := newFakeClock()

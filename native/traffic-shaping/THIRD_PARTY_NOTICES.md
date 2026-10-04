@@ -1,7 +1,7 @@
 # Third-party notices
 
 The source-built Particeps traffic-shaping library includes the pinned upstream
-projects and adapted CoDel reference algorithm listed below. Their full notices
+projects and adapted CoDel and FQ-CoDel algorithms listed below. Their full notices
 are reproduced here. Every linked module, version, checksum, role, SPDX license identifier,
 license filename, and license-file SHA-256 is enumerated in `sbom-input.json`.
 The release artifact also contains the independently verified, unmodified
@@ -61,11 +61,16 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 
 
-## CoDel — RFC 8289, Section 5 (2018)
+## CoDel and FQ-CoDel — RFC 8289 and RFC 8290 (2018)
 
 The CoDel algorithm in codel.go and uplink_packet_queue.go is adapted from
 RFC 8289, Section 5 (January 2018), by K. Nichols, V. Jacobson, A. McGregor,
 and J. Iyengar: https://www.rfc-editor.org/rfc/rfc8289.html#section-5
+
+The flow scheduler in uplink_packet_queue.go and classification policy in
+flow_classifier.go implement RFC 8290, Sections 4 and 5 (January 2018), by
+T. Hoeiland-Joergensen, P. McKenney, D. Taht, J. Gettys, and E. Dumazet:
+https://www.rfc-editor.org/rfc/rfc8290.html
 
 Copyright (c) 2018 IETF Trust and the persons identified as authors of the
 code. All rights reserved.
