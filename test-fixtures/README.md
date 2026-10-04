@@ -22,7 +22,8 @@ generation. It checks their combined TCP payload reaches 85% of the
 Layer-3 cap and stays below the cap plus 5% and one MTU. The payload floor accounts for IP/TCP
 headers and virtual-device scheduling jitter; it does not relax the upper limit. A simultaneous
 unselected control connection must exceed that upper bound, proving it bypasses both the local VPN
-and limiter.
+and limiter. All host payload counts use read completion in the half-open measurement window
+`[0, duration)`: a chunk completing at or after the deadline is excluded in full.
 Every selected connection must also make progress: after the first 10 seconds, no target may have
 more than five consecutive complete one-second buckets with zero delivered payload. For a 60-second
 measurement, this examines buckets 10 through 59; sparse missing buckets are zero and deadline-tail
@@ -34,6 +35,20 @@ active seconds. It waits for each durably verified applied profile with open adm
 new epochs and advancing resource generations in the original App process. This checks live profile
 application; it does not claim that a long-lived TCP connection spans a profile barrier. Neither case
 infers the applied profile from a fixed host sleep.
+
+A separate 60-second duplex case uses the fixed 512/512 kbps profile: target A uploads while target B
+downloads a fixed all-`Z` payload, alongside an unselected upload control. The host counts delivered
+upload bytes. Android counts actual download read completions, validates every payload byte, and
+atomically publishes exactly 60 one-second buckets after its own window ends. A fresh measurement ID
+binds both observations to the barrier; the host requires the download barrier acknowledgement within
+one second. Host and Android use their respective monotonic clocks, so their origins are bounded by
+that handshake rather than claimed identical. The sender stops within 61.5 seconds; its socket write
+counts are diagnostic only. Both received directions must meet the same rate and liveness bounds,
+using only chunks completed inside their respective 60-second windows. Receiver EOF/errors, an
+early sender stop, stale IDs, or truncated windows fail the case; a sender error after the receiver's
+normal deadline closure is expected and retained as a diagnostic. Applied-profile and process
+proofs bracket the transfer; it makes no periodic device queries. Run this case alone with
+`tools/android-host-harness.sh --skip-build --duplex-only`.
 
 `host-study.json` is the dynamic source fixture. Regenerate its signed asset and the three fixed
 variants with `./gradlew :researcher-tools:installDist` followed by
@@ -89,7 +104,7 @@ For a bounded diagnostic run, `tools/android-host-harness.sh --skip-build --fixe
 records all five independent 60-second attempts with the same throughput bounds and enables sampling.
 Add `--fixed-512-duration-seconds 300` for five-minute connections; this option is valid only in the
 focused diagnostic lane. Use `--no-throughput-diagnostics` for a comparison without periodic host
-queries. The regular CI invocation still runs all 13 scenarios with 60-second measurements and no
+queries. The regular CI invocation runs all 14 scenarios with 60-second measurements and no
 periodic sampling. Debug broadcasts can affect process scheduling/importance; a passing instrumented
 run alone does not establish that an intermittent stall has been fixed. The sampler has a hard
 duration-plus-60-second limit and records command failures or missing observations explicitly.

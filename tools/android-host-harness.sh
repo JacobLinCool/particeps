@@ -5,6 +5,7 @@ repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
 
 skip_build=false
+duplex_only=false
 fixed_512_repetitions=0
 fixed_512_duration_seconds=60
 diagnostic_duration_requested=false
@@ -12,6 +13,7 @@ diagnostics_mode=auto
 while (( $# != 0 )); do
   case "$1" in
     --skip-build) skip_build=true; shift ;;
+    --duplex-only) duplex_only=true; shift ;;
     --fixed-512-repetitions)
       [[ "${2:-}" =~ ^[1-5]$ ]] || { echo "Expected 1..5 repetitions" >&2; exit 2; }
       fixed_512_repetitions="$2"; shift 2 ;;
@@ -22,9 +24,13 @@ while (( $# != 0 )); do
       [[ "$diagnostics_mode" == auto ]] || { echo "Choose one diagnostics option" >&2; exit 2; }
       if [[ "$1" == --capture-throughput-diagnostics ]]; then diagnostics_mode=on; else diagnostics_mode=off; fi
       shift ;;
-    *) echo "usage: tools/android-host-harness.sh [--skip-build] [--fixed-512-repetitions 1..5 [--fixed-512-duration-seconds 60|300]] [--capture-throughput-diagnostics|--no-throughput-diagnostics]" >&2; exit 2 ;;
+    *) echo "usage: tools/android-host-harness.sh [--skip-build] [--duplex-only|--fixed-512-repetitions 1..5 [--fixed-512-duration-seconds 60|300]] [--capture-throughput-diagnostics|--no-throughput-diagnostics]" >&2; exit 2 ;;
   esac
 done
+if [[ "$duplex_only" == true ]] && { (( fixed_512_repetitions > 0 )) || [[ "$diagnostics_mode" == on ]]; }; then
+  echo "Duplex-only cannot combine with repetitions or periodic diagnostics" >&2
+  exit 2
+fi
 if [[ "$diagnostic_duration_requested" == true ]] && (( fixed_512_repetitions == 0 )); then
   echo "Diagnostic duration requires --fixed-512-repetitions" >&2
   exit 2
@@ -506,6 +512,48 @@ run_saturation_measurement() {
   (( result == 0 ))
 }
 
+run_duplex_measurement() {
+  local directory="$report_directory/duplex" identity ready result=0 server_result=0
+  mkdir -p "$directory"
+  identity="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+  ready="$harness_temporary/duplex.ready"
+  stop_traffic_fixtures
+  "$adb_binary" shell run-as "$target_b_package" rm -f files/duplex-download.json
+  python3 -m tools.android_duplex_fixture serve \
+    --measurement-id "$identity" --upload-port 19120 --download-port 19121 --control-port 19122 \
+    --ready "$ready" --output "$directory/host.json" &
+  server_pid="$!"
+  for _ in $(seq 1 50); do
+    [[ -f "$ready" ]] && break
+    kill -0 "$server_pid"
+    sleep 0.1
+  done
+  test -f "$ready"
+  "$adb_binary" shell am start -W -n "$target_a_package/$traffic_activity" \
+    --es mode saturate --ei port 19120 > "$harness_temporary/duplex-a.txt"
+  "$adb_binary" shell am start -W -n "$target_b_package/$traffic_activity" \
+    --es mode duplex-download --es measurement_id "$identity" --ei port 19121 > "$harness_temporary/duplex-b.txt"
+  "$adb_binary" shell am start -W -n "$control_package/$traffic_activity" \
+    --es mode saturate --ei port 19122 > "$harness_temporary/duplex-control.txt"
+  wait "$server_pid" || server_result=$?
+  server_pid=""
+  # One post-window adb call waits for AtomicFile publication and reads it once.
+  # There are no periodic device queries during this duplex measurement.
+  "$adb_binary" shell run-as "$target_b_package" sh -c \
+    "'for n in 1 2 3 4 5 6 7 8 9 10; do if [ -f files/duplex-download.json ]; then cat files/duplex-download.json; exit 0; fi; sleep 0.2; done; exit 1'" \
+    > "$directory/android-download.json"
+  python3 -m tools.android_duplex_fixture validate \
+    --measurement-id "$identity" --host "$directory/host.json" \
+    --download "$directory/android-download.json" --output "$directory/result.json" || result=$?
+  cat "$directory/result.json" >> "$metrics_file"
+  if (( result != 0 || server_result != 0 )); then
+    python3 -m tools.android_host_diagnostics --adb "$adb_binary" --serial "$device_serial" capture \
+      --output "$directory/failure"
+  fi
+  stop_traffic_fixtures
+  (( result == 0 && server_result == 0 ))
+}
+
 wait_for_boot() {
   "$adb_binary" wait-for-device
   for _ in $(seq 1 90); do
@@ -595,6 +643,25 @@ case_three_profile_throughput_and_control_bypass() {
     sequence=$((sequence + 1))
     case_fixed_profile_measurement "$cap" "$sequence"
   done
+}
+
+case_duplex_fixed_512() {
+  local live_pid before after measurement_status
+  local envelope_asset="app/src/androidTest/assets/host_fixed_512_study_envelope.txt"
+  mkdir -p "$report_directory/applied-profiles"
+  provision_running_study "$envelope_asset"
+  live_pid="$(capture_live_particeps_pid)"
+  before="$report_directory/applied-profiles/duplex-512-before.json"
+  after="$report_directory/applied-profiles/duplex-512-after.json"
+  await_applied_profile cap-0512 "$live_pid" "$envelope_asset" "$before"
+  set +e
+  (trap case_cleanup EXIT; set -euo pipefail; run_duplex_measurement)
+  measurement_status=$?
+  set -e
+  await_applied_profile cap-0512 "$live_pid" "$envelope_asset" "$after"
+  python3 tools/android_host_profile.py compare --before "$before" --after "$after"
+  (( measurement_status == 0 ))
+  reset_study
 }
 
 case_fixed_512_diagnostic() {
@@ -804,7 +871,10 @@ run_case() {
   case_durations+=("$((ended - started))")
 }
 
-if (( fixed_512_repetitions > 0 )); then
+if [[ "$duplex_only" == true ]]; then
+  prepare_fixed_512_diagnostic
+  run_case "simultaneous_512_upload_download_and_control_bypass" case_duplex_fixed_512
+elif (( fixed_512_repetitions > 0 )); then
   prepare_fixed_512_diagnostic
   for diagnostic_iteration in $(seq 1 "$fixed_512_repetitions"); do
     run_case "fixed_512_diagnostic_$diagnostic_iteration" case_fixed_512_diagnostic
@@ -816,6 +886,7 @@ run_case "all_apps_capped_tcp_round_trip" case_all_apps_tcp_round_trip
 run_case "fixture_inventory_protocol_attempts_and_shared_uid" case_fixture_inventory_and_protocols
 run_case "protocol_attempts_preserve_verified_vpn" case_protocol_matrix_through_verified_vpn
 run_case "aggregate_64_512_4096_kbps_and_control_bypass" case_three_profile_throughput_and_control_bypass
+run_case "simultaneous_512_upload_download_and_control_bypass" case_duplex_fixed_512
 run_case "dynamic_profiles_advance_verified_epochs_without_process_restart" case_dynamic_verified_profile_transitions
 run_case "process_kill_recovers_safety_paused" case_process_kill_recovery
 run_case "reboot_recovers_safety_paused" case_reboot_recovery

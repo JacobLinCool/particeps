@@ -201,19 +201,25 @@ class AndroidFixtureServerTest(unittest.TestCase):
         self.assertIsNone(metrics.first_byte_seconds)
         self.assertNotIn("private-endpoint-secret", json.dumps(metrics.document()))
 
-    def test_existing_boundary_recv_tail_remains_counted_in_its_actual_second(self) -> None:
-        connection = Mock()
-        connection.recv.return_value = b"tail"
-        counter = server.ByteCounter()
-        metrics = server.ConnectionMetrics("target", 0)
-        with patch.object(server.time, "monotonic", side_effect=[
-            159.9, 160.2, 160.2, 160.2,
-        ]):
-            server.receive_until(connection, 160.0, counter, metrics, 100.0)
-        self.assertEqual(4, counter.value)
-        self.assertEqual({60: 4}, metrics.bytes_by_second)
-        self.assertEqual("deadline", metrics.end_reason)
-        connection.recv.assert_called_once()
+    def test_read_completing_at_or_after_deadline_cannot_contribute_payload(self) -> None:
+        for duration in (60, 300):
+            for offset in (0, 0.2):
+                with self.subTest(duration=duration, offset=offset):
+                    deadline = 100.0 + duration
+                    connection = Mock()
+                    connection.recv.return_value = b"tail"
+                    counter = server.ByteCounter()
+                    metrics = server.ConnectionMetrics("target", 0)
+                    with patch.object(server.time, "monotonic", side_effect=[
+                        deadline - 0.1, deadline + offset, deadline + offset,
+                    ]):
+                        server.receive_until(connection, deadline, counter, metrics, 100.0)
+                    self.assertEqual(0, counter.value)
+                    self.assertEqual({}, metrics.bytes_by_second)
+                    self.assertIsNone(metrics.first_byte_seconds)
+                    self.assertIsNone(metrics.last_byte_seconds)
+                    self.assertEqual("deadline", metrics.end_reason)
+                    connection.recv.assert_called_once()
 
     def test_three_connection_barrier_publishes_consistent_private_metrics(self) -> None:
         pairs = [socket.socketpair() for _ in range(3)]

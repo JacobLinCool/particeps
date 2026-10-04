@@ -111,6 +111,10 @@ class ProfileHarnessControlFlowTest(unittest.TestCase):
         for arguments, expected in (
             ([], "0|60|false"),
             (["--capture-throughput-diagnostics"], "0|60|true"),
+            (["--duplex-only"], "0|60|false"),
+            (["--duplex-only", "--fixed-512-repetitions", "1"], None),
+            (["--duplex-only", "--capture-throughput-diagnostics"], None),
+            (["--duplex-only", "--fixed-512-duration-seconds", "300"], None),
             (["--fixed-512-repetitions", "5"], "5|60|true"),
             (["--fixed-512-repetitions", "1", "--fixed-512-duration-seconds", "300"], "1|300|true"),
             (["--no-throughput-diagnostics", "--fixed-512-repetitions", "1", "--fixed-512-duration-seconds", "300"], "1|300|false"),
@@ -191,6 +195,28 @@ await_applied_profile cap-0064 42 unused "$proof_file"
             })
             self.assertNotEqual(0, result.returncode)
             self.assertFalse(proof.exists())
+
+    def test_duplex_failure_keeps_after_proof_and_does_not_reset_before_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            script = "set -euo pipefail\n" + self.function("case_duplex_fixed_512") + """
+provision_running_study() { echo provision >> "$calls"; }
+capture_live_particeps_pid() { echo 42; }
+await_applied_profile() { echo proof >> "$calls"; }
+case_cleanup() { :; }
+run_duplex_measurement() {
+  echo measure >> "$calls"
+  false
+  echo accidentally-ignored-errexit >> "$calls"
+}
+python3() { echo compare >> "$calls"; }
+reset_study() { echo reset >> "$calls"; }
+case_duplex_fixed_512
+"""
+            calls = Path(temporary) / "calls.txt"
+            result = subprocess.run(["bash", "-s"], input=script, text=True, capture_output=True,
+                env={**os.environ, "report_directory": temporary, "calls": str(calls)})
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual(["provision", "proof", "measure", "proof", "compare"], calls.read_text().splitlines())
 
 
 if __name__ == "__main__":

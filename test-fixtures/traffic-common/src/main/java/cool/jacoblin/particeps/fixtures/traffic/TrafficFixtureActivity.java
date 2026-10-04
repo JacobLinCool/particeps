@@ -41,7 +41,8 @@ public final class TrafficFixtureActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-        if ("saturate".equals(getIntent().getStringExtra("mode"))) {
+        String mode = getIntent().getStringExtra("mode");
+        if ("saturate".equals(mode) || "duplex-download".equals(mode)) {
             Intent service = new Intent(this, TrafficFixtureService.class)
                     .putExtras(getIntent());
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

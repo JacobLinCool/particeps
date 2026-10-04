@@ -301,7 +301,9 @@ esac
     def test_harness_is_blocking_and_covers_every_device_stage(self) -> None:
         harness = (ROOT / "tools/android-host-harness.sh").read_text()
         required_cases = (
+            "fixture_inventory_protocol_attempts_and_shared_uid",
             "aggregate_64_512_4096_kbps_and_control_bypass",
+            "simultaneous_512_upload_download_and_control_bypass",
             "dynamic_profiles_advance_verified_epochs_without_process_restart",
             "all_apps_capped_tcp_round_trip",
             "protocol_attempts_preserve_verified_vpn",
@@ -316,6 +318,7 @@ esac
         )
         for name in required_cases:
             self.assertIn(name, harness)
+        self.assertEqual(14, len(required_cases))
         self.assertIn("for cap in 64 512 4096", harness)
         self.assertIn('run_saturation_measurement "$cap" "$sequence"', harness)
         self.assertNotIn("sleep 18", harness)

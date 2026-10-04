@@ -12,18 +12,22 @@ import android.os.SystemClock;
 import android.system.ErrnoException;
 import android.util.AtomicFile;
 import java.io.File;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.UUID;
 
 /** Keeps the host-only saturation workload runnable while its launcher activity is backgrounded. */
 public final class TrafficFixtureService extends Service {
@@ -43,7 +47,11 @@ public final class TrafficFixtureService extends Service {
         if (!started.compareAndSet(false, true)) return START_NOT_STICKY;
         executor.execute(() -> {
             try {
-                runSaturation(intent);
+                if ("duplex-download".equals(intent.getStringExtra("mode"))) {
+                    runDownload(intent);
+                } else {
+                    runSaturation(intent);
+                }
             } finally {
                 executor.shutdown();
                 stopForeground(STOP_FOREGROUND_REMOVE);
@@ -121,6 +129,70 @@ public final class TrafficFixtureService extends Service {
             persistProgress(progress);
         }
         writeMetrics(succeeded, attemptedBytes);
+    }
+
+    private void runDownload(Intent intent) {
+        int port = intent.getIntExtra("port", -1);
+        if (port < 1024 || port > 65535) throw new IllegalArgumentException("Missing fixture port");
+        String measurementId = intent.getStringExtra("measurement_id");
+        UUID expected = UUID.fromString(measurementId);
+        DownloadMeasurement measurement = new DownloadMeasurement(measurementId, requireMetadata("fixture_role"));
+        String endReason = "error";
+        String errorType = null;
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(InetAddress.getByName("10.0.2.2"), port), 5_000);
+            socket.setTcpNoDelay(true);
+            socket.setSoTimeout(20_000);
+            DataInputStream input = new DataInputStream(socket.getInputStream());
+            DataOutputStream output = new DataOutputStream(socket.getOutputStream());
+            output.writeLong(expected.getMostSignificantBits());
+            output.writeLong(expected.getLeastSignificantBits());
+            output.flush();
+            int signal = input.readUnsignedByte();
+            UUID received = new UUID(input.readLong(), input.readLong());
+            if (signal != 1 || !expected.equals(received)) {
+                throw new IllegalStateException("Invalid duplex barrier");
+            }
+            measurement.start(SystemClock.elapsedRealtimeNanos());
+            output.writeByte(2);
+            output.writeLong(expected.getMostSignificantBits());
+            output.writeLong(expected.getLeastSignificantBits());
+            output.flush();
+            socket.setSoTimeout(250);
+            byte[] payload = new byte[PAYLOAD_BYTES];
+            while (true) {
+                if (SystemClock.elapsedRealtimeNanos() >= measurement.deadlineNanos()) {
+                    endReason = "deadline";
+                    break;
+                }
+                int count;
+                try {
+                    count = input.read(payload);
+                } catch (SocketTimeoutException timeout) {
+                    continue;
+                }
+                if (count < 0) {
+                    endReason = "eof";
+                    break;
+                }
+                measurement.received(payload, count, SystemClock.elapsedRealtimeNanos());
+            }
+        } catch (Exception failure) {
+            endReason = "error";
+            errorType = failure.getClass().getSimpleName();
+        } finally {
+            measurement.finish(endReason, errorType, SystemClock.elapsedRealtimeNanos());
+            AtomicFile destination = new AtomicFile(new File(getFilesDir(), "duplex-download.json"));
+            FileOutputStream file = null;
+            try {
+                file = destination.startWrite();
+                file.write(measurement.json().getBytes(StandardCharsets.UTF_8));
+                destination.finishWrite(file);
+            } catch (Exception failure) {
+                if (file != null) destination.failWrite(file);
+                throw new IllegalStateException("Unable to persist download metrics", failure);
+            }
+        }
     }
 
     private synchronized void persistProgress(SaturationProgress progress) {

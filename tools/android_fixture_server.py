@@ -138,6 +138,18 @@ class MeasurementValidation:
         }
 
 
+def check_liveness(target: ConnectionMetrics, duration_seconds: int) -> TargetLiveness:
+    if duration_seconds <= LIVENESS_WARMUP_SECONDS:
+        raise ValueError("measurement must include complete buckets after liveness warmup")
+    longest = consecutive = 0
+    # Only complete receive-completion buckets count. Sparse missing buckets
+    # are zero; startup and any recv tail at/after the deadline are excluded.
+    for second in range(LIVENESS_WARMUP_SECONDS, duration_seconds):
+        consecutive = consecutive + 1 if target.bytes_by_second.get(second, 0) == 0 else 0
+        longest = max(longest, consecutive)
+    return TargetLiveness(target.index, longest)
+
+
 def validate_measurement(
     cap_kbps: int,
     duration_seconds: int,
@@ -164,13 +176,7 @@ def validate_measurement(
     rate_passed = not reasons
     liveness = []
     for target in sorted(targets, key=lambda value: value.index):
-        longest = consecutive = 0
-        # Only complete host recv-completion buckets count. Sparse missing buckets
-        # are zero; startup and any recv tail at/after the deadline are excluded.
-        for second in range(LIVENESS_WARMUP_SECONDS, duration_seconds):
-            consecutive = consecutive + 1 if target.bytes_by_second.get(second, 0) == 0 else 0
-            longest = max(longest, consecutive)
-        result = TargetLiveness(target.index, longest)
+        result = check_liveness(target, duration_seconds)
         liveness.append(result)
         if not result.passed:
             reasons.append(f"target_{target.index}_zero_payload_run_exceeded")
@@ -214,7 +220,12 @@ def receive_until(
         if not chunk:
             reason = "eof"
             break
-        elapsed = time.monotonic() - started_at
+        completed_at = time.monotonic()
+        # Socket reads may start within the window and finish after it. Delivery is
+        # observed at completion, so the whole boundary-crossing chunk is excluded.
+        if completed_at >= deadline:
+            break
+        elapsed = completed_at - started_at
         counter.add(len(chunk))
         metrics.received(len(chunk), elapsed)
     metrics.end_reason = reason
@@ -287,8 +298,8 @@ def run(args: argparse.Namespace) -> bool:
                 "control_connections": len(control),
                 "duration_seconds": args.duration_seconds,
                 # Sparse buckets use host recv-completion time relative to the existing
-                # deadline origin. Missing buckets contain zero bytes. A blocking recv
-                # may finish after the deadline; preserve that tail in its actual bucket.
+                # deadline origin. Missing buckets contain zero bytes. Read completions
+                # at/after the deadline are excluded from both the count and buckets.
                 "timing_basis": "host_monotonic_since_all_connections_accepted",
                 "started_host_monotonic_ns": int(started_at * 1_000_000_000),
                 "bytes_bucket_width_seconds": 1,
