@@ -87,6 +87,13 @@ commit missing from the retained chain. On-device recovery authenticates every c
 may be absent. Range export decrypts and emits one commit at a time and stops at its requested
 complete-commit boundary.
 
+If a checkpoint write is interrupted, an incomplete or unauthenticated staging snapshot can be
+excluded only when the base snapshot authenticates successfully. Recovery still verifies the full
+retained commit chain and pending input before replacing the cache and retiring staging files.
+An invalid base, an authenticated malformed or conflicting snapshot, or a missing/corrupt retained
+commit fails recovery. This rule applies only to runtime snapshot caches; it does not relax pending
+input or safety-record authentication.
+
 ## Source observations and coverage
 
 A `SourceObservation` describes one admitted collector batch without repeating batch metadata in

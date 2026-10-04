@@ -16,6 +16,11 @@ these changes do not establish a completed 120-hour physical-device endurance ru
 The RC14 and RC15 tags did not produce public releases because their CI gates failed. RC16 is
 the queued candidate after RC13 and has not yet been published.
 
+- Interrupted runtime checkpoint writes can recover from an authenticated base and the complete
+  authenticated commit log even when a staging snapshot was only partly written. Staging files are
+  retired only after recovery succeeds. Invalid bases, authenticated conflicting documents, damaged
+  retained commits and pending-input failures still stop recovery; process recovery remains paused
+  until the participant explicitly resumes.
 - Limited uplink traffic now drains Android's TUN into bounded flow queues before
   paced Layer-3 admission. Previously, waiting for rate credit stopped TUN reads; sustained
   transfers filled the kernel queue, lost packets and stalled TCP delivery during retransmission,

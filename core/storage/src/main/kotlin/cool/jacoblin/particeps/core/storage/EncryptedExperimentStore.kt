@@ -25,6 +25,7 @@ import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.file.Files
+import java.security.GeneralSecurityException
 import java.security.KeyStore
 import java.security.MessageDigest
 import java.util.Collections
@@ -521,10 +522,26 @@ class EncryptedExperimentStore internal constructor(
 
     private fun recoverSnapshot(key: SecretKey): RuntimeDocument {
         val candidates = try {
-            snapshotFile.candidates().map { candidate ->
-                EngineDataJsonCodec.decodeRuntime(
-                    decryptDocument(candidate.bytes, key, RUNTIME_HEADER, MAXIMUM_SNAPSHOT_BYTES),
-                ).also { require(it.experimentId == experimentId) { "Encrypted experiment ID mismatch" } }
+            val encoded = snapshotFile.candidates()
+            // A checkpoint is only a cache of authenticated commit frames. A writer may die
+            // while filling a staging file, leaving its acknowledged base intact. Authenticate
+            // that base first; only then can an unsealed staging file be excluded as an anchor.
+            // Never discard an invalid base or an authenticated but inconsistent document.
+            val base = encoded.singleOrNull { it.role == AcknowledgedFileCandidateRole.BASE }?.let {
+                decodeSnapshot(decryptDocument(it.bytes, key, RUNTIME_HEADER, MAXIMUM_SNAPSHOT_BYTES))
+            }
+            encoded.mapNotNull { candidate ->
+                if (candidate.role == AcknowledgedFileCandidateRole.BASE) return@mapNotNull base
+                val plaintext = try {
+                    decryptDocument(candidate.bytes, key, RUNTIME_HEADER, MAXIMUM_SNAPSHOT_BYTES)
+                } catch (failure: GeneralSecurityException) {
+                    if (base == null) throw failure
+                    return@mapNotNull null
+                } catch (failure: IllegalArgumentException) {
+                    if (base == null) throw failure
+                    return@mapNotNull null
+                }
+                decodeSnapshot(plaintext)
             }
         } catch (failure: Throwable) {
             throw StudyStoreRecoveryException(StudyStoreRecoveryFailure.SNAPSHOT_INVALID, failure)
@@ -539,6 +556,11 @@ class EncryptedExperimentStore internal constructor(
         }
         return newest.single()
     }
+
+    private fun decodeSnapshot(plaintext: ByteArray): RuntimeDocument =
+        EngineDataJsonCodec.decodeRuntime(plaintext).also {
+            require(it.experimentId == experimentId) { "Encrypted experiment ID mismatch" }
+        }
 
     private fun recoverPending(
         key: SecretKey,

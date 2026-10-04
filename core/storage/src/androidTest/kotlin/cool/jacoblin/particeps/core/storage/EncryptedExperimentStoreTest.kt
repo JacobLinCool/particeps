@@ -28,12 +28,15 @@ import cool.jacoblin.particeps.core.model.StudyStoreRecoveryException
 import cool.jacoblin.particeps.core.model.StudyStoreRecoveryFailure
 import cool.jacoblin.particeps.core.model.withComputedDigest
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.io.RandomAccessFile
 import java.security.KeyStore
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
+import javax.crypto.Cipher
+import javax.crypto.SecretKey
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
@@ -189,6 +192,108 @@ class EncryptedExperimentStoreTest {
         val recoveredSequences = mutableListOf<Long>()
         reopened.readCommits(1, 2) { recoveredSequences += it.commitSequence }
         assertEquals(listOf(1L, 2L), recoveredSequences)
+    }
+
+    @Test
+    fun tornCheckpointStagingReplaysAcknowledgedCommitsBeforeRetiringResidue() = runBlocking {
+        for (suffix in listOf("pending", "replacement")) {
+            for (writePrefix in listOf(false, true)) {
+                var interruptCheckpoint = false
+                val operations = object : AcknowledgedFileSystem by AndroidAcknowledgedFileSystem {
+                    override fun openOutput(file: File): FileOutputStream {
+                        if (!interruptCheckpoint || !file.name.endsWith(".runtime3.ptc.$suffix")) {
+                            return AndroidAcknowledgedFileSystem.openOutput(file)
+                        }
+                        return object : FileOutputStream(file, false) {
+                            override fun write(bytes: ByteArray) {
+                                if (writePrefix) super.write(bytes, 0, bytes.size / 2)
+                                fd.sync()
+                                throw IOException("injected interrupted checkpoint staging")
+                            }
+                        }
+                    }
+                }
+                store = EncryptedExperimentStore(context, experimentId, QUOTA_BYTES, File::delete,
+                    fileSystem = operations)
+                val initial = initialRuntime()
+                store.initialize(initial)
+                interruptCheckpoint = true
+                val (commit, successor) = lifecycleCommit(initial, ExperimentState.CONFIG_VERIFIED)
+                // The durable frame is acknowledged even though its cache checkpoint tears.
+                store.appendCommit(commit, successor)
+                assertTrue(snapshotResidue().isNotEmpty())
+                val reopened = newStore()
+                assertEquals(successor, reopened.loadRuntime())
+                val retained = mutableListOf<EngineCommit>()
+                reopened.readCommits(1, 1, retained::add)
+                assertEquals(listOf(commit), retained)
+                assertTrue(snapshotResidue().isEmpty())
+                assertEquals(successor, newStore().loadRuntime())
+                reopened.clear()
+            }
+        }
+    }
+
+    @Test
+    fun invalidBaseCannotBeReplacedByAnAuthenticatedStagingSnapshot() = runBlocking {
+        store.initialize(initialRuntime())
+        val staging = checkpointStagingFile("pending")
+        staging.writeBytes(snapshotFile().readBytes())
+        snapshotFile().writeBytes(byteArrayOf(0))
+        assertSnapshotRecoveryFails()
+        assertTrue(staging.exists())
+    }
+
+    @Test
+    fun invalidStagingWithoutAnAcknowledgedBaseCannotRecover() = runBlocking {
+        store.initialize(initialRuntime())
+        val staging = checkpointStagingFile("pending")
+        staging.writeBytes(byteArrayOf(0))
+        assertTrue(snapshotFile().delete())
+        assertSnapshotRecoveryFails()
+        assertTrue(staging.exists())
+    }
+
+    @Test
+    fun tornCheckpointCannotHideCorruptOrMissingRetainedCommits() = runBlocking {
+        for (removeLog in listOf(false, true)) {
+            val initial = initialRuntime()
+            store = newStore()
+            store.initialize(initial)
+            val (commit, successor) = lifecycleCommit(initial, ExperimentState.CONFIG_VERIFIED)
+            store.appendCommit(commit, successor)
+            val staging = checkpointStagingFile("pending")
+            staging.writeBytes(byteArrayOf(0))
+            if (removeLog) {
+                commitSegments().forEach { assertTrue(it.delete()) }
+            } else {
+                corruptCommitCiphertext(commit.commitSequence)
+            }
+            val failure = assertThrows(StudyStoreRecoveryException::class.java) {
+                runBlocking { newStore().loadRuntime() }
+            }
+            assertEquals(StudyStoreRecoveryFailure.COMMIT_LOG_INVALID, failure.failure)
+            // Failed authentication must leave the evidence intact.
+            assertTrue(staging.exists())
+            store.clear()
+        }
+    }
+
+    @Test
+    fun authenticatedMalformedOrConflictingStagingStillFailsClosed() = runBlocking {
+        val initial = initialRuntime()
+        store.initialize(initial)
+        for (plaintext in listOf(
+            "{broken json".toByteArray(),
+            EngineDataJsonCodec.encodeRuntime(initial.copy(experimentId = "another-study")),
+            EngineDataJsonCodec.encodeRuntime(initial.copy(state = ExperimentState.CONFIG_VERIFIED)),
+        )) {
+            val staging = checkpointStagingFile("pending")
+            staging.writeBytes(encryptSnapshotForTest(plaintext))
+            assertSnapshotRecoveryFails()
+            assertTrue(staging.exists())
+            assertTrue(staging.delete())
+        }
     }
 
     @Test
@@ -1064,6 +1169,27 @@ class EncryptedExperimentStoreTest {
     private fun snapshotResidue(): List<File> = listOf(".pending", ".replacement")
         .map { suffix -> snapshotFile().resolveSibling(".${snapshotFile().name}$suffix") }
         .filter(File::exists)
+
+    private fun checkpointStagingFile(suffix: String): File =
+        snapshotFile().resolveSibling(".${snapshotFile().name}.$suffix")
+
+    private fun assertSnapshotRecoveryFails() {
+        val failure = assertThrows(StudyStoreRecoveryException::class.java) {
+            runBlocking { newStore().loadRuntime() }
+        }
+        assertEquals(StudyStoreRecoveryFailure.SNAPSHOT_INVALID, failure.failure)
+    }
+
+    private fun encryptSnapshotForTest(plaintext: ByteArray): ByteArray {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val key = keyStore.getKey("$ENGINE_KEY_ALIAS_PREFIX${opaqueId()}", null) as SecretKey
+        val header = "PTCRUN03".toByteArray(Charsets.US_ASCII)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
+            init(Cipher.ENCRYPT_MODE, key)
+            updateAAD(header + opaqueId().toByteArray(Charsets.US_ASCII))
+        }
+        return header + cipher.iv + cipher.doFinal(plaintext)
+    }
 
     private fun pendingFile(): File = context.noBackupFilesDir.resolve("experiments")
         .resolve("${opaqueId()}.pending3.ptc")
