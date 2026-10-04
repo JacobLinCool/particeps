@@ -23,6 +23,54 @@ POLICY = """    KeyguardServiceDelegate
       KeyguardStateMonitor
         mIsShowing=false
 """
+PROCESS_HEADER = "ACTIVITY MANAGER RUNNING PROCESSES (dumpsys activity processes)\n  All known processes:\n"
+
+
+def process(name=DEVICE.STOCK_HOME_PACKAGE, pid=1109, error="", user=0):
+    return f"  *APP* UID 10168 ProcessRecord{{abcd {pid}:{name}/u{user}a168}}\n    user #{user} uid=10168 gids={{}}\n" + error
+
+
+ANR = "     mCrashing=false null mNotResponding=true null bad=false\n"
+PROCESSES = PROCESS_HEADER + process()
+
+
+def displays(title=DEVICE.STOCK_HOME):
+    focus = "null" if title is None else f"Window{{abcd u0 {title}}}"
+    return f"WINDOW MANAGER DISPLAY CONTENTS (dumpsys window displays)\n  Display: mDisplayId=0 (organized)\n  mCurrentFocus={focus}\n"
+
+
+class AndroidHomeStateTest(unittest.TestCase):
+    def test_pending_anr_is_recognized_before_dialog_exists(self):
+        self.assertEqual((1109, False), DEVICE.home_process_state(PROCESSES))
+        self.assertEqual((1109, True), DEVICE.home_process_state(PROCESS_HEADER + process(error=ANR)))
+        self.assertEqual("home", DEVICE.home_focus(displays()))
+        self.assertEqual("stock_anr", DEVICE.home_focus(displays("Application Not Responding: " + DEVICE.STOCK_HOME_PACKAGE)))
+
+    def test_unknown_other_application_and_ambiguous_process_state_fail_closed(self):
+        for value in (
+            "", PROCESS_HEADER, PROCESSES + process(), PROCESSES.replace("    user #0", "    user #10"),
+            PROCESS_HEADER + process(pid=0),
+            PROCESSES + process(name="cool.jacoblin.particeps", pid=2000, error=ANR),
+            PROCESS_HEADER + process(error=ANR.replace("mCrashing=false", "mCrashing=true")),
+            PROCESS_HEADER + process(error=ANR.replace("bad=false", "bad=true")),
+            PROCESS_HEADER + process(error="     mNotResponding=true\n"),
+            PROCESS_HEADER + process(error=ANR + ANR),
+            PROCESS_HEADER + process(error=ANR.replace("mNotResponding=true", "mNotResponding=false")),
+            PROCESSES.replace("ProcessRecord{", "UnknownRecord{"),
+        ):
+            with self.subTest(value=value), self.assertRaises(RuntimeError):
+                DEVICE.home_process_state(value)
+
+    def test_live_focus_rejects_other_dialogs_and_historical_or_duplicate_dump(self):
+        self.assertEqual("none", DEVICE.home_focus(displays(None)))
+        for value in (
+            "", displays("Application Not Responding: cool.jacoblin.particeps"),
+            displays("Unexpected dialog"), displays() + displays(),
+            displays().replace("mDisplayId=0", "mDisplayId=1"),
+            "WINDOW MANAGER LAST ANR\n" + displays(),
+        ):
+            with self.subTest(value=value), self.assertRaises(RuntimeError):
+                DEVICE.home_focus(value)
 
 
 class AndroidUiStateTest(unittest.TestCase):
@@ -43,10 +91,17 @@ class AndroidUiStateTest(unittest.TestCase):
             with self.subTest(power=power, policy=policy, user=user):
                 self.assertTrue(DEVICE.ui_state_problems(power, policy, user))
 
-    def run_preparation(self, *, serial="emulator-5584", qemu="1", sdk="34", stays_locked=False, previous_markers=False):
+    def run_preparation(self, *, serial="emulator-5584", qemu="1", sdk="34", stays_locked=False, previous_markers=False,
+                        states=None, home=None, timeout_seconds=30, launch_result="Status: ok", command_delay=0.01):
         commands = []
+        clock = [0.0]
+        snapshot = [0]
+        states = states or [{}]
 
         def run(command, **kwargs):
+            self.assertGreater(kwargs["timeout"], 0)
+            self.assertLessEqual(kwargs["timeout"], min(15, timeout_seconds - clock[0]))
+            clock[0] += command_delay
             if command[1:] == ["get-serialno"]:
                 arguments = ("get-serialno",)
             else:
@@ -62,17 +117,27 @@ class AndroidUiStateTest(unittest.TestCase):
                     POLICY.replace("showing=false", "showing=true") if stays_locked else POLICY
                 ),
                 ("shell", "am", "get-started-user-state", "0"): "RUNNING_UNLOCKED",
+                ("shell", "dumpsys", "window", "displays"): states[min(snapshot[0], len(states)-1)].get("displays", displays()),
+                ("shell", "dumpsys", "activity", "-a", "processes"): states[min(snapshot[0], len(states)-1)].get("processes", PROCESSES),
+                ("shell", "cmd", "package", "resolve-activity", "--components", "--user", "0", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME"): home or DEVICE.STOCK_HOME,
+                ("shell", "am", "start", "-W", "--user", "0", "-n", DEVICE.STOCK_HOME, "-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME"): launch_result,
             }
+            if arguments == ("shell", "dumpsys", "activity", "-a", "processes"):
+                snapshot[0] += 1
             return subprocess.CompletedProcess(command, 0, replies.get(arguments, ""), "")
 
-        with tempfile.TemporaryDirectory() as temporary, patch.object(DEVICE.subprocess, "run", side_effect=run):
+        def sleep(seconds):
+            clock[0] += seconds
+
+        with tempfile.TemporaryDirectory() as temporary, patch.object(DEVICE.subprocess, "run", side_effect=run), \
+                patch.object(DEVICE.time, "monotonic", side_effect=lambda: clock[0]), patch.object(DEVICE.time, "sleep", side_effect=sleep):
             evidence = Path(temporary)
             if previous_markers:
                 (evidence / "result.txt").write_text("PASS from a previous run\n")
                 (evidence / "device-serial.txt").write_text("emulator-5554\n")
                 (evidence / "previous-diagnostic.txt").write_text("Preserve diagnostic evidence\n")
             try:
-                DEVICE.prepare("adb", evidence, timeout_seconds=0)
+                DEVICE.prepare("adb", evidence, timeout_seconds=timeout_seconds)
                 error = None
             except RuntimeError as failure:
                 error = str(failure)
@@ -98,8 +163,9 @@ class AndroidUiStateTest(unittest.TestCase):
 
     def test_unresolved_keyguard_remains_a_failure_with_evidence(self) -> None:
         _, error, files = self.run_preparation(stays_locked=True)
-        self.assertIn("keyguard showing", error)
-        self.assertIn("showing=true", files["after-window-policy.txt"])
+        self.assertIn("time budget", error)
+        self.assertIn("keyguard showing", files["pending-problems.txt"])
+        self.assertIn("showing=true", files["state-000-window-policy.txt"])
         self.assertNotIn("result.txt", files)
 
     def test_failed_revalidation_clears_only_stale_success_and_device_markers(self) -> None:
@@ -108,6 +174,61 @@ class AndroidUiStateTest(unittest.TestCase):
         self.assertNotIn("result.txt", files)
         self.assertNotIn("device-serial.txt", files)
         self.assertEqual("Preserve diagnostic evidence\n", files["previous-diagnostic.txt"])
+
+    def test_only_matching_stock_anr_allows_one_recovery_before_success(self):
+        for focus in (DEVICE.STOCK_HOME, "Application Not Responding: " + DEVICE.STOCK_HOME_PACKAGE):
+            bad = {"processes": PROCESS_HEADER + process(error=ANR), "displays": displays(focus)}
+            healthy = {"processes": PROCESS_HEADER + process(pid=2200)}
+            commands, error, files = self.run_preparation(states=[bad, bad, healthy])
+            self.assertIsNone(error)
+            self.assertEqual(1, commands.count(("shell", "am", "force-stop", "--user", "0", DEVICE.STOCK_HOME_PACKAGE)))
+            self.assertIn("mNotResponding=true", files["state-000-processes.txt"])
+            self.assertIn("2200:", files["after-processes.txt"])
+            self.assertIn("pid=1109", files["stock-home-recovery.txt"])
+
+    def test_resolver_requests_components_only_and_rejects_unexpected_metadata(self):
+        component = DEVICE.STOCK_HOME_PACKAGE + "/.NexusLauncherActivity"
+        commands, error, files = self.run_preparation(home=component)
+        self.assertIsNone(error)
+        resolver = [command for command in commands if "resolve-activity" in command]
+        self.assertEqual(1, len(resolver))
+        self.assertIn("--components", resolver[0])
+        self.assertNotIn("--brief", resolver[0])
+        self.assertEqual(component + "\n", files["resolved-home.txt"])
+        # Actual Android 14 --brief output must not be accepted by splitting off an arbitrary tail.
+        for unexpected in (
+            "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true\n" + component,
+            component + "\n" + component,
+            "No activity found",
+        ):
+            with self.subTest(unexpected=unexpected):
+                _, error, files = self.run_preparation(home=unexpected)
+                self.assertIn("Unexpected default HOME", error)
+                self.assertNotIn("result.txt", files)
+
+    def test_unhealthy_unidentified_or_repeated_state_is_never_dismissed(self):
+        stock_anr = {"processes": PROCESS_HEADER + process(error=ANR)}
+        cases = (
+            ({"states": [stock_anr]}, 1),
+            ({"states": [stock_anr, stock_anr, {}]}, 1),  # same PID after force-stop
+            ({"states": [{"processes": PROCESSES + process(name="cool.jacoblin.particeps", pid=2000, error=ANR)}]}, 0),
+            ({"states": [{"displays": displays("Unexpected dialog")}]}, 0),
+            ({"states": [{"displays": displays("Application Not Responding: " + DEVICE.STOCK_HOME_PACKAGE)}]}, 0),
+            ({"home": "com.other/.Home"}, 0),
+            ({"launch_result": "Status: timeout"}, 0),
+        )
+        for settings, mutations in cases:
+            with self.subTest(settings=settings):
+                commands, error, files = self.run_preparation(**settings)
+                self.assertIsNotNone(error)
+                self.assertNotIn("result.txt", files)
+                self.assertEqual(mutations, commands.count(("shell", "am", "force-stop", "--user", "0", DEVICE.STOCK_HOME_PACKAGE)))
+
+    def test_all_commands_and_success_readback_share_one_deadline(self):
+        commands, error, files = self.run_preparation(timeout_seconds=0.135)
+        self.assertIn("time budget", error)
+        self.assertNotIn("result.txt", files)
+        self.assertEqual(14, len(commands))
 
 
 class AndroidUiEvidenceTest(unittest.TestCase):

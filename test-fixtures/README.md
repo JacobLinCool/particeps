@@ -110,6 +110,11 @@ measurement origin in the same clock domain. Unavailable counters, command failu
 remain explicit, never zero-filled. Fixture writes count bytes accepted by the socket API; the
 host counts delivered TCP payload. Failed cases capture bounded synthetic-emulator logcat before
 reset or reboot can erase the failure window, including in the default suite without periodic sampling.
+The report also retains every instrumentation invocation's combined output and, on failure,
+bounded `dumpsys activity lastanr` and `lastanr-traces` reads. Missing, empty or failed diagnostic
+reads do not establish the absence of an ANR and never change the scenario result. After reboot,
+the harness requires two consecutive boot-complete and user-0 `RUNNING_UNLOCKED` observations
+before instrumenting the App; this readiness check does not waive application startup failures.
 
 For a bounded diagnostic run, `tools/android-host-harness.sh --skip-build --fixed-cap-kbps 512 --repetitions 5`
 records all five independent 60-second attempts with the same throughput bounds and enables sampling.

@@ -179,12 +179,15 @@ def capture(adb: list[str], output: Path) -> None:
         ("processes.txt", ["shell", "ps", "-A"]),
         ("tcp-counters.txt", ["shell", "cat", "/proc/net/snmp"]),
         ("interface-counters.txt", ["shell", "cat", "/proc/net/dev"]),
+        ("lastanr.txt", ["shell", "dumpsys", "activity", "lastanr"]),
+        ("lastanr-traces.txt", ["shell", "dumpsys", "activity", "lastanr-traces"]),
     ):
         destination = output / name
         with destination.open("wb") as stream:
             try:
                 result = subprocess.run(adb + arguments, stdout=stream, stderr=subprocess.STDOUT, timeout=15, check=False)
-                results.append({"file": name, "status": "ok" if result.returncode == 0 else "command_failed", "returncode": result.returncode})
+                status = "command_failed" if result.returncode != 0 else ("ok" if destination.stat().st_size else "empty")
+                results.append({"file": name, "status": status, "returncode": result.returncode})
             except subprocess.TimeoutExpired:
                 results.append({"file": name, "status": "timeout"})
             except OSError as failure:

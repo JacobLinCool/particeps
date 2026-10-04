@@ -9,6 +9,73 @@ import time
 from pathlib import Path
 
 
+STOCK_HOME_PACKAGE = "com.google.android.apps.nexuslauncher"
+STOCK_HOME = f"{STOCK_HOME_PACKAGE}/{STOCK_HOME_PACKAGE}.NexusLauncherActivity"
+
+
+def home_process_state(processes: str) -> tuple[int, bool]:
+    """Read Android 14's current records, including ANRs whose dialog is still pending.
+
+    ProcessErrorStateRecord sets mNotResponding before collecting ANR traces and posting
+    the dialog. Its dump omits the entire error line for a healthy process. Require the
+    surrounding complete process dump rather than treating an empty response as healthy.
+    """
+    if not processes.startswith("ACTIVITY MANAGER RUNNING PROCESSES (dumpsys activity processes)\n"):
+        raise RuntimeError("Missing Android 14 process dump header")
+    records = list(re.finditer(
+        r"^  \*(?:APP|PERS)\* UID \d+ ProcessRecord\{[^\s{}]+ (\d+):([^/\s]+)/[^}\s]+\}[ \t]*$",
+        processes, re.M,
+    ))
+    if not records or len(records) != len(re.findall(r"^  \*(?:APP|PERS)\*", processes, re.M)):
+        raise RuntimeError("Missing or ambiguous Android 14 process records")
+    home = []
+    accounted_errors = 0
+    for index, record in enumerate(records):
+        body = processes[record.end():records[index + 1].start() if index + 1 < len(records) else len(processes)]
+        boundary = re.search(r"^ {0,3}\S", body, re.M)
+        if boundary:
+            body = body[:boundary.start()]
+        name = record[2]
+        errors = re.findall(r"^\s+mCrashing=(true|false) (.*?) mNotResponding=(true|false) (.*?) bad=(true|false)(?: errorReportReceiver=\S+)?\s*$", body, re.M)
+        accounted_errors += len(errors)
+        if len(errors) > 1 or len(re.findall(r"^    user #\d+ uid=", body, re.M)) != 1:
+            raise RuntimeError(f"Incomplete or ambiguous process state: {name}")
+        anr = False
+        if errors:
+            crashing, crash_dialogs, not_responding, _, bad = errors[0]
+            if name != STOCK_HOME_PACKAGE or crashing != "false" or crash_dialogs != "null" or not_responding != "true" or bad != "false":
+                raise RuntimeError(f"Unexpected process error state: {name}")
+            anr = True
+        if name == STOCK_HOME_PACKAGE:
+            if re.findall(r"^    user #(\d+) uid=", body, re.M) != ["0"]:
+                raise RuntimeError("Stock HOME is not running as user 0")
+            home.append((int(record[1]), anr))
+    if any(accounted_errors != len(re.findall(rf"\b{field}=", processes)) for field in ("mCrashing", "mNotResponding")):
+        raise RuntimeError("Unrecognized process error state")
+    if len(home) != 1 or home[0][0] <= 0:
+        raise RuntimeError("Expected one live stock HOME process")
+    return home[0]
+
+
+def home_focus(displays: str) -> str:
+    """Use only the live displays dump; a full window dump also contains historical ANRs."""
+    if not displays.startswith("WINDOW MANAGER DISPLAY CONTENTS (dumpsys window displays)\n"):
+        raise RuntimeError("Missing live window display header")
+    if re.findall(r"^\s*Display: mDisplayId=(\d+)\b", displays, re.M) != ["0"]:
+        raise RuntimeError("Expected exactly one display, display 0")
+    focuses = re.findall(r"^\s*mCurrentFocus=(.+)$", displays, re.M)
+    if len(focuses) != 1:
+        raise RuntimeError("Missing or ambiguous live window focus")
+    if focuses == ["null"]:
+        return "none"
+    match = re.fullmatch(r"Window\{[^\s{}]+ u0 (.+)\}", focuses[0])
+    if match and match[1] == STOCK_HOME:
+        return "home"
+    if match and match[1] == f"Application Not Responding: {STOCK_HOME_PACKAGE}":
+        return "stock_anr"
+    raise RuntimeError(f"Unexpected foreground window: {focuses[0]}")
+
+
 def ui_state_problems(power: str, policy: str, user_state: str) -> list[str]:
     """Fail closed on missing/ambiguous dumpsys fields, including a hidden secure keyguard."""
     problems = []
@@ -32,10 +99,17 @@ def prepare(adb: str, evidence: Path, timeout_seconds: float = 30) -> None:
     for marker in ("result.txt", "device-serial.txt"):
         (evidence / marker).unlink(missing_ok=True)
     target = [adb]
+    deadline = time.monotonic() + timeout_seconds
+
+    def remaining() -> float:
+        budget = deadline - time.monotonic()
+        if budget <= 0:
+            raise RuntimeError("API 34 UI precondition exceeded its total time budget")
+        return budget
 
     def command(*arguments: str) -> str:
         return subprocess.run(
-            [*target, *arguments], check=True, capture_output=True, text=True, timeout=15,
+            [*target, *arguments], check=True, capture_output=True, text=True, timeout=min(15, remaining()),
         ).stdout.strip()
 
     # Do not wake/unlock a physical phone or apply this API-specific policy to another lane.
@@ -49,28 +123,73 @@ def prepare(adb: str, evidence: Path, timeout_seconds: float = 30) -> None:
         raise RuntimeError("UI preparation is only defined for the API 34 product lane")
     (evidence / "device-serial.txt").write_text(serial + "\n")
 
-    def snapshot(prefix: str) -> list[str]:
-        power = command("shell", "dumpsys", "power")
-        policy = command("shell", "dumpsys", "window", "policy")
-        user_state = command("shell", "am", "get-started-user-state", "0")
-        for name, content in (("power", power), ("window-policy", policy), ("user-state", user_state)):
+    def snapshot(prefix: str) -> tuple[list[str], str, str]:
+        def read(name: str, *arguments: str) -> str:
+            content = command(*arguments)
             (evidence / f"{prefix}-{name}.txt").write_text(content + "\n")
-        return ui_state_problems(power, policy, user_state)
+            return content
 
-    snapshot("before")
+        power = read("power", "shell", "dumpsys", "power")
+        policy = read("window-policy", "shell", "dumpsys", "window", "policy")
+        user_state = read("user-state", "shell", "am", "get-started-user-state", "0")
+        displays = read("window-displays", "shell", "dumpsys", "window", "displays")
+        processes = read("processes", "shell", "dumpsys", "activity", "-a", "processes")
+        return ui_state_problems(power, policy, user_state), displays, processes
+
+    _, _, before_processes = snapshot("before")
+    home_process_state(before_processes)
     # These commands use the normal wake/dismiss path. Do not change power policy, disable
     # keyguard, or grant access; later background and screen-state tests keep their own semantics.
     command("shell", "input", "keyevent", "KEYCODE_WAKEUP")
     command("shell", "wm", "dismiss-keyguard")
-    deadline = time.monotonic() + timeout_seconds
+    # Android 14 --brief includes resolution metadata; --components emits only the component.
+    resolved = command("shell", "cmd", "package", "resolve-activity", "--components", "--user", "0",
+                       "-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME")
+    (evidence / "resolved-home.txt").write_text(resolved + "\n")
+    if resolved not in (STOCK_HOME, f"{STOCK_HOME_PACKAGE}/.NexusLauncherActivity"):
+        raise RuntimeError(f"Unexpected default HOME: {resolved!r}")
+    recovered_pid = None
+    started_home = False
+    sequence = 0
+
+    def start_home() -> None:
+        result = command("shell", "am", "start", "-W", "--user", "0", "-n", STOCK_HOME,
+                         "-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME")
+        (evidence / f"home-start-{sequence:03d}.txt").write_text(result + "\n")
+        if re.findall(r"^Status: (\S+)\s*$", result, re.M) != ["ok"]:
+            raise RuntimeError("Normal HOME launch did not report Status: ok")
+
     while True:
-        problems = snapshot("after")
-        if not problems:
-            (evidence / "result.txt").write_text("PASS: API 34 emulator awake; user 0 unlocked; unsecured keyguard dismissed.\n")
+        prefix = f"state-{sequence:03d}"
+        sequence += 1
+        problems, displays, processes = snapshot(prefix)
+        pid, anr = home_process_state(processes)
+        focus = home_focus(displays)
+        if anr:
+            if recovered_pid is not None:
+                raise RuntimeError("Stock HOME ANR persisted or recurred after the one allowed recovery")
+            recovered_pid = pid
+            (evidence / "stock-home-recovery.txt").write_text(f"Confirmed stock HOME ANR, pid={pid}; one normal force-stop and HOME launch.\n")
+            command("shell", "am", "force-stop", "--user", "0", STOCK_HOME_PACKAGE)
+            start_home()
+            started_home = True
+            continue
+        if focus == "stock_anr":
+            raise RuntimeError("Stock ANR dialog has no matching current process error state")
+        if recovered_pid == pid:
+            raise RuntimeError("Stock HOME recovery did not replace the failing process")
+        if not problems and not started_home:
+            start_home()
+            started_home = True
+            continue
+        if not problems and focus == "home":
+            remaining()
+            for source in evidence.glob(f"{prefix}-*.txt"):
+                shutil.copyfile(source, evidence / source.name.replace(prefix, "after", 1))
+            (evidence / "result.txt").write_text("PASS: API 34 emulator awake; user 0 unlocked; unsecured keyguard dismissed; live stock HOME focused without process errors.\n")
             return
-        if time.monotonic() >= deadline:
-            raise RuntimeError("API 34 UI precondition failed: " + "; ".join(problems))
-        time.sleep(0.1)
+        (evidence / "pending-problems.txt").write_text("; ".join(problems + (["HOME has no focus"] if focus != "home" else [])) + "\n")
+        time.sleep(min(0.1, remaining()))
 
 
 def capture(adb: str, evidence: Path, serial_file: Path, repository: Path) -> None:

@@ -49,6 +49,7 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
             environment.update({
                 "adb_binary": str(adb),
                 "harness_temporary": temporary,
+                "report_directory": temporary,
                 "test_class": "UnusedDefaultClass",
                 "test_runner": "fixture/Runner",
                 "FAKE_ADB_LOG": str(log),
@@ -61,6 +62,9 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
+            retained = list(directory.glob("instrumentation-transfer-*"))
+            self.assertEqual(1, len(retained))
+            self.assertEqual(output.replace("\r", ""), retained[0].read_text())
             return result, log.read_text()
 
     def test_host_gate_requires_a_completed_successful_instrumentation_test(self) -> None:
@@ -85,6 +89,41 @@ class AndroidHostHarnessContractTest(unittest.TestCase):
             with self.subTest(output=output):
                 result, _ = self.run_host_instrumentation_result(output)
                 self.assertNotEqual(0, result.returncode)
+
+    def test_reboot_requires_two_consecutive_completed_unlocked_samples(self) -> None:
+        harness = (ROOT / "tools/android-host-harness.sh").read_text()
+        declaration = "wait_for_boot() {"
+        body = harness.split(declaration, 1)[1].split("\n}", 1)[0]
+        for states, expected in (
+            ([('1', 'RUNNING_LOCKED'), ('1', 'RUNNING_UNLOCKED'), ('1', 'RUNNING_UNLOCKED')], 0),
+            ([('1', 'RUNNING_UNLOCKED'), ('0', 'RUNNING_UNLOCKED'), ('1', 'RUNNING_UNLOCKED')], 1),
+            ([('1', 'RUNNING_LOCKED')] * 3, 1),
+            ([('1', 'unknown')] * 3, 1),
+        ):
+            with self.subTest(states=states), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                fixture = directory / 'states.json'
+                fixture.write_text(json.dumps(states))
+                adb = directory / 'adb'
+                adb.write_text(
+                    '#!/usr/bin/env python3\nimport json, os, pathlib, sys\n'
+                    'p=pathlib.Path(os.environ["FAKE_STATES"]); states=json.loads(p.read_text())\n'
+                    'i=p.with_suffix(".index"); n=int(i.read_text()) if i.exists() else 0\n'
+                    'if sys.argv[1:]==["wait-for-device"]: pass\n'
+                    'elif sys.argv[1:]==["shell","getprop","sys.boot_completed"]: print(states[n][0])\n'
+                    'elif sys.argv[1:]==["shell","am","get-started-user-state","0"]:\n'
+                    ' print(states[n][1]); i.write_text(str(n+1))\n'
+                    'else: raise SystemExit(2)\n'
+                )
+                adb.chmod(0o755)
+                script = (
+                    'set -euo pipefail\nsleep() { :; }\nseq() { printf "1\\n2\\n3\\n"; }\n'
+                    f'{declaration}{body}\n}}\nwait_for_boot\n'
+                )
+                result = subprocess.run(['bash', '-s'], input=script, text=True, capture_output=True,
+                    env={**os.environ, 'adb_binary': str(adb), 'report_directory': temporary, 'FAKE_STATES': str(fixture)})
+                self.assertEqual(expected, result.returncode, result.stderr)
+                self.assertEqual(3, len((directory / 'reboot-readiness.txt').read_text().splitlines()))
 
     def run_api37_classifier(
         self,

@@ -204,11 +204,13 @@ run_instrumentation() {
   else
     shift
   fi
-  local output="$harness_temporary/instrumentation-$method.txt"
+  # Keep each invocation, including a startup ANR/aborted runner, after temporary cleanup.
+  local output
+  output="$(mktemp "$report_directory/instrumentation-${method}-XXXXXX")"
   "$adb_binary" shell am instrument -w -r \
     -e particepsHostHarness true \
     -e class "$instrumentation_class#$method" \
-    "$@" "$test_runner" | tr -d '\r' > "$output"
+    "$@" "$test_runner" 2>&1 | tr -d '\r' > "$output"
   grep -Eq '^OK \(1 test\)$' "$output"
   grep -qx 'INSTRUMENTATION_STATUS_CODE: 0' "$output"
   ! grep -Eq 'INSTRUMENTATION_STATUS_CODE: -[1-4]$|FAILURES!!!|INSTRUMENTATION_(ABORTED|FAILED)|shortMsg=' "$output"
@@ -571,10 +573,17 @@ run_duplex_measurement() {
 }
 
 wait_for_boot() {
+  local boot_completed user_state ready_samples=0
   "$adb_binary" wait-for-device
   for _ in $(seq 1 90); do
-    if [[ "$($adb_binary shell getprop sys.boot_completed | tr -d '\r')" == "1" ]]; then
-      return 0
+    boot_completed="$($adb_binary shell getprop sys.boot_completed | tr -d '\r')"
+    user_state="$($adb_binary shell am get-started-user-state 0 | tr -d '\r')"
+    printf 'boot_completed=%s user_0=%s\n' "$boot_completed" "$user_state" >> "$report_directory/reboot-readiness.txt"
+    if [[ "$boot_completed" == "1" && "$user_state" == "RUNNING_UNLOCKED" ]]; then
+      ready_samples=$((ready_samples + 1))
+      if (( ready_samples == 2 )); then return 0; fi
+    else
+      ready_samples=0
     fi
     sleep 2
   done

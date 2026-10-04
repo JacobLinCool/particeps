@@ -19,9 +19,18 @@ verifier. Successful runs retain the debug APK as an artifact for 14 days.
 
 Before API 34 UI tests, the launcher verifies that its target is the isolated API 34 emulator,
 wakes it, dismisses the unsecured keyguard through Android's normal command, and checks the
-interactive, unlocked state. It does not change power policy or bypass system Back assertions.
+interactive, unlocked state and live default HOME focus. It checks the current ActivityManager
+process error records, including an ANR whose dialog has not appeared yet. Only the exact stock
+NexusLauncher HOME with a matching current ANR permits one normal force-stop and HOME launch,
+before any product test starts. A different process error, unknown foreground window, repeated
+ANR, unchanged failing process or unverified readback fails the gate. All preparation commands
+share one 30-second deadline; this recovery is never applied during or after product tests.
+It does not change power policy or bypass system Back assertions.
 The lane retains before/after state and, on either success or failure, connected test reports,
 window/power state, logcat and a screenshot. Diagnostic timeouts preserve the original test result.
+The pending-ANR check follows Android 14's
+[ProcessErrorStateRecord](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android14-release/services/core/java/com/android/server/am/ProcessErrorStateRecord.java),
+which sets `mNotResponding` before trace collection and deferred dialog handling.
 
 The host harness measures each of 64, 512 and 4,096 kbps for 60 seconds in a separately signed,
 fixed-profile study, retaining the original aggregate-rate bounds and unselected control. Before

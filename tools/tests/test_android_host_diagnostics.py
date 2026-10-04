@@ -95,10 +95,31 @@ class AndroidHostDiagnosticsTest(unittest.TestCase):
             with patch("tools.android_host_diagnostics.subprocess.run", side_effect=subprocess.TimeoutExpired("adb", 15)) as run:
                 capture(["adb", "-s", "emulator-5584"], Path(temporary))
             results = json.loads((Path(temporary) / "capture-result.json").read_text())
-        self.assertEqual(4, len(results))
+        self.assertEqual(6, len(results))
         self.assertTrue(all(result["status"] == "timeout" for result in results))
         self.assertTrue(all(call.kwargs["timeout"] == 15 for call in run.call_args_list))
         self.assertTrue(all(call.args[0][:3] == ["adb", "-s", "emulator-5584"] for call in run.call_args_list))
+        self.assertEqual(["lastanr.txt", "lastanr-traces.txt"], [entry["file"] for entry in results[-2:]])
+
+    def test_capture_retains_anr_text_but_empty_or_failed_reads_are_not_evidence(self):
+        def run(command, **kwargs):
+            if command[-1] == "lastanr-traces":
+                kwargs["stdout"].write(b'Permission denied\n')
+                return subprocess.CompletedProcess(command, 1)
+            if command[-1] == "lastanr":
+                kwargs["stdout"].write(b'ANR in fixture\n')
+                kwargs["stdout"].flush()
+            return subprocess.CompletedProcess(command, 0)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            with patch("tools.android_host_diagnostics.subprocess.run", side_effect=run):
+                capture(["adb", "-s", "emulator-5584"], directory)
+            results = {entry["file"]: entry["status"] for entry in json.loads((directory / "capture-result.json").read_text())}
+            self.assertEqual("ok", results["lastanr.txt"])
+            self.assertEqual("command_failed", results["lastanr-traces.txt"])
+            self.assertEqual("empty", results["logcat.txt"])
+            self.assertEqual("Permission denied\n", (directory / "lastanr-traces.txt").read_text())
 
     def test_duplex_monitor_never_reads_stale_download_target_upload_progress(self):
         with tempfile.TemporaryDirectory() as temporary:
