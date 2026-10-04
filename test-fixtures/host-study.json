@@ -61,7 +61,7 @@
         {
           "condition": {
             "type": "elapsed_at_least",
-            "duration_seconds": 150,
+            "duration_seconds": 60,
             "clock": "ACTIVE_RUNNING_TIME"
           },
           "profile_id": "cap-4096"
@@ -69,7 +69,7 @@
         {
           "condition": {
             "type": "elapsed_at_least",
-            "duration_seconds": 75,
+            "duration_seconds": 30,
             "clock": "ACTIVE_RUNNING_TIME"
           },
           "profile_id": "cap-0512"

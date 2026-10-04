@@ -23,6 +23,16 @@ interactive, unlocked state. It does not change power policy or bypass system Ba
 The lane retains before/after state and, on either success or failure, connected test reports,
 window/power state, logcat and a screenshot. Diagnostic timeouts preserve the original test result.
 
+The host harness measures each of 64, 512 and 4,096 kbps for 60 seconds in a separately signed,
+fixed-profile study, retaining the original aggregate-rate bounds and unselected control. Before
+and after each measurement it checks the original App process and the same committed resource
+epoch, vector, profile digest and generation. A separate scenario verifies the live 64 → 512 →
+4,096 profile transitions against the signed configuration, requiring advancing epochs and
+generations without restarting the App. This avoids measuring across a scheduled rate change;
+the transition scenario does not establish long-lived TCP continuity across a resource barrier.
+The debug-only query reads committed applied resources under the coordinator locks and requires
+open admission; it never treats the requested profile as proof of successful application.
+
 The complete API 37 host harness is temporarily quarantined for one exact preview-emulator defect:
 the evidence must identify `mapper.ranchu.so`, the `SurfaceFlinger` process, and
 `Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma`. The classifier first rejects any

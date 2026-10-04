@@ -6,6 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tools.android_host_profile import fixture_configuration
+from tools.generate_android_host_studies import configurations
+
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULES = (
@@ -270,7 +273,7 @@ esac
         )
         binding = next(item for item in configuration["automations"] if item["id"] == "bind-traffic-shaping")
         self.assertEqual("cap-0064", binding["default_profile_id"])
-        self.assertEqual([150, 75], [case["condition"]["duration_seconds"] for case in binding["cases"]])
+        self.assertEqual([60, 30], [case["condition"]["duration_seconds"] for case in binding["cases"]])
         self.assertTrue(all(case["condition"]["clock"] == "ACTIVE_RUNNING_TIME" for case in binding["cases"]))
 
         envelope = base64.b64decode(
@@ -279,10 +282,27 @@ esac
         )
         self.assertEqual(b"PTCCFG01", envelope[:8])
 
+    def test_signed_rate_studies_cannot_change_profile_during_measurement(self) -> None:
+        base = json.loads((ROOT / "test-fixtures/host-study.json").read_text())
+        for name, expected in configurations(base):
+            with self.subTest(asset=name):
+                actual = fixture_configuration(ROOT / "app/src/androidTest/assets" / name)
+                self.assertEqual(expected, actual)
+                if name == "host_harness_study_envelope.txt":
+                    continue
+                profiles = actual["traffic_shaping"]["profiles"]
+                self.assertEqual(1, len(profiles))
+                profile = profiles[0]
+                binding = next(item for item in actual["automations"] if item["id"] == "bind-traffic-shaping")
+                self.assertEqual(profile["id"], binding["default_profile_id"])
+                self.assertEqual([{"condition": {"type": "study_session_active"}, "profile_id": profile["id"]}], binding["cases"])
+                self.assertEqual(profile["uplink_kbps"], profile["downlink_kbps"])
+
     def test_harness_is_blocking_and_covers_every_device_stage(self) -> None:
         harness = (ROOT / "tools/android-host-harness.sh").read_text()
         required_cases = (
             "aggregate_64_512_4096_kbps_and_control_bypass",
+            "dynamic_profiles_advance_verified_epochs_without_process_restart",
             "all_apps_capped_tcp_round_trip",
             "protocol_attempts_preserve_verified_vpn",
             "process_kill_recovers_safety_paused",
@@ -296,7 +316,12 @@ esac
         )
         for name in required_cases:
             self.assertIn(name, harness)
-        self.assertEqual(3, harness.count("run_saturation_measurement "))
+        self.assertIn("for cap in 64 512 4096", harness)
+        self.assertIn('run_saturation_measurement "$cap" "$sequence"', harness)
+        self.assertNotIn("sleep 18", harness)
+        self.assertIn("--ez include_applied_profile true", harness)
+        self.assertIn('compare --before "$before" --after "$after"', harness)
+        self.assertIn('compare --before "$previous" --after "$proof" --transition', harness)
         self.assertIn("--duration-seconds 60", harness)
         self.assertIn("run_instrumentation assertSafetyPaused", harness)
         self.assertEqual(2, harness.count("run_instrumentation assertSafetyPaused"))
@@ -354,7 +379,7 @@ esac
         self.assertIn("Host provisioning failed:", harness)
         self.assertEqual(
             harness.count("am broadcast --include-stopped-packages --receiver-foreground"),
-            4,
+            5,
         )
         self.assertNotIn("am broadcast --receiver-foreground", harness)
 

@@ -296,10 +296,11 @@ print(json.dumps({
 }
 
 provision_running_study() {
+  local envelope_asset="${1:-$host_envelope_asset}"
   local encoded output data
   "$adb_binary" shell am force-stop "$competing_vpn_package"
   authorize_vpn "$particeps_package"
-  encoded="$(tr -d '\r\n' < "$host_envelope_asset")"
+  encoded="$(tr -d '\r\n' < "$envelope_asset")"
   output="$harness_temporary/provision.txt"
   "$adb_binary" shell am broadcast --include-stopped-packages --receiver-foreground \
     -a "$host_provision_action" \
@@ -311,6 +312,33 @@ provision_running_study() {
     printf 'Host provisioning failed: %s\n' "${data:-NO_RESULT}" >&2
     return 1
   fi
+}
+
+await_applied_profile() {
+  local expected_profile="$1" expected_pid="$2" envelope_asset="$3" proof_file="$4"
+  local deadline current_pid query_output result
+  deadline=$((SECONDS + 90))
+  query_output="$harness_temporary/applied-profile-query.txt"
+  while (( SECONDS <= deadline )); do
+    current_pid="$(particeps_pid)"
+    [[ "$current_pid" == "$expected_pid" ]]
+    "$adb_binary" shell am broadcast --include-stopped-packages --receiver-foreground \
+      -a "$host_query_action" -p "$particeps_package" \
+      --ez include_applied_profile true > "$query_output"
+    current_pid="$(particeps_pid)"
+    [[ "$current_pid" == "$expected_pid" ]]
+    result=0
+    python3 tools/android_host_profile.py query --broadcast "$query_output" \
+      --asset "$envelope_asset" --profile "$expected_profile" --output "$proof_file" || result=$?
+    if (( result == 0 )); then
+      return 0
+    fi
+    # Only an explicit PENDING/earlier verified profile permits a state-driven wait.
+    (( result == 3 )) || return "$result"
+    sleep 0.25
+  done
+  printf 'Verified profile %s did not arrive within 90 seconds\n' "$expected_profile" >&2
+  return 1
 }
 
 reset_study() {
@@ -481,14 +509,43 @@ case_protocol_matrix_through_verified_vpn() {
 }
 
 case_three_profile_throughput_and_control_bypass() {
+  local sequence=0 cap profile envelope_asset live_pid before after measurement_status
+  mkdir -p "$report_directory/applied-profiles"
+  for cap in 64 512 4096; do
+    sequence=$((sequence + 1))
+    printf -v profile 'cap-%04d' "$cap"
+    envelope_asset="app/src/androidTest/assets/host_fixed_${cap}_study_envelope.txt"
+    provision_running_study "$envelope_asset"
+    live_pid="$(capture_live_particeps_pid)"
+    before="$report_directory/applied-profiles/fixed-$cap-before.json"
+    after="$report_directory/applied-profiles/fixed-$cap-after.json"
+    await_applied_profile "$profile" "$live_pid" "$envelope_asset" "$before"
+    # Record the applied condition at both ends even when the byte-count gate fails. Keep errexit
+    # inside the measurement, so a setup failure cannot be hidden by its later cleanup.
+    set +e
+    (trap case_cleanup EXIT; set -euo pipefail; run_saturation_measurement "$cap" "$sequence")
+    measurement_status=$?
+    set -e
+    await_applied_profile "$profile" "$live_pid" "$envelope_asset" "$after"
+    python3 tools/android_host_profile.py compare --before "$before" --after "$after"
+    (( measurement_status == 0 ))
+    reset_study
+  done
+}
+
+case_dynamic_verified_profile_transitions() {
+  local live_pid profile previous="" proof
+  mkdir -p "$report_directory/applied-profiles"
   provision_running_study
-  run_saturation_measurement 64 1
-  # The signed resource binding changes at 75 active seconds; stay clear of the barrier.
-  sleep 18
-  run_saturation_measurement 512 2
-  # The next signed binding boundary is 150 active seconds.
-  sleep 18
-  run_saturation_measurement 4096 3
+  live_pid="$(capture_live_particeps_pid)"
+  for profile in cap-0064 cap-0512 cap-4096; do
+    proof="$report_directory/applied-profiles/dynamic-$profile.json"
+    await_applied_profile "$profile" "$live_pid" "$host_envelope_asset" "$proof"
+    if [[ -n "$previous" ]]; then
+      python3 tools/android_host_profile.py compare --before "$previous" --after "$proof" --transition
+    fi
+    previous="$proof"
+  done
   reset_study
 }
 
@@ -674,6 +731,7 @@ run_case "all_apps_capped_tcp_round_trip" case_all_apps_tcp_round_trip
 run_case "fixture_inventory_protocol_attempts_and_shared_uid" case_fixture_inventory_and_protocols
 run_case "protocol_attempts_preserve_verified_vpn" case_protocol_matrix_through_verified_vpn
 run_case "aggregate_64_512_4096_kbps_and_control_bypass" case_three_profile_throughput_and_control_bypass
+run_case "dynamic_profiles_advance_verified_epochs_without_process_restart" case_dynamic_verified_profile_transitions
 run_case "process_kill_recovers_safety_paused" case_process_kill_recovery
 run_case "reboot_recovers_safety_paused" case_reboot_recovery
 run_case "target_replace_safety_pauses" case_target_replace
