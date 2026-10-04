@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.android_host_profile import compare_observations, fixture_configuration, observation_from_broadcast, verified_profile
+from tools.android_host_profile import compare_observations, fixture_configuration, observation_from_query, verified_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -79,13 +79,13 @@ class AppliedProfileObservationTest(unittest.TestCase):
             with self.subTest(transition=transition), self.assertRaisesRegex(ValueError, "backwards"):
                 compare_observations(after, before, transition=transition)
 
-    def test_broadcast_parser_requires_a_single_successful_json_result(self) -> None:
+    def test_query_parser_requires_a_single_json_object(self) -> None:
         value = self.observation()
-        valid = f'Broadcasting: Intent {{ act=fixture }}\nBroadcast completed: result=-1, data="{json.dumps(value)}"\n'
-        self.assertEqual(value, observation_from_broadcast(valid))
-        for output in (valid.replace("result=-1", "result=0"), valid + valid, "Broadcast completed: result=-1\n", 'Broadcast completed: result=-1, data="RUNNING:5"\n'):
+        valid = json.dumps(value)
+        self.assertEqual(value, observation_from_query(valid))
+        for output in (valid + valid, "RUNNING:5", "null", "[]", '"text"'):
             with self.subTest(output=output), self.assertRaises(ValueError):
-                observation_from_broadcast(output)
+                observation_from_query(output)
 
     def test_envelope_reader_rejects_truncated_or_trailing_payload(self) -> None:
         import base64
@@ -202,6 +202,7 @@ case_three_profile_throughput_and_control_bypass
             proof = directory / "proof.json"
             script = "set -euo pipefail\n" + self.function("await_applied_profile") + """
 particeps_pid() { cat "$pid_file"; }
+host_control() { echo 43 > "$pid_file"; echo completed; }
 python3() { echo should-not-parse > "$proof_file"; }
 await_applied_profile cap-0064 42 unused "$proof_file"
 """

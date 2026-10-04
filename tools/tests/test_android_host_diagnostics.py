@@ -32,7 +32,7 @@ class AndroidHostDiagnosticsTest(unittest.TestCase):
     def test_native_counter_identity_and_availability_cannot_be_fabricated(self):
         expected = self.observation()
         def decode(value):
-            return native_observation('Broadcast completed: result=-1, data="' + json.dumps(value) + '"\n', expected)
+            return native_observation(json.dumps(value), expected)
         self.assertEqual(64000, decode(expected)["native_counters"]["uplink_bytes"])
         mutations = (
             lambda v: v.pop("native_counters"),
@@ -82,7 +82,7 @@ class AndroidHostDiagnosticsTest(unittest.TestCase):
             with patch("tools.android_host_diagnostics.signal.signal"), patch(
                 "tools.android_host_diagnostics.observed", return_value={"status": "timeout"},
             ) as observe:
-                monitor(["adb", "-s", "emulator-5584"], self.observation(), output, stop)
+                monitor(["adb", "-s", "emulator-5584"], self.observation(), output, stop, identity={"pid": "42", "process_id": "fixed-process"})
             samples = [json.loads(line) for line in output.read_text().splitlines()]
         self.assertEqual(1, len(samples))
         self.assertEqual(6, observe.call_count)
@@ -108,7 +108,7 @@ class AndroidHostDiagnosticsTest(unittest.TestCase):
             with patch("tools.android_host_diagnostics.signal.signal"), patch(
                 "tools.android_host_diagnostics.observed", return_value={"status": "timeout"},
             ) as observe:
-                monitor(["adb", "-s", "emulator-5584"], self.observation(), output, stop, traffic_mode="duplex")
+                monitor(["adb", "-s", "emulator-5584"], self.observation(), output, stop, traffic_mode="duplex", identity={"pid": "42", "process_id": "fixed-process"})
             sample = json.loads(output.read_text())
         self.assertEqual("duplex", sample["traffic_mode"])
         self.assertEqual(5, observe.call_count)
@@ -125,7 +125,7 @@ class AndroidHostDiagnosticsTest(unittest.TestCase):
             with patch("tools.android_host_diagnostics.signal.signal"), patch(
                 "tools.android_host_diagnostics.observed", side_effect=consume_budget,
             ) as observe:
-                monitor(["adb", "-s", "emulator-5584"], self.observation(), output, Path(temporary) / "stop", maximum_seconds=0.03)
+                monitor(["adb", "-s", "emulator-5584"], self.observation(), output, Path(temporary) / "stop", maximum_seconds=0.03, identity={"pid": "42", "process_id": "fixed-process"})
             samples = [json.loads(line) for line in output.read_text().splitlines()]
         self.assertEqual(1, observe.call_count)
         self.assertEqual(1, len(samples))

@@ -7,12 +7,13 @@ import argparse
 import json
 import re
 import signal
+import sys
 import subprocess
 import threading
 import time
 from pathlib import Path
 
-from tools.android_host_profile import compare_observations, observation_from_broadcast
+from tools.android_host_profile import compare_observations, observation_from_query
 
 PACKAGES = (
     ("target", 0, "cool.jacoblin.particeps.fixture.targeta"),
@@ -33,7 +34,7 @@ COUNTER_FIELDS = (
 
 
 def native_observation(output: str, expected: dict) -> dict:
-    value = observation_from_broadcast(output)
+    value = observation_from_query(output)
     if value.get("status") != "VERIFIED" or value.get("admission_open") is not True:
         raise ValueError("Native counters require verified open admission")
     compare_observations(expected, value, transition=False)
@@ -131,7 +132,7 @@ def observed(command: list[str], parser, *, timeout: float = 5.0) -> dict:
     return result
 
 
-def monitor(adb: list[str], expected: dict, output: Path, stop_file: Path, *, maximum_seconds: float = 120.0, traffic_mode: str = "upload") -> None:
+def monitor(adb: list[str], expected: dict, output: Path, stop_file: Path, *, maximum_seconds: float = 120.0, traffic_mode: str = "upload", identity: dict) -> None:
     packages = PROGRESS_PACKAGES[traffic_mode]
     stopped = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stopped.set())
@@ -149,10 +150,10 @@ def monitor(adb: list[str], expected: dict, output: Path, stop_file: Path, *, ma
     with output.open("x") as stream:
         while not stopped.is_set() and time.monotonic() < deadline:
             sampled = time.monotonic()
-            native = read(adb + [
-                "shell", "am", "broadcast", "--include-stopped-packages", "--receiver-foreground",
-                "-a", "cool.jacoblin.particeps.HOST_HARNESS_QUERY", "-p", "cool.jacoblin.particeps",
-                "--ez", "include_applied_profile", "true", "--ez", "include_native_counters", "true",
+            native = read([
+                sys.executable, str(Path(__file__).with_name("android_host_control.py")),
+                "--adb", adb[0], "--serial", adb[2], "--timeout-seconds", "3",
+                "--expected-pid", identity["pid"], "--expected-process-id", identity["process_id"], "native",
             ], lambda value: native_observation(value, expected))
             fixtures = []
             for role, index, package in packages:
@@ -197,6 +198,7 @@ def main() -> None:
     parser.add_argument("--serial", required=True)
     commands = parser.add_subparsers(dest="operation", required=True)
     sample = commands.add_parser("monitor")
+    sample.add_argument("--identity-file", type=Path, required=True)
     sample.add_argument("--expected", type=Path, required=True)
     sample.add_argument("--output", type=Path, required=True)
     sample.add_argument("--stop-file", type=Path, required=True)
@@ -210,7 +212,7 @@ def main() -> None:
     adb = [args.adb, "-s", args.serial]
     if args.operation == "monitor":
         monitor(adb, json.loads(args.expected.read_text()), args.output, args.stop_file,
-            maximum_seconds=args.maximum_seconds, traffic_mode=args.traffic_mode)
+            maximum_seconds=args.maximum_seconds, traffic_mode=args.traffic_mode, identity=json.loads(args.identity_file.read_text()))
     else:
         capture(adb, args.output)
 

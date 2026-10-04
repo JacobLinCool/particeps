@@ -25,9 +25,9 @@ import cool.jacoblin.particeps.core.runtime.ExperimentRuntime
 import cool.jacoblin.particeps.core.runtime.RuntimeResourceHost
 import cool.jacoblin.particeps.core.runtime.RuntimeSnapshot
 import java.math.BigInteger
+import java.security.MessageDigest
 import java.util.Base64
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
@@ -52,58 +52,81 @@ class HostHarnessStateReceiver : BroadcastReceiver() {
             resultCode = Activity.RESULT_CANCELED
             return
         }
-        val pending = goAsync()
-        application.applicationScope.launch {
-            try {
-                pending.resultData = if (action == ACTION &&
-                    (intent.getBooleanExtra(EXTRA_APPLIED_PROFILE, false) ||
-                        intent.getBooleanExtra(EXTRA_NATIVE_COUNTERS, false))
-                ) {
-                    // One deadline covers initialization and both coordinator locks.
-                    withTimeout(QUERY_TIMEOUT_MILLIS) {
-                        application.session.snapshot.first { it.initialized }
-                        HostHarnessAppliedProfileReader.read(
-                            application.session,
-                            includeNativeCounters = intent.getBooleanExtra(EXTRA_NATIVE_COUNTERS, false),
-                        ).toJson()
-                    }
-                } else {
-                    withTimeout(QUERY_TIMEOUT_MILLIS) {
-                        application.session.snapshot.first { it.initialized }
-                    }
-                    when (action) {
-                        PROVISION_ACTION -> application.provision(requireNotNull(intent))
-                        RESET_ACTION -> {
-                            application.resetForHostHarness()
-                            RESET_COMPLETE
-                        }
-                        else -> {
-                            val snapshot = application.session.snapshot.value
-                            val state = snapshot.runtime.state?.name ?: NO_STUDY_STATE
-                            "$state:${snapshot.runtime.lifetimeDataEventCount}"
-                        }
-                    }
+        // No initialization, coordinator lock or disk IO is awaited by this receiver. Android's
+        // broadcast deadline includes goAsync(), so long work has a separate process-bound receipt.
+        try {
+            val request = requireNotNull(intent)
+            val operations = operations(application)
+            val snapshot = application.session.snapshot.value
+            val response = JSONObject()
+                .put("schema_version", 1)
+                .put("process_id", operations.processId)
+            when {
+                action == ACTION && request.getBooleanExtra(EXTRA_READINESS, false) ->
+                    response.put("status", if (snapshot.initialized) "READY" else "INITIALIZING")
+                request.getStringExtra(EXTRA_PROCESS_ID) != operations.processId ->
+                    response.put("status", "PROCESS_CHANGED")
+                action == ACTION && request.getBooleanExtra(EXTRA_OPERATION_STATUS, false) ->
+                    response.putReceipt(operations.status(
+                        requireNotNull(request.getStringExtra(EXTRA_PROCESS_ID)),
+                        requireNotNull(request.getStringExtra(EXTRA_OPERATION_ID)),
+                    ))
+                !snapshot.initialized -> response.put("status", "NOT_READY")
+                action == ACTION && !request.getBooleanExtra(EXTRA_APPLIED_PROFILE, false) &&
+                    !request.getBooleanExtra(EXTRA_NATIVE_COUNTERS, false) -> {
+                    val state = snapshot.runtime.state?.name ?: NO_STUDY_STATE
+                    response.put("status", "SUCCEEDED")
+                        .put("result", "$state:${snapshot.runtime.lifetimeDataEventCount}")
                 }
-                pending.resultCode = Activity.RESULT_OK
-            } catch (failure: HostHarnessProvisionException) {
-                pending.resultCode = Activity.RESULT_CANCELED
-                pending.resultData = "FAILED:${failure.stage}:${failure.resultCode}"
-            } catch (failure: Exception) {
-                pending.resultCode = Activity.RESULT_CANCELED
-                pending.resultData = "$QUERY_UNAVAILABLE:${failure::class.java.simpleName}"
-            } finally {
-                pending.finish()
+                else -> {
+                    val encoded = request.getStringExtra(EXTRA_SIGNED_ENVELOPE)
+                    require(action != PROVISION_ACTION || encoded != null) { "Missing signed envelope" }
+                    val native = request.getBooleanExtra(EXTRA_NATIVE_COUNTERS, false)
+                    val fingerprint = MessageDigest.getInstance("SHA-256")
+                        .digest("$action\n$native\n${encoded.orEmpty()}".toByteArray())
+                        .joinToString("") { "%02x".format(it) }
+                    response.putReceipt(operations.admit(
+                        requireNotNull(request.getStringExtra(EXTRA_PROCESS_ID)),
+                        requireNotNull(request.getStringExtra(EXTRA_OPERATION_ID)),
+                        fingerprint,
+                        failureResult = { failure ->
+                            if (failure is HostHarnessProvisionException) {
+                                "FAILED:${failure.stage}:${failure.resultCode}"
+                            } else {
+                                failure::class.java.simpleName
+                            }
+                        },
+                    ) {
+                        when (action) {
+                            PROVISION_ACTION -> application.provision(requireNotNull(encoded))
+                            RESET_ACTION -> {
+                                application.resetForHostHarness()
+                                RESET_COMPLETE
+                            }
+                            else -> HostHarnessAppliedProfileReader.read(
+                                application.session, includeNativeCounters = native,
+                            ).toJson()
+                        }
+                    })
+                }
             }
+            resultData = response.toString()
+            resultCode = Activity.RESULT_OK
+        } catch (failure: Exception) {
+            resultCode = Activity.RESULT_CANCELED
+            resultData = "UNAVAILABLE:${failure::class.java.simpleName}"
         }
     }
+
+    private fun JSONObject.putReceipt(receipt: HostHarnessOperations.Receipt): JSONObject =
+        put("status", receipt.status)
+            .put("operation_id", receipt.operationId)
+            .put("result", receipt.result ?: JSONObject.NULL)
 
     private fun ApplicationInfo.isDebuggable(): Boolean =
         flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
 
-    private suspend fun CollectorApplication.provision(intent: Intent): String {
-        val encoded = requireNotNull(intent.getStringExtra(EXTRA_SIGNED_ENVELOPE)) {
-            "Missing signed host-harness study envelope"
-        }
+    private suspend fun CollectorApplication.provision(encoded: String): String {
         resetForHostHarness()
         session.importSignedConfiguration(Base64.getDecoder().decode(encoded))
         requireSuccess("REVIEW", session.reviewStudy())
@@ -147,7 +170,17 @@ class HostHarnessStateReceiver : BroadcastReceiver() {
         val ACTIONS = setOf(ACTION, PROVISION_ACTION, RESET_ACTION)
         const val RESET_COMPLETE = "RESET"
         const val NO_STUDY_STATE = "NONE"
-        const val QUERY_UNAVAILABLE = "UNAVAILABLE"
+        const val EXTRA_READINESS = "readiness"
+        const val EXTRA_PROCESS_ID = "process_id"
+        const val EXTRA_OPERATION_ID = "operation_id"
+        const val EXTRA_OPERATION_STATUS = "operation_status"
+        private var processOperations: HostHarnessOperations? = null
+
+        @Synchronized
+        fun operations(application: CollectorApplication): HostHarnessOperations =
+            processOperations ?: HostHarnessOperations(application.applicationScope).also {
+                processOperations = it
+            }
         const val QUERY_TIMEOUT_MILLIS = 30_000L
     }
 }

@@ -322,7 +322,7 @@ esac
         self.assertIn("for cap in 64 512 4096", harness)
         self.assertIn('run_saturation_measurement "$cap" "$sequence"', harness)
         self.assertNotIn("sleep 18", harness)
-        self.assertIn("--ez include_applied_profile true", harness)
+        self.assertIn('host_control --expected-pid "$expected_pid" --timeout-seconds "$remaining" profile', harness)
         self.assertIn('compare --before "$before" --after "$after"', harness)
         self.assertIn('compare --before "$previous" --after "$proof" --transition', harness)
         self.assertIn("measurement_duration_seconds=60", harness)
@@ -349,9 +349,9 @@ esac
         self.assertIn('result="not_applicable"', harness)
         self.assertIn("<skipped message=", harness)
         self.assertIn("-e particepsHostHarness true", harness)
-        self.assertIn("HOST_HARNESS_PROVISION", harness)
-        self.assertIn("HOST_HARNESS_RESET", harness)
-        self.assertIn("RESET is idempotent", harness)
+        self.assertIn("host_control provision --envelope", harness)
+        self.assertIn("host_control reset", harness)
+        self.assertIn("polling never repeats deletion", harness)
         self.assertNotIn("run_instrumentation provisionRunningStudy", harness)
         self.assertNotIn("run_instrumentation resetStudy", harness)
         self.assertIn("set +e\n  (trap case_cleanup EXIT; set -euo pipefail;", harness)
@@ -381,11 +381,13 @@ esac
         self.assertIn("session.start()", receiver)
         self.assertIn('"FAILED:${failure.stage}:${failure.resultCode}"', receiver)
         self.assertIn("Host provisioning failed:", harness)
-        self.assertEqual(
-            harness.count("am broadcast --include-stopped-packages --receiver-foreground"),
-            5,
-        )
-        self.assertNotIn("am broadcast --receiver-foreground", harness)
+        self.assertNotIn("am broadcast", harness)
+        self.assertNotIn("goAsync()", receiver.replace("// broadcast deadline includes goAsync(),", ""))
+        self.assertIn('request.getBooleanExtra(EXTRA_READINESS, false)', receiver)
+        self.assertNotIn('snapshot.first { it.initialized }', receiver)
+        transport = (ROOT / "tools/android_host_control.py").read_text()
+        self.assertIn('start=args.operation in ("reset", "provision", "prepare")', transport)
+        self.assertIn('"operation_status", "true"', transport)
 
     def test_android_release_gates_are_tiered_without_system_image_mutation(self) -> None:
         launcher = (ROOT / "tools/android-emulator-ci.sh").read_text()

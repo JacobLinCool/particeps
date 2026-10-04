@@ -74,8 +74,19 @@ instead of accepting process-recovery fallback as evidence. Process kill and reb
 durable recovery cases. On API 37, revoking `ACCESS_LOCAL_NETWORK` is another blocking live safety
 case; API 34 reports that case explicitly as not applicable in JUnit.
 The API 37 case accepts only two platform-defined outcomes: a same-process permission callback, or
-a system process kill followed by fail-closed durable recovery. Its metrics record only whether
-process continuity was preserved, never either process identifier.
+a system process kill followed by one explicit App reopen and fail-closed durable recovery. That
+reopen is used only after observing the original PID disappear/change; losing the recovery process
+fails the case. Metrics distinguish `process_continuity` and `recovery_action=explicit_app_reopen`.
+
+Debug control uses short broadcasts and a bounded process-local receipt registry. Cold setup opens
+the App and polls readiness independently; reset/provision is admitted once with a fresh operation
+UUID and process UUID, then its completion is polled. Changed processes, unknown outcomes, conflicting
+UUID reuse, busy execution, or an exhausted 4,096-receipt capacity fail explicitly. Receipts are not
+evicted or replayed. State/profile/native queries never open an Activity or restart a process;
+applied-profile work takes the same runtime locks asynchronously and retains the existing proof
+checks. `control-operations/` preserves bounded status traces and synthetic process identities without
+the signed envelope. An unfinished operation may outlive a host timeout, which never authorizes a
+second mutation.
 
 Fixture output contains role, version, aggregate operation counts, attempted byte count, and
 whether the competing VPN established. Saturation diagnostics also record aggregate write progress,

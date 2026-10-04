@@ -110,9 +110,6 @@ shared_peer_package="cool.jacoblin.particeps.fixture.sharedpeer"
 competing_vpn_package="cool.jacoblin.particeps.fixture.competingvpn"
 competing_vpn_activity="cool.jacoblin.particeps.fixtures.competingvpn.CompetingVpnActivity"
 traffic_activity="cool.jacoblin.particeps.fixtures.traffic.TrafficFixtureActivity"
-host_query_action="cool.jacoblin.particeps.HOST_HARNESS_QUERY"
-host_provision_action="cool.jacoblin.particeps.HOST_HARNESS_PROVISION"
-host_reset_action="cool.jacoblin.particeps.HOST_HARNESS_RESET"
 host_envelope_asset="app/src/androidTest/assets/host_harness_study_envelope.txt"
 
 stop_traffic_fixtures() {
@@ -222,39 +219,28 @@ particeps_pid() {
 }
 
 capture_live_particeps_pid() {
-  local pid
-  pid="$(particeps_pid)"
-  [[ "$pid" =~ ^[0-9]+$ ]]
-  printf '%s\n' "$pid"
+  host_control --timeout-seconds 5 identity
+}
+
+host_control() {
+  python3 tools/android_host_control.py --adb "$adb_binary" \
+    --identity-file "$harness_temporary/particeps-process.json" \
+    --evidence-directory "$report_directory/control-operations" "$@"
 }
 
 query_live_runtime() {
-  local expected_pid="$1"
-  local current_pid output data
-  current_pid="$(particeps_pid)"
-  [[ "$current_pid" == "$expected_pid" ]]
-  output="$harness_temporary/live-state.txt"
-  "$adb_binary" shell am broadcast --include-stopped-packages --receiver-foreground \
-    -a "$host_query_action" \
-    -p "$particeps_package" > "$output"
-  grep -q 'Broadcast completed: result=-1' "$output"
-  current_pid="$(particeps_pid)"
-  [[ "$current_pid" == "$expected_pid" ]]
-  data="$(sed -n 's/.*data="\([^"]*\)".*/\1/p' "$output" | tail -n 1)"
+  local expected_pid="$1" timeout_seconds="${2:-5}" data
+  data="$(host_control --expected-pid "$expected_pid" --timeout-seconds "$timeout_seconds" state)"
   [[ "$data" =~ ^(NONE|IMPORTED|CONFIG_VERIFIED|CONSENT_PENDING|ACCESS_SETUP|READY|ACTIVATING|RUNNING|PAUSING|PAUSED|COMPLETED|WITHDRAWN):[0-9]+$ ]]
   printf '%s\n' "$data"
 }
 
 query_current_runtime() {
-  local output data current_pid
-  output="$harness_temporary/current-state.txt"
-  "$adb_binary" shell am broadcast --include-stopped-packages --receiver-foreground \
-    -a "$host_query_action" \
-    -p "$particeps_package" > "$output"
-  grep -q 'Broadcast completed: result=-1' "$output"
-  data="$(sed -n 's/.*data="\([^"]*\)".*/\1/p' "$output" | tail -n 1)"
-  [[ "$data" =~ ^(NONE|IMPORTED|CONFIG_VERIFIED|CONSENT_PENDING|ACCESS_SETUP|READY|ACTIVATING|RUNNING|PAUSING|PAUSED|COMPLETED|WITHDRAWN):[0-9]+$ ]]
-  current_pid="$(capture_live_particeps_pid)"
+  local data current_pid timeout_seconds="${1:-5}"
+  # This query requires an already live process and never starts an Activity.
+  current_pid="$(particeps_pid)"
+  [[ "$current_pid" =~ ^[0-9]+$ ]]
+  data="$(query_live_runtime "$current_pid" "$timeout_seconds")"
   printf '%s|%s\n' "$current_pid" "$data"
 }
 
@@ -262,15 +248,19 @@ await_live_state() {
   local expected_state="$1"
   local expected_pid="$2"
   local timeout_seconds="$3"
-  local deadline state_and_count state admitted_after_quiescence
+  local deadline state_and_count state admitted_after_quiescence remaining
   deadline=$((SECONDS + timeout_seconds))
   while (( SECONDS <= deadline )); do
-    state_and_count="$(query_live_runtime "$expected_pid")" || return 1
+    remaining=$((deadline - SECONDS))
+    (( remaining > 0 )) || return 1
+    state_and_count="$(query_live_runtime "$expected_pid" "$remaining")" || return 1
     state="${state_and_count%%:*}"
     if [[ "$state" == "$expected_state" ]]; then
       if [[ "$expected_state" == "PAUSED" ]]; then
         sleep 1
-        admitted_after_quiescence="$(query_live_runtime "$expected_pid")" || return 1
+        remaining=$((deadline - SECONDS))
+        (( remaining > 0 )) || return 1
+        admitted_after_quiescence="$(query_live_runtime "$expected_pid" "$remaining")" || return 1
         [[ "$admitted_after_quiescence" == "$state_and_count" ]]
       fi
       return 0
@@ -283,10 +273,28 @@ await_live_state() {
 await_permission_revoke_pause() {
   local initial_pid="$1"
   local timeout_seconds="$2"
-  local deadline observation observed_pid state_and_count state admitted_after_quiescence
+  local deadline observation observed_pid state_and_count state admitted_after_quiescence current_pid recovery_pid="" remaining
+  permission_revoke_recovery_action=none
   deadline=$((SECONDS + timeout_seconds))
   while (( SECONDS <= deadline )); do
-    if ! observation="$(query_current_runtime)"; then
+    remaining=$((deadline - SECONDS))
+    (( remaining > 0 )) || return 1
+    (( remaining <= 90 )) || remaining=90
+    current_pid="$(particeps_pid || true)"
+    if [[ -n "$recovery_pid" ]]; then
+      # A second process loss is a failure, never another cold-start attempt.
+      [[ "$current_pid" == "$recovery_pid" ]] || return 1
+    elif [[ "$current_pid" != "$initial_pid" ]]; then
+      # Android may terminate a process on permission revocation. This scenario explicitly
+      # reopens once to test durable PAUSED recovery; it does not claim automatic restart.
+      recovery_pid="$(host_control --timeout-seconds "$remaining" prepare)" || return 1
+      [[ "$recovery_pid" =~ ^[0-9]+$ && "$recovery_pid" != "$initial_pid" ]] || return 1
+      permission_revoke_recovery_action=explicit_app_reopen
+    fi
+    remaining=$((deadline - SECONDS))
+    (( remaining > 0 )) || return 1
+    (( remaining <= 90 )) || remaining=90
+    if ! observation="$(query_current_runtime "$remaining")"; then
       sleep 0.25
       continue
     fi
@@ -295,7 +303,10 @@ await_permission_revoke_pause() {
     state="${state_and_count%%:*}"
     if [[ "$state" == "PAUSED" ]]; then
       sleep 1
-      admitted_after_quiescence="$(query_live_runtime "$observed_pid")" || return 1
+      remaining=$((deadline - SECONDS))
+      (( remaining > 0 )) || return 1
+      (( remaining <= 90 )) || remaining=90
+      admitted_after_quiescence="$(query_live_runtime "$observed_pid" "$remaining")" || return 1
       [[ "$admitted_after_quiescence" == "$state_and_count" ]]
       if [[ "$observed_pid" == "$initial_pid" ]]; then
         permission_revoke_process_continuity=true
@@ -343,24 +354,17 @@ import json, sys
 print(json.dumps({
     "fixture_role": "permission_revoke_outcome",
     "process_continuity": sys.argv[1] == "true",
+    "recovery_action": sys.argv[2],
     "scenario": "api37_local_network_permission_revoke",
 }, sort_keys=True, separators=(",", ":")))
-' "$process_continuity" >> "$metrics_file"
+' "$process_continuity" "$permission_revoke_recovery_action" >> "$metrics_file"
 }
 
 provision_running_study() {
-  local envelope_asset="${1:-$host_envelope_asset}"
-  local encoded output data
+  local envelope_asset="${1:-$host_envelope_asset}" data
   "$adb_binary" shell am force-stop "$competing_vpn_package"
   authorize_vpn "$particeps_package"
-  encoded="$(tr -d '\r\n' < "$envelope_asset")"
-  output="$harness_temporary/provision.txt"
-  "$adb_binary" shell am broadcast --include-stopped-packages --receiver-foreground \
-    -a "$host_provision_action" \
-    -p "$particeps_package" \
-    --es signed_envelope_base64 "$encoded" > "$output"
-  grep -q 'Broadcast completed: result=-1' "$output"
-  data="$(sed -n 's/.*data="\([^"]*\)".*/\1/p' "$output" | tail -n 1)"
+  data="$(host_control provision --envelope "$envelope_asset")"
   if [[ "$data" != "RUNNING" ]]; then
     printf 'Host provisioning failed: %s\n' "${data:-NO_RESULT}" >&2
     return 1
@@ -369,19 +373,19 @@ provision_running_study() {
 
 await_applied_profile() {
   local expected_profile="$1" expected_pid="$2" envelope_asset="$3" proof_file="$4"
-  local deadline current_pid query_output result
+  local deadline current_pid query_output result remaining
   deadline=$((SECONDS + 90))
   query_output="$harness_temporary/applied-profile-query.txt"
   while (( SECONDS <= deadline )); do
     current_pid="$(particeps_pid)"
     [[ "$current_pid" == "$expected_pid" ]]
-    "$adb_binary" shell am broadcast --include-stopped-packages --receiver-foreground \
-      -a "$host_query_action" -p "$particeps_package" \
-      --ez include_applied_profile true > "$query_output"
+    remaining=$((deadline - SECONDS))
+    (( remaining > 0 )) || return 1
+    host_control --expected-pid "$expected_pid" --timeout-seconds "$remaining" profile > "$query_output"
     current_pid="$(particeps_pid)"
     [[ "$current_pid" == "$expected_pid" ]]
     result=0
-    python3 tools/android_host_profile.py query --broadcast "$query_output" \
+    python3 tools/android_host_profile.py query --observation "$query_output" \
       --asset "$envelope_asset" --profile "$expected_profile" --output "$proof_file" || result=$?
     if (( result == 0 )); then
       return 0
@@ -395,22 +399,10 @@ await_applied_profile() {
 }
 
 reset_study() {
-  local output data
-  output="$harness_temporary/reset.txt"
-  # Connectivity callbacks can briefly overlap teardown after a handover.
-  # RESET is idempotent, so retry the debug-only command until the serialized
-  # runtime has completed any in-flight transition instead of failing cleanup.
-  for _ in $(seq 1 40); do
-    if "$adb_binary" shell am broadcast --include-stopped-packages --receiver-foreground \
-      -a "$host_reset_action" \
-      -p "$particeps_package" > "$output" \
-      && grep -q 'Broadcast completed: result=-1' "$output"; then
-      data="$(sed -n 's/.*data="\([^"]*\)".*/\1/p' "$output" | tail -n 1)"
-      [[ "$data" == "RESET" ]] && return 0
-    fi
-    sleep 0.25
-  done
-  return 1
+  local data
+  # One process-bound operation UUID; polling never repeats deletion after an unknown outcome.
+  data="$(host_control reset)"
+  [[ "$data" == "RESET" ]]
 }
 
 package_uid() {
@@ -478,6 +470,7 @@ run_saturation_measurement() {
     diagnostics_result="$report_directory/throughput-diagnostics/measurement-$sequence-result.json"
     rm -f "$diagnostics_stop"
     python3 -m tools.android_host_diagnostics --adb "$adb_binary" --serial "$device_serial" monitor \
+      --identity-file "$harness_temporary/particeps-process.json" \
       --expected "$report_directory/applied-profiles/fixed-$cap_kbps-before.json" \
       --output "$report_directory/throughput-diagnostics/measurement-$sequence.ndjson" \
       --maximum-seconds "$((measurement_duration_seconds + 60))" \
@@ -535,6 +528,7 @@ run_duplex_measurement() {
     diagnostics_result="$directory/monitor-result.json"
     rm -f "$diagnostics_stop"
     python3 -m tools.android_host_diagnostics --adb "$adb_binary" --serial "$device_serial" monitor \
+      --identity-file "$harness_temporary/particeps-process.json" \
       --traffic-mode duplex --maximum-seconds 120 \
       --expected "$report_directory/applied-profiles/duplex-512-before.json" \
       --output "$directory/diagnostics.ndjson" --stop-file "$diagnostics_stop" &

@@ -23,11 +23,8 @@ def fixture_configuration(asset: Path) -> dict:
     return json.loads(envelope[start:start + config_length])
 
 
-def observation_from_broadcast(output: str) -> dict:
-    matches = re.findall(r'^Broadcast completed: result=-1, data="(.*)"\s*$', output, re.M)
-    if len(matches) != 1:
-        raise ValueError("Applied-profile query did not return exactly one successful result")
-    value = json.loads(matches[0])
+def observation_from_query(output: str) -> dict:
+    value = json.loads(output)
     if not isinstance(value, dict):
         raise ValueError("Applied-profile observation must be an object")
     return value
@@ -85,7 +82,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="operation", required=True)
     query = commands.add_parser("query")
-    query.add_argument("--broadcast", type=Path, required=True)
+    query.add_argument("--observation", type=Path, required=True)
     query.add_argument("--asset", type=Path, required=True)
     query.add_argument("--profile", required=True)
     query.add_argument("--output", type=Path, required=True)
@@ -95,7 +92,7 @@ def main() -> None:
     compare.add_argument("--transition", action="store_true")
     arguments = parser.parse_args()
     if arguments.operation == "query":
-        observation = observation_from_broadcast(arguments.broadcast.read_text())
+        observation = observation_from_query(arguments.observation.read_text())
         if not verified_profile(observation, fixture_configuration(arguments.asset), arguments.profile):
             raise SystemExit(3)
         arguments.output.write_text(json.dumps(observation, sort_keys=True, separators=(",", ":")) + "\n")
