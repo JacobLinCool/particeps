@@ -25,6 +25,13 @@ NexusLauncher HOME with a matching current ANR permits one normal force-stop and
 before any product test starts. A different process error, unknown foreground window, repeated
 ANR, unchanged failing process or unverified readback fails the gate. All preparation commands
 share one 30-second deadline; this recovery is never applied during or after product tests.
+On a fresh image, the observed `com.google.android.googlesdksetup/.DefaultActivity` default
+HOME is only a pending state within that same deadline. The helper records each resolution
+and setup snapshot and waits for NexusLauncher; it never changes setup flags or the default
+HOME. The observed Settings `FallbackHome` window may remain pending during that transition,
+but only verified, error-free NexusLauncher focus can pass. Other default activities or
+foreground windows fail immediately. This is a bounded readiness check, not evidence that
+every image completes first-boot setup within 30 seconds.
 It does not change power policy or bypass system Back assertions.
 The lane retains before/after state and, on either success or failure, connected test reports,
 window/power state, logcat and a screenshot. Diagnostic timeouts preserve the original test result.

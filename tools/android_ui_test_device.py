@@ -11,6 +11,8 @@ from pathlib import Path
 
 STOCK_HOME_PACKAGE = "com.google.android.apps.nexuslauncher"
 STOCK_HOME = f"{STOCK_HOME_PACKAGE}/{STOCK_HOME_PACKAGE}.NexusLauncherActivity"
+STOCK_SETUP_HOME = "com.google.android.googlesdksetup/.DefaultActivity"
+FALLBACK_HOME_WINDOW = "com.android.settings/com.android.settings.FallbackHome"
 
 
 def home_process_state(processes: str) -> tuple[int, bool]:
@@ -57,7 +59,7 @@ def home_process_state(processes: str) -> tuple[int, bool]:
     return home[0]
 
 
-def home_focus(displays: str) -> str:
+def home_focus(displays: str, *, waiting_for_setup: bool = False) -> str:
     """Use only the live displays dump; a full window dump also contains historical ANRs."""
     if not displays.startswith("WINDOW MANAGER DISPLAY CONTENTS (dumpsys window displays)\n"):
         raise RuntimeError("Missing live window display header")
@@ -71,6 +73,8 @@ def home_focus(displays: str) -> str:
     match = re.fullmatch(r"Window\{[^\s{}]+ u0 (.+)\}", focuses[0])
     if match and match[1] == STOCK_HOME:
         return "home"
+    if waiting_for_setup and match and match[1] == FALLBACK_HOME_WINDOW:
+        return "setup"
     if match and match[1] == f"Application Not Responding: {STOCK_HOME_PACKAGE}":
         return "stock_anr"
     raise RuntimeError(f"Unexpected foreground window: {focuses[0]}")
@@ -142,12 +146,26 @@ def prepare(adb: str, evidence: Path, timeout_seconds: float = 30) -> None:
     # keyguard, or grant access; later background and screen-state tests keep their own semantics.
     command("shell", "input", "keyevent", "KEYCODE_WAKEUP")
     command("shell", "wm", "dismiss-keyguard")
-    # Android 14 --brief includes resolution metadata; --components emits only the component.
-    resolved = command("shell", "cmd", "package", "resolve-activity", "--components", "--user", "0",
-                       "-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME")
-    (evidence / "resolved-home.txt").write_text(resolved + "\n")
-    if resolved not in (STOCK_HOME, f"{STOCK_HOME_PACKAGE}/.NexusLauncherActivity"):
-        raise RuntimeError(f"Unexpected default HOME: {resolved!r}")
+    # A fresh Google APIs image may still resolve HOME to its SDK setup activity after
+    # user unlock. Observe its own completion; never change setup flags or launch over it.
+    setup_sequence = 0
+    while True:
+        # Android 14 --brief includes metadata; --components emits only the component.
+        resolved = command("shell", "cmd", "package", "resolve-activity", "--components", "--user", "0",
+                           "-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME")
+        (evidence / f"resolved-home-{setup_sequence:03d}.txt").write_text(resolved + "\n")
+        (evidence / "resolved-home.txt").write_text(resolved + "\n")
+        if resolved in (STOCK_HOME, f"{STOCK_HOME_PACKAGE}/.NexusLauncherActivity"):
+            break
+        if resolved != STOCK_SETUP_HOME:
+            raise RuntimeError(f"Unexpected default HOME: {resolved!r}")
+        _, setup_displays, setup_processes = snapshot(f"setup-{setup_sequence:03d}")
+        _, setup_anr = home_process_state(setup_processes)
+        setup_focus = home_focus(setup_displays, waiting_for_setup=True)
+        if setup_anr or setup_focus == "stock_anr":
+            raise RuntimeError("Process error during stock SDK setup; no recovery is allowed before default HOME is ready")
+        setup_sequence += 1
+        time.sleep(min(0.1, remaining()))
     recovered_pid = None
     started_home = False
     sequence = 0
@@ -164,7 +182,12 @@ def prepare(adb: str, evidence: Path, timeout_seconds: float = 30) -> None:
         sequence += 1
         problems, displays, processes = snapshot(prefix)
         pid, anr = home_process_state(processes)
-        focus = home_focus(displays)
+        focus = home_focus(displays, waiting_for_setup=setup_sequence > 0 and not started_home)
+        if focus == "setup":
+            if anr:
+                raise RuntimeError("Process error while stock SDK setup still has focus")
+            time.sleep(min(0.1, remaining()))
+            continue
         if anr:
             if recovered_pid is not None:
                 raise RuntimeError("Stock HOME ANR persisted or recurred after the one allowed recovery")

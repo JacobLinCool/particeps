@@ -92,11 +92,13 @@ class AndroidUiStateTest(unittest.TestCase):
                 self.assertTrue(DEVICE.ui_state_problems(power, policy, user))
 
     def run_preparation(self, *, serial="emulator-5584", qemu="1", sdk="34", stays_locked=False, previous_markers=False,
-                        states=None, home=None, timeout_seconds=30, launch_result="Status: ok", command_delay=0.01):
+                        states=None, home=None, homes=None, timeout_seconds=30, launch_result="Status: ok", command_delay=0.01):
         commands = []
         clock = [0.0]
         snapshot = [0]
+        resolver = [0]
         states = states or [{}]
+        homes = homes or [home or DEVICE.STOCK_HOME]
 
         def run(command, **kwargs):
             self.assertGreater(kwargs["timeout"], 0)
@@ -119,11 +121,13 @@ class AndroidUiStateTest(unittest.TestCase):
                 ("shell", "am", "get-started-user-state", "0"): "RUNNING_UNLOCKED",
                 ("shell", "dumpsys", "window", "displays"): states[min(snapshot[0], len(states)-1)].get("displays", displays()),
                 ("shell", "dumpsys", "activity", "-a", "processes"): states[min(snapshot[0], len(states)-1)].get("processes", PROCESSES),
-                ("shell", "cmd", "package", "resolve-activity", "--components", "--user", "0", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME"): home or DEVICE.STOCK_HOME,
+                ("shell", "cmd", "package", "resolve-activity", "--components", "--user", "0", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME"): homes[min(resolver[0], len(homes)-1)],
                 ("shell", "am", "start", "-W", "--user", "0", "-n", DEVICE.STOCK_HOME, "-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME"): launch_result,
             }
             if arguments == ("shell", "dumpsys", "activity", "-a", "processes"):
                 snapshot[0] += 1
+            if "resolve-activity" in arguments:
+                resolver[0] += 1
             return subprocess.CompletedProcess(command, 0, replies.get(arguments, ""), "")
 
         def sleep(seconds):
@@ -223,6 +227,55 @@ class AndroidUiStateTest(unittest.TestCase):
                 self.assertIsNotNone(error)
                 self.assertNotIn("result.txt", files)
                 self.assertEqual(mutations, commands.count(("shell", "am", "force-stop", "--user", "0", DEVICE.STOCK_HOME_PACKAGE)))
+
+    def test_fresh_sdk_setup_is_observed_until_nexus_without_mutating_setup(self):
+        fallback = {"displays": displays(DEVICE.FALLBACK_HOME_WINDOW)}
+        commands, error, files = self.run_preparation(
+            homes=[DEVICE.STOCK_SETUP_HOME, DEVICE.STOCK_SETUP_HOME, DEVICE.STOCK_HOME],
+            states=[fallback, fallback, fallback, fallback, {}, {}],
+        )
+        self.assertIsNone(error)
+        self.assertEqual(DEVICE.STOCK_SETUP_HOME + "\n", files["resolved-home-000.txt"])
+        self.assertEqual(DEVICE.STOCK_SETUP_HOME + "\n", files["resolved-home-001.txt"])
+        self.assertEqual(DEVICE.STOCK_HOME + "\n", files["resolved-home-002.txt"])
+        self.assertIn(DEVICE.FALLBACK_HOME_WINDOW, files["setup-001-window-displays.txt"])
+        self.assertIn("setup-001-processes.txt", files)
+        self.assertIn("PASS", files["result.txt"])
+        mutations = [command for command in commands if command[:3] in (
+            ("shell", "am", "start"), ("shell", "am", "force-stop"),
+        )]
+        self.assertEqual(1, len(mutations))
+        last_resolve = max(index for index, command in enumerate(commands) if "resolve-activity" in command)
+        self.assertGreater(commands.index(mutations[0]), last_resolve)
+        self.assertFalse(any(command[:2] in (("shell", "settings"), ("shell", "pm")) for command in commands))
+
+    def test_sdk_setup_timeout_and_unknown_default_fail_without_home_launch(self):
+        for homes, expected in (
+            ([DEVICE.STOCK_SETUP_HOME], "time budget"),
+            ([DEVICE.STOCK_SETUP_HOME, "com.other/.Home"], "Unexpected default HOME"),
+            ([DEVICE.STOCK_SETUP_HOME, "com.google.android.googlesdksetup/com.google.android.googlesdksetup.DefaultActivity"], "Unexpected default HOME"),
+        ):
+            with self.subTest(homes=homes):
+                commands, error, files = self.run_preparation(homes=homes, timeout_seconds=0.65)
+                self.assertIn(expected, error)
+                self.assertNotIn("result.txt", files)
+                self.assertIn("setup-000-processes.txt", files)
+                self.assertFalse(any(command[:3] in (("shell", "am", "start"), ("shell", "am", "force-stop")) for command in commands))
+
+    def test_sdk_setup_does_not_accept_other_windows_or_process_errors(self):
+        for pending in (
+            {"displays": displays("Unexpected dialog")},
+            {"processes": PROCESS_HEADER + process(error=ANR)},
+            {"processes": PROCESSES + process(name="com.google.android.googlesdksetup", pid=2000, error=ANR)},
+        ):
+            with self.subTest(pending=pending):
+                commands, error, files = self.run_preparation(homes=[DEVICE.STOCK_SETUP_HOME], states=[{}, pending])
+                self.assertIsNotNone(error)
+                self.assertNotIn("result.txt", files)
+                self.assertFalse(any(command[:3] in (("shell", "am", "start"), ("shell", "am", "force-stop")) for command in commands))
+        # FallbackHome is not accepted outside the explicitly observed SDK setup sequence.
+        _, error, _ = self.run_preparation(states=[{"displays": displays(DEVICE.FALLBACK_HOME_WINDOW)}])
+        self.assertIn("Unexpected foreground window", error)
 
     def test_all_commands_and_success_readback_share_one_deadline(self):
         commands, error, files = self.run_preparation(timeout_seconds=0.135)
