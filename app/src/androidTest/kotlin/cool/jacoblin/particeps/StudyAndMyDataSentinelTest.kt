@@ -1,7 +1,7 @@
 package cool.jacoblin.particeps
 
 import android.text.format.Formatter
-import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -23,6 +23,7 @@ import java.security.MessageDigest
 import java.text.NumberFormat
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -43,7 +44,12 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class StudyAndMyDataSentinelTest {
     @get:Rule
-    val composeRule = createComposeRule()
+    val composeRule = createAndroidComposeRule<ComposeFixtureActivity>()
+
+    @After
+    fun clearFixture() {
+        composeRule.clearFixtureContent()
+    }
 
     @Test
     fun runningScreenAndStudyAndMyDataShowTheFloorAndNothingElseFromTheConfiguration() {
@@ -60,7 +66,7 @@ class StudyAndMyDataSentinelTest {
             ),
             lastExport = CoreExportSummary(commitCount = 12, eventCount = 1_200, byteCount = EXPORTED_BYTES),
         ).toParticipantUiModel()
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             CollectorApp(
                 state = StudyUiState.ActiveStudy(
                     model = model,
@@ -175,29 +181,29 @@ class StudyAndMyDataSentinelTest {
         )
     }
 
-    private fun actions() = StudyUiActions(
-        scan = {},
-        import = {},
-        demo = null,
-        review = {},
-        acceptConsent = {},
-        completeAccess = {},
-        requestAccess = {},
-        start = {},
-        pause = {},
-        resume = {},
-        complete = {},
-        withdraw = {},
-        decline = {},
-        export = {},
-        cancelExport = {},
-        delete = {},
-        retryRecovery = {},
-        resetAndRestart = {},
-        readLocalStorageSize = { ParticipantSizeBucket.of(STORED_BYTES) },
-    )
-
     private companion object {
+        private fun actions() = StudyUiActions(
+            scan = {},
+            import = {},
+            demo = null,
+            review = {},
+            acceptConsent = {},
+            completeAccess = {},
+            requestAccess = {},
+            start = {},
+            pause = {},
+            resume = {},
+            complete = {},
+            withdraw = {},
+            decline = {},
+            export = {},
+            cancelExport = {},
+            delete = {},
+            retryRecovery = {},
+            resetAndRestart = {},
+            readLocalStorageSize = { ParticipantSizeBucket.of(STORED_BYTES) },
+        )
+
         const val FLOOR_TITLE = "Floor study title"
         const val FLOOR_PURPOSE = "Floor purpose of the study."
         const val FLOOR_RESEARCHER = "Floor Researcher"

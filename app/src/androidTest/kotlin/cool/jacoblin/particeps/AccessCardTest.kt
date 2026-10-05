@@ -11,7 +11,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.captureToImage
-import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -26,6 +26,9 @@ import cool.jacoblin.particeps.core.collector.SetupGuidance
 import cool.jacoblin.particeps.core.model.ExperimentState
 import java.text.NumberFormat
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -33,7 +36,12 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AccessCardTest {
     @get:Rule
-    val composeRule = createComposeRule()
+    val composeRule = createAndroidComposeRule<ComposeFixtureActivity>()
+
+    @After
+    fun clearFixture() {
+        composeRule.clearFixtureContent()
+    }
 
     @Test
     fun backgroundLocationShowsManualStepsAndWaitsForPreciseLocation() {
@@ -49,7 +57,7 @@ class AccessCardTest {
             ),
         )
 
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             MaterialTheme { AccessCard(check, actions(), busy = false) }
         }
 
@@ -88,7 +96,7 @@ class AccessCardTest {
             ),
         )
 
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             MaterialTheme {
                 AccessCard(check, actions { launchedAction = it }, busy = false)
             }
@@ -123,7 +131,7 @@ class AccessCardTest {
             ),
         )
 
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             MaterialTheme { AccessCard(check, actions(), busy = false) }
         }
 
@@ -148,7 +156,7 @@ class AccessCardTest {
             ),
         )
 
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             MaterialTheme {
                 OptionalAccessRemediation(
                     study = participantModel(access = listOf(check)),
@@ -173,7 +181,7 @@ class AccessCardTest {
             retryRecovery = { retries += 1 },
             resetAndRestart = { resets += 1 },
         )
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             CollectorApp(
                 state = StudyUiState.NoStudy(
                     message = null,
@@ -200,7 +208,7 @@ class AccessCardTest {
     fun completeControlIsConfirmedOnlyForRunningOrPausedStudy() {
         val state = mutableStateOf(ExperimentState.RUNNING)
         var completions = 0
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             CollectorApp(
                 state = StudyUiState.ActiveStudy(
                     model = participantModel(emptyList(), state.value),
@@ -245,7 +253,7 @@ class AccessCardTest {
         )
         val model = mutableStateOf(participantModel(emptyList(), ExperimentState.CONSENT_PENDING))
         var declines = 0
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             CollectorApp(
                 state = StudyUiState.ActiveStudy(
                     model = model.value,
@@ -301,7 +309,7 @@ class AccessCardTest {
     fun declineSaysSoWhenAnEarlierReleaseAlreadySentSetupRecords() {
         // Only a study imported under an earlier release, which uploaded from import, can have an
         // acknowledged upload before Start.
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             CollectorApp(
                 state = StudyUiState.ActiveStudy(
                     model = participantModel(emptyList(), ExperimentState.READY).copy(uploadedThroughCommit = 4),
@@ -323,7 +331,7 @@ class AccessCardTest {
     @Test
     fun endedStudyOffersDeleteWithoutAWithdrawThatCannotSucceed() {
         val state = mutableStateOf(ExperimentState.COMPLETED)
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             CollectorApp(
                 state = StudyUiState.ActiveStudy(
                     model = participantModel(emptyList(), state.value),
@@ -358,7 +366,7 @@ class AccessCardTest {
             ParticipantExportState.Running(ParticipantExportPhase.ENCRYPTING, 10, 20),
         )
         var pauses = 0
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             CollectorApp(
                 state = StudyUiState.ActiveStudy(
                     model = participantModel(emptyList()),
@@ -393,7 +401,7 @@ class AccessCardTest {
     @Test
     fun terminalDeletionWaitsForExportCleanupAndReportsAnUnremovedFile() {
         val export = mutableStateOf<ParticipantExportState>(ParticipantExportState.Cancelling)
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             CollectorApp(
                 state = StudyUiState.ActiveStudy(
                     model = participantModel(emptyList(), ExperimentState.COMPLETED),
@@ -422,7 +430,7 @@ class AccessCardTest {
     @Test
     fun studyAndMyDataIsOneIdenticalEntryOnEveryCollectionScreen() {
         val model = mutableStateOf(participantModel(emptyList()))
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             CollectorApp(
                 state = StudyUiState.ActiveStudy(
                     model = model.value,
@@ -489,9 +497,44 @@ class AccessCardTest {
     }
 
     @Test
+    fun activityRecreationRetainsTheStudyAndMyDataEntryAndAcceptsModelUpdates() {
+        val model = mutableStateOf(participantModel(emptyList()))
+        composeRule.setFixtureContent {
+            CollectorApp(
+                state = StudyUiState.ActiveStudy(
+                    model = model.value,
+                    export = ParticipantExportState.Idle,
+                    message = null,
+                    busy = false,
+                    recoveryStatus = null,
+                ),
+                actions = actions(),
+            )
+        }
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA).performScrollTo().assertIsEnabled()
+        val originalActivity = composeRule.activity
+
+        composeRule.activityRule.scenario.recreate()
+
+        assertNotSame(originalActivity, composeRule.activity)
+        assertTrue(originalActivity.isDestroyed)
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA).performScrollTo().assertIsEnabled()
+        composeRule.runOnIdle { model.value = participantModel(emptyList(), ExperimentState.PAUSED) }
+        composeRule.onNodeWithTag(UiTags.RESUME).performScrollTo().assertIsEnabled()
+        composeRule.onNodeWithTag(UiTags.PAUSE).assertDoesNotExist()
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA).performScrollTo().performClick()
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA_SCREEN).assertExists()
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA_BACK).performClick()
+        composeRule.onNodeWithTag(UiTags.RESUME).performScrollTo().assertIsEnabled()
+        composeRule.runOnIdle { model.value = participantModel(emptyList(), ExperimentState.READY) }
+        composeRule.onNodeWithTag(UiTags.START).assertExists()
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA).assertDoesNotExist()
+    }
+
+    @Test
     fun studyAndMyDataAddsNoLifecycleControlAndBackReturnsToTheSameControls() {
         var storageReads = 0
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             CollectorApp(
                 state = StudyUiState.ActiveStudy(
                     model = participantModel(
@@ -541,7 +584,7 @@ class AccessCardTest {
 
     @Test
     fun studyWithoutUploadStatesNoUploadConsequences() {
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             CollectorApp(
                 state = StudyUiState.ActiveStudy(
                     model = participantModel(emptyList(), ExperimentState.WITHDRAWN),
@@ -578,75 +621,81 @@ class AccessCardTest {
         }
     }
 
-    private fun actions(requestAccess: (SetupAction) -> Unit = {}) = StudyUiActions(
-        scan = {},
-        import = {},
-        demo = null,
-        review = {},
-        acceptConsent = {},
-        completeAccess = {},
-        requestAccess = requestAccess,
-        start = {},
-        pause = {},
-        resume = {},
-        complete = {},
-        withdraw = {},
-        decline = {},
-        export = {},
-        cancelExport = {},
-        delete = {},
-        retryRecovery = {},
-        resetAndRestart = {},
-        readLocalStorageSize = { null },
-    )
-
-    private fun accessItem(
-        kind: AccessKind,
-        resolution: ParticipantAccessResolution,
-        guidance: SetupGuidance?,
-        required: Boolean = true,
-        owners: List<ParticipantAccessOwner> = emptyList(),
-    ) = ParticipantAccessItem(kind, required, owners, resolution, guidance)
-
-    private fun participantModel(
-        access: List<ParticipantAccessItem>,
-        state: ExperimentState = ExperimentState.RUNNING,
-        trafficShaping: Boolean = false,
-        upload: ParticipantUploadDisclosure? = null,
-    ) = ParticipantStudyUiModel(
-        experimentId = "access-card-test",
-        title = "Access card test",
-        purpose = "Access UI test",
-        researcherName = "Test researcher",
-        researcherContact = "test@example.invalid",
-        durationHours = 1,
-        consentSummary = "Test consent",
-        consentDocumentVersion = "test-1",
-        signerFingerprint = "0000 0000 0000 0000 0000 0000 0000 0000",
-        signerAnchored = false,
-        assignedParticipantId = null,
-        participantInstanceId = "00000000-0000-4000-8000-000000000000",
-        dataCategories = listOf(ParticipantDataCategory(ParticipantDataKind.USAGE_EVENTS, optional = true)),
-        access = access,
-        upload = upload,
-        state = state,
-        lifetimeDataEventCount = 0,
-        durableThroughCommit = 0,
-        uploadedThroughCommit = 0,
-        retainedFromCommit = 1,
-        pausedAtUtcMillis = null,
-        participation = ParticipantParticipationSummary(
-            studyDayCount = 1,
-            plannedEndUtcMillis = null,
-            studyLength = null,
-            activeCollection = ParticipantElapsedTime.Settled(0),
-            ended = state == ExperimentState.COMPLETED || state == ExperimentState.WITHDRAWN,
-        ),
-        lastExport = null,
-        trafficShapingDisclosureRequired = trafficShaping,
-    )
-
     private companion object {
+        private fun actions(requestAccess: (SetupAction) -> Unit = {}) = StudyUiActions(
+            scan = {},
+            import = {},
+            demo = null,
+            review = {},
+            acceptConsent = {},
+            completeAccess = {},
+            requestAccess = requestAccess,
+            start = {},
+            pause = {},
+            resume = {},
+            complete = {},
+            withdraw = {},
+            decline = {},
+            export = {},
+            cancelExport = {},
+            delete = {},
+            retryRecovery = {},
+            resetAndRestart = {},
+            readLocalStorageSize = { null },
+        )
+
+        private fun accessItem(
+            kind: AccessKind,
+            resolution: ParticipantAccessResolution,
+            guidance: SetupGuidance?,
+            required: Boolean = true,
+            owners: List<ParticipantAccessOwner> = emptyList(),
+        ) = ParticipantAccessItem(kind, required, owners, resolution, guidance)
+
+        private fun participantModel(
+            access: List<ParticipantAccessItem>,
+            state: ExperimentState = ExperimentState.RUNNING,
+            trafficShaping: Boolean = false,
+            upload: ParticipantUploadDisclosure? = null,
+        ) = ParticipantStudyUiModel(
+            experimentId = "access-card-test",
+            title = "Access card test",
+            purpose = "Access UI test",
+            researcherName = "Test researcher",
+            researcherContact = "test@example.invalid",
+            durationHours = 1,
+            consentSummary = "Test consent",
+            consentDocumentVersion = "test-1",
+            signerFingerprint = "0000 0000 0000 0000 0000 0000 0000 0000",
+            signerAnchored = false,
+            assignedParticipantId = null,
+            participantInstanceId = "00000000-0000-4000-8000-000000000000",
+            dataCategories = listOf(ParticipantDataCategory(ParticipantDataKind.USAGE_EVENTS, optional = true)),
+            access = access,
+            upload = upload,
+            state = state,
+            lifetimeDataEventCount = 0,
+            durableThroughCommit = 0,
+            uploadedThroughCommit = 0,
+            retainedFromCommit = 1,
+            pausedAtUtcMillis = null,
+            participation = ParticipantParticipationSummary(
+                studyDayCount = 1,
+                plannedEndUtcMillis = null,
+                studyLength = null,
+                activeCollection = ParticipantElapsedTime.Settled(0),
+                ended = state == ExperimentState.COMPLETED || state == ExperimentState.WITHDRAWN,
+            ),
+            lastExport = null,
+            trafficShapingDisclosureRequired = trafficShaping,
+        )
+
+        private fun prerequisiteLabel(kind: AccessKind): Int = when (kind) {
+            AccessKind.FINE_LOCATION -> R.string.access_fine_location
+            AccessKind.LOCATION_SERVICES -> R.string.access_location_services
+            else -> error("Unexpected prerequisite")
+        }
+
         val LIFECYCLE_CONTROLS = listOf(
             UiTags.START,
             UiTags.PAUSE,
@@ -657,11 +706,5 @@ class AccessCardTest {
             UiTags.EXPORT,
             UiTags.DELETE,
         )
-    }
-
-    private fun prerequisiteLabel(kind: AccessKind): Int = when (kind) {
-        AccessKind.FINE_LOCATION -> R.string.access_fine_location
-        AccessKind.LOCATION_SERVICES -> R.string.access_location_services
-        else -> error("Unexpected prerequisite")
     }
 }

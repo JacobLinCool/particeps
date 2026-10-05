@@ -6,7 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -15,6 +15,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -26,7 +27,12 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class WallClockLifecycleTest {
     @get:Rule
-    val composeRule = createComposeRule()
+    val composeRule = createAndroidComposeRule<ComposeFixtureActivity>()
+
+    @After
+    fun clearFixture() {
+        composeRule.clearFixtureContent()
+    }
 
     @Test
     fun theClockDoesNotTickWhileStoppedAndIsCurrentOnceStartedAgain() {
@@ -35,7 +41,7 @@ class WallClockLifecycleTest {
             owner = ControlledLifecycleOwner()
             owner.registry.currentState = Lifecycle.State.RESUMED
         }
-        composeRule.setContent {
+        composeRule.setFixtureContent {
             CompositionLocalProvider(LocalLifecycleOwner provides owner) {
                 val now by rememberWallClockMillis()
                 Text(now.toString(), Modifier.testTag(CLOCK))

@@ -143,7 +143,6 @@ dependencies {
     )
 
     debugImplementation(libs.compose.ui.tooling)
-    debugImplementation(libs.compose.ui.test.manifest)
 
     testImplementation(libs.junit4)
     testImplementation(libs.coroutines.test)

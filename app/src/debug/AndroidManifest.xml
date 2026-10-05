@@ -8,6 +8,10 @@
         android:targetPackage="cool.jacoblin.particeps" />
 
     <application>
+        <activity
+            android:name=".ComposeFixtureActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
         <!-- Debug-only shell control for the blocking host harness. Release has no such component. -->
         <receiver
             android:name=".HostHarnessStateReceiver"

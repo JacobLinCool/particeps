@@ -29,13 +29,20 @@ import cool.jacoblin.particeps.core.resource.ResourceKey
 import cool.jacoblin.particeps.core.resource.ResourceKind
 import cool.jacoblin.particeps.core.resource.SignedResourceProfile
 import cool.jacoblin.particeps.platform.AndroidResearchClocks
+import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -43,6 +50,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import org.json.JSONObject
 import org.junit.runner.RunWith
 
 /** Host-controlled integration: a local server sends 262144 ASCII Z bytes after receiving one byte. */
@@ -55,6 +63,11 @@ class AllAppsTrafficShapingAndroidTest {
             require(!endpoint.isNullOrBlank()) { "The blocking host gate requires its local TCP test server" }
         }
         assumeTrue("Requires the local TCP test server", endpoint != null)
+        val connectionCount = when (arguments.getString("traffic_test_connections") ?: "1") {
+            "1" -> 1
+            "5" -> 5
+            else -> error("traffic_test_connections must be 1 or 5")
+        }
         val address = requireNotNull(endpoint).split(':')
         require(address.size == 2)
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -96,19 +109,7 @@ class AllAppsTrafficShapingAndroidTest {
             }
             // The research app is deliberately absent from any selected-package list. Its default
             // socket must traverse the all-app VPN, while the engine's protected sockets avoid loops.
-            val before = android.os.SystemClock.elapsedRealtime()
-            val payload = Socket().use { socket ->
-                socket.soTimeout = 15_000
-                socket.connect(InetSocketAddress(address[0], address[1].toInt()), 5_000)
-                socket.getOutputStream().write(1)
-                socket.getInputStream().readBytes()
-            }
-            val elapsed = android.os.SystemClock.elapsedRealtime() - before
-            assertEquals(262_144, payload.size)
-            assertTrue(payload.all { it == 'Z'.code.toByte() })
-            // A generous bound detects an uncapped path without asserting exact packet timing.
-            assertTrue("256 KiB crossed the 500 kbps VPN in only $elapsed ms", elapsed >= 2_000)
-            android.util.Log.i("AllAppsTrafficTest", "Transferred ${payload.size} bytes in $elapsed ms")
+            readFixtureConnections(InetSocketAddress(address[0], address[1].toInt()), connectionCount)
             assertEquals(ResourceHealthStatus.APPLIED, actuator.health().status)
             actuator.release(desired)
             withTimeout(5_000) {
@@ -130,6 +131,126 @@ class AllAppsTrafficShapingAndroidTest {
                     shell("appops set ${context.packageName} ACTIVATE_VPN default")
                 }
             }
+        }
+    }
+
+    private suspend fun readFixtureConnections(address: InetSocketAddress, connectionCount: Int) = coroutineScope {
+        val sockets = List(connectionCount) { Socket() }
+        val remainingConnections = AtomicInteger(connectionCount)
+        val start = CompletableDeferred<Unit>()
+        var failure: Throwable? = null
+        try {
+            sockets.mapIndexed { index, socket ->
+                async(Dispatchers.IO) {
+                    readFixtureConnection(socket, address, index, remainingConnections, start)
+                }
+            }.awaitAll()
+        } catch (error: Throwable) {
+            failure = error
+            throw error
+        } finally {
+            // awaitAll fails promptly. Close every socket before coroutineScope joins siblings,
+            // including a sibling blocked in connect/read or cancelled before its body ran.
+            var closeFailure: IOException? = null
+            sockets.forEach { socket ->
+                try {
+                    socket.close()
+                } catch (error: IOException) {
+                    val previous = closeFailure
+                    if (previous == null) closeFailure = error else previous.addSuppressed(error)
+                }
+            }
+            closeFailure?.let { error ->
+                val original = failure
+                if (original == null) throw error else original.addSuppressed(error)
+            }
+        }
+    }
+
+    private suspend fun readFixtureConnection(
+        socket: Socket,
+        address: InetSocketAddress,
+        connectionIndex: Int,
+        remainingConnections: AtomicInteger,
+        start: CompletableDeferred<Unit>,
+    ) {
+        val before = android.os.SystemClock.elapsedRealtime()
+        val received = ByteArrayOutputStream()
+        var stage = "connect"
+        var firstByteElapsed: Long? = null
+        var lastProgressElapsed: Long? = null
+        var readStartedElapsed: Long? = null
+        var transferStartedElapsed: Long? = null
+        var maxReadIdleMillis = 0L
+        var reachedEof = false
+        try {
+            val payload = socket.use {
+                socket.soTimeout = 15_000
+                socket.connect(address, 5_000)
+                stage = "barrier"
+                if (remainingConnections.decrementAndGet() == 0) start.complete(Unit)
+                start.await()
+                stage = "trigger"
+                transferStartedElapsed = android.os.SystemClock.elapsedRealtime() - before
+                socket.getOutputStream().write(1)
+                stage = "read"
+                readStartedElapsed = android.os.SystemClock.elapsedRealtime() - before
+                val input = socket.getInputStream()
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                // Match readBytes: retain every byte and continue until EOF, including after
+                // the expected payload length. SO_TIMEOUT remains per-read inactivity.
+                while (true) {
+                    val count = input.read(buffer)
+                    val completedElapsed = android.os.SystemClock.elapsedRealtime() - before
+                    maxReadIdleMillis = maxOf(
+                        maxReadIdleMillis,
+                        completedElapsed - requireNotNull(lastProgressElapsed ?: readStartedElapsed),
+                    )
+                    if (count < 0) {
+                        reachedEof = true
+                        break
+                    }
+                    if (count > 0) {
+                        received.write(buffer, 0, count)
+                        if (firstByteElapsed == null) firstByteElapsed = completedElapsed
+                        lastProgressElapsed = completedElapsed
+                    }
+                }
+                stage = "close"
+                received.toByteArray()
+            }
+            val totalElapsed = android.os.SystemClock.elapsedRealtime() - before
+            val elapsed = totalElapsed - requireNotNull(transferStartedElapsed)
+            stage = "validate"
+            assertEquals(262_144, payload.size)
+            assertTrue(payload.all { it == 'Z'.code.toByte() })
+            // A generous per-connection bound detects an uncapped path without asserting exact timing.
+            assertTrue("256 KiB crossed the 500 kbps VPN in only $elapsed ms", elapsed >= 2_000)
+            android.util.Log.i(
+                "AllAppsTrafficTest",
+                "Connection $connectionIndex transferred ${payload.size} bytes in $elapsed ms (total $totalElapsed ms)",
+            )
+        } catch (failure: Throwable) {
+            val failedElapsed = android.os.SystemClock.elapsedRealtime() - before
+            val idleMillis = (lastProgressElapsed ?: readStartedElapsed)?.let { failedElapsed - it }
+            android.util.Log.e(
+                "AllAppsTrafficTest",
+                JSONObject()
+                    .put("connection_index", connectionIndex)
+                    .put("stage", stage)
+                    .put("error_class", failure.javaClass.simpleName)
+                    .put("received_bytes", received.size())
+                    .put("elapsed_millis", failedElapsed)
+                    .put("transfer_elapsed_millis", transferStartedElapsed?.let { failedElapsed - it } ?: JSONObject.NULL)
+                    .put("first_byte_elapsed_millis", firstByteElapsed ?: JSONObject.NULL)
+                    .put("last_progress_elapsed_millis", lastProgressElapsed ?: JSONObject.NULL)
+                    .put("read_idle_millis", idleMillis ?: JSONObject.NULL)
+                    .put("max_read_idle_millis", maxOf(maxReadIdleMillis, idleMillis ?: 0L))
+                    .put("reached_eof", reachedEof)
+                    .put("full_payload_awaiting_eof", received.size() == 262_144 && !reachedEof)
+                    .toString(),
+            )
+            throw failure
         }
     }
 
