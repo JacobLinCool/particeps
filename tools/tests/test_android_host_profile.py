@@ -189,6 +189,144 @@ case_fixed_diagnostic
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertEqual({"monitor_exit_code": 7}, json.loads(result_file.read_text()))
 
+    def test_measurement_end_harvest_runs_once_before_cleanup_and_preserves_failure(self) -> None:
+        for server_status, launch_status, capture_status in ((0, 0, 0), (1, 0, 0), (0, 23, 0), (1, 0, 37), (0, 0, 37)):
+            with self.subTest(server=server_status, launch=launch_status, capture=capture_status), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                calls = directory / "calls.txt"
+                script = "set -euo pipefail\n" + "".join(self.function(name) for name in (
+                    "capture_fixture_progress", "case_cleanup", "run_saturation_measurement",
+                )) + """
+server_pid=""; progress_capture_output=""; progress_capture_mode=""
+stop_diagnostics() { :; }
+stop_traffic_fixtures() { echo stop >> "$calls"; }
+fake_adb() {
+  if [[ "$*" == *'am start'* ]]; then
+    echo launch >> "$calls"
+    return "$launch_status"
+  fi
+}
+python3() {
+  if [[ "$1" == tools/android_fixture_server.py ]]; then
+    local output="" ready=""
+    while (( $# )); do
+      case "$1" in --output) output="$2"; shift;; --ready) ready="$2"; shift;; esac
+      shift
+    done
+    echo '{}' > "$output"; touch "$ready"; return "$server_status"
+  elif [[ "$*" == *' progress '* ]]; then
+    echo progress >> "$calls"
+    echo synthetic-capture-error >&2
+    return "$capture_status"
+  elif [[ "$*" == *' capture '* ]]; then
+    echo failure-capture >> "$calls"
+  else
+    return 99
+  fi
+}
+trap case_cleanup EXIT
+run_saturation_measurement 64 1
+"""
+                result = subprocess.run(["bash", "-s"], input=script, text=True, capture_output=True, timeout=5, env={
+                    **os.environ, "calls": str(calls), "server_status": str(server_status), "launch_status": str(launch_status),
+                    "capture_status": str(capture_status), "harness_temporary": temporary, "report_directory": temporary,
+                    "adb_binary": "fake_adb", "device_serial": "emulator-5584", "target_a_package": "targeta",
+                    "target_b_package": "targetb", "control_package": "control", "traffic_activity": "TrafficActivity",
+                    "capture_throughput_diagnostics": "false", "measurement_duration_seconds": "60", "metrics_file": str(directory / "metrics"),
+                })
+                self.assertEqual(launch_status or server_status, result.returncode, result.stderr)
+                recorded = calls.read_text().splitlines()
+                self.assertEqual(1, recorded.count("progress"))
+                self.assertTrue(all(item != "stop" for item in recorded[1:recorded.index("progress")]))
+                self.assertEqual("stop", recorded[-1])
+                receipt = directory / "throughput-diagnostics/measurement-1-progress.json.capture-result.json"
+                self.assertEqual({"capture_exit_code": capture_status}, json.loads(receipt.read_text()))
+                self.assertEqual("synthetic-capture-error\n", receipt.with_name("measurement-1-progress.json.stderr").read_text())
+
+    def test_inventory_installs_its_peer_before_uid_checks_and_propagates_install_failure(self) -> None:
+        for installed in (True, False):
+            with self.subTest(installed=installed), tempfile.TemporaryDirectory() as temporary:
+                calls = Path(temporary) / "calls.txt"
+                script = "set -euo pipefail\n" + self.function("install_apk") + self.function("case_fixture_inventory_and_protocols") + """
+fake_adb() {
+  echo "$*" >> "$calls"
+  if [[ "$1" == install ]]; then
+    echo "$install_result"
+    [[ "$install_result" == Success ]] && touch "$harness_temporary/peer-installed"
+    return 0
+  fi
+  echo Success
+}
+package_uid() {
+  test -f "$harness_temporary/peer-installed"
+  echo "uid|$1" >> "$calls"
+  if [[ "$1" == control ]]; then echo 200; else echo 100; fi
+}
+run_smoke_fixture() { echo "smoke|$1" >> "$calls"; }
+case_fixture_inventory_and_protocols
+"""
+                result = subprocess.run(["bash", "-s"], input=script, text=True, capture_output=True, env={
+                    **os.environ, "calls": str(calls), "install_result": "Success" if installed else "Failure",
+                    "harness_temporary": temporary, "adb_binary": "fake_adb", "shared_peer_apk": "peer.apk",
+                    "shared_target_package": "sharedtarget", "shared_peer_package": "peer", "control_package": "control",
+                    "target_a_package": "targeta", "target_b_package": "targetb",
+                })
+                self.assertEqual(installed, result.returncode == 0, result.stderr)
+                recorded = calls.read_text().splitlines()
+                self.assertEqual("install --no-streaming -r -d -t peer.apk", recorded[0])
+                self.assertEqual(10 if installed else 1, len(recorded))
+                if installed:
+                    self.assertEqual("uninstall peer", recorded[-1])
+
+    def test_duplex_end_harvest_does_not_sample_download_target_or_mask_verdict(self) -> None:
+        for validation_status in (0, 1):
+            with self.subTest(validation=validation_status), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                calls = directory / "calls.txt"
+                script = "set -euo pipefail\n" + "".join(self.function(name) for name in (
+                    "capture_fixture_progress", "case_cleanup", "run_duplex_measurement",
+                )) + """
+server_pid=""; progress_capture_output=""; progress_capture_mode=""
+stop_diagnostics() { :; }
+stop_traffic_fixtures() { echo stop >> "$calls"; }
+fake_adb() { echo "$*" >> "$calls"; echo '{}'; }
+python3() {
+  if [[ "$1" == -c ]]; then echo 00000000-0000-4000-8000-000000000001; return; fi
+  local args="$*" output="" ready=""
+  while (( $# )); do
+    case "$1" in --output) output="$2"; shift;; --ready) ready="$2"; shift;; esac
+    shift
+  done
+  if [[ "$args" == *' serve '* ]]; then
+    echo '{}' > "$output"; touch "$ready"
+  elif [[ "$args" == *' progress '* ]]; then
+    echo "progress|$args" >> "$calls"; return 37
+  elif [[ "$args" == *' validate '* ]]; then
+    echo '{}' > "$output"; return "$validation_status"
+  elif [[ "$args" != *' capture '* ]]; then return 99; fi
+}
+trap case_cleanup EXIT
+run_duplex_measurement 512
+"""
+                result = subprocess.run(["bash", "-s"], input=script, text=True, capture_output=True, timeout=5, env={
+                    **os.environ, "calls": str(calls), "validation_status": str(validation_status),
+                    "harness_temporary": temporary, "report_directory": temporary, "adb_binary": "fake_adb",
+                    "device_serial": "emulator-5584", "target_a_package": "targeta", "target_b_package": "targetb",
+                    "control_package": "control", "traffic_activity": "TrafficActivity", "capture_throughput_diagnostics": "false",
+                    "metrics_file": str(directory / "metrics"),
+                })
+                self.assertEqual(validation_status, result.returncode, result.stderr)
+                recorded = calls.read_text().splitlines()
+                progress = [item for item in recorded if item.startswith("progress|")]
+                self.assertEqual(1, len(progress))
+                self.assertIn("--traffic-mode duplex", progress[0])
+                self.assertEqual("stop", recorded[-1])
+                self.assertNotIn("shell run-as targetb rm -f files/saturation-progress.json", recorded)
+                for package in ("targeta", "control"):
+                    self.assertIn(f"shell run-as {package} rm -f files/saturation-progress.json", recorded)
+                receipt = directory / "duplex/saturation-progress.json.capture-result.json"
+                self.assertEqual({"capture_exit_code": 37}, json.loads(receipt.read_text()))
+
     def test_rate_failure_keeps_after_proof_without_hiding_the_failed_command(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             script = "set -euo pipefail\n" + self.function("case_fixed_profile_measurement") + self.function("case_three_profile_throughput_and_control_bypass") + """

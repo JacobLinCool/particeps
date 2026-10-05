@@ -97,15 +97,17 @@ public final class TrafficFixtureService extends Service {
         String errorType = null;
         Integer errorErrno = null;
         try (Socket socket = new Socket()) {
+            progress.beginConnect(SystemClock.elapsedRealtimeNanos());
             socket.connect(new InetSocketAddress(InetAddress.getByName("10.0.2.2"), port), 5_000);
+            progress.completeConnect(SystemClock.elapsedRealtimeNanos());
             socket.setTcpNoDelay(true);
             socket.setSoTimeout(70_000);
             InputStream input = socket.getInputStream();
             OutputStream output = socket.getOutputStream();
-            progress.awaitingBarrier();
             if (input.read() != 1) {
                 throw new IllegalStateException("Fixture barrier was not released");
             }
+            progress.receiveBarrier(SystemClock.elapsedRealtimeNanos());
             while (!Thread.currentThread().isInterrupted()) {
                 progress.beginWrite(SystemClock.elapsedRealtimeNanos());
                 output.write(payload);

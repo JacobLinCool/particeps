@@ -96,7 +96,8 @@ second mutation.
 
 Fixture output contains role, version, aggregate operation counts, attempted byte count, and
 whether the competing VPN established. Saturation diagnostics also record aggregate write progress,
-write duration, and exception class/errno without exception messages. They never record packets,
+write duration, retained monotonic connect-start/completion, barrier-received and first-write
+start/completion times, and exception class/errno without exception messages. They never record packets,
 addresses, ports, hostnames, or DNS names.
 
 Run the complete suite against an already booted API 34 or API 37 emulator:
@@ -108,6 +109,13 @@ tools/android-host-harness.sh
 The script writes `android-host-harness.xml`, `fixture-metrics.ndjson`, and sanitized
 `applied-profiles/*.json` observations under `build/reports/android-host-harness/`.
 CI uploads that directory.
+
+After each upload or duplex measurement, the harness reads each active upload fixture's existing
+`saturation-progress.json` once before cleanup, on success and failure. Missing files, timeouts and
+parse failures remain explicit in the progress capture; they do not change the measurement verdict.
+The sample may precede the read or socket termination. Its indices identify fixture package slots,
+not host connection accept order. These milestones separate local connect/barrier delays from
+write progress; host acceptance of a proxy connection alone does not establish Android readiness.
 
 With `--capture-throughput-diagnostics`, each measurement additionally samples native Layer-3 counters, fixture write progress,
 kernel TCP/TUN counters when accessible, and selected process-state fields into

@@ -31,6 +31,11 @@ COUNTER_FIELDS = (
     "native_generation", "uplink_bytes", "uplink_packets", "downlink_bytes",
     "downlink_packets", "uplink_throttled_nanos", "downlink_throttled_nanos",
 )
+PROGRESS_MILESTONES = (
+    "connect_started_elapsed_realtime_nanos", "connect_completed_elapsed_realtime_nanos",
+    "barrier_received_elapsed_realtime_nanos", "first_write_started_elapsed_realtime_nanos",
+    "first_write_completed_elapsed_realtime_nanos",
+)
 
 
 def native_observation(output: str, expected: dict) -> dict:
@@ -62,9 +67,19 @@ def progress_observation(output: str) -> dict:
     for name in ("sample_elapsed_realtime_nanos", "completed_bytes", "completed_writes", "completed_write_nanos", "longest_write_nanos"):
         if type(value.get(name)) is not int or value[name] < 0:
             raise ValueError(f"Invalid fixture progress {name}")
-    for name in ("write_started_elapsed_realtime_nanos", "current_write_elapsed_nanos", "last_completed_elapsed_realtime_nanos", "error_errno"):
+    for name in (*PROGRESS_MILESTONES, "write_started_elapsed_realtime_nanos", "current_write_elapsed_nanos", "last_completed_elapsed_realtime_nanos", "error_errno"):
         if name not in value or (value[name] is not None and (type(value[name]) is not int or value[name] < 0)):
             raise ValueError(f"Invalid fixture progress {name}")
+    previous = -1
+    missing = False
+    for name in PROGRESS_MILESTONES:
+        timestamp = value[name]
+        if timestamp is None:
+            missing = True
+        elif missing or timestamp < previous:
+            raise ValueError("Fixture progress milestones are out of order")
+        else:
+            previous = timestamp
     if value.get("error_type") is not None and not re.fullmatch(r"[A-Za-z0-9_$]+", value["error_type"]):
         raise ValueError("Fixture errors may contain only exception class names")
     return value
@@ -195,6 +210,21 @@ def capture(adb: list[str], output: Path) -> None:
     (output / "capture-result.json").write_text(json.dumps(results, sort_keys=True) + "\n")
 
 
+def capture_progress(adb: list[str], output: Path, *, traffic_mode: str) -> None:
+    """Read each fixture's last persisted sample once, including missing/error states."""
+    fixtures = [
+        {"role": role, "index": index, **observed(
+            adb + ["shell", "run-as", package, "cat", "files/saturation-progress.json"],
+            progress_observation, timeout=5.0,
+        )}
+        for role, index, package in PROGRESS_PACKAGES[traffic_mode]
+    ]
+    # These indices identify fixture package slots, not the server's accept order.
+    with output.open("x") as stream:
+        json.dump({"traffic_mode": traffic_mode, "fixtures": fixtures}, stream, sort_keys=True)
+        stream.write("\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--adb", required=True)
@@ -209,6 +239,9 @@ def main() -> None:
     sample.add_argument("--traffic-mode", choices=tuple(PROGRESS_PACKAGES), default="upload")
     snapshot = commands.add_parser("capture")
     snapshot.add_argument("--output", type=Path, required=True)
+    progress = commands.add_parser("progress")
+    progress.add_argument("--output", type=Path, required=True)
+    progress.add_argument("--traffic-mode", choices=tuple(PROGRESS_PACKAGES), required=True)
     args = parser.parse_args()
     if not re.fullmatch(r"emulator-[0-9]+", args.serial):
         parser.error("Synthetic diagnostics require an explicit emulator serial")
@@ -216,8 +249,10 @@ def main() -> None:
     if args.operation == "monitor":
         monitor(adb, json.loads(args.expected.read_text()), args.output, args.stop_file,
             maximum_seconds=args.maximum_seconds, traffic_mode=args.traffic_mode, identity=json.loads(args.identity_file.read_text()))
-    else:
+    elif args.operation == "capture":
         capture(adb, args.output)
+    else:
+        capture_progress(adb, args.output, traffic_mode=args.traffic_mode)
 
 
 if __name__ == "__main__":

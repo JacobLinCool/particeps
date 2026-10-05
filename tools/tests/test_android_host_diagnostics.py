@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.android_host_diagnostics import capture, kernel_observation, monitor, native_observation, observed, process_observation, progress_observation
+from tools.android_host_diagnostics import PROGRESS_MILESTONES, capture, capture_progress, kernel_observation, monitor, native_observation, observed, process_observation, progress_observation
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -152,6 +152,24 @@ class AndroidHostDiagnosticsTest(unittest.TestCase):
         self.assertEqual(1, len(samples))
         self.assertTrue(all(item["status"] == "sampling_deadline" for item in samples[0]["fixtures"]))
 
+    def test_end_capture_reads_each_active_fixture_once_and_retains_errors(self):
+        for mode, expected in (("upload", [("target", 0), ("target", 1), ("control", 0)]),
+                               ("duplex", [("target", 0), ("control", 0)])):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary) / "progress.json"
+                observations = [{"status": "command_failed", "returncode": 1}, {"status": "timeout"}, {"status": "invalid_observation", "error_type": "ValueError"}][:len(expected)]
+                with patch("tools.android_host_diagnostics.observed", side_effect=observations) as observe:
+                    capture_progress(["adb", "-s", "emulator-5584"], output, traffic_mode=mode)
+                captured = json.loads(output.read_text())
+            self.assertEqual(mode, captured["traffic_mode"])
+            self.assertEqual(expected, [(item["role"], item["index"]) for item in captured["fixtures"]])
+            self.assertEqual([item["status"] for item in observations], [item["status"] for item in captured["fixtures"]])
+            self.assertEqual(len(expected), observe.call_count)
+            self.assertTrue(all(call.kwargs["timeout"] == 5.0 for call in observe.call_args_list))
+            self.assertTrue(all(call.args[0][-2:] == ["cat", "files/saturation-progress.json"] for call in observe.call_args_list))
+            if mode == "duplex":
+                self.assertNotIn("cool.jacoblin.particeps.fixture.targetb", str(observe.call_args_list))
+
     def test_real_java_progress_distinguishes_blocked_failed_and_completed_writes(self):
         source = ROOT / "test-fixtures/traffic-common/src/main/java/cool/jacoblin/particeps/fixtures/traffic/SaturationProgress.java"
         with tempfile.TemporaryDirectory() as temporary:
@@ -161,14 +179,21 @@ class AndroidHostDiagnosticsTest(unittest.TestCase):
 public class Probe { public static void main(String[] args) {
   SaturationProgress p = new SaturationProgress();
   System.out.print(p.json(100));
-  p.awaitingBarrier(); p.beginWrite(1000); System.out.print(p.json(2000));
+  p.beginConnect(200); p.completeConnect(300); System.out.print(p.json(500));
+  p.receiveBarrier(900); p.beginWrite(1000); System.out.print(p.json(2000));
   p.completeWrite(3000, 65536); System.out.print(p.json(4000));
   p.beginWrite(5000); p.finish("SocketException", 32, 9000); System.out.print(p.json(10000));
+  SaturationProgress failedConnect = new SaturationProgress();
+  failedConnect.beginConnect(100); failedConnect.finish("SocketTimeoutException", null, 200);
+  System.out.print(failedConnect.json(300));
 }}''')
             subprocess.run(["javac", "-d", temporary, str(source), str(probe)], check=True, capture_output=True)
             result = subprocess.run(["java", "-cp", temporary, "Probe"], check=True, capture_output=True, text=True)
-        initial, blocked, completed, failed = map(progress_observation, result.stdout.splitlines())
+        initial, waiting, blocked, completed, failed, failed_connect = map(progress_observation, result.stdout.splitlines())
         self.assertEqual("CONNECTING", initial["stage"])
+        self.assertTrue(all(initial[name] is None for name in PROGRESS_MILESTONES))
+        self.assertEqual("AWAITING_BARRIER", waiting["stage"])
+        self.assertEqual([200, 300, None, None, None], [waiting[name] for name in PROGRESS_MILESTONES])
         self.assertEqual(0, blocked["completed_bytes"])
         self.assertEqual(1000, blocked["current_write_elapsed_nanos"])
         self.assertEqual(65536, completed["completed_bytes"])
@@ -180,6 +205,13 @@ public class Probe { public static void main(String[] args) {
         self.assertEqual(4000, failed["current_write_elapsed_nanos"])
         self.assertEqual("SocketException", failed["error_type"])
         self.assertEqual(32, failed["error_errno"])
+        self.assertEqual([200, 300, 900, 1000, 3000], [failed[name] for name in PROGRESS_MILESTONES])
+        self.assertEqual([100, None, None, None, None], [failed_connect[name] for name in PROGRESS_MILESTONES])
+        self.assertEqual("CONNECTING", failed_connect["terminal_stage"])
+        for name, invalid in ((PROGRESS_MILESTONES[0], None), (PROGRESS_MILESTONES[1], 199),
+                              (PROGRESS_MILESTONES[2], True), (PROGRESS_MILESTONES[3], -1)):
+            with self.subTest(name=name, invalid=invalid), self.assertRaises(ValueError):
+                progress_observation(json.dumps(failed | {name: invalid}))
 
 
 if __name__ == "__main__":

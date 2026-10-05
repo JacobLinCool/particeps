@@ -68,6 +68,11 @@ class AllAppsTrafficShapingAndroidTest {
             "5" -> 5
             else -> error("traffic_test_connections must be 1 or 5")
         }
+        val observeTraffic = when (arguments.getString("traffic_test_observer") ?: "false") {
+            "false" -> false
+            "true" -> true
+            else -> error("traffic_test_observer must be true or false")
+        }
         val address = requireNotNull(endpoint).split(':')
         require(address.size == 2)
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -91,6 +96,7 @@ class AllAppsTrafficShapingAndroidTest {
         )
         val profile = SignedResourceProfile("limited-500", TrafficShapingProfile("limited-500", 500, 500).canonicalBytes())
         val desired = DesiredResourceState(ResourceKey(ResourceKind.ACTUATOR, TrafficShapingActuator.RESOURCE_ID), ResourceGeneration(1uL), true, profile)
+        val observer = if (observeTraffic) AllAppsTrafficObserver(actuator, desired, connectionCount) else null
         shell("pm grant ${context.packageName} ${Manifest.permission.POST_NOTIFICATIONS}")
         shell("appops set ${context.packageName} ACTIVATE_VPN allow")
         try {
@@ -101,6 +107,7 @@ class AllAppsTrafficShapingAndroidTest {
             actuator.apply(desired)
             assertTrue(actuator.verify(desired).healthy)
             assertTrue(actuator.resume(desired).resumed)
+            observer?.start(scope)
             withTimeout(5_000) {
                 while (connectivity.getNetworkCapabilities(connectivity.activeNetwork)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) != true) delay(50)
             }
@@ -109,8 +116,9 @@ class AllAppsTrafficShapingAndroidTest {
             }
             // The research app is deliberately absent from any selected-package list. Its default
             // socket must traverse the all-app VPN, while the engine's protected sockets avoid loops.
-            readFixtureConnections(InetSocketAddress(address[0], address[1].toInt()), connectionCount)
+            readFixtureConnections(InetSocketAddress(address[0], address[1].toInt()), connectionCount, observer)
             assertEquals(ResourceHealthStatus.APPLIED, actuator.health().status)
+            observer?.finish()
             actuator.release(desired)
             withTimeout(5_000) {
                 while (vpnEvents.events().lastOrNull()?.fields?.get("connected") != "false") delay(50)
@@ -121,6 +129,7 @@ class AllAppsTrafficShapingAndroidTest {
                 assertTrue(requireNotNull(ProtocolEventSourceRegistry["vpn_state.v1"]).accepts(event, index + 1L, null))
             }
         } finally {
+            observer?.finish()
             try {
                 actuator.release(desired)
             } finally {
@@ -134,7 +143,11 @@ class AllAppsTrafficShapingAndroidTest {
         }
     }
 
-    private suspend fun readFixtureConnections(address: InetSocketAddress, connectionCount: Int) = coroutineScope {
+    private suspend fun readFixtureConnections(
+        address: InetSocketAddress,
+        connectionCount: Int,
+        observer: AllAppsTrafficObserver?,
+    ) = coroutineScope {
         val sockets = List(connectionCount) { Socket() }
         val remainingConnections = AtomicInteger(connectionCount)
         val start = CompletableDeferred<Unit>()
@@ -142,7 +155,7 @@ class AllAppsTrafficShapingAndroidTest {
         try {
             sockets.mapIndexed { index, socket ->
                 async(Dispatchers.IO) {
-                    readFixtureConnection(socket, address, index, remainingConnections, start)
+                    readFixtureConnection(socket, address, index, remainingConnections, start, observer?.connections?.get(index))
                 }
             }.awaitAll()
         } catch (error: Throwable) {
@@ -173,6 +186,7 @@ class AllAppsTrafficShapingAndroidTest {
         connectionIndex: Int,
         remainingConnections: AtomicInteger,
         start: CompletableDeferred<Unit>,
+        progress: AllAppsTrafficObserver.ConnectionProgress?,
     ) {
         val before = android.os.SystemClock.elapsedRealtime()
         val received = ByteArrayOutputStream()
@@ -183,18 +197,28 @@ class AllAppsTrafficShapingAndroidTest {
         var transferStartedElapsed: Long? = null
         var maxReadIdleMillis = 0L
         var reachedEof = false
+        fun recordProgress(errorClass: String? = null) {
+            progress?.record(
+                before, stage, received.size(), transferStartedElapsed, firstByteElapsed,
+                lastProgressElapsed, reachedEof, errorClass,
+            )
+        }
+        recordProgress()
         try {
             val payload = socket.use {
                 socket.soTimeout = 15_000
                 socket.connect(address, 5_000)
                 stage = "barrier"
+                recordProgress()
                 if (remainingConnections.decrementAndGet() == 0) start.complete(Unit)
                 start.await()
                 stage = "trigger"
                 transferStartedElapsed = android.os.SystemClock.elapsedRealtime() - before
+                recordProgress()
                 socket.getOutputStream().write(1)
                 stage = "read"
                 readStartedElapsed = android.os.SystemClock.elapsedRealtime() - before
+                recordProgress()
                 val input = socket.getInputStream()
                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                 // Match readBytes: retain every byte and continue until EOF, including after
@@ -208,29 +232,36 @@ class AllAppsTrafficShapingAndroidTest {
                     )
                     if (count < 0) {
                         reachedEof = true
+                        recordProgress()
                         break
                     }
                     if (count > 0) {
                         received.write(buffer, 0, count)
                         if (firstByteElapsed == null) firstByteElapsed = completedElapsed
                         lastProgressElapsed = completedElapsed
+                        recordProgress()
                     }
                 }
                 stage = "close"
+                recordProgress()
                 received.toByteArray()
             }
             val totalElapsed = android.os.SystemClock.elapsedRealtime() - before
             val elapsed = totalElapsed - requireNotNull(transferStartedElapsed)
             stage = "validate"
+            recordProgress()
             assertEquals(262_144, payload.size)
             assertTrue(payload.all { it == 'Z'.code.toByte() })
             // A generous per-connection bound detects an uncapped path without asserting exact timing.
             assertTrue("256 KiB crossed the 500 kbps VPN in only $elapsed ms", elapsed >= 2_000)
+            stage = "complete"
+            recordProgress()
             android.util.Log.i(
                 "AllAppsTrafficTest",
                 "Connection $connectionIndex transferred ${payload.size} bytes in $elapsed ms (total $totalElapsed ms)",
             )
         } catch (failure: Throwable) {
+            recordProgress(failure.javaClass.simpleName)
             val failedElapsed = android.os.SystemClock.elapsedRealtime() - before
             val idleMillis = (lastProgressElapsed ?: readStartedElapsed)?.let { failedElapsed - it }
             android.util.Log.e(

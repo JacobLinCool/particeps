@@ -76,6 +76,20 @@ server_pid=""
 diagnostics_pid=""
 diagnostics_stop=""
 diagnostics_result=""
+progress_capture_output=""
+progress_capture_mode=""
+capture_fixture_progress() {
+  [[ -n "$progress_capture_output" ]] || return 0
+  local output="$progress_capture_output" mode="$progress_capture_mode" result=0
+  # Disarm before reading: normal completion and the EXIT trap must not sample twice.
+  progress_capture_output=""
+  python3 -m tools.android_host_diagnostics --adb "$adb_binary" --serial "$device_serial" progress \
+    --traffic-mode "$mode" --output "$output" 2> "$output.stderr" || result=$?
+  printf '{"capture_exit_code":%d}\n' "$result" > "$output.capture-result.json" || \
+    printf 'Unable to retain fixture progress capture status (%d): %s\n' "$result" "$output" >&2
+  # Diagnostic availability is recorded separately from the original gate result.
+  return 0
+}
 stop_diagnostics() {
   if [[ -n "$diagnostics_pid" ]]; then
     local result=0
@@ -105,6 +119,7 @@ case_cleanup() {
     server_pid=""
   fi
   stop_diagnostics
+  capture_fixture_progress
   stop_traffic_fixtures
 }
 
@@ -475,8 +490,10 @@ run_saturation_measurement() {
   for package_name in "$target_a_package" "$target_b_package" "$control_package"; do
     "$adb_binary" shell run-as "$package_name" rm -f files/saturation-progress.json
   done
+  mkdir -p "$report_directory/throughput-diagnostics"
+  progress_capture_output="$report_directory/throughput-diagnostics/measurement-$sequence-progress.json"
+  progress_capture_mode=upload
   if [[ "$capture_throughput_diagnostics" == true ]]; then
-    mkdir -p "$report_directory/throughput-diagnostics"
     diagnostics_stop="$harness_temporary/diagnostics-$sequence.stop"
     diagnostics_result="$report_directory/throughput-diagnostics/measurement-$sequence-result.json"
     rm -f "$diagnostics_stop"
@@ -513,9 +530,10 @@ run_saturation_measurement() {
   local result=0
   wait "$server_pid" || result="$?"
   server_pid=""
+  stop_diagnostics
+  capture_fixture_progress
   test -f "$output"
   cat "$output" >> "$metrics_file"
-  stop_diagnostics
   if (( result != 0 )); then
     python3 -m tools.android_host_diagnostics --adb "$adb_binary" --serial "$device_serial" capture \
       --output "$report_directory/throughput-diagnostics/measurement-$sequence-failure"
@@ -532,10 +550,12 @@ run_duplex_measurement() {
   ready="$harness_temporary/duplex.ready"
   stop_traffic_fixtures
   "$adb_binary" shell run-as "$target_b_package" rm -f files/duplex-download.json
+  for package_name in "$target_a_package" "$control_package"; do
+    "$adb_binary" shell run-as "$package_name" rm -f files/saturation-progress.json
+  done
+  progress_capture_output="$directory/saturation-progress.json"
+  progress_capture_mode=duplex
   if [[ "$capture_throughput_diagnostics" == true ]]; then
-    for package_name in "$target_a_package" "$control_package"; do
-      "$adb_binary" shell run-as "$package_name" rm -f files/saturation-progress.json
-    done
     diagnostics_stop="$harness_temporary/duplex-diagnostics.stop"
     diagnostics_result="$directory/monitor-result.json"
     rm -f "$diagnostics_stop"
@@ -565,6 +585,7 @@ run_duplex_measurement() {
   wait "$server_pid" || server_result=$?
   server_pid=""
   stop_diagnostics
+  capture_fixture_progress
   # One post-window adb call waits for AtomicFile publication and reads it once.
   # The default duplex gate has no periodic queries; explicit diagnostics opt in.
   "$adb_binary" shell run-as "$target_b_package" sh -c \
@@ -628,6 +649,7 @@ case_all_apps_tcp_round_trip() {
 
 case_fixture_inventory_and_protocols() {
   local shared_target_uid shared_peer_uid control_uid
+  install_apk "$shared_peer_apk"
   shared_target_uid="$(package_uid "$shared_target_package")"
   shared_peer_uid="$(package_uid "$shared_peer_package")"
   control_uid="$(package_uid "$control_package")"
