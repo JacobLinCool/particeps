@@ -17,6 +17,7 @@
   import LanguageControl from '$lib/ui/LanguageControl.svelte';
   import Section from '$lib/ui/Section.svelte';
   import Hero from '$lib/participant/Hero.svelte';
+  import StudyFiles from '$lib/participant/StudyFiles.svelte';
   import SetupPreview from '$lib/participant/SetupPreview.svelte';
   import SourceGrid from '$lib/participant/SourceGrid.svelte';
   import DeliveryCard from '$lib/participant/DeliveryCard.svelte';
@@ -50,6 +51,8 @@
 
 <main id="main" class="wrap">
   <Hero />
+
+  <StudyFiles />
 
   <Section id="setup" icon="clock" title={m('setup.title')} lead={m('setup.lead')}>
     <SetupPreview />

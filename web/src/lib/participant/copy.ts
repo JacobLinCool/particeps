@@ -11,9 +11,9 @@
  *   - No claim that a signature or fingerprint identifies who wrote a file.
  *   - Public source tiles are profile-independent categories. Cadence, distance thresholds,
  *     limits, and other named-profile settings do not belong on this page.
- *   - No "anonymous", no hardware-backed key, and nothing about a research team's intentions.
- *     The install code is pseudonymous, the app requests no StrongBox, and this page cannot know
- *     anything at all about the team that recruited its reader.
+ *   - No "anonymous", no hardware-backed key, and no claims about a research team's intentions.
+ *     The install code is pseudonymous and the app requests no StrongBox. The named study handoff
+ *     uses the frozen signed file's public details; generic platform copy cannot vouch for a team.
  *
  * Where the app already has a stable, profile-independent sentence — a setup-step label or consent
  * block — it is transcribed from `strings.xml`. Data-source descriptions stay at the shared
@@ -39,6 +39,17 @@ export interface ParticipantCopy {
   glance: {
     collect: string;
     where: string;
+  };
+
+  study: {
+    title: string;
+    team: string;
+    lead: string;
+    configurationDownload: string;
+    guideDownload: string;
+    importInstructions: string;
+    startInstructions: string;
+    deliveryInstructions: string;
   };
 
   setup: {
@@ -151,6 +162,17 @@ export const en: ParticipantCopy = {
       limits:
         'The name is not a promise that the study is yours to set. What a study may collect, and how long it runs, are fixed in the signed study file your research team gives you: you can decline the study, or leave it, but you cannot rewrite it. Inside a study you can hold back the sources it marks optional, by not granting the access they ask for; a source it marks required stops the study instead. Nothing that has already left your phone can be taken back.'
     }
+  },
+
+  study: {
+    title: '手機使用與日常活動研究',
+    team: 'Research team: 黃貞穎老師團隊',
+    lead: 'For invited participants using their everyday Android 14 or later phone. No account is needed.',
+    configurationDownload: 'Download study file',
+    guideDownload: 'Download instructions (Traditional Chinese PDF)',
+    importInstructions: 'After installing the app, download study.partcfg, then open Particeps and choose “Choose a study file”. Select that file and follow the setup screens.',
+    startInstructions: 'Wait for the research team’s instruction before pressing Start study. Contact the team through your invitation channel if you need help.',
+    deliveryInstructions: 'This study does not upload automatically. After export succeeds, return the original .partexp file using the method the research team provides.'
   },
 
   glance: {
@@ -280,6 +302,17 @@ export const zhTW: ParticipantCopy = {
       limits:
         '這個名稱不代表研究內容由你決定。研究可以收集哪些資料、進行多久，都寫定在研究團隊交給你的那份已簽署設定檔裡：你可以拒絕參與，也可以中途離開，但無法改寫它。在一項研究裡，你能保留不給的只有標示為選用的資料來源——不授予它要求的權限，它就不會啟用；標示為必要的來源則會直接讓研究無法進行。已經離開手機的資料也無法收回。'
     }
+  },
+
+  study: {
+    title: '手機使用與日常活動研究',
+    team: '研究團隊：黃貞穎老師團隊',
+    lead: '提供給已受邀的參與者，請使用日常使用的 Android 14 以上手機。不需要建立帳號。',
+    configurationDownload: '下載研究設定檔',
+    guideDownload: '下載繁中操作說明 PDF',
+    importInstructions: '安裝 App 後，下載 study.partcfg，再開啟 Particeps，按「選擇研究設定檔」，選取剛下載的檔案並依序完成設定畫面。',
+    startInstructions: '請等研究團隊通知後，再按「開始研究」。遇到問題，請透過原邀請管道聯絡研究團隊。',
+    deliveryInstructions: '這次研究不會自動上傳。匯出成功後，還需要依研究團隊指定的方式交回原始 .partexp 檔案。'
   },
 
   glance: {

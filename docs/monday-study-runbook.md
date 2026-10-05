@@ -4,13 +4,13 @@
 
 ## 交付版本
 
-- App 候選版本：`1.0.0-rc.14`／versionCode `41`，沿用既有正式 APK 簽章身分。候選檔案只在本機產出；正式下載網址與發送 QR 需指向驗收後同一份檔案。
-- 簽署研究設定：`output/monday-study/study.partcfg`。研究者為「黃貞穎老師團隊」，聯絡方式指向原邀請管道，不列私人電話或 Email。App 使用事件為必要、連續收集；120 小時；每日 gyro 時段與現有限速規則保留。`study-draft.json` 與 `study.canonical.json` 是研究者工作檔；參與者匯入 `.partcfg`。
+- App：使用 [參與者頁](https://jacoblincool.github.io/particeps/participant/) 提供的正式簽章版 `1.0.0-rc.17`。實際 versionCode、大小與 SHA-256 見 [交付版本表](monday-participant-handoff.md#每位受試者要收到什麼)；簽署研究設定要求最低 versionCode `41`。研究端保留同一份 Release APK、checksum、簽章與匿名下載驗證紀錄。
+- 簽署研究設定：網站的「手機使用與日常活動研究」區塊提供 `.partcfg`，其原檔位於 `web/static/studies/phone-usage-five-day-20261005-r1/`。研究者為「黃貞穎老師團隊」，聯絡方式指向原邀請管道，不列私人電話或 Email。App 使用事件為必要、連續收集；120 小時；每日 gyro 時段與現有限速規則保留。本機 `output/monday-study/study-draft.json` 與 `study.canonical.json` 是研究者工作檔；參與者匯入 `.partcfg`。
 - 分析工具：使用包含串流驗證與 `usage-report` 的本次版本。每次處理均保留原始密文、manifest 與 quality summary，不用舊 RC13 分析器。
 
-本次簽署內容沿用第 3–5 天 17:00 邀請的相同六題，回顧 12:00–17:00；未改為五天都發送。題目見 [活動問卷](activity-substitution-survey.md)。若研究團隊改變日程，再產生新設定；不要覆寫已發出的設定或 QR。受試者拿到哪些檔案、如何匯入及交回，見 [交付清單](monday-participant-handoff.md)與[中文操作單](participant-start.zh-TW.md)。
+本次簽署設定於第 3–5 天 17:00 邀請填答相同六題，回顧 12:00–17:00。題目見 [活動問卷](activity-substitution-survey.md)。若研究團隊改變日程，再產生新設定；不要覆寫已發出的設定或 QR。受試者拿到哪些檔案、如何匯入及交回，見 [交付清單](monday-participant-handoff.md)與[中文操作單](participant-start.zh-TW.md)。
 
-## 週末完成的事
+## 正式開始前完成的事
 
 1. 固定 APK 與設定 SHA-256、版本、研究者與同意內容、可填答日期、正式資料接收位置。以正式匯出公鑰對應的私鑰試讀一份端到端測試檔，不只比對金鑰名稱。
 2. 由團隊以可取得的實體 Android 手機，從正式下載管道安裝 APK；不要只透過 ADB 安裝。確認 Play Protect 與使用情況存取權的實際授權流程。
@@ -18,13 +18,13 @@
 4. 檢查實際 App package 與事件時間、已套用限速條件、問卷邀請／提交，完成密文回收→驗證→Parquet→usage report。失敗要在第一名正式參與者開始前定位。
 5. 測試回收位置的可用空間與檔案大小上限；研究者電腦保留密文、解密暫存、SQLite 與 Parquet 的空間。磁碟不足會明確失敗，不應反覆重試到耗盡剩餘空間。
 
-完整 120 小時實機耐久測試無法從週六開始、在週一前完成。本次修正、故障測試和合成大檔驗證能縮小風險，不能改寫為已完成五天真機驗收。持續觀察與每天回收，是正式執行期間仍必須完成的工作。
+本次尚未完成完整 120 小時實機耐久驗收。故障測試、合成資料驗證與模擬器結果不能替代五天實機證據；執行期間仍須持續觀察並每天回收。
 
 ## 每名參與者入組
 
 | 檢查 | 留存結果 |
 | --- | --- |
-| 手機系統與安裝 | 品牌／型號、Android 版本、APK versionCode 與雜湊；確認正式簽章候選已可正常安裝 |
+| 手機系統與安裝 | 品牌／型號、Android 版本、APK versionCode 與雜湊；確認正式簽章發布檔可正常安裝 |
 | 個人日常限制 | 是否需使用另一個 VPN、工作設定檔、另一支手機；這些不由研究 VPN 自動涵蓋 |
 | 設定與身分 | 匯入正式簽章設定，核對研究內容與簽章指紋；以研究代碼建立參與者對應表，限制存取 |
 | Android 存取 | 通知及研究通知頻道可用、Usage Access 已授權、研究 VPN 可啟動；其他必要資料來源可用 |
@@ -55,6 +55,24 @@
 
 ## 研究端命令
 
+研究者先從 [RC17 Release](https://github.com/JacobLinCool/particeps/releases/tag/v1.0.0-rc.17) 下載 `particeps_analysis-0.1.0-py3-none-any.whl` 與其 `.sha256`。本次 wheel 的 SHA-256 為 `02648dfb767a945d0f666670c3af78b0d5bc4cfe4580f82c3f363ca1c98902bd`；它是研究端工具，不交給參與者。
+
+在下載目錄核對摘要，並使用 Python 3.11 以上建立新的分析環境。以下為 macOS／Linux 操作範例；`/secure/study` 請換成實際受保護的研究資料目錄。
+
+```sh
+shasum -a 256 -c particeps_analysis-0.1.0-py3-none-any.whl.sha256
+```
+
+摘要核對必須顯示 `OK`，再執行：
+
+```sh
+python3 -m venv /secure/study/analysis-env
+. /secure/study/analysis-env/bin/activate
+python -m pip install ./particeps_analysis-0.1.0-py3-none-any.whl
+```
+
+每日分析沿用這個環境。研究者金鑰格式見 [分析工具說明](../particeps-analysis/README.md)。
+
 研究者私鑰檔案使用分析工具的 keyring 格式並限制為只有擁有者可讀寫；不要傳給參與者或放在公開網站。以下路徑為操作範例，應換成實際受保護的回收目錄。
 
 ```sh
@@ -78,6 +96,6 @@ particeps-analysis usage-report \
 
 ## 最後一天與完成回收
 
-從週一 10:00 按 Start 起算 120 小時，會到週六 10:00 才截止。暫停不延長截止，週五 17:00 也不是整份研究結束。若研究團隊需要另一種結束時間，須在簽署與入組前定案。
+例如從週一 10:00 按 Start 起算 120 小時，會到週六 10:00 才截止；實際開始時段由團隊另行通知。暫停不延長截止，週五 17:00 也不是整份研究結束。若研究團隊需要另一種結束時間，須在簽署與入組前定案。
 
 截止後另做一次最終匯出，確認包含完成狀態與最後資料；研究者成功驗證、產出分析表並完成備份後，再處理參與者手機上的清理。報酬依事前向參與者說明的規則辦理，不以臨時產生的資料品質門檻更改承諾。

@@ -93,7 +93,7 @@ a {
   transition: color var(--motion-state);
 }
 
-a:hover {
+a:not(.btn):hover {
   color: var(--accent-lift);
 }
 

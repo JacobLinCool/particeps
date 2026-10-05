@@ -88,8 +88,14 @@ export const SETUP_STEPS: readonly { nameKey: MessageKey; captionKey: MessageKey
 
 export const REPOSITORY = 'https://github.com/JacobLinCool/particeps';
 
-export const ANDROID_RELEASE_VERSION = 'v1.0.0-rc.13';
+export const ANDROID_RELEASE_VERSION = 'v1.0.0-rc.17';
 
 export const ANDROID_APK_URL = `${REPOSITORY}/releases/download/${ANDROID_RELEASE_VERSION}/particeps-${ANDROID_RELEASE_VERSION}.apk`;
 
 export const PARTICIPANT_GUIDE = `${REPOSITORY}/blob/main/docs/participant-guide.md`;
+
+const STUDY_ASSET_DIRECTORY = '/studies/phone-usage-five-day-20261005-r1';
+
+export const STUDY_CONFIGURATION_PATH = `${STUDY_ASSET_DIRECTORY}/cafbdbd47dc26d44d0604a5e7c70ca48977af0cc1b35c2b69a556ac18321ff4e.partcfg`;
+
+export const STUDY_GUIDE_PATH = `${STUDY_ASSET_DIRECTORY}/participant-start.zh-TW.pdf`;
