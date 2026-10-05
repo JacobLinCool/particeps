@@ -76,6 +76,7 @@ type packetQueue struct {
 	newFlows, oldFlows           flowList
 	stats                        packetQueueStats
 	byteLimit                    int
+	tailDropCursor               int
 	limited, paused              bool
 	pausedAt                     time.Time
 	parameters                   codelParameters
@@ -295,9 +296,15 @@ func (q *packetQueue) makeRoomLocked(incoming, size int) bool {
 func (q *packetQueue) makeRoomFromTailLocked(incoming, size int) bool {
 	for !q.hasRoomLocked(size) {
 		fattest, largest := incoming, q.flows[incoming].bytes+size
-		for i := range q.flows {
-			if q.flows[i].bytes > largest {
-				fattest, largest = i, q.flows[i].bytes
+		// Equal-size resident singletons must not permanently exclude a new
+		// bucket. Prefer a resident tail on a largest-backlog tie and rotate
+		// ties through the fixed bucket ring. A strictly fattest incoming
+		// bucket still loses its virtual tail, preserving its resident prefix.
+		for offset := range len(q.flows) {
+			i := (q.tailDropCursor + offset) % len(q.flows)
+			backlog := q.flows[i].bytes
+			if backlog > largest || (backlog == largest && fattest == incoming) {
+				fattest, largest = i, backlog
 			}
 		}
 		q.stats.capacityDropPackets++
@@ -306,6 +313,7 @@ func (q *packetQueue) makeRoomFromTailLocked(incoming, size int) bool {
 			return false
 		}
 		packet := q.popFlowTailLocked(fattest)
+		q.tailDropCursor = (fattest + 1) % len(q.flows)
 		q.stats.capacityDropBytes += uint64(packet.size)
 	}
 	return true

@@ -39,7 +39,10 @@ follows RC13 as the next public release candidate.
   Uplink uses CoDel and capacity drops. Limited downlink admission never waits for
   queue capacity on a shared TCP processor: it removes the minimum required tail
   packets from the largest byte backlog, including the incoming packet in that
-  decision. Its effective byte limit follows 100 ms of configured bandwidth,
+  decision. Equal largest backlogs rotate the resident tail selected for removal,
+  so resident single-packet queues cannot always reject a newly arriving flow on
+  a tie. A strictly largest incoming backlog still loses its incoming tail.
+  Its effective byte limit follows 100 ms of configured bandwidth,
   bounded by one MTU and 64 KiB; the consumer can hold one additional MTU.
   A completed limited enqueue yields to ready workers after releasing its locks,
   without waiting for the queue to drain. TCP explicitly uses Reno with SACK-based

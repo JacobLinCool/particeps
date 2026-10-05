@@ -65,7 +65,9 @@ and wake the runtime; it must not call back into the engine.
 - Limited downlink uses the same FQ scheduler with nonblocking capacity
   admission. On overflow it includes the incoming packet in the byte backlog,
   then drops one arrival-tail packet from the fattest bucket at a time until
-  both hard bounds hold. Selecting the incoming bucket drops the incoming
+  both hard bounds hold. Equal-largest backlogs select a resident tail using
+  a rotating cursor over the fixed buckets, so a new equal-sized bucket is not
+  always rejected. Selecting a strictly larger incoming bucket drops the incoming
   packet itself. It does not apply CoDel or batch head drops. This keeps the
   stack's shared TCP processors available to handle other connections; it can
   still cause TCP loss recovery, and arrival-tail order is not TCP sequence
