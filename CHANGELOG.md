@@ -7,14 +7,14 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
-## v1.0.0-rc.16 — Unreleased
+## v1.0.0-rc.16 — 2026-10-05
 
-This queued release improves participant disclosure, collection recovery, and verification of
+This release improves participant disclosure, collection recovery, and verification of
 five-day study exports. Physical-device admission checks and daily data return remain necessary;
 these changes do not establish a completed 120-hour physical-device endurance run.
 
-The RC14 and RC15 tags did not produce public releases because their CI gates failed. RC16 is
-the queued candidate after RC13 and has not yet been published.
+The RC14 and RC15 tags did not produce public releases because their CI gates failed. RC16 follows
+RC13 as the next public release candidate.
 
 - Interrupted runtime checkpoint writes can recover from an authenticated base and the complete
   authenticated commit log even when a staging snapshot was only partly written. Staging files are
