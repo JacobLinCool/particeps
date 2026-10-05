@@ -97,14 +97,15 @@ func TestLimitedTailDropVictimsRotateAcrossEveryHashPosition(t *testing.T) {
 	}
 }
 
-func TestLimitedTailDropStrictlyLargerIncomingStillDropsItsOwnTail(t *testing.T) {
+func TestLimitedTailDropStrictlyHigherQuantumIncomingStillDropsItsOwnTail(t *testing.T) {
 	q := newTailFairnessQueue(t, 64)
-	flows := distinctQueueFlows(t, q, 3)
+	flows := distinctQueueFlows(t, q, 2)
 	enqueueFlowPacket(t, q, 1000, 1, flows[0])
 	enqueueFlowPacket(t, q, 500, 2, flows[1])
-	enqueueFlowPacket(t, q, 1500, 3, flows[2])
-	if got := q.snapshot(); got.queuedBytes != 1500 || got.capacityDropPackets != 1 || got.capacityDropBytes != 1500 || tailFlowOccupancy(q, flows[2]) != 0 {
-		t.Fatalf("strict largest-backlog policy changed: %+v", got)
+	// The incoming bucket would occupy two quanta; the other occupies one.
+	enqueueFlowPacket(t, q, 1500, 3, flows[0])
+	if got := q.snapshot(); got.queuedBytes != 1500 || got.capacityDropPackets != 1 || got.capacityDropBytes != 1500 || tailFlowOccupancy(q, flows[0]) != 1 {
+		t.Fatalf("strict highest-quantum policy changed: %+v", got)
 	}
 	q.apply(nil)
 	for _, id := range []byte{1, 2} {
@@ -256,4 +257,119 @@ func TestLimitedTailDropDoesNotPermanentlyExcludeNewFlow(t *testing.T) {
 		}
 		t.Fatal("fifth bucket never admitted despite continuous resident service and 641 admission attempts")
 	}
+}
+
+// Eighty independently salted / initial-DRR-phase schedules require actual
+// dequeue of the larger newcomer, not merely transient admission.
+func TestLimitedTailDropQuantizedUnequalSingletonReceivesService(t *testing.T) {
+	for salt := range 16 {
+		for phase := range 5 {
+			t.Run(fmt.Sprintf("salt%d/phase%d", salt, phase), func(t *testing.T) {
+				q := newTailFairnessQueue(t, 500)
+				flows := distinctQueueFlows(t, q, 5)
+				late := phase
+				for i, f := range flows {
+					if i != late {
+						enqueueFlowPacket(t, q, 1450, byte(i), f)
+					}
+				}
+				for range phase {
+					p := takeQueuePacket(t, q)
+					enqueueFlowPacket(t, q, 1450, p.data[28], packetFlow(p))
+				}
+				enqueueFlowPacket(t, q, 1500, 99, flows[late])
+				served := false
+				for range 8 {
+					p := takeQueuePacket(t, q)
+					if packetFlow(p) == flows[late] {
+						if p.size != 1500 || p.data[28] != 99 {
+							t.Fatal("newcomer packet changed")
+						}
+						served = true
+						break
+					}
+					enqueueFlowPacket(t, q, 1450, p.data[28], packetFlow(p))
+					// Repeated attempts may lose their virtual tails, but must not evict the
+					// already queued prefix in the same bucket.
+					enqueueFlowPacket(t, q, 1500, 100, flows[late])
+					assertQueueStructure(t, q)
+				}
+				if !served {
+					t.Fatal("larger singleton received no DRR service in eight turns")
+				}
+				assertQueueStructure(t, q)
+			})
+		}
+	}
+}
+
+func TestLimitedTailDropQuantizedMixedPacketSizesReceiveActualService(t *testing.T) {
+	for salt := range 16 {
+		for phase := range 5 {
+			t.Run(fmt.Sprintf("salt%d/phase%d", salt, phase), func(t *testing.T) {
+				q := newTailFairnessQueue(t, 500)
+				flows := distinctQueueFlows(t, q, 5)
+				sizes := []int{64, 1400, 1450, 1472}
+				for range 23 {
+					enqueueFlowPacket(t, q, 64, 1, flows[0])
+				}
+				for i := 1; i < 4; i++ {
+					enqueueFlowPacket(t, q, sizes[i], byte(i+1), flows[i])
+				}
+				for range phase {
+					p := takeQueuePacket(t, q)
+					enqueueFlowPacket(t, q, p.size, p.data[28], packetFlow(p))
+				}
+				enqueueFlowPacket(t, q, 1500, 99, flows[4])
+				served := false
+				// Byte DRR may serve multiple 64B packets within one quantum. This bound
+				// counts dequeue operations, not a claim about TCP or elapsed time.
+				for range 2 * packetQueueMaxPackets {
+					p := takeQueuePacket(t, q)
+					if packetFlow(p) == flows[4] {
+						if p.data[28] != 99 {
+							t.Fatal("newcomer prefix changed")
+						}
+						served = true
+						break
+					}
+					enqueueFlowPacket(t, q, p.size, p.data[28], packetFlow(p))
+					enqueueFlowPacket(t, q, 1500, 100, flows[4])
+					assertQueueStructure(t, q)
+				}
+				if !served {
+					t.Fatal("newcomer did not receive mixed-size DRR service")
+				}
+				assertQueueStructure(t, q)
+			})
+		}
+	}
+}
+
+func TestLimitedTailDropQuantizedSmallSingletonCostIsExplicitAndBounded(t *testing.T) {
+	q := newTailFairnessQueue(t, 500)
+	flows := distinctQueueFlows(t, q, 98)
+	for _, f := range flows[:97] {
+		enqueueFlowPacket(t, q, 64, 1, f)
+	}
+	enqueueFlowPacket(t, q, 1500, 99, flows[97])
+	got := q.snapshot()
+	// All 98 singleton buckets have score 1. Admitting the large packet needs
+	// at least 23 small packets of space. This is a cost, not ACK-priority proof.
+	if got.queuedBytes != 6236 || got.queuedPackets != 75 || got.capacityDropPackets != 23 || got.capacityDropBytes != 1472 || tailFlowOccupancy(q, flows[97]) != 1 {
+		t.Fatalf("unexpected bounded small-packet cost: %+v", got)
+	}
+	assertQueueStructure(t, q)
+	served := false
+	for range 75 {
+		p := takeQueuePacket(t, q)
+		if packetFlow(p) == flows[97] {
+			served = true
+			break
+		}
+	}
+	if !served {
+		t.Fatal("newcomer admission did not turn into service without refills")
+	}
+	assertQueueStructure(t, q)
 }

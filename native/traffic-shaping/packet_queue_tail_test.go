@@ -108,7 +108,7 @@ func TestLimitedTailDropSlotPressureAdmitsSparseFlow(t *testing.T) {
 	assertQueueStructure(t, q)
 }
 
-func TestLimitedTailDropRejectsVirtualFattestSingleton(t *testing.T) {
+func TestLimitedTailDropSlotPressureTreatsSingletonsAsOneQuantum(t *testing.T) {
 	q := newPacketQueue(newFakeClock(), queueFattestTailDrop)
 	q.apply(queueTestRate(1_000_000))
 	q.resume()
@@ -117,8 +117,17 @@ func TestLimitedTailDropRejectsVirtualFattestSingleton(t *testing.T) {
 		enqueueFlowPacket(t, q, 64, 1, flow)
 	}
 	enqueueFlowPacket(t, q, 1500, 2, flows[packetQueueMaxPackets])
-	if got := q.snapshot(); got.queuedPackets != 128 || got.queuedBytes != 8192 || got.capacityDropPackets != 1 || got.capacityDropBytes != 1500 {
-		t.Fatalf("virtual incoming was excluded from fattest selection: %+v", got)
+	if got := q.snapshot(); got.queuedPackets != 128 || got.queuedBytes != 9628 || got.capacityDropPackets != 1 || got.capacityDropBytes != 64 {
+		t.Fatalf("slot pressure did not replace one equal-score resident: %+v", got)
+	}
+	q.apply(nil)
+	for range packetQueueMaxPackets - 1 {
+		if packet := takeQueuePacket(t, q); packet.size != 64 || packet.data[28] != 1 {
+			t.Fatal("retained resident prefix changed")
+		}
+	}
+	if packet := takeQueuePacket(t, q); packet.size != 1500 || packetFlow(packet) != flows[packetQueueMaxPackets] {
+		t.Fatal("larger singleton was not retained after resident packets")
 	}
 	assertQueueStructure(t, q)
 }

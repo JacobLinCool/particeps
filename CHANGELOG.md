@@ -38,10 +38,13 @@ follows RC13 as the next public release candidate.
   64 KiB across 1024 fixed hash buckets, with byte-deficit scheduling.
   Uplink uses CoDel and capacity drops. Limited downlink admission never waits for
   queue capacity on a shared TCP processor: it removes the minimum required tail
-  packets from the largest byte backlog, including the incoming packet in that
-  decision. Equal largest backlogs rotate the resident tail selected for removal,
-  so resident single-packet queues cannot always reject a newly arriving flow on
-  a tie. A strictly largest incoming backlog still loses its incoming tail.
+  packets from the highest occupied-MTU score (`ceil(backlog_bytes / 1500)`),
+  including the incoming packet in that decision. Equal scores rotate the
+  resident tail selected for removal, so smaller resident single-packet queues
+  cannot always reject a full-MTU newcomer. A strictly highest-score incoming
+  backlog still loses its incoming tail. Scheduling remains byte based; admitting
+  a large packet can require multiple small-packet drops, and this policy does
+  not guarantee ACK priority or progress for every flow under arbitrary traffic.
   Its effective byte limit follows 100 ms of configured bandwidth,
   bounded by one MTU and 64 KiB; the consumer can hold one additional MTU.
   A completed limited enqueue yields to ready workers after releasing its locks,

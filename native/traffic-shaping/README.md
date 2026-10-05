@@ -64,14 +64,19 @@ and wake the runtime; it must not call back into the engine.
   are temporary; no separate tuple or hash records are retained or exported.
 - Limited downlink uses the same FQ scheduler with nonblocking capacity
   admission. On overflow it includes the incoming packet in the byte backlog,
-  then drops one arrival-tail packet from the fattest bucket at a time until
-  both hard bounds hold. Equal-largest backlogs select a resident tail using
-  a rotating cursor over the fixed buckets, so a new equal-sized bucket is not
-  always rejected. Selecting a strictly larger incoming bucket drops the incoming
+  scores each bucket by `ceil(backlog_bytes / 1500)`, then drops one arrival-tail
+  packet from a highest-score bucket at a time until both hard bounds hold.
+  Equal scores select a resident tail using a rotating cursor over the fixed
+  buckets. Single-packet buckets therefore share one score even when packet
+  sizes differ; a full-MTU newcomer is not always rejected in favor of smaller
+  resident singletons. Selecting a strictly higher-score incoming bucket drops the incoming
   packet itself. It does not apply CoDel or batch head drops. This keeps the
   stack's shared TCP processors available to handle other connections; it can
   still cause TCP loss recovery, and arrival-tail order is not TCP sequence
-  order. No lossless-delivery or contiguous-sequence guarantee is made.
+  order. Quantized admission is a local policy, while scheduling remains byte
+  DRR. Admitting a large packet can require several small-packet tail drops;
+  there is no ACK priority or general per-flow progress, lossless-delivery, or
+  contiguous-sequence guarantee.
   Its effective byte admission limit is
   `min(65536, max(1500, floor(rate_bps * 100 ms / 8)))`: 1500, 6400, and 51200
   bytes at 64, 512, and 4096 kbps. A profile decrease trims resident fattest

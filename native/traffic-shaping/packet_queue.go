@@ -290,19 +290,20 @@ func (q *packetQueue) makeRoomLocked(incoming, size int) bool {
 	return true
 }
 
-// Include the incoming packet as a virtual tail before choosing the fattest
-// byte backlog. Remove one tail at a time and stop as soon as both bounds hold.
+// Include the incoming packet as a virtual tail and score occupied MTU quanta.
+// Remove one tail at a time and stop as soon as both bounds hold.
 // Arrival order is not TCP sequence order; drops may still require recovery.
 func (q *packetQueue) makeRoomFromTailLocked(incoming, size int) bool {
 	for !q.hasRoomLocked(size) {
-		fattest, largest := incoming, q.flows[incoming].bytes+size
-		// Equal-size resident singletons must not permanently exclude a new
-		// bucket. Prefer a resident tail on a largest-backlog tie and rotate
-		// ties through the fixed bucket ring. A strictly fattest incoming
+		fattest, largest := incoming, (q.flows[incoming].bytes+size+fqQuantum-1)/fqQuantum
+		// Score occupied byte quanta, so differently sized resident singletons
+		// within one MTU do not systematically exclude a new
+		// bucket. Prefer a resident tail on a largest-score tie and rotate
+		// ties through the fixed bucket ring. A strictly highest-score incoming
 		// bucket still loses its virtual tail, preserving its resident prefix.
 		for offset := range len(q.flows) {
 			i := (q.tailDropCursor + offset) % len(q.flows)
-			backlog := q.flows[i].bytes
+			backlog := (q.flows[i].bytes + fqQuantum - 1) / fqQuantum
 			if backlog > largest || (backlog == largest && fattest == incoming) {
 				fattest, largest = i, backlog
 			}
