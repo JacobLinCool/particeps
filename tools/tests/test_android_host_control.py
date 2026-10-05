@@ -69,8 +69,8 @@ class HostControlTest(unittest.TestCase):
         self.assertGreater(adb.now, 0)
 
     @patch("tools.android_host_control.uuid.uuid4", return_value=OPERATION)
-    def test_profile_and_native_queries_never_start_or_restart_activity(self, _):
-        for operation in ("profile", "native"):
+    def test_process_bound_queries_never_start_or_restart_activity(self, _):
+        for operation in ("profile", "native", "safety-pause"):
             with self.subTest(operation=operation):
                 adb = FakeAdb([{"status": "READY"}, {"status": "SUCCEEDED", "operation_id": OPERATION, "result": "{}"}])
                 client = adb.client()
@@ -78,6 +78,10 @@ class HostControlTest(unittest.TestCase):
                 self.assertEqual("{}", client.execute(operation))
                 self.assertFalse(any("start" in call or "force-stop" in call for call in adb.calls))
                 self.assertTrue(all(PROCESS in call for call in adb.broadcasts()[1:]))
+                query = adb.broadcasts()[1]
+                self.assertEqual(operation == "safety-pause", "include_safety_pause_proof" in query)
+                self.assertEqual(operation != "safety-pause", "include_applied_profile" in query)
+                self.assertEqual(operation == "native", "include_native_counters" in query)
 
     @patch("tools.android_host_control.uuid.uuid4", return_value=OPERATION)
     def test_pid_or_process_token_change_never_reissues_the_command(self, _):

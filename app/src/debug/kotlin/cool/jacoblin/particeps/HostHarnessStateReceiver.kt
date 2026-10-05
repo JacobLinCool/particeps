@@ -56,6 +56,14 @@ class HostHarnessStateReceiver : BroadcastReceiver() {
         // broadcast deadline includes goAsync(), so long work has a separate process-bound receipt.
         try {
             val request = requireNotNull(intent)
+            val profile = request.getBooleanExtra(EXTRA_APPLIED_PROFILE, false)
+            val native = request.getBooleanExtra(EXTRA_NATIVE_COUNTERS, false)
+            val safetyPause = request.getBooleanExtra(EXTRA_SAFETY_PAUSE_PROOF, false)
+            require(!safetyPause || action == ACTION && !profile && !native &&
+                !request.getBooleanExtra(EXTRA_READINESS, false) &&
+                !request.getBooleanExtra(EXTRA_OPERATION_STATUS, false)) {
+                "Safety pause proof must be an exclusive query"
+            }
             val operations = operations(application)
             val startup = application.startupState.value
             val graph = (startup as? ApplicationStartupState.Ready)?.graph
@@ -79,8 +87,7 @@ class HostHarnessStateReceiver : BroadcastReceiver() {
                     ))
                 startup == ApplicationStartupState.Failed -> response.put("status", "FAILED")
                 graph == null || snapshot == null -> response.put("status", "NOT_READY")
-                action == ACTION && !request.getBooleanExtra(EXTRA_APPLIED_PROFILE, false) &&
-                    !request.getBooleanExtra(EXTRA_NATIVE_COUNTERS, false) -> {
+                action == ACTION && !profile && !native && !safetyPause -> {
                     val state = snapshot.runtime.state?.name ?: NO_STUDY_STATE
                     response.put("status", "SUCCEEDED")
                         .put("result", "$state:${snapshot.runtime.lifetimeDataEventCount}")
@@ -88,9 +95,14 @@ class HostHarnessStateReceiver : BroadcastReceiver() {
                 else -> {
                     val encoded = request.getStringExtra(EXTRA_SIGNED_ENVELOPE)
                     require(action != PROVISION_ACTION || encoded != null) { "Missing signed envelope" }
-                    val native = request.getBooleanExtra(EXTRA_NATIVE_COUNTERS, false)
+                    val queryKind = when {
+                        safetyPause -> "safety_pause"
+                        native -> "native"
+                        profile -> "profile"
+                        else -> "command"
+                    }
                     val fingerprint = MessageDigest.getInstance("SHA-256")
-                        .digest("$action\n$native\n${encoded.orEmpty()}".toByteArray())
+                        .digest("$action\n$queryKind\n${encoded.orEmpty()}".toByteArray())
                         .joinToString("") { "%02x".format(it) }
                     response.putReceipt(operations.admit(
                         requireNotNull(request.getStringExtra(EXTRA_PROCESS_ID)),
@@ -110,9 +122,13 @@ class HostHarnessStateReceiver : BroadcastReceiver() {
                                 graph.resetForHostHarness()
                                 RESET_COMPLETE
                             }
-                            else -> HostHarnessAppliedProfileReader.read(
-                                graph.session, includeNativeCounters = native,
-                            ).toJson()
+                            else -> if (safetyPause) {
+                                HostHarnessSafetyPauseProofReader.read(application, graph.session).toJson()
+                            } else {
+                                HostHarnessAppliedProfileReader.read(
+                                    graph.session, includeNativeCounters = native,
+                                ).toJson()
+                            }
                         }
                     })
                 }
@@ -174,6 +190,7 @@ class HostHarnessStateReceiver : BroadcastReceiver() {
         const val EXTRA_SIGNED_ENVELOPE = "signed_envelope_base64"
         const val EXTRA_APPLIED_PROFILE = "include_applied_profile"
         const val EXTRA_NATIVE_COUNTERS = "include_native_counters"
+        const val EXTRA_SAFETY_PAUSE_PROOF = "include_safety_pause_proof"
         val ACTIONS = setOf(ACTION, PROVISION_ACTION, RESET_ACTION)
         const val RESET_COMPLETE = "RESET"
         const val NO_STUDY_STATE = "NONE"

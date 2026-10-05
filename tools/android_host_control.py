@@ -93,11 +93,14 @@ class HostControl:
         else:
             operation_id = str(uuid.uuid4())
             extras = identity + ["--es", "operation_id", operation_id]
-            if operation in ("profile", "native"):
+            if operation in ("profile", "native", "safety-pause"):
                 action = QUERY
-                extras += ["--ez", "include_applied_profile", "true"]
-                if operation == "native":
-                    extras += ["--ez", "include_native_counters", "true"]
+                if operation == "safety-pause":
+                    extras += ["--ez", "include_safety_pause_proof", "true"]
+                else:
+                    extras += ["--ez", "include_applied_profile", "true"]
+                    if operation == "native":
+                        extras += ["--ez", "include_native_counters", "true"]
             elif operation in ("reset", "provision"):
                 action = f"{PACKAGE}.HOST_HARNESS_{operation.upper()}"
                 if operation == "provision":
@@ -131,7 +134,7 @@ def main() -> None:
     parser.add_argument("--identity-file", type=Path)
     parser.add_argument("--evidence-directory", type=Path)
     parser.add_argument("--timeout-seconds", type=float, default=90.0)
-    parser.add_argument("operation", choices=("state", "profile", "native", "reset", "provision", "prepare", "identity"))
+    parser.add_argument("operation", choices=("state", "profile", "native", "safety-pause", "reset", "provision", "prepare", "identity"))
     parser.add_argument("--envelope", type=Path)
     args = parser.parse_args()
     if not 0 < args.timeout_seconds <= 90:

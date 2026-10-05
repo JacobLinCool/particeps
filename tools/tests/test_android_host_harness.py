@@ -394,7 +394,11 @@ esac
         self.assertIn("measurement_duration_seconds=60", harness)
         self.assertIn('--duration-seconds "$measurement_duration_seconds"', harness)
         self.assertIn("run_instrumentation assertSafetyPaused", harness)
-        self.assertEqual(2, harness.count("run_instrumentation assertSafetyPaused"))
+        self.assertEqual(1, harness.count("run_instrumentation assertSafetyPaused"))
+        reboot = harness.split("case_reboot_recovery() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn("tools.android_reboot_proof", reboot)
+        self.assertIn('--previous-boot-id "$previous_boot_id"', reboot)
+        self.assertNotIn("run_instrumentation", reboot)
         self.assertIn("await_live_state PAUSED", harness)
         self.assertIn("await_live_state RUNNING", harness)
         self.assertIn("capture_live_particeps_pid", harness)

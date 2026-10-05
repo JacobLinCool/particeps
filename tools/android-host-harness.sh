@@ -762,11 +762,18 @@ case_process_kill_recovery() {
 }
 
 case_reboot_recovery() {
+  local previous_boot_id
   provision_running_study
+  previous_boot_id="$("$adb_binary" shell cat /proc/sys/kernel/random/boot_id | tr -d '\r\n')"
   "$adb_binary" reboot
   wait_for_boot
   prepare_permissions
-  run_instrumentation assertSafetyPaused
+  # Exercise the participant's ordinary app startup. Loading a second, cold JUnit runner here
+  # can exhaust Android's process-bind deadline before Application.onCreate even executes.
+  # The process-bound proof retains initialization, the actual pause notification and one second
+  # of closed admission; current-boot system events also reject a crash before the first receipt.
+  python3 -m tools.android_reboot_proof --adb "$adb_binary" --serial "$device_serial" \
+    --previous-boot-id "$previous_boot_id" --output "$report_directory/reboot-recovery-proof"
   reset_study
 }
 
