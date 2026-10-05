@@ -52,6 +52,8 @@
     -->
     <string name="header_no_study" translatable="false">@string/app_name</string>
     <string name="header_starting">Starting up</string>
+    <string name="startup_failed_title">Particeps could not start</string>
+    <string name="startup_failed_body">Collection cannot resume. Please contact the research team before continuing.</string>
     <string name="startup_stage_generic">Still starting up.</string>
     <string name="startup_stage_loading_study">Reading the saved study.</string>
     <string name="startup_stage_validating_storage">Checking recorded study data. A study that has been collecting for a while can take longer here.</string>

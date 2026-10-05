@@ -9,7 +9,6 @@ import android.content.pm.PackageManager
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import cool.jacoblin.particeps.core.model.ExperimentState
-import kotlinx.coroutines.flow.first
 
 /**
  * One notification a day saying whether the study is still collecting, or still paused.
@@ -32,7 +31,12 @@ class DailyStatusWorker(
 ) : CoroutineWorker(context, parameters) {
     override suspend fun doWork(): Result {
         val application = applicationContext as CollectorApplication
-        val snapshot = application.session.snapshot.first { it.initialized }
+        val graph = try {
+            application.awaitReady()
+        } catch (_: ApplicationStartupException) {
+            return Result.failure()
+        }
+        val snapshot = graph.session.snapshot.value
         val activeState = snapshot.runtime.state?.takeIf {
             it == ExperimentState.RUNNING || it == ExperimentState.PAUSED
         }

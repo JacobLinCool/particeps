@@ -28,7 +28,6 @@ import cool.jacoblin.particeps.platform.awaitWorkPersistence
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 class RuntimeTimerWorker(
@@ -42,8 +41,13 @@ class RuntimeTimerWorker(
             ?.toULongOrNull()
             ?.takeIf { it > 0uL }
             ?: return Result.failure()
-        val session = (applicationContext as CollectorApplication).session
-        val snapshot = session.snapshot.first { it.initialized }
+        val graph = try {
+            (applicationContext as CollectorApplication).awaitReady()
+        } catch (_: ApplicationStartupException) {
+            return Result.failure()
+        }
+        val session = graph.session
+        val snapshot = session.snapshot.value
         if (snapshot.study == null) return Result.success()
         // A durable timer commit can retire the unique WorkManager row that is currently
         // delivering it. Finish the coordinator transition even when that self-retirement
@@ -119,8 +123,12 @@ class ActionOutboxWorker(
     override suspend fun doWork(): Result {
         val actionId = inputData.getString(KEY_ACTION_ID)?.takeIf(ACTION_ID::matches) ?: return Result.failure()
         val application = applicationContext as CollectorApplication
-        val session = application.session
-        session.snapshot.first { it.initialized }
+        val graph = try {
+            application.awaitReady()
+        } catch (_: ApplicationStartupException) {
+            return Result.failure()
+        }
+        val session = graph.session
         val invocation = session.claimAction(actionId) ?: return Result.success()
         val intervention = session.intervention(invocation.interventionId)
         if (intervention == null) {
@@ -157,7 +165,7 @@ class ActionOutboxWorker(
         val notification = interventionNotification(applicationContext, action, contentIntent)
         val notifications = applicationContext.getSystemService(NotificationManager::class.java)
         val displayed = try {
-            application.actionOutboxNotifier.displayIfRunning(
+            graph.actionOutboxNotifier.displayIfRunning(
                 actionId = actionId,
                 isRunning = {
                     session.snapshot.value.runtime.state == ExperimentState.RUNNING &&
@@ -239,14 +247,18 @@ class ActionExpiryWorker(
             ?.takeIf { it.length == 64 && it.all { character -> character in '0'..'9' || character in 'a'..'f' } }
             ?: return Result.failure()
         val application = applicationContext as CollectorApplication
-        val session = application.session
-        session.snapshot.first { it.initialized }
+        val graph = try {
+            application.awaitReady()
+        } catch (_: ApplicationStartupException) {
+            return Result.failure()
+        }
+        val session = graph.session
         var retractFailure: Throwable? = null
         try {
             // Mark the action inactive under the same gate used by display before committing
             // expiry. A worker that claimed just before the deadline can no longer display after
             // this point, even if WorkManager has not cancelled it yet.
-            application.actionOutboxNotifier.retractVisible(actionId)
+            graph.actionOutboxNotifier.retractVisible(actionId)
         } catch (failure: Throwable) {
             if (failure is CancellationException) throw failure
             retractFailure = failure
@@ -273,21 +285,27 @@ class UploadWorker(
             ?.takeIf { STUDY_ID.matches(it) }
             ?: return Result.failure()
         val application = applicationContext as CollectorApplication
-        val initialized = application.session.snapshot.first { it.initialized }
+        val graph = try {
+            application.awaitReady()
+        } catch (_: ApplicationStartupException) {
+            return Result.failure()
+        }
+        val session = graph.session
+        val initialized = session.snapshot.value
         if (initialized.study?.experimentId != experimentId) return Result.success()
         return try {
-            when (val attempt = application.uploadPlatform.uploadOnce(application.session, experimentId)) {
+            when (val attempt = graph.uploadPlatform.uploadOnce(session, experimentId)) {
                 UploadAttempt.Stale -> Result.success()
                 UploadAttempt.Retry -> Result.retry()
                 is UploadAttempt.NothingToUpload -> {
-                    if (application.session.snapshot.value.runtime.state in RESCHEDULABLE_STATES) {
-                        application.uploadPlatform.scheduleSuccessor(attempt.plan)
+                    if (session.snapshot.value.runtime.state in RESCHEDULABLE_STATES) {
+                        graph.uploadPlatform.scheduleSuccessor(attempt.plan)
                     }
                     Result.success()
                 }
                 is UploadAttempt.Uploaded -> {
-                    if (application.session.snapshot.value.runtime.state in RESCHEDULABLE_STATES) {
-                        application.uploadPlatform.scheduleSuccessor(attempt.plan)
+                    if (session.snapshot.value.runtime.state in RESCHEDULABLE_STATES) {
+                        graph.uploadPlatform.scheduleSuccessor(attempt.plan)
                     }
                     Result.success()
                 }

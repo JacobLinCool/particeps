@@ -155,6 +155,50 @@ private enum class SetupStep(val labelRes: Int) {
     START(R.string.step_start),
 }
 
+/** No session-dependent actions exist until the application graph has been published. */
+@Composable
+internal fun ApplicationStartupScreen(state: ApplicationStartupState) {
+    require(state !is ApplicationStartupState.Ready)
+    var languageOpen by remember { mutableStateOf(false) }
+    MaterialTheme(
+        colorScheme = lightColorScheme(
+            primary = Color(0xFF16476A),
+            secondary = Color(0xFF00796B),
+            background = Color(0xFFF5F7FA),
+            surface = Color.White,
+        ),
+    ) {
+        Surface(Modifier.fillMaxSize()) {
+            Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(padding)
+                        .verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                ) {
+                    Header(
+                        title = stringResource(R.string.header_no_study),
+                        step = null,
+                        initializing = state is ApplicationStartupState.Starting,
+                        state = null,
+                        studyLength = null,
+                        pausedAtUtcMillis = null,
+                        onOpenLanguage = { languageOpen = true },
+                    )
+                    when (state) {
+                        is ApplicationStartupState.Starting -> StartupPatience(state.stage)
+                        ApplicationStartupState.Failed -> {
+                            Text(stringResource(R.string.startup_failed_title), style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.startup_failed_body))
+                        }
+                        is ApplicationStartupState.Ready -> error("Ready graph belongs on the study screen")
+                    }
+                }
+            }
+        }
+        if (languageOpen) LanguageDialog(onDismiss = { languageOpen = false })
+    }
+}
+
 @Composable
 fun CollectorApp(
     state: StudyUiState,

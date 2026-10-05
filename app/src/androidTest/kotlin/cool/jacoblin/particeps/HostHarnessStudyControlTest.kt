@@ -15,6 +15,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assume.assumeTrue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -116,10 +117,11 @@ class HostHarnessStudyControlTest {
         )
     }
 
-    private suspend fun initializedSession() =
-        ApplicationProvider.getApplicationContext<CollectorApplication>().session.also { session ->
-            withTimeout(TIMEOUT_MILLIS) { session.snapshot.first { it.initialized } }
+    private suspend fun initializedSession() = withTimeout(TIMEOUT_MILLIS) {
+        ApplicationProvider.getApplicationContext<CollectorApplication>().awaitReady().session.also { session ->
+            assertTrue("Ready must include completed durable session initialization", session.snapshot.value.initialized)
         }
+    }
 
     private suspend fun awaitState(
         session: cool.jacoblin.particeps.core.application.StudySessionManager,

@@ -3,8 +3,8 @@ package cool.jacoblin.particeps
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import cool.jacoblin.particeps.core.application.StudyRecoveryStatus
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -18,15 +18,22 @@ class ScheduledWorkRecoveryReceiver : BroadcastReceiver() {
         val application = context.applicationContext as CollectorApplication
         application.applicationScope.launch {
             try {
-                val snapshot = application.session.snapshot.first { it.initialized }
+                val graph = try {
+                    application.awaitReady()
+                } catch (_: ApplicationStartupException) {
+                    Log.e("ParticepsStartup", "Scheduled recovery stopped because application initialization failed")
+                    return@launch
+                }
+                val session = graph.session
+                val snapshot = session.snapshot.value
                 if (snapshot.recoveryStatus == StudyRecoveryStatus.ACTION_REQUIRED || snapshot.study == null) {
                     return@launch
                 }
                 if (intent.action != Intent.ACTION_BOOT_COMPLETED) {
-                    application.session.onClockDiscontinuity()
+                    session.onClockDiscontinuity()
                 }
-                application.session.reconcileActionOutbox()
-                application.currentTimerAdapter?.reconcile(application.session)
+                session.reconcileActionOutbox()
+                graph.reconcileTimerWakeups()
             } finally {
                 pending.finish()
             }

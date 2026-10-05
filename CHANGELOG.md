@@ -7,15 +7,24 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
-## v1.0.0-rc.16 — 2026-10-05
+## v1.0.0-rc.17 — 2026-10-05
 
 This release improves participant disclosure, collection recovery, and verification of
 five-day study exports. Physical-device admission checks and daily data return remain necessary;
 these changes do not establish a completed 120-hour physical-device endurance run.
 
-The RC14 and RC15 tags did not produce public releases because their CI gates failed. RC16 follows
-RC13 as the next public release candidate.
+The RC14, RC15 and RC16 tags did not produce public releases because their CI gates failed. RC17
+follows RC13 as the next public release candidate.
 
+- Application dependency construction and session initialization run in the background behind one
+  explicit readiness boundary. Participant screens, Android results and study-entry intents,
+  workers and receivers wait for the same initialized components. Unexpected initialization
+  failures release waiters and show a neutral failure screen; they do not leave a permanent
+  loading screen or expose incomplete components. Foreground-service notification and startup
+  acknowledgement remain immediate, before waiting for the application, so recovery cannot
+  deadlock with service startup. Existing recovery-required state and participant controls remain
+  unchanged. This removes filesystem, KeyStore and client construction from process binding;
+  it does not guarantee responsiveness under arbitrary device CPU starvation.
 - Interrupted runtime checkpoint writes can recover from an authenticated base and the complete
   authenticated commit log even when a staging snapshot was only partly written. Staging files are
   retired only after recovery succeeds. Invalid bases, authenticated conflicting documents, damaged
@@ -226,7 +235,7 @@ RC13 as the next public release candidate.
   analyze them with this tree's `particeps-analysis` and `researcher-tools`. Keep the pilot phones
   on RC13 until the pilot ends: the fix is in the offline tools only.
 
-**Application update from `v1.0.0-rc.13`:** install the signed RC16 APK over the existing
+**Application update from `v1.0.0-rc.13`:** install the signed RC17 APK over the existing
 app without uninstalling or clearing its data; it does not change the application ID.
 
 **Local studies and exported data:** there is no local-store migration, mandatory reset,
@@ -283,38 +292,24 @@ access checks, and explicitly Resume the study.
   re-armed and retired. One whose target passes while the study runs retries until the next pause
   under RC13; after the update it ends at its next attempt.
 
-**Fresh install:** install the signed RC16 APK, then scan a research-team QR code or import
+**Fresh install:** install the signed RC17 APK, then scan a research-team QR code or import
 its signed study file. Review the study and data collection, provide consent, complete required
 access setup, and explicitly Start.
 
-**RC16 source verification:** the Linux native race gate, host tools, Kotlin/Python export
-interoperability, and both Android device lanes passed at `1483ebf`. The API 34 host suite passed
-13 scenarios, with its API 37-only permission scenario inapplicable; API 37 passed all 14 without
-quarantine. These checks include measured shaping and duplex traffic, process recovery, reboot,
-package replacement, and safety states. The release tag must independently pass its device,
-consumer, build, packaging, and signing gates before publication.
+**Verification scope:** publication requires this tag's own Android 14 and Android 17 device gates,
+Web/receiver/analysis checks, native race gate, release build and signing/packaging verification.
+Earlier candidates' passing checks do not override a failure in this run. A complete 120-hour
+physical-device endurance study has not been performed; per-device admission and daily readable
+exports remain necessary.
 
-**Earlier RC14 verification:** local unit, lint, protocol and consumer checks passed. Android 14
-app, storage, usage-access and host-harness checks passed; the host harness's API 37-only permission
-case was inapplicable there. Android 17 compatibility, targeted app/usage checks and all 12 host
-scenarios passed locally, including local-network permission revocation. The signed RC14 candidate
-was installed and started on API 34 and API 37 (16 KiB). Its ordinary participant UI completed
-import, consent, Android access, Start and file export; the formal research key and the installed
-analysis wheel authenticated and materialized that export, and the known foreground-app interval
-matched the usage report. The complete installed-wheel suite passed 171 tests. These are emulator,
-deterministic-runtime and synthetic-data checks; a 120-hour physical-device study has not been
-completed. Publication additionally requires the release workflow's device and consumer gates.
+## v1.0.0-rc.16 — 2026-10-05
 
-**Verification of the analysis-tool change:** on the working tree only,
-`./gradlew test testDebugUnitTest`, the Kotlin protocol and automation-reducer conformance tests,
-the Protocol v1, registry, retired-identity, and collector-assurance checks, the
-`particeps-analysis` suite, including the real-runtime interop test in Kotlin and Python, and the
-Web unit, type-check, and TypeScript conformance suites passed locally. `researcher-tools
-decrypt` and `particeps-analysis` accepted all 31 exports examined, and the analyzer materialized
-each to Parquet: 10 from the RC13 app on an emulator, 13 from the RC13 and current runtimes on the
-JVM, and 8 from the JVM containment scenarios, each run on RC13 and on this tree's runtime. The
-researcher site's reader opened 30 of them; the 31st, a 66 MB export, exceeds the reader's 32 MiB
-browser limit, which is unchanged.
+This tag did not produce a public release. Android 14, consumer verification and 13 of 14 Android 17
+host scenarios passed, but the Android 17 reboot scenario encountered an application-startup ANR.
+The main thread was runnable under severe guest CPU pressure while the application still constructed
+its dependencies synchronously. Signing and publication were skipped. The immutable tagged source
+and [release workflow evidence](https://github.com/JacobLinCool/particeps/actions/runs/37249245610)
+retain that failure; RC17 removes nonessential dependency construction from process binding.
 
 ## v1.0.0-rc.13 — 2026-09-14
 

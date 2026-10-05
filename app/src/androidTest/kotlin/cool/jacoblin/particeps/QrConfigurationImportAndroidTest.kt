@@ -26,14 +26,18 @@ import org.junit.runner.RunWith
 class QrConfigurationImportAndroidTest {
     private val application: CollectorApplication
         get() = ApplicationProvider.getApplicationContext()
-    private val session: StudySessionManager
-        get() = application.session
+    private lateinit var session: StudySessionManager
 
     @Before
-    fun clearStudyBeforeTest() = runBlocking { session.clearStudyDataForTest() }
+    fun clearStudyBeforeTest() = runBlocking {
+        session = withTimeout(40_000L) { application.awaitReady().session }
+        session.clearStudyDataForTest()
+    }
 
     @After
-    fun clearStudyAfterTest() = runBlocking { session.clearStudyDataForTest() }
+    fun clearStudyAfterTest() = runBlocking {
+        if (::session.isInitialized) session.clearStudyDataForTest()
+    }
 
     @Test
     fun canonicalJoinImportsTheBoundArtifactWithoutStartingCollection() = runBlocking {

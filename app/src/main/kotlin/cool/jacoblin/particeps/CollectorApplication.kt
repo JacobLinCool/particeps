@@ -26,6 +26,7 @@ import cool.jacoblin.particeps.core.application.AcceptedStudyVerifier
 import cool.jacoblin.particeps.core.application.EventDrivenRuntimeAssemblyFactory
 import cool.jacoblin.particeps.core.application.PlatformResourceActuatorFactory
 import cool.jacoblin.particeps.core.application.StudyAccessPolicy
+import cool.jacoblin.particeps.core.application.StartupStage
 import cool.jacoblin.particeps.core.application.StudyRuntimeAssemblyFactory
 import cool.jacoblin.particeps.core.application.StudySessionManager
 import cool.jacoblin.particeps.core.application.StudyStoreFactory
@@ -53,9 +54,11 @@ import cool.jacoblin.particeps.platform.JoinArtifactDownloader
 import cool.jacoblin.particeps.platform.OkHttpStudyUploader
 import cool.jacoblin.particeps.platform.ensureDailyStatusWork
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
@@ -69,30 +72,45 @@ class CollectorApplication : Application(), Configuration.Provider {
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().build()
 
-    lateinit var session: StudySessionManager
-        private set
-    lateinit var accessManager: AccessManager
-        private set
-    lateinit var joinArtifactDownloader: JoinArtifactDownloader
-        private set
-    internal lateinit var actionOutboxNotifier: AndroidActionOutboxNotifier
-        private set
-    internal lateinit var uploadPlatform: AndroidStudyUploadPlatform
-        private set
+    private val startup = ApplicationStartup(applicationScope)
+    internal val startupState: StateFlow<ApplicationStartupState> = startup.state
 
-    @Volatile
-    internal var currentTimerAdapter: AndroidTimerWakeupAdapter? = null
-        private set
+    internal suspend fun awaitReady(): ApplicationGraph = startup.awaitReady()
 
     override fun onCreate() {
+        val startedAt = SystemClock.elapsedRealtime()
+        val startedCpu = SystemClock.currentThreadTimeMillis()
         super.onCreate()
+        // A redelivered foreground service must be able to post its neutral notification before
+        // waiting for the graph. All other dependency construction stays outside process binding.
         ParticepsNotificationChannels.ensureCreated(this)
-        accessManager = AccessManager(
+        startup.start { reportStage ->
+            try {
+                val graph = buildGraph()
+                initializeSession(graph, reportStage)
+                graph
+            } catch (failure: Throwable) {
+                Log.e(TAG, "Application initialization did not complete")
+                throw failure
+            }
+        }
+        Log.i(
+            TAG,
+            "Application onCreate returned in ${SystemClock.elapsedRealtime() - startedAt}ms " +
+                "with ${SystemClock.currentThreadTimeMillis() - startedCpu}ms thread CPU",
+        )
+    }
+
+    private fun buildGraph(): ApplicationGraph {
+        val startedAt = SystemClock.elapsedRealtime()
+        val startedCpu = SystemClock.currentThreadTimeMillis()
+        val currentTimerAdapter = AtomicReference<AndroidTimerWakeupAdapter?>(null)
+        val accessManager = AccessManager(
             this,
             ResearchInputMethodService::class.java.name,
             ParticepsNotificationChannels.idsByFeature,
         )
-        joinArtifactDownloader = JoinArtifactDownloader(noBackupFilesDir.resolve("join-import"))
+        val joinArtifactDownloader = JoinArtifactDownloader(noBackupFilesDir.resolve("join-import"))
         val registry = CollectorRegistry(
             listOf(
                 AppLifecycleCollectorPlugin(this),
@@ -113,8 +131,8 @@ class CollectorApplication : Application(), Configuration.Provider {
             ),
         )
         val collectorForegroundService = AndroidCollectorForegroundServiceDecorator(this)
-        actionOutboxNotifier = AndroidActionOutboxNotifier(this)
-        uploadPlatform = AndroidStudyUploadPlatform(
+        val actionOutboxNotifier = AndroidActionOutboxNotifier(this)
+        val uploadPlatform = AndroidStudyUploadPlatform(
             context = this,
             uploader = OkHttpStudyUploader(
                 outbox = FileUploadOutbox(noBackupFilesDir.resolve("engine-commit-upload-outbox")),
@@ -153,10 +171,10 @@ class CollectorApplication : Application(), Configuration.Provider {
                 actionNotifier = actionOutboxNotifier,
             ).create(configuration, store)
             timerAdapter.bindRuntime(assembly.runtime)
-            currentTimerAdapter = timerAdapter
+            currentTimerAdapter.set(timerAdapter)
             assembly
         }
-        session = StudySessionManager(
+        val session = StudySessionManager(
             activeStudyStore = EncryptedActiveStudyStore(this),
             verifier = StudyVerifier { bytes ->
                 configurationVerifier().verify(bytes).also { ResearchExport.validate(it.configuration) }
@@ -183,10 +201,22 @@ class CollectorApplication : Application(), Configuration.Provider {
             exportedAtUtcMillis = { Instant.now().toEpochMilli() },
             scope = applicationScope,
         )
-        applicationScope.launch { initializeSession() }
+        Log.i(
+            TAG,
+            "Application graph constructed in ${SystemClock.elapsedRealtime() - startedAt}ms " +
+                "with ${SystemClock.currentThreadTimeMillis() - startedCpu}ms thread CPU",
+        )
+        return DefaultApplicationGraph(
+            session, accessManager, joinArtifactDownloader, actionOutboxNotifier, uploadPlatform,
+            currentTimerAdapter,
+        )
     }
 
-    private suspend fun initializeSession() {
+    private suspend fun initializeSession(
+        graph: ApplicationGraph,
+        reportStage: (StartupStage?) -> Unit,
+    ) {
+        val session = graph.session
         // Stage names and elapsed times only — never study data. Initialization runs behind a bare
         // starting screen, and logcat is the sole way to place a reported startup stall.
         val startedAtMillis = SystemClock.elapsedRealtime()
@@ -196,6 +226,7 @@ class CollectorApplication : Application(), Configuration.Provider {
                 .distinctUntilChanged()
                 .filterNotNull()
                 .collect { stage ->
+                    reportStage(stage)
                     Log.i(TAG, "Startup stage $stage at ${SystemClock.elapsedRealtime() - startedAtMillis}ms")
                 }
         }
@@ -203,11 +234,11 @@ class CollectorApplication : Application(), Configuration.Provider {
             session.initialize()
         } finally {
             stageLog.cancel()
-            Log.i(TAG, "Session initialized in ${SystemClock.elapsedRealtime() - startedAtMillis}ms")
+            Log.i(TAG, "Session initialization finished in ${SystemClock.elapsedRealtime() - startedAtMillis}ms")
         }
         val snapshot = session.snapshot.value
         if (snapshot.recoveryStatus != cool.jacoblin.particeps.core.application.StudyRecoveryStatus.ACTION_REQUIRED) {
-            currentTimerAdapter?.reconcile(session)
+            graph.reconcileTimerWakeups()
         }
         ensureDailyStatusWork(this)
         applicationScope.launch {
@@ -216,7 +247,7 @@ class CollectorApplication : Application(), Configuration.Provider {
                 .distinctUntilChanged()
                 .collect { state ->
                     if (state == cool.jacoblin.particeps.core.model.ExperimentState.RUNNING) {
-                        currentTimerAdapter?.reconcile(session)
+                        graph.reconcileTimerWakeups()
                     }
                 }
         }
@@ -235,5 +266,19 @@ class CollectorApplication : Application(), Configuration.Provider {
          * map accepts any correctly signed study while identifying the publisher as unanchored.
          */
         val TRUSTED_SIGNING_KEYS = emptyMap<String, String>()
+    }
+}
+
+/** All fields are published together by ApplicationStartup after session initialization. */
+private class DefaultApplicationGraph(
+    override val session: StudySessionManager,
+    override val accessManager: AccessManager,
+    override val joinArtifactDownloader: JoinArtifactDownloader,
+    override val actionOutboxNotifier: AndroidActionOutboxNotifier,
+    override val uploadPlatform: AndroidStudyUploadPlatform,
+    private val currentTimerAdapter: AtomicReference<AndroidTimerWakeupAdapter?>,
+) : ApplicationGraph {
+    override suspend fun reconcileTimerWakeups() {
+        currentTimerAdapter.get()?.reconcile(session)
     }
 }

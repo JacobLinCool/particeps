@@ -34,6 +34,8 @@
     <!-- header_no_study is the product name Particeps and is not translated. -->
     <string name="header_starting">準備中</string>
     <string name="startup_stage_generic">仍在啟動中。</string>
+    <string name="startup_failed_title">Particeps 無法啟動</string>
+    <string name="startup_failed_body">目前無法恢復收集。請先聯絡研究團隊，再繼續參與。</string>
     <string name="startup_stage_loading_study">正在讀取已儲存的研究。</string>
     <string name="startup_stage_validating_storage">正在檢查已收集的研究資料，收集較久的研究這一步可能比較慢。</string>
     <string name="startup_stage_restoring_runtime">正在恢復研究執行狀態。</string>

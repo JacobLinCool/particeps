@@ -21,6 +21,7 @@ import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import cool.jacoblin.particeps.core.application.StudyCommandResult
+import cool.jacoblin.particeps.core.application.StudySessionManager
 import cool.jacoblin.particeps.core.collector.AccessKind
 import cool.jacoblin.particeps.core.model.ExperimentState
 import java.text.NumberFormat
@@ -43,11 +44,20 @@ class CoreFlowTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
 
+    private lateinit var readySession: StudySessionManager
+
     @Before
-    fun clearStudyBeforeTest() = runBlocking { session().clearStudyDataForTest() }
+    fun clearStudyBeforeTest() = runBlocking {
+        readySession = withTimeout(TIMEOUT_MILLIS) {
+            (composeRule.activity.application as CollectorApplication).awaitReady().session
+        }
+        readySession.clearStudyDataForTest()
+    }
 
     @After
-    fun clearStudyAfterTest() = runBlocking { session().clearStudyDataForTest() }
+    fun clearStudyAfterTest() = runBlocking {
+        if (::readySession.isInitialized) readySession.clearStudyDataForTest()
+    }
 
     @Test
     fun fullParticipantFlowRunsModularCollectorsAndHonorsPause() {
@@ -305,7 +315,7 @@ class CoreFlowTest {
         assertEquals(session.snapshot.value.runtime.durableThroughCommit, shown.model.durableThroughCommit)
     }
 
-    private fun session() = (composeRule.activity.application as CollectorApplication).session
+    private fun session() = readySession
 
     /** Reads Android's posted notification, including when the participant screen is stopped. */
     private fun assertPausedNotificationPosted() {

@@ -18,7 +18,8 @@ class RecoveryNotificationAndroidTest {
     @Test
     fun missingChannelDoesNotAcknowledgeDeliveryAndRestoringItAllowsNotification() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<CollectorApplication>()
-        context.session.clearStudyDataForTest()
+        val session = withTimeout(40_000L) { context.awaitReady().session }
+        session.clearStudyDataForTest()
         val manager = context.getSystemService(NotificationManager::class.java)
         val reporter = AndroidRecoveryReporter(context)
         InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(
@@ -48,7 +49,7 @@ class RecoveryNotificationAndroidTest {
         } finally {
             ParticepsNotificationChannels.ensureCreated(context)
             reporter.clear()
-            context.session.clearStudyDataForTest()
+            session.clearStudyDataForTest()
         }
     }
 }

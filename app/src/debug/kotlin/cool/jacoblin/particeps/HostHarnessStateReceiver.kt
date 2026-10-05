@@ -57,13 +57,19 @@ class HostHarnessStateReceiver : BroadcastReceiver() {
         try {
             val request = requireNotNull(intent)
             val operations = operations(application)
-            val snapshot = application.session.snapshot.value
+            val startup = application.startupState.value
+            val graph = (startup as? ApplicationStartupState.Ready)?.graph
+            val snapshot = graph?.session?.snapshot?.value
             val response = JSONObject()
                 .put("schema_version", 1)
                 .put("process_id", operations.processId)
             when {
                 action == ACTION && request.getBooleanExtra(EXTRA_READINESS, false) ->
-                    response.put("status", if (snapshot.initialized) "READY" else "INITIALIZING")
+                    response.put("status", when (startup) {
+                        is ApplicationStartupState.Ready -> "READY"
+                        is ApplicationStartupState.Starting -> "INITIALIZING"
+                        ApplicationStartupState.Failed -> "FAILED"
+                    })
                 request.getStringExtra(EXTRA_PROCESS_ID) != operations.processId ->
                     response.put("status", "PROCESS_CHANGED")
                 action == ACTION && request.getBooleanExtra(EXTRA_OPERATION_STATUS, false) ->
@@ -71,7 +77,8 @@ class HostHarnessStateReceiver : BroadcastReceiver() {
                         requireNotNull(request.getStringExtra(EXTRA_PROCESS_ID)),
                         requireNotNull(request.getStringExtra(EXTRA_OPERATION_ID)),
                     ))
-                !snapshot.initialized -> response.put("status", "NOT_READY")
+                startup == ApplicationStartupState.Failed -> response.put("status", "FAILED")
+                graph == null || snapshot == null -> response.put("status", "NOT_READY")
                 action == ACTION && !request.getBooleanExtra(EXTRA_APPLIED_PROFILE, false) &&
                     !request.getBooleanExtra(EXTRA_NATIVE_COUNTERS, false) -> {
                     val state = snapshot.runtime.state?.name ?: NO_STUDY_STATE
@@ -98,13 +105,13 @@ class HostHarnessStateReceiver : BroadcastReceiver() {
                         },
                     ) {
                         when (action) {
-                            PROVISION_ACTION -> application.provision(requireNotNull(encoded))
+                            PROVISION_ACTION -> graph.provision(requireNotNull(encoded))
                             RESET_ACTION -> {
-                                application.resetForHostHarness()
+                                graph.resetForHostHarness()
                                 RESET_COMPLETE
                             }
                             else -> HostHarnessAppliedProfileReader.read(
-                                application.session, includeNativeCounters = native,
+                                graph.session, includeNativeCounters = native,
                             ).toJson()
                         }
                     })
@@ -126,7 +133,7 @@ class HostHarnessStateReceiver : BroadcastReceiver() {
     private fun ApplicationInfo.isDebuggable(): Boolean =
         flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
 
-    private suspend fun CollectorApplication.provision(encoded: String): String {
+    private suspend fun ApplicationGraph.provision(encoded: String): String {
         resetForHostHarness()
         session.importSignedConfiguration(Base64.getDecoder().decode(encoded))
         requireSuccess("REVIEW", session.reviewStudy())
@@ -148,7 +155,7 @@ class HostHarnessStateReceiver : BroadcastReceiver() {
         }
     }
 
-    private suspend fun CollectorApplication.resetForHostHarness() {
+    private suspend fun ApplicationGraph.resetForHostHarness() {
         when {
             session.snapshot.value.study != null -> session.deleteLocalData()
             session.snapshot.value.recoveryStatus ==

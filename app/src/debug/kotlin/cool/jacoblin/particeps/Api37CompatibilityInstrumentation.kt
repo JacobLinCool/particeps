@@ -16,6 +16,8 @@ import cool.jacoblin.particeps.nativebinding.trafficshaping.Trafficshaping
 import dalvik.system.BaseDexClassLoader
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 
 /** Debug-only API 37 checks that do not launch UI or invoke system task snapshots. */
 class Api37CompatibilityInstrumentation : Instrumentation() {
@@ -39,10 +41,16 @@ class Api37CompatibilityInstrumentation : Instrumentation() {
         try {
             // onStart runs on a separate thread before Android calls Application.onCreate.
             // Only its successful lifecycle return may release this gate; an App crash cannot pass.
+            val deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
             val application = awaitApplicationCreation()
             check(application is CollectorApplication && application === targetContext.applicationContext) {
-                "The target CollectorApplication did not finish initialization"
+                "The target CollectorApplication did not return from onCreate"
             }
+            // Application lifecycle return and dependency readiness are separate contracts. This
+            // instrumentation thread can suspend, but shares the original 30-second startup budget.
+            val remainingMillis = TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime())
+            check(remainingMillis > 0) { "Application readiness exceeded the startup budget" }
+            runBlocking { withTimeout(remainingMillis) { application.awaitReady() } }
             check(application.getSystemService(UserManager::class.java).isUserUnlocked) {
                 "The target user must be unlocked before compatibility verification"
             }

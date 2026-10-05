@@ -11,8 +11,10 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import cool.jacoblin.particeps.core.application.StudySessionManager
 import cool.jacoblin.particeps.core.model.ExperimentState
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -30,15 +32,21 @@ class QrStudyConsentFlowTest {
     private val application: CollectorApplication
         get() = composeRule.activity.application as CollectorApplication
 
+    private lateinit var session: StudySessionManager
+
     @Before
-    fun clearStudyBeforeTest() = runBlocking { application.session.clearStudyDataForTest() }
+    fun clearStudyBeforeTest() = runBlocking {
+        session = withTimeout(TIMEOUT_MILLIS) { application.awaitReady().session }
+        session.clearStudyDataForTest()
+    }
 
     @After
-    fun clearStudyAfterTest() = runBlocking { application.session.clearStudyDataForTest() }
+    fun clearStudyAfterTest() = runBlocking {
+        if (::session.isInitialized) session.clearStudyDataForTest()
+    }
 
     @Test
     fun verifiedQrStillRequiresStudyReviewDataReviewConsentAccessAndExplicitStart() {
-        val session = application.session
         val fixture = qrStudyImportFixture(application)
         runBlocking { session.importSignedConfiguration(fixture.envelope, fixture.join) }
         waitForState(ExperimentState.CONFIG_VERIFIED)
@@ -84,7 +92,7 @@ class QrStudyConsentFlowTest {
     }
 
     private fun waitForState(state: ExperimentState) {
-        composeRule.waitUntil(TIMEOUT_MILLIS) { application.session.snapshot.value.runtime.state == state }
+        composeRule.waitUntil(TIMEOUT_MILLIS) { session.snapshot.value.runtime.state == state }
         composeRule.waitForIdle()
     }
 

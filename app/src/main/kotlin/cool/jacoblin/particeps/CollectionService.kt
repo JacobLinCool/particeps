@@ -19,7 +19,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -138,10 +137,17 @@ class CollectionService : Service() {
         if (accessMonitor?.isActive == true) return
         val collectorApplication = application as CollectorApplication
         accessMonitor = collectorApplication.applicationScope.launch {
+            val graph = try {
+                collectorApplication.awaitReady()
+            } catch (_: ApplicationStartupException) {
+                stopSelf()
+                return@launch
+            }
+            val session = graph.session
             while (isActive) {
                 delay(ACCESS_RECONCILIATION_INTERVAL_MILLIS)
-                collectorApplication.session.reconcileAccess()
-                val snapshot = collectorApplication.session.snapshot.value
+                session.reconcileAccess()
+                val snapshot = session.snapshot.value
                 if (
                     snapshot.runtime.state == ExperimentState.RUNNING &&
                     snapshot.study?.mayAdjustAppTransferSpeed == true &&
@@ -150,7 +156,7 @@ class CollectionService : Service() {
                             TrafficShapingAndroidPrerequisites.vpnConsentIntent(this@CollectionService) != null
                         )
                 ) {
-                    collectorApplication.session.safetyPauseForPlatformAccessLoss()
+                    session.safetyPauseForPlatformAccessLoss()
                 }
             }
         }
@@ -166,8 +172,13 @@ class CollectionService : Service() {
         val collectorApplication = application as CollectorApplication
         accessMonitor?.cancel()
         accessMonitor = collectorApplication.applicationScope.launch {
-            collectorApplication.session.snapshot.first { it.initialized }
-            val running = collectorApplication.session.snapshot.value.runtime.state == ExperimentState.RUNNING
+            val graph = try {
+                collectorApplication.awaitReady()
+            } catch (_: ApplicationStartupException) {
+                stopSelfResult(startId)
+                return@launch
+            }
+            val running = graph.session.snapshot.value.runtime.state == ExperimentState.RUNNING
             if (running) {
                 accessMonitor = null
                 startAccessMonitor()

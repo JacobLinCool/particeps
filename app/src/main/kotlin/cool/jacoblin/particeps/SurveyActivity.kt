@@ -4,7 +4,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -66,14 +65,19 @@ class SurveyActivity : ComponentActivity() {
     private val actionId by lazy {
         requireNotNull(intent.getStringExtra(ACTION_ID)) { "Missing action ID" }
     }
-    private val viewModel by viewModels<SurveyViewModel> {
-        SurveyViewModel.Factory((application as CollectorApplication).session, actionId)
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
+            val startup = (application as CollectorApplication).startupState.collectAsStateWithLifecycle().value
+            if (startup !is ApplicationStartupState.Ready) {
+                ApplicationStartupScreen(startup)
+                return@setContent
+            }
+            val viewModel = ViewModelProvider(
+                this, SurveyViewModel.Factory(startup.graph.session, actionId),
+            )[SurveyViewModel::class.java]
             MaterialTheme {
                 SurveyScreen(
                     viewModel = viewModel,

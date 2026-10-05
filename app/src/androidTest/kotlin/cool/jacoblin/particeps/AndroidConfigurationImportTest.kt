@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.storage.EncryptedActiveStudyStore
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -20,7 +21,7 @@ class AndroidConfigurationImportTest {
     @Test
     fun debugDemoImportsIntoTheAndroidSession() = runBlocking {
         val application = ApplicationProvider.getApplicationContext<CollectorApplication>()
-        val session = application.session
+        val session = withTimeout(40_000L) { application.awaitReady().session }
         session.clearStudyDataForTest()
         assertNull("test requires a clean study session", session.snapshot.value.study)
 
@@ -44,7 +45,7 @@ class AndroidConfigurationImportTest {
     @Test
     fun theRetiredConfigurationMagicFailsClosedInTheParser() = runBlocking {
         val application = ApplicationProvider.getApplicationContext<CollectorApplication>()
-        val session = application.session
+        val session = withTimeout(40_000L) { application.awaitReady().session }
         session.clearStudyDataForTest()
         assertNull("test requires a clean study session", session.snapshot.value.study)
 
