@@ -287,6 +287,13 @@ access checks, and explicitly Resume the study.
 its signed study file. Review the study and data collection, provide consent, complete required
 access setup, and explicitly Start.
 
+**RC16 source verification:** the Linux native race gate, host tools, Kotlin/Python export
+interoperability, and both Android device lanes passed at `1483ebf`. The API 34 host suite passed
+13 scenarios, with its API 37-only permission scenario inapplicable; API 37 passed all 14 without
+quarantine. These checks include measured shaping and duplex traffic, process recovery, reboot,
+package replacement, and safety states. The release tag must independently pass its device,
+consumer, build, packaging, and signing gates before publication.
+
 **Earlier RC14 verification:** local unit, lint, protocol and consumer checks passed. Android 14
 app, storage, usage-access and host-harness checks passed; the host harness's API 37-only permission
 case was inapplicable there. Android 17 compatibility, targeted app/usage checks and all 12 host
