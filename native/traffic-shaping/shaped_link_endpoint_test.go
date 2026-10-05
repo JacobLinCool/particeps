@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -38,7 +39,7 @@ func newShapedLinkFixture(t *testing.T, rate *uint64) *shapedLinkFixture {
 	if err := down.resume(); err != nil {
 		t.Fatal(err)
 	}
-	uq, dq := newPacketQueue(clock, queueActiveManagement), newPacketQueue(clock, queueBackpressure)
+	uq, dq := newPacketQueue(clock, queueActiveManagement), newPacketQueue(clock, queueFattestTailDrop)
 	uq.apply(nil)
 	uq.resume()
 	dq.apply(rate)
@@ -117,11 +118,11 @@ func TestShapedLinkACKBypassesBackloggedDownloadFlow(t *testing.T) {
 	started := f.clock.Now()
 	f.endpoint.Attach(&noInboundDispatcher{})
 	first := nextDownlinkWait(t, f.waiter)
-	for range 40 {
+	for range 3 {
 		writeLinkPacket(t, f.endpoint, data)
 	}
 	writeLinkPacket(t, f.endpoint, ack)
-	if got := f.endpoint.queue.snapshot(); got.queuedPackets != 41 || got.capacityDropPackets != 0 {
+	if got := f.endpoint.queue.snapshot(); got.queuedPackets != 4 || got.capacityDropPackets != 0 {
 		t.Fatalf("unexpected backlog: %+v", got)
 	}
 	if !bytes.Equal(releaseLinkWait(t, f, first), data) {
@@ -149,6 +150,9 @@ func TestShapedLinkACKBypassesBackloggedDownloadFlow(t *testing.T) {
 func TestShapedLinkBackpressureAndPausedProducerClose(t *testing.T) {
 	for _, rate := range []*uint64{nil, queueTestRate(512)} {
 		for _, paused := range []bool{false, true} {
+			if rate != nil && !paused {
+				continue // Limited capacity admission never waits for a consumer.
+			}
 			t.Run(fmt.Sprint(rate, paused), func(t *testing.T) {
 				f := newShapedLinkFixture(t, rate)
 				data := queueTestPacket(1500, 1, 1)
@@ -195,9 +199,10 @@ func TestShapedLinkHeldPacketUsesReplacementProfileAfterPause(t *testing.T) {
 	drainInitialCredit(t, f.endpoint.shaped.downlink)
 	data := queueTestPacket(1500, 1, 1)
 	writeLinkPacket(t, f.endpoint, data)
-	writeLinkPacket(t, f.endpoint, queueTestPacket(1500, 2, 1))
 	f.endpoint.Attach(&noInboundDispatcher{})
 	_ = nextDownlinkWait(t, f.waiter)
+	// At 64 kbps the queue holds one MTU in addition to the held packet.
+	writeLinkPacket(t, f.endpoint, queueTestPacket(1500, 2, 1))
 	f.endpoint.shaped.downlink.suspend()
 	f.endpoint.queue.pause()
 	f.endpoint.shaped.gate.Lock()
@@ -338,12 +343,13 @@ func TestEngineSuspendedStartupAndStopBeforeResumeWithBothQueues(t *testing.T) {
 
 func TestShapedLinkLimitedAcceptanceIsBoundedAndNotCountedAsAdmission(t *testing.T) {
 	f := newShapedLinkFixture(t, queueTestRate(512))
-	for i := range packetQueueMaxBytes / protocolMTU {
+	capacity := f.endpoint.queue.byteLimit / protocolMTU
+	for i := range 2 * capacity {
 		writeLinkPacket(t, f.endpoint, queueTestPacket(1500, byte(i), 1))
 	}
 	stats := f.endpoint.queue.snapshot()
-	if stats.capacityDropPackets != 0 || stats.codelDropPackets != 0 || stats.queuedPackets != packetQueueMaxBytes/protocolMTU || stats.queuedBytes != (packetQueueMaxBytes/protocolMTU)*protocolMTU {
-		t.Fatalf("limited queue failed to preserve bounded accepted traffic: %+v", stats)
+	if stats.capacityDropPackets != uint64(capacity) || stats.codelDropPackets != 0 || stats.queuedPackets != capacity || stats.queuedBytes != capacity*protocolMTU {
+		t.Fatalf("limited queue failed bounded nonblocking congestion admission: %+v", stats)
 	}
 	if f.endpoint.shaped.counters.downlinkBytes.Load() != 0 || f.endpoint.shaped.counters.downlinkPackets.Load() != 0 {
 		t.Fatal("queue acceptance was counted as Layer-3 admission")
@@ -382,11 +388,11 @@ func TestShapedLinkCloseWakesAllSerializedProducers(t *testing.T) {
 	}
 }
 
-// Bulk batches must relinquish producer admission between packets. Otherwise
+// Unlimited bulk batches must relinquish producer admission between packets. Otherwise
 // one full queue can keep a different flow's small ACK outside the FQ scheduler
 // until every packet in the bulk batch has acquired capacity.
 func TestShapedLinkBatchReleasesAdmissionBetweenPackets(t *testing.T) {
-	f := newShapedLinkFixture(t, queueTestRate(512))
+	f := newShapedLinkFixture(t, nil)
 	for range packetQueueMaxBytes / protocolMTU {
 		writeLinkPacket(t, f.endpoint, queueTestPacket(protocolMTU, 1, 1))
 	}
@@ -444,4 +450,37 @@ admitted:
 	case <-time.After(time.Second):
 		t.Fatal("closed queue did not release bulk suffix")
 	}
+}
+
+// The initial congestion window fits the existing token credit, but exceeds
+// the limited queue. With one Go worker the ready consumer must get a turn
+// while the stack is still synchronously emitting that initial batch.
+func TestShapedLinkLimitedBatchYieldsToReadyConsumer(t *testing.T) {
+	previous := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(previous) })
+	f := newShapedLinkFixture(t, queueTestRate(512))
+	const count = 10
+	f.device.writes = make(chan []byte, count)
+	f.endpoint.Attach(&noInboundDispatcher{})
+	var batch stack.PacketBufferList
+	for i := range count {
+		packet := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(queueTestPacket(protocolMTU, byte(i), 1))})
+		defer packet.DecRef()
+		batch.PushBack(packet)
+	}
+	if n, err := f.endpoint.WritePackets(batch); n != count || err != nil {
+		t.Fatalf("initial batch rejected: %d,%v", n, err)
+	}
+	for i := range count {
+		if got := nextLinkWrite(t, f); len(got) != protocolMTU || got[28] != byte(i) {
+			t.Fatal("ready consumer lost or reordered initial-credit payload")
+		}
+	}
+	if got := f.endpoint.queue.snapshot(); got.capacityDropPackets != 0 || got.codelDropPackets != 0 || got.queuedPackets != 0 {
+		t.Fatalf("synchronous batch overflowed despite immediately usable credit: %+v", got)
+	}
+	if got := f.endpoint.shaped.counters.downlinkBytes.Load(); got != count*protocolMTU {
+		t.Fatalf("initial-credit delivered bytes=%d", got)
+	}
+	assertQueueStructure(t, f.endpoint.queue)
 }

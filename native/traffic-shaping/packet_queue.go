@@ -24,12 +24,13 @@ const (
 )
 
 // Congestion policy is independent of limited/unlimited scheduling. The local
-// downlink producer can wait for capacity; a kernel TUN reader must keep draining.
+// downlink callback must not block a shared TCP processor; the kernel TUN
+// reader must also keep draining. Unlimited queues retain FIFO backpressure.
 type queueCongestionPolicy uint8
 
 const (
 	queueActiveManagement queueCongestionPolicy = iota + 1
-	queueBackpressure
+	queueFattestTailDrop
 )
 
 type queuedPacket struct {
@@ -74,6 +75,7 @@ type packetQueue struct {
 	free, globalHead, globalTail int
 	newFlows, oldFlows           flowList
 	stats                        packetQueueStats
+	byteLimit                    int
 	limited, paused              bool
 	pausedAt                     time.Time
 	parameters                   codelParameters
@@ -83,12 +85,12 @@ type packetQueue struct {
 
 func newPacketQueue(clock monotonicClock, congestion queueCongestionPolicy) *packetQueue {
 	switch congestion {
-	case queueActiveManagement, queueBackpressure:
+	case queueActiveManagement, queueFattestTailDrop:
 	default:
 		panic("invalid packet queue congestion policy")
 	}
 	q := &packetQueue{clock: clock, congestion: congestion, seed: maphash.MakeSeed(), paused: true,
-		pausedAt: clock.Now(), changed: make(chan struct{})}
+		pausedAt: clock.Now(), byteLimit: packetQueueMaxBytes, changed: make(chan struct{})}
 	q.initializeStorageLocked()
 	return q
 }
@@ -131,8 +133,43 @@ func (q *packetQueue) apply(rateKbps *uint64) {
 	defer q.mu.Unlock()
 	q.limited = rateKbps != nil
 	q.parameters = codelParametersForRate(rateKbps)
+	q.byteLimit = packetQueueMaxBytes
+	if q.limited && q.congestion == queueFattestTailDrop {
+		q.byteLimit = downlinkQueueByteLimit(*rateKbps)
+		// A lower rate cannot inherit a standing backlog above its new
+		// admission limit. Trim before reopening the profile, without waiting.
+		for q.stats.queuedBytes > q.byteLimit {
+			fattest, largest := noSlot, 0
+			for i := range q.flows {
+				if q.flows[i].bytes > largest {
+					fattest, largest = i, q.flows[i].bytes
+				}
+			}
+			packet := q.popFlowTailLocked(fattest)
+			q.stats.capacityDropPackets++
+			q.stats.capacityDropBytes += uint64(packet.size)
+		}
+	}
 	q.resetSchedulerLocked()
 	q.signalLocked()
+}
+
+// Bound limited downlink's queued serialization time using the existing
+// congestion reaction interval. One MTU is the minimum useful packet capacity;
+// this and the consumer-held MTU can exceed 100 ms at low rates. Rates have
+// already passed the protocol's positive, bounded integer validation.
+func downlinkQueueByteLimit(rateKbps uint64) int {
+	bytes := rateKbps * 1_000 * uint64(codelInterval) / uint64(time.Second) / bitsPerByte
+	return int(min(uint64(packetQueueMaxBytes), max(uint64(protocolMTU), bytes)))
+}
+
+// This is a scheduling hint, not a forwarding permit. A concurrent profile
+// change may make one hint stale; the queue and delivery gates still enforce
+// the actual mode and current profile independently.
+func (q *packetQueue) isLimited() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.limited
 }
 
 func (q *packetQueue) pause() {
@@ -195,7 +232,7 @@ func (q *packetQueue) enqueue(ctx context.Context, packet []byte) error {
 			return err
 		}
 		if !q.paused {
-			if q.limited && q.congestion == queueActiveManagement && !q.makeRoomLocked(bucket, len(packet)) {
+			if q.limited && !q.makeRoomLocked(bucket, len(packet)) {
 				q.signalLocked()
 				return nil
 			}
@@ -212,14 +249,18 @@ func (q *packetQueue) enqueue(ctx context.Context, packet []byte) error {
 }
 
 func (q *packetQueue) hasRoomLocked(size int) bool {
-	return q.stats.queuedPackets < len(q.slots) && q.stats.queuedBytes+size <= packetQueueMaxBytes
+	return q.stats.queuedPackets < len(q.slots) && q.stats.queuedBytes+size <= q.byteLimit
 }
 
 // Model the incoming packet at its bucket's tail while selecting the fattest
 // bucket. Drop before allocating its slot, so neither hard bound is exceeded
-// even transiently. RFC 8290 Section 4.1 specifies half the packet count (at
-// least one here for singleton queues), capped at 64, dropped from the head.
+// even transiently. Uplink uses RFC 8290 Section 4.1: half the packet count
+// (at least one here for singleton queues), capped at 64, from the head.
+// Downlink uses minimal tail drops to avoid blocking shared TCP processors.
 func (q *packetQueue) makeRoomLocked(incoming, size int) bool {
+	if q.congestion == queueFattestTailDrop {
+		return q.makeRoomFromTailLocked(incoming, size)
+	}
 	for !q.hasRoomLocked(size) {
 		fattest, largest := incoming, q.flows[incoming].bytes+size
 		for i := range q.flows {
@@ -244,6 +285,28 @@ func (q *packetQueue) makeRoomLocked(incoming, size int) bool {
 			q.stats.capacityDropPackets++
 			q.stats.capacityDropBytes += uint64(droppedSize)
 		}
+	}
+	return true
+}
+
+// Include the incoming packet as a virtual tail before choosing the fattest
+// byte backlog. Remove one tail at a time and stop as soon as both bounds hold.
+// Arrival order is not TCP sequence order; drops may still require recovery.
+func (q *packetQueue) makeRoomFromTailLocked(incoming, size int) bool {
+	for !q.hasRoomLocked(size) {
+		fattest, largest := incoming, q.flows[incoming].bytes+size
+		for i := range q.flows {
+			if q.flows[i].bytes > largest {
+				fattest, largest = i, q.flows[i].bytes
+			}
+		}
+		q.stats.capacityDropPackets++
+		if fattest == incoming {
+			q.stats.capacityDropBytes += uint64(size)
+			return false
+		}
+		packet := q.popFlowTailLocked(fattest)
+		q.stats.capacityDropBytes += uint64(packet.size)
 	}
 	return true
 }
@@ -322,11 +385,35 @@ func (q *packetQueue) popFlowPacketLocked(bucket int) queuedPacket {
 	flow := &q.flows[bucket]
 	index := flow.head
 	slot := &q.slots[index]
-	packet := slot.packet
 	flow.head = slot.nextFlow
 	if flow.head == noSlot {
 		flow.tail = noSlot
 	}
+	return q.releaseSlotLocked(index)
+}
+
+func (q *packetQueue) popFlowTailLocked(bucket int) queuedPacket {
+	flow := &q.flows[bucket]
+	index := flow.tail
+	previous := noSlot
+	// There are at most 128 resident slots. Keep the shared slot layout and
+	// bounded storage unchanged; this scan never waits for a consumer.
+	for slot := flow.head; slot != index; slot = q.slots[slot].nextFlow {
+		previous = slot
+	}
+	flow.tail = previous
+	if previous == noSlot {
+		flow.head = noSlot
+	} else {
+		q.slots[previous].nextFlow = noSlot
+	}
+	return q.releaseSlotLocked(index)
+}
+
+func (q *packetQueue) releaseSlotLocked(index int) queuedPacket {
+	slot := &q.slots[index]
+	flow := &q.flows[slot.bucket]
+	packet := slot.packet
 	if slot.previousGlobal == noSlot {
 		q.globalHead = slot.nextGlobal
 	} else {
@@ -410,8 +497,8 @@ func (q *packetQueue) dequeueFQLocked(now time.Time) queuedPacket {
 	}
 }
 
-// Both policies use the same deficit scheduler and per-bucket ordering. Local
-// backpressure never turns a long sojourn into a congestion drop.
+// Both policies use the same deficit scheduler and per-bucket ordering.
+// Downlink tail admission never turns a long sojourn into a CoDel drop.
 func (q *packetQueue) dequeueFlowLocked(bucket int, now time.Time) (queuedPacket, bool) {
 	if q.congestion == queueActiveManagement {
 		return q.dequeueCodelLocked(bucket, now)

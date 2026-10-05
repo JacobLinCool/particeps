@@ -2,6 +2,7 @@ package trafficshaping
 
 import (
 	"errors"
+	"runtime"
 	"sync"
 
 	"gvisor.dev/gvisor/pkg/buffer"
@@ -129,9 +130,16 @@ func (e *shapedLinkEndpoint) enqueuePackets(packets stack.PacketBufferList) (int
 		if err := e.enqueuePacket(packet); err != nil {
 			return count, err
 		}
-		// Accepted means queued; only successful paced TUN writes are counted
-		// as admitted Layer-3 traffic.
+		// Accepted includes congestion drops. Only successful paced TUN writes
+		// are counted as admitted Layer-3 traffic.
 		count++
+		// Give a ready paced consumer a turn before a synchronous stack batch
+		// overruns the queue despite available token credit. Our producer,
+		// copy and queue scopes have ended; the transport caller may still
+		// hold its own endpoint lock. This does not wait for queue capacity.
+		if e.queue.isLimited() {
+			runtime.Gosched()
+		}
 	}
 	return count, nil
 }

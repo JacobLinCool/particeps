@@ -22,24 +22,29 @@ the queued candidate after RC13 and has not yet been published.
   retained commits and pending-input failures still stop recovery; process recovery remains paused
   until the participant explicitly resumes.
 - Limited traffic uses separate bounded flow queues in both directions before
-  paced Layer-3 admission. Previously, waiting for uplink credit stopped TUN reads; sustained
-  transfers filled the kernel queue, lost packets and stalled TCP delivery during retransmission,
-  even when their 60-second average passed the rate check. The former downlink FIFO also let
-  download data delay upload acknowledgements and reduce simultaneous upload throughput.
-  Each direction shares a hard 128-packet / 64 KiB payload limit across 1024 fixed hash
-  buckets, with byte-deficit scheduling. Uplink uses CoDel with a congestion target that
-  accommodates an MTU at low rates and a 100 ms reaction interval, and may discard TCP or UDP
-  packets before admission. Downlink waits for queue capacity instead of discarding queued
-  packets for capacity or sojourn time: losses there induced TCP retransmission backoff inside
-  the local gVisor sender and underfed the download limiter. Downlink producers release their
-  admission lock between packets so a stack batch cannot hold it ahead of another flow's ACK.
-  Classification keys are temporary; no separate flow identities or hashes are recorded or exported;
-  counters still include only admitted packets, including admitted retransmissions; downlink
-  admission requires a successful TUN write. Unlimited
-  profiles use queue backpressure without these drops. Suspension, profile replacement and
-  shutdown retain the existing admission fence, and queued packets use the current profile
-  when delivered. Hash collisions and fragmented or opaque traffic can share a bucket;
-  this does not establish strict per-flow fairness or lossless delivery.
+  paced Layer-3 admission. Previously, waiting for uplink credit stopped TUN reads;
+  sustained transfers could fill the kernel queue and stall TCP delivery even when
+  their average rate passed. A downlink FIFO also let download data delay upload
+  acknowledgements. Each direction now has a shared hard limit of 128 packets and
+  64 KiB across 1024 fixed hash buckets, with byte-deficit scheduling.
+  Uplink uses CoDel and capacity drops. Limited downlink admission never waits for
+  queue capacity on a shared TCP processor: it removes the minimum required tail
+  packets from the largest byte backlog, including the incoming packet in that
+  decision. Its effective byte limit follows 100 ms of configured bandwidth,
+  bounded by one MTU and 64 KiB; the consumer can hold one additional MTU.
+  A completed limited enqueue yields to ready workers after releasing its locks,
+  without waiting for the queue to drain. TCP explicitly uses Reno with SACK-based
+  recovery and leaves RACK disabled; controlled duplex tests exposed repeated
+  timeout/recovery cycles with the pinned stack's RACK mode after initial queue
+  loss. This choice applies to every study profile and does not alter the signed
+  rate settings. Congestion drops and retransmissions remain possible.
+  Classification keys are temporary; flow identities and hashes are not recorded
+  or exported. Counters include only admitted Layer-3 packets, including admitted
+  retransmissions; downlink admission requires a successful TUN write. Unlimited
+  profiles retain FIFO queue backpressure. Suspension, profile replacement and
+  shutdown retain the admission fence, and queued packets use the current profile
+  when delivered. Hash collisions and opaque traffic can share a bucket; strict
+  per-flow fairness and lossless delivery are not guaranteed.
 - WorkManager initializes on demand with its existing default configuration. Its database is no
   longer opened by the eager startup provider, and constructing the action and upload adapters
   does not initialize it. Durable timer, action and upload scheduling still request the same
@@ -53,6 +58,13 @@ the queued candidate after RC13 and has not yet been published.
   measurement even if its aggregate rate passes. A simultaneous upload/download case checks
   actual Android-received download payload under the same fixed 512/512 kbps profile, with
   bounded start synchronization and the original rate bounds in both directions.
+  A focused 64/64 kbps duplex run uses the corresponding signed fixture and the
+  same rate and liveness bounds; the default release suite retains its 512 kbps case.
+- Emulator readiness waits for completed boot before querying ActivityManager and
+  allows the stock SDK image to finish its initial HOME setup within the existing
+  deadline. API 37 cleanup bounds console commands, terminates only the process
+  owned by that runner, preserves the original failure status, and records whether
+  the emulator and temporary AVD were actually removed.
 - Usage-event queries now check Usage Access and the unlocked-user state before and after each
   query, including an empty barrier flush. Lost access fails the collector without advancing its
   successful-query coverage, rather than recording an empty result as successful collection.

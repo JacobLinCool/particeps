@@ -11,7 +11,9 @@ import (
 	tunlog "github.com/xjasonlyu/tun2socks/v2/log"
 	"github.com/xjasonlyu/tun2socks/v2/tunnel"
 	"github.com/xjasonlyu/tun2socks/v2/tunnel/statistic"
+	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 )
 
 const protocolMTU = 1500
@@ -99,7 +101,7 @@ func newEngine(tunFD int, mtu int, protector Protector, listener TerminalListene
 		downlink:      newDirectionLimiter(mtu, clock, waiter),
 		counters:      &aggregateCounters{},
 		suspended:     true,
-		downlinkQueue: newPacketQueue(clock, queueBackpressure),
+		downlinkQueue: newPacketQueue(clock, queueFattestTailDrop),
 	}
 	state.shaped = &shapedTun{
 		ctx:        ctx,
@@ -219,6 +221,13 @@ func (e *engineState) start() (err error) {
 		TransportHandler: forwarder,
 	})
 	if err != nil {
+		e.startFailed()
+		return errNativeStack
+	}
+	// Configure loss recovery before TUN admission or any TCP handshake.
+	// SACK and congestion control retain their independently configured defaults.
+	recovery := tcpip.TCPRecovery(0)
+	if optionErr := networkStack.SetTransportProtocolOption(tcp.ProtocolNumber, &recovery); optionErr != nil {
 		e.startFailed()
 		return errNativeStack
 	}

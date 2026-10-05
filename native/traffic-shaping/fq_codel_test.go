@@ -3,6 +3,7 @@ package trafficshaping
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"math/rand"
 	"reflect"
 	"testing"
@@ -264,35 +265,42 @@ func TestFQLowRateParametersAndProfileReset(t *testing.T) {
 }
 
 func TestFQPoolAndListsRemainBoundedAcrossReuseDropsAndModeChanges(t *testing.T) {
-	q, clock := readyUplinkQueue(true)
-	random := rand.New(rand.NewSource(483901))
-	for step := range 6000 {
-		switch random.Intn(10) {
-		case 0:
-			q.pause()
-			clock.advance(time.Hour)
+	for _, policy := range []queueCongestionPolicy{queueActiveManagement, queueFattestTailDrop} {
+		t.Run(fmt.Sprint(policy), func(t *testing.T) {
+			clock := newFakeClock()
+			q := newPacketQueue(clock, policy)
+			q.apply(queueTestRate(512))
 			q.resume()
-		case 1:
-			if q.limited {
-				q.apply(nil)
-			} else {
-				q.apply(queueTestRate([]uint64{64, 512, 4096}[random.Intn(3)]))
+			random := rand.New(rand.NewSource(483901))
+			for step := range 6000 {
+				switch random.Intn(10) {
+				case 0:
+					q.pause()
+					clock.advance(time.Hour)
+					q.resume()
+				case 1:
+					if q.limited {
+						q.apply(nil)
+					} else {
+						q.apply(queueTestRate([]uint64{64, 512, 4096}[random.Intn(3)]))
+					}
+				case 2, 3, 4:
+					if q.snapshot().queuedPackets > 0 {
+						takeQueuePacket(t, q)
+					}
+				default:
+					size := 64 + random.Intn(1437)
+					if q.limited || q.hasRoomLocked(size) {
+						enqueueFlowPacket(t, q, size, byte(step), uint16(1+random.Intn(2000)))
+					}
+				}
+				clock.advance(time.Duration(random.Intn(200)) * time.Millisecond)
+				assertQueueStructure(t, q)
 			}
-		case 2, 3, 4:
-			if q.snapshot().queuedPackets > 0 {
-				takeQueuePacket(t, q)
-			}
-		default:
-			size := 64 + random.Intn(1437)
-			if q.limited || q.hasRoomLocked(size) {
-				enqueueFlowPacket(t, q, size, byte(step), uint16(1+random.Intn(2000)))
-			}
-		}
-		clock.advance(time.Duration(random.Intn(200)) * time.Millisecond)
-		assertQueueStructure(t, q)
+			q.close(errEngineStopped)
+			assertQueueStructure(t, q)
+		})
 	}
-	q.close(errEngineStopped)
-	assertQueueStructure(t, q)
 }
 
 func assertQueueStructure(t *testing.T, q *packetQueue) {
@@ -316,7 +324,7 @@ func assertQueueStructure(t *testing.T, q *packetQueue) {
 		count++
 		bytesTotal += p.packet.size
 	}
-	if previous != q.globalTail || count != q.stats.queuedPackets || bytesTotal != q.stats.queuedBytes || count > 128 || bytesTotal > 65536 {
+	if previous != q.globalTail || count != q.stats.queuedPackets || bytesTotal != q.stats.queuedBytes || count > 128 || bytesTotal > 65536 || bytesTotal > q.byteLimit {
 		t.Fatal("global occupancy mismatch")
 	}
 	freeCount := 0

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -30,9 +31,15 @@ import (
 )
 
 // A real production stack/FQ and a second pinned TCP stack negotiate their own
-// SACK and ACKs. Every second must retain duplex progress, payload integrity,
-// bounded storage and a lossless downlink. Android rate acceptance is separate.
+// SACK and ACKs. One shared TCP processor must retain duplex progress every
+// second, payload integrity and bounded storage, even under queue congestion.
+// The complete window also retains the Android acceptance floor of 85%.
 func TestControlledColdStartDuplexTCP(t *testing.T) {
+	// TCP sizes its shared dispatcher from GOMAXPROCS when the stack is made.
+	// This test is not parallel: force both connections to share a processor,
+	// then restore the setting only after all stack and transport cleanup.
+	previousProcessors := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(previousProcessors) })
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	start := make(chan struct{})
@@ -250,8 +257,8 @@ func TestControlledColdStartDuplexTCP(t *testing.T) {
 			dq.queuedPackets < 0 || dq.queuedPackets > packetQueueMaxPackets || uq.queuedPackets < 0 || uq.queuedPackets > packetQueueMaxPackets {
 			t.Fatalf("queue exceeded fixed bounds at second %d: up=%+v down=%+v", second, uq, dq)
 		}
-		if dq.capacityDropPackets != 0 || dq.codelDropPackets != 0 {
-			t.Fatalf("controlled stack downlink dropped packets at second %d: %+v", second, dq)
+		if dq.codelDropPackets != 0 {
+			t.Fatalf("controlled stack downlink used CoDel at second %d: %+v", second, dq)
 		}
 		if last.DownloadedUnique <= previous.DownloadedUnique || last.UplinkAccepted <= previous.UplinkAccepted {
 			t.Fatalf("duplex stopped making unique progress in second %d: before=%+v after=%+v", second, previous, last)
@@ -266,8 +273,9 @@ func TestControlledColdStartDuplexTCP(t *testing.T) {
 	if last.PeerSendErrors != 0 || last.EngineSendErrors != 0 {
 		t.Fatal("test bridge or endpoint rejected TCP packets")
 	}
-	if last.DownloadedUnique == 0 || last.UplinkAccepted == 0 {
-		t.Fatal("duplex made no unique progress")
+	const minimumUniqueBytes = 512_000 * 20 / 8 * 85 / 100
+	if last.DownloadedUnique < minimumUniqueBytes || last.UplinkAccepted < minimumUniqueBytes {
+		t.Fatalf("20-second duplex payload fell below 85%% of 512 kbps (%d bytes per direction): %+v", minimumUniqueBytes, last)
 	}
 	if last.DownloadedUnique > last.DownlinkAdmitted {
 		t.Fatal("unique bytes exceeded L3 admission")
@@ -277,7 +285,7 @@ func TestControlledColdStartDuplexTCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Log(string(b))
-	// Uplink remains AQM: retransmit/RTO totals are diagnostics, not a zero-loss oracle.
+	// Congestion drops and retransmit/RTO totals are diagnostics, not a zero-loss oracle.
 }
 
 // Record only which of the two known test connections negotiated SACK. A

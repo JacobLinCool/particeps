@@ -62,11 +62,26 @@ and wake the runtime; it must not call back into the engine.
   protocols and opaque extension headers also use that coarse classification;
   their payload is not parsed. Hash collisions share one FIFO. Classification keys
   are temporary; no separate tuple or hash records are retained or exported.
-- Downlink uses the same FQ scheduler with bounded producer backpressure.
-  It deliberately drops no queued packets for capacity or sojourn time: the
-  local gVisor producer waits for space instead of inducing TCP loss recovery
-  inside the shaper. Lifecycle closure still discards queued traffic, and this
-  policy does not promise lossless delivery through the network.
+- Limited downlink uses the same FQ scheduler with nonblocking capacity
+  admission. On overflow it includes the incoming packet in the byte backlog,
+  then drops one arrival-tail packet from the fattest bucket at a time until
+  both hard bounds hold. Selecting the incoming bucket drops the incoming
+  packet itself. It does not apply CoDel or batch head drops. This keeps the
+  stack's shared TCP processors available to handle other connections; it can
+  still cause TCP loss recovery, and arrival-tail order is not TCP sequence
+  order. No lossless-delivery or contiguous-sequence guarantee is made.
+  Its effective byte admission limit is
+  `min(65536, max(1500, floor(rate_bps * 100 ms / 8)))`: 1500, 6400, and 51200
+  bytes at 64, 512, and 4096 kbps. A profile decrease trims resident fattest
+  tails to the new limit before resuming; unlimited restores 64 KiB. This
+  limits queued serialization delay, not end-to-end latency: the MTU floor
+  plus one consumer-held packet can take 375 ms at 64 kbps. The smaller queue
+  can still discard bursts. After each limited-mode enqueue, the link releases
+  its producer/copy/queue scopes and yields to ready Go goroutines so an
+  immediately runnable consumer can use available token credit. It never
+  sleeps, retries, or waits for capacity. A brief locked mode read avoids this
+  extra scheduling on the unlimited path; a concurrent profile switch can
+  make one scheduling hint stale, without changing forwarding admission.
 - Uplink CoDel's target is the larger of 5 ms and one MTU's serialization time at the
   configured directional rate. The interval retains the 100 ms default independently
   of the target; low-rate targets may exceed this reaction interval. At
@@ -89,6 +104,12 @@ and wake the runtime; it must not call back into the engine.
   and two link workers. Detachment also wakes workers before the stack waits;
   terminal failures close forwarding admission immediately. The packet already
   held by a paced consumer is not preempted by a newly arriving sparse flow.
+
+The stack explicitly selects classic SACK loss recovery (`TCPRecovery=0`)
+with SACK negotiation and Reno congestion control retained. This configuration
+is installed during suspended startup before any TCP handshake; failure to
+apply it fails startup. It does not eliminate queue drops or retransmission
+timeouts, and is not a claim to implement a particular upstream TCP fix.
 
 The direct proxy is intentionally thin: it opens raw TCP/UDP sockets and
 synchronously protects each descriptor. Shaping remains at the Layer-3 boundary,
