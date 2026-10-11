@@ -29,7 +29,7 @@ function trafficStudy(): StudyConfiguration {
 }
 
 describe('complete researcher editors', () => {
-  it('renders all six imported questions and every occurrence without rewriting the study', () => {
+  it('renders all imported questions and every occurrence without rewriting the study', () => {
     const configuration = fiveDay();
     const before = canonicalize(configuration);
     const { body } = render(InterventionEditor, { props: { draft: { configuration } as Draft, m: zhTW, locale: 'zh-TW' } });

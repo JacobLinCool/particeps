@@ -5,10 +5,10 @@
 ## 交付版本
 
 - App：使用 [參與者頁](https://jacoblincool.github.io/particeps/participant/) 提供的正式簽章版 `1.0.0-rc.17`。實際 versionCode、大小與 SHA-256 見 [交付版本表](monday-participant-handoff.md#每位受試者要收到什麼)；簽署研究設定要求最低 versionCode `41`。研究端保留同一份 Release APK、checksum、簽章與匿名下載驗證紀錄。
-- 簽署研究設定：網站的「手機使用與日常活動研究」區塊提供 `.partcfg`，其原檔位於 `web/static/studies/phone-usage-five-day-20261005-r1/`。研究者為「黃貞穎老師團隊」，聯絡方式指向原邀請管道，不列私人電話或 Email。App 使用事件為必要、連續收集；120 小時；每日 gyro 時段與現有限速規則保留。本機 `output/monday-study/study-draft.json` 與 `study.canonical.json` 是研究者工作檔；參與者匯入 `.partcfg`。
+- 簽署研究設定：網站的「手機使用與日常活動研究」區塊提供 `.partcfg`，其原檔位於 `web/static/studies/phone-usage-five-day/`。研究者為「黃貞穎老師團隊」，聯絡方式指向原邀請管道，不列私人電話或 Email。App 使用事件為必要、連續收集；120 小時；每日 gyro 時段與現有限速規則保留。`researcher-tools/studies/phone-usage-five-day.json` 是目前正式研究的可編輯來源；參與者匯入 `.partcfg`。
 - 分析工具：使用包含串流驗證與 `usage-report` 的本次版本。每次處理均保留原始密文、manifest 與 quality summary，不用舊 RC13 分析器。
 
-本次簽署設定於第 3–5 天 17:00 邀請填答相同六題，回顧 12:00–17:00。題目見 [活動問卷](activity-substitution-survey.md)。若研究團隊改變日程，再產生新設定；不要覆寫已發出的設定或 QR。受試者拿到哪些檔案、如何匯入及交回，見 [交付清單](monday-participant-handoff.md)與[中文操作單](participant-start.zh-TW.md)。
+目前簽署設定於第 3–5 天 17:00 邀請填答相同七題，回顧 12:00–17:00，有效期維持六小時。題目見[活動問卷](activity-substitution-survey.md)。更新後仍使用固定 `study.partcfg` 網址；設定內保留版本身分，已入組研究不會自動切換，舊資料依原設定分析。更新方式見[發布流程](study-publication.md)。受試者交付方式見[交付清單](monday-participant-handoff.md)與[中文操作單](participant-start.zh-TW.md)。
 
 ## 正式開始前完成的事
 

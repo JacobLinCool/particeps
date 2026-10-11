@@ -47,6 +47,8 @@ export interface ParticipantCopy {
     lead: string;
     configurationDownload: string;
     guideDownload: string;
+    downloading: string;
+    downloadFailed: string;
     importInstructions: string;
     startInstructions: string;
     deliveryInstructions: string;
@@ -170,7 +172,9 @@ export const en: ParticipantCopy = {
     lead: 'For invited participants using their everyday Android 14 or later phone. No account is needed.',
     configurationDownload: 'Download study file',
     guideDownload: 'Download instructions (Traditional Chinese PDF)',
-    importInstructions: 'After installing the app, download study.partcfg, then open Particeps and choose “Choose a study file”. Select that file and follow the setup screens.',
+    downloading: 'Downloading the current file…',
+    downloadFailed: 'The download did not finish. Check your connection and download again; do not use a previously saved study file.',
+    importInstructions: 'Each time you set up or reinstall the app, download study.partcfg again from this page. Open Particeps, choose “Choose a study file”, and select the file you just downloaded, not an older saved copy. Reinstalling the app alone does not update an imported study.',
     startInstructions: 'Wait for the research team’s instruction before pressing Start study. Contact the team through your invitation channel if you need help.',
     deliveryInstructions: 'This study does not upload automatically. After export succeeds, return the original .partexp file using the method the research team provides.'
   },
@@ -310,7 +314,9 @@ export const zhTW: ParticipantCopy = {
     lead: '提供給已受邀的參與者，請使用日常使用的 Android 14 以上手機。不需要建立帳號。',
     configurationDownload: '下載研究設定檔',
     guideDownload: '下載繁中操作說明 PDF',
-    importInstructions: '安裝 App 後，下載 study.partcfg，再開啟 Particeps，按「選擇研究設定檔」，選取剛下載的檔案並依序完成設定畫面。',
+    downloading: '正在下載目前的檔案…',
+    downloadFailed: '下載未完成，請確認網路後重新下載，不要改用先前存下的研究設定檔。',
+    importInstructions: '每次設定或重新安裝 App，都請從本頁重新下載 study.partcfg。開啟 Particeps，按「選擇研究設定檔」，選取剛下載的檔案，不要選以前存下的舊檔。只重新安裝 App，不會自動更新已匯入的研究。',
     startInstructions: '請等研究團隊通知後，再按「開始研究」。遇到問題，請透過原邀請管道聯絡研究團隊。',
     deliveryInstructions: '這次研究不會自動上傳。匯出成功後，還需要依研究團隊指定的方式交回原始 .partexp 檔案。'
   },

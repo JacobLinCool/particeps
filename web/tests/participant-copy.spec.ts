@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import {
   ANDROID_APK_URL, ANDROID_RELEASE_VERSION, GLANCE,
@@ -7,6 +6,7 @@ import {
 } from '$lib/participant/content';
 import { en, zhTW } from '$lib/participant/copy';
 import { decodeEnvelope } from '$lib/particeps/envelope';
+import { fingerprint, verify } from '$lib/particeps/crypto';
 
 describe('participant page structure', () => {
   it('links only to the retained overview sections', () => {
@@ -39,16 +39,22 @@ describe('participant page structure', () => {
 });
 
 describe('invited participant study files', () => {
-  it('serves the frozen signed configuration and reviewed PDF without researcher-only files', () => {
+  it('serves the latest signed study at stable paths without researcher-only files', () => {
+    expect(STUDY_CONFIGURATION_PATH).toBe('/studies/phone-usage-five-day/study.partcfg');
+    expect(STUDY_GUIDE_PATH).toBe('/studies/phone-usage-five-day/participant-start.zh-TW.pdf');
     const configurationBytes = readFileSync(new URL(`../static${STUDY_CONFIGURATION_PATH}`, import.meta.url));
     const guideBytes = readFileSync(new URL(`../static${STUDY_GUIDE_PATH}`, import.meta.url));
-    expect(createHash('sha256').update(configurationBytes).digest('hex')).toBe(
-      'cafbdbd47dc26d44d0604a5e7c70ca48977af0cc1b35c2b69a556ac18321ff4e'
-    );
-    expect(createHash('sha256').update(guideBytes).digest('hex')).toBe(
-      '7830cef05e1ab6fa7eb6dd22234181e711d6a41157189e4ff7f1ad3ec55f72c4'
-    );
-    const study = JSON.parse(new TextDecoder().decode(decodeEnvelope(configurationBytes).configurationBytes));
+    const envelope = decodeEnvelope(configurationBytes);
+    const study = JSON.parse(new TextDecoder().decode(envelope.configurationBytes));
+    const source = JSON.parse(readFileSync(new URL('../../researcher-tools/studies/phone-usage-five-day.json', import.meta.url), 'utf8'));
+    expect(study).toEqual(source);
+    expect(fingerprint(study.signer.public_key)).toBe('3E17 CD8A 4AD2 198D 87B7 81EA 9EBD 3201');
+    expect(verify(envelope.configurationBytes, envelope.signature, study.signer.public_key)).toBe(true);
+    expect(study.surveys[0].questions).toHaveLength(7);
+    expect(study.surveys[0].questions[3].options.map((option: { id: string }) => option.id)).toEqual(['yes', 'none', 'unsure']);
+    expect(study.surveys[0].questions[6].id).toBe('perceived-daily-impact');
+    expect(guideBytes.subarray(0, 5).toString()).toBe('%PDF-');
+    expect(guideBytes.length).toBeGreaterThan(10_000);
     expect(study.title).toBe(zhTW.study.title);
     expect(en.study.team).toContain(study.researcher.name);
     expect(zhTW.study.team).toContain(study.researcher.name);

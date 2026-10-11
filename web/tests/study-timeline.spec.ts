@@ -18,7 +18,7 @@ function traffic(configuration: StudyConfiguration): ResourceBindingAutomation {
 }
 
 describe('researcher reference study timeline', () => {
-  it.each([3, 4, 5])('shows exact day %i treatment and all six survey questions at 17:00', (studyDay) => {
+  it.each([3, 4, 5])('shows exact day %i treatment and all seven survey questions at 17:00', (studyDay) => {
     const summary = summarizeStudyTimeline(fixture(), { studyDay, timeZone: 'Asia/Taipei' });
     const lane = summary.lanes.find((item) => item.resourceId === 'traffic-shaping.v1')!;
     expect(lane.detail).toBe('All apps');
@@ -26,7 +26,7 @@ describe('researcher reference study timeline', () => {
       ['00:00', '12:00', ['baseline']], ['12:00', '17:00', ['limited-500']], ['17:00', '24:00', ['baseline']]
     ]);
     expect(lane.segments[1].detail).toContain('upload 500 kbps, download 500 kbps');
-    expect(summary.events).toMatchObject([{ automationId: `activities-day-${studyDay}`, localTime: '17:00', questionCount: 6, certainty: 'scheduled' }]);
+    expect(summary.events).toMatchObject([{ automationId: `activities-day-${studyDay}`, localTime: '17:00', questionCount: 7, certainty: 'scheduled' }]);
     expect(summary.events).toHaveLength(1);
     expect(summary.rules).toHaveLength(fixture().automations.length);
   });
@@ -146,9 +146,9 @@ describe('researcher reference study timeline', () => {
   it('returns serializable localized content without mutating configuration', () => {
     const configuration = fixture(); const before = JSON.stringify(configuration);
     const result = summarizeStudyTimeline(configuration, { studyDay: 3, locale: 'zh-TW' });
-    expect(JSON.parse(JSON.stringify(result)).events[0].questionCount).toBe(6);
+    expect(JSON.parse(JSON.stringify(result)).events[0].questionCount).toBe(7);
     expect(result.lanes.find((lane) => lane.kind === 'actuator')!.detail).toBe('所有 App');
-    expect(result.rules[0].summary).toContain('6 題');
+    expect(result.rules[0].summary).toContain('7 題');
     expect(JSON.stringify(configuration)).toBe(before);
   });
 });

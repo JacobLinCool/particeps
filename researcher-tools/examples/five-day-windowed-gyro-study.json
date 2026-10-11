@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment_id": "five-day-speed-study",
-  "configuration_id": "five-day-windowed-gyro-activities-v3",
+  "configuration_id": "five-day-windowed-gyro-activities-v4",
   "assigned_participant_id": null,
   "issued_at": "2026-09-06T00:00:00Z",
   "expires_at": "2027-09-06T00:00:00Z",
@@ -15,7 +15,7 @@
   "purpose": "記錄日常手機使用與活動情形。此檔使用公開測試金鑰，正式研究前須替換。",
   "duration_hours": 120,
   "consent": {
-    "document_version": "five-day-demo-3",
+    "document_version": "five-day-demo-4",
     "summary": "本研究記錄螢幕電源與鎖定狀態、陀螺儀、網路連線與 VPN 狀態、傳輸量、App 活動及時區。研究可能調整所有 App 的傳輸速度，並邀請您填寫問卷，回顧手機以外的活動、其他裝置使用及活動安排變化。您可暫停或退出；資料加密儲存於裝置，匯出後交予研究團隊。此公開測試範本不得直接用於真實參與者。"
   },
   "collectors": [
@@ -320,43 +320,29 @@
           "type": "single_choice",
           "id": "device-substitution",
           "prompt": {
-            "default": "在上述 12:00–17:00 時段，您使用其他裝置的情形最接近哪一項？「轉移」指把原本正在或打算在這支手機上做的事，改到其他裝置上做。",
+            "default": "在上述 12:00–17:00 時段，您是否曾將原本正在或打算在這支手機上進行的活動，改到其他裝置上進行？（包含玩遊戲）",
             "translations": {}
           },
           "required": true,
           "options": [
             {
-              "id": "no-other-device",
+              "id": "yes",
               "label": {
-                "default": "沒有使用其他裝置",
+                "default": "是，至少一次",
                 "translations": {}
               }
             },
             {
-              "id": "used-no-substitution",
+              "id": "none",
               "label": {
-                "default": "有使用其他裝置，但沒有上述轉移",
+                "default": "否",
                 "translations": {}
               }
             },
             {
-              "id": "used-with-substitution",
+              "id": "unsure",
               "label": {
-                "default": "有使用其他裝置，且至少發生過一次上述轉移",
-                "translations": {}
-              }
-            },
-            {
-              "id": "used-substitution-uncertain",
-              "label": {
-                "default": "有使用其他裝置，但不確定是否有上述轉移",
-                "translations": {}
-              }
-            },
-            {
-              "id": "device-use-uncertain",
-              "label": {
-                "default": "不記得是否使用過其他裝置",
+                "default": "不記得或不確定",
                 "translations": {}
               }
             }
@@ -403,6 +389,59 @@
           },
           "required": false,
           "maximum_length": 1000
+        },
+        {
+          "type": "single_choice",
+          "id": "perceived-daily-impact",
+          "prompt": {
+            "default": "您覺得上述 12:00–17:00 時段的手機網路速度，對您這段時間的日常活動影響程度如何？",
+            "translations": {}
+          },
+          "required": true,
+          "options": [
+            {
+              "id": "very-large",
+              "label": {
+                "default": "非常大",
+                "translations": {}
+              }
+            },
+            {
+              "id": "large",
+              "label": {
+                "default": "大",
+                "translations": {}
+              }
+            },
+            {
+              "id": "moderate",
+              "label": {
+                "default": "中等",
+                "translations": {}
+              }
+            },
+            {
+              "id": "small",
+              "label": {
+                "default": "小",
+                "translations": {}
+              }
+            },
+            {
+              "id": "none",
+              "label": {
+                "default": "完全沒有影響",
+                "translations": {}
+              }
+            },
+            {
+              "id": "unsure",
+              "label": {
+                "default": "不確定",
+                "translations": {}
+              }
+            }
+          ]
         }
       ]
     }

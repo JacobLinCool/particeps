@@ -83,7 +83,7 @@ try {
   const cap = page.getByTestId('overview-lane-traffic-shaping.v1').getByRole('button', { name: /12:00–17:00.*limited-500/ });
   assert(await cap.isVisible());
   assert.match(await cap.getAttribute('class'), /band--capped/, 'an actual cap receives a distinct fill');
-  const event = page.getByTestId('overview-chart').getByRole('button', { name: /^17:00,.*6 questions/ });
+  const event = page.getByTestId('overview-chart').getByRole('button', { name: /^17:00,.*7 questions/ });
   assert(await event.isVisible());
   const participant = page.getByTestId('participant-preview');
   for (const question of fixture.surveys[0].questions) assert(await participant.getByText(question.prompt.default, { exact: true }).isVisible());
@@ -91,7 +91,7 @@ try {
   await event.click();
   await page.getByTestId('overview-selection').getByRole('button', { name: 'Edit setting', exact: true }).click();
   assert(await page.locator('details[data-issue-host="automations.0"]').evaluate(element => element.open));
-  assert.equal(await page.locator('details.question').count(), 6);
+  assert.equal(await page.locator('details.question').count(), 7);
   const availability = page.locator('[data-testid="field-automations.0.availability_seconds"] input');
   await availability.fill('1.5');
   const unfinished = await save('unfinished.partdraft');
@@ -185,12 +185,12 @@ try {
   writeFileSync(join(output, 'rules-layout.json'), JSON.stringify(ruleGeometries, null, 2));
   assert.deepEqual(errors, []);
   writeFileSync(join(output, 'result.json'), JSON.stringify({ status: 'pass', checks: [
-    'import preserves public keys', 'all six questions represented', 'day 3 cap and survey timeline',
+    'import preserves public keys', 'all seven questions represented', 'day 3 cap and survey timeline',
     'timeline edit opens occurrence', 'fractional unfinished draft round trip', 'matching signing key',
     'review gates signing', 'export private key optional when signing', 'mobile overflow absent',
     'authenticated bundle read and honest commit coverage', 'trace edits clear stale simulator output',
     'closed and expanded rules never overlap adjacent content', 'keyboard rule disclosure',
     'long rule IDs wrap in English and Traditional Chinese across desktop/mobile and light/dark'
   ], screenshots: ['desktop.png', 'mobile.png', 'overview.png', ...ruleScreenshots] }, null, 2));
-  console.log(`PASS researcher improvements: imported keys, six questions, timeline, draft round trip, review, mobile and authenticated bundle.\nArtifacts: ${output}`);
+  console.log(`PASS researcher improvements: imported keys, seven questions, timeline, draft round trip, review, mobile and authenticated bundle.\nArtifacts: ${output}`);
 } finally { await browser.close(); }

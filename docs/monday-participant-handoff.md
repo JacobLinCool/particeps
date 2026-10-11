@@ -9,23 +9,23 @@
 3. `participant-start.zh-TW.pdf`：手機可閱讀的中文操作單，包含可信管道核對用的簽章指紋。
 4. 團隊的開始通知與資料交回通知：指定哪個時段按「開始研究」、每天何時交回、交到哪裡，以及聯絡與報酬領取方式。
 
-本機交付包存放於 `output/release-rc17-20261005/participant-pack/`。下表為已驗證的交付檔案，須與網站下載檔及 Release checksum 相符。可由團隊經既有邀請管道分別傳送三個檔案；若先將整包下載到研究者電腦，請解開後分別提供，避免要求受試者先在手機解壓縮。
+請以網站的固定入口提供最新設定與操作單，不要轉傳先前存下的交付包。RC17 Release 中日期為 20261005 的 ZIP 保留原六題設定，只供歷史核對。
 
-| 檔案 | 版本／用途 | 大小（bytes） | SHA-256 |
-| --- | --- | ---: | --- |
-| `particeps-v1.0.0-rc.17.apk` | `1.0.0-rc.17`；versionCode `44` | 36178784 | `89be1d00421980c53ce86742c230c6e3edba9a386e1dfbf36f02405f4f272caa` |
-| `study.partcfg` | 正式研究設定 | 10716 | `cafbdbd47dc26d44d0604a5e7c70ca48977af0cc1b35c2b69a556ac18321ff4e` |
-| `participant-start.zh-TW.pdf` | 繁中操作單 | 237207 | `7830cef05e1ab6fa7eb6dd22234181e711d6a41157189e4ff7f1ad3ec55f72c4` |
+| 檔案 | 取得方式 |
+| --- | --- |
+| App | [RC17 APK](https://github.com/JacobLinCool/particeps/releases/download/v1.0.0-rc.17/particeps-v1.0.0-rc.17.apk)，versionCode 44 |
+| `study.partcfg` | [最新簽署研究設定](https://jacoblincool.github.io/particeps/studies/phone-usage-five-day/study.partcfg) |
+| `participant-start.zh-TW.pdf` | [最新操作單](https://jacoblincool.github.io/particeps/studies/phone-usage-five-day/participant-start.zh-TW.pdf) |
 
-本次簽章設定為 120 小時；App 使用紀錄為必要來源；前兩天不限速，第 3–5 天 12–17 時雙向各 500 kbps；問卷於第 3–5 天邀請。更改任何已簽署內容，必須重新簽署，更新檔案摘要及對應 QR；沿用同一簽署金鑰時，簽章指紋保持相同。不能覆寫已交付的檔案冒充原版本。
+目前七題設定為 120 小時；App 使用紀錄為必要來源；前兩天不限速，第 3–5 天 12–17 時雙向各 500 kbps；問卷於第 3–5 天 17:00 邀請。更改已簽署內容，必須重新簽署並保留內部版本識別；公開網址及檔名維持固定。沿用同一簽署金鑰時，簽章指紋保持相同。
 
 研究團隊不列私人電話或 Email。設定中的聯絡方式為「請透過邀請您參與研究的管道聯絡研究團隊。」因此邀請管道必須有人值守，受試者遇到安裝或回收問題時才能得到處理。
 
 ## 發布後的下載與設定入口
 
-參與者使用 [公開參與者頁](https://jacoblincool.github.io/particeps/participant/) 的「下載 App」取得 RC17，並在「黃貞穎老師團隊：手機使用與日常活動研究」區塊取得研究設定檔與中文 PDF。網站下載設定檔時建議檔名為 `study.partcfg`；若瀏覽器保留摘要檔名，仍可在 App 的檔案選擇器中選取該 `.partcfg`。
+參與者使用 [公開參與者頁](https://jacoblincool.github.io/particeps/participant/) 的「下載 App」取得 RC17，並在「黃貞穎老師團隊：手機使用與日常活動研究」區塊取得研究設定檔與中文 PDF。設定檔的網址與下載檔名固定為 `study.partcfg`；每次設定或重新安裝均須重新下載並匯入。重新安裝 APK 不會自動替換研究設定。
 
-發布維護者必須先驗證 [RC17 Release](https://github.com/JacobLinCool/particeps/releases/tag/v1.0.0-rc.17) 的 APK 可下載、簽章與版本正確，再發布網站新按鈕。設定檔與 PDF 固定存放於 `web/static/studies/phone-usage-five-day-20261005-r1/`；檔名包含摘要的設定檔不得覆寫。更新研究規則時另發新版本，並同步操作單。
+設定與操作單存放於 `web/static/studies/phone-usage-five-day/`。更新與發布方式見[發布流程](study-publication.md)；每次發布後都須下載網站上的實際檔案驗證。
 
 團隊也可直接傳送 APK、`study.partcfg` 與 PDF；受試者從 Particeps 的「選擇研究設定檔」載入，不需要帳號或 QR。既有兩份公開 QR 是內部試跑設定，其中一份把 App 使用資料設為可選；不要將舊 QR、舊 `join.txt` 或舊 `.partcfg` 交給正式受試者。
 
@@ -55,7 +55,7 @@ Android 14 以上只是最低條件；本設定還要求陀螺儀、Usage Access
 
 ## 發送前最後核對
 
-- APK 與 `.partcfg` 摘要符合上方交付版本表及回收端保留的 manifest；簽章設定要求最低 versionCode 41。
+- APK 符合 RC17 Release checksum，網站 `.partcfg` 通過簽章驗證且與正式研究來源一致；簽章設定要求最低 versionCode 41。
 - 受試者操作單與這次設定使用相同的研究團隊名稱及 signer fingerprint。
 - 安裝檔由實際邀請管道可下載；至少一部實體手機已走過下載、安裝、檔案匯入、授權、收集、匯出及研究者分析。
 - 團隊在入組前通知開始時段、每日收件時間／位置、聯絡值守與報酬領取方式。

@@ -94,8 +94,8 @@ export const ANDROID_APK_URL = `${REPOSITORY}/releases/download/${ANDROID_RELEAS
 
 export const PARTICIPANT_GUIDE = `${REPOSITORY}/blob/main/docs/participant-guide.md`;
 
-const STUDY_ASSET_DIRECTORY = '/studies/phone-usage-five-day-20261005-r1';
+const STUDY_ASSET_DIRECTORY = '/studies/phone-usage-five-day';
 
-export const STUDY_CONFIGURATION_PATH = `${STUDY_ASSET_DIRECTORY}/cafbdbd47dc26d44d0604a5e7c70ca48977af0cc1b35c2b69a556ac18321ff4e.partcfg`;
+export const STUDY_CONFIGURATION_PATH = `${STUDY_ASSET_DIRECTORY}/study.partcfg`;
 
 export const STUDY_GUIDE_PATH = `${STUDY_ASSET_DIRECTORY}/participant-start.zh-TW.pdf`;
