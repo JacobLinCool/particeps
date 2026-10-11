@@ -1,10 +1,34 @@
 <script lang="ts">
+  import QRCode from 'qrcode';
+  import { studyJoinLink } from './study-qr';
   import { base } from '$app/paths';
   import Icon from '$lib/ui/Icon.svelte';
   import Section from '$lib/ui/Section.svelte';
   import { STUDY_CONFIGURATION_PATH, STUDY_GUIDE_PATH } from './content';
   import { m } from './messages.svelte';
   import { fetchStudyFile } from './study-download';
+
+  let qrImage = $state('');
+  let qrLoading = $state(false);
+  let qrFailed = $state(false);
+
+  async function toggleQr() {
+    if (qrImage) { qrImage = ''; return; }
+    qrLoading = true;
+    qrFailed = false;
+    try {
+      const url = new URL(`${base}${STUDY_CONFIGURATION_PATH}`, window.location.origin).href;
+      const bytes = new Uint8Array(await (await fetchStudyFile(url)).arrayBuffer());
+      qrImage = await QRCode.toDataURL(studyJoinLink(url, bytes), {
+        width: 360, margin: 4, errorCorrectionLevel: 'M',
+        color: { dark: '#000000', light: '#ffffff' }
+      });
+    } catch {
+      qrFailed = true;
+    } finally {
+      qrLoading = false;
+    }
+  }
 
   let downloading = $state(false);
   let downloadFailed = $state(false);
@@ -57,6 +81,17 @@
       <Icon name="document" size={18} />
       <span>{m('study.guideDownload')}</span>
     </a>
+    <button class="btn btn--quiet" type="button" data-testid="show-study-qr"
+      aria-expanded={Boolean(qrImage)} aria-controls="study-qr" disabled={qrLoading}
+      onclick={toggleQr}>{qrImage ? m('study.hideQr') : m('study.showQr')}</button>
+  </div>
+  <div id="study-qr">
+    {#if qrLoading}<p class="fine" role="status">{m('study.qrLoading')}</p>{/if}
+    {#if qrFailed}<p class="fine" role="alert">{m('study.qrFailed')}</p>{/if}
+    {#if qrImage}
+      <img class="study-files__qr" src={qrImage} alt={m('study.showQr')} width="360" height="360" />
+      <p class="fine">{m('study.qrInstructions')}</p>
+    {/if}
   </div>
   {#if downloading}
     <p class="fine" role="status">{m('study.downloading')}</p>
@@ -66,8 +101,6 @@
   {/if}
   <div class="stack stack--tight">
     <p class="fine">{m('study.importInstructions')}</p>
-    <p class="fine">{m('study.startInstructions')}</p>
-    <p class="fine">{m('study.deliveryInstructions')}</p>
   </div>
 </Section>
 
@@ -79,7 +112,9 @@
     margin-block: var(--sp-5);
   }
 
-  .study-files__downloads a {
+  .study-files__qr { display: block; max-inline-size: 100%; height: auto; margin-block-end: var(--sp-3); }
+
+  .study-files__downloads a, .study-files__downloads button {
     white-space: normal;
     text-align: start;
     max-inline-size: 100%;

@@ -50,8 +50,11 @@ export interface ParticipantCopy {
     downloading: string;
     downloadFailed: string;
     importInstructions: string;
-    startInstructions: string;
-    deliveryInstructions: string;
+    showQr: string;
+    hideQr: string;
+    qrInstructions: string;
+    qrLoading: string;
+    qrFailed: string;
   };
 
   setup: {
@@ -169,14 +172,17 @@ export const en: ParticipantCopy = {
   study: {
     title: '手機使用與日常活動研究',
     team: 'Research team: 黃貞穎老師團隊',
-    lead: 'For invited participants using their everyday Android 14 or later phone. No account is needed.',
+    lead: 'For invited participants using their everyday Android 14 or later phone.',
     configurationDownload: 'Download study file',
     guideDownload: 'Download instructions (Traditional Chinese PDF)',
     downloading: 'Downloading the current file…',
     downloadFailed: 'The download did not finish. Check your connection and download again; do not use a previously saved study file.',
+    showQr: 'Show QR code',
+    hideQr: 'Hide QR code',
+    qrInstructions: 'In Particeps on your phone, choose “Scan a study QR code” and scan this code. If viewing this page on the same phone, use the study file download instead. Open this code again after a study update.',
+    qrLoading: 'Preparing the current study QR code…',
+    qrFailed: 'Could not prepare the QR code. Check your connection and try again.',
     importInstructions: 'Each time you set up or reinstall the app, download study.partcfg again from this page. Open Particeps, choose “Choose a study file”, and select the file you just downloaded, not an older saved copy. Reinstalling the app alone does not update an imported study.',
-    startInstructions: 'Wait for the research team’s instruction before pressing Start study. Contact the team through your invitation channel if you need help.',
-    deliveryInstructions: 'This study does not upload automatically. After export succeeds, return the original .partexp file using the method the research team provides.'
   },
 
   glance: {
@@ -311,14 +317,17 @@ export const zhTW: ParticipantCopy = {
   study: {
     title: '手機使用與日常活動研究',
     team: '研究團隊：黃貞穎老師團隊',
-    lead: '提供給已受邀的參與者，請使用日常使用的 Android 14 以上手機。不需要建立帳號。',
+    lead: '提供給已受邀的參與者，請使用日常使用的 Android 14 以上手機。',
     configurationDownload: '下載研究設定檔',
     guideDownload: '下載繁中操作說明 PDF',
     downloading: '正在下載目前的檔案…',
     downloadFailed: '下載未完成，請確認網路後重新下載，不要改用先前存下的研究設定檔。',
+    showQr: '顯示 QR code',
+    hideQr: '收起 QR code',
+    qrInstructions: '請在手機的 Particeps 按「掃描研究 QR code」，掃描此代碼。若正在同一支手機瀏覽本頁，請改用下載研究設定檔。研究更新後，請重新開啟此代碼。',
+    qrLoading: '正在準備目前研究的 QR code…',
+    qrFailed: '無法產生 QR code，請確認網路後重試。',
     importInstructions: '每次設定或重新安裝 App，都請從本頁重新下載 study.partcfg。開啟 Particeps，按「選擇研究設定檔」，選取剛下載的檔案，不要選以前存下的舊檔。只重新安裝 App，不會自動更新已匯入的研究。',
-    startInstructions: '請等研究團隊通知後，再按「開始研究」。遇到問題，請透過原邀請管道聯絡研究團隊。',
-    deliveryInstructions: '這次研究不會自動上傳。匯出成功後，還需要依研究團隊指定的方式交回原始 .partexp 檔案。'
   },
 
   glance: {

@@ -66,13 +66,10 @@ describe('invited participant study files', () => {
     ].sort());
   });
 
-  it('explains file import and manual return without disclosing the study schedule', () => {
+  it('explains file import without disclosing the study schedule', () => {
     expect(en.study.importInstructions).toContain('Choose a study file');
     expect(zhTW.study.importInstructions).toContain('選擇研究設定檔');
-    expect(en.study.deliveryInstructions).toContain('does not upload automatically');
-    expect(zhTW.study.deliveryInstructions).toContain('不會自動上傳');
     for (const copy of [en.study, zhTW.study]) {
-      expect(copy.deliveryInstructions).toContain('.partexp');
       expect(Object.values(copy).join(' ')).not.toMatch(/500|12[:：]00|17[:：]00|第\s*3|day\s*3|limited-500|baseline|kbps/i);
     }
   });
