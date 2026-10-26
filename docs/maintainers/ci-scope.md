@@ -33,6 +33,10 @@ publication remains blocked by it; manual dispatch provides earlier device feedb
 - The registry tool tests are discovered once, without a separate invocation of the same module.
 - Device lanes no longer wait for the host JVM job. Signed APK construction no longer waits for
   device tests; only publication waits. Only the publisher has repository write permission.
+- API 34 builds its test APKs in a separate step before starting the emulator. A failed build
+  stops the job immediately: the emulator action's pre-launch hook previously continued after
+  a dependency download failure, wasting about ten minutes before missing fixture APKs failed
+  harness setup. API 37's runner already stops when its prebuild fails.
 - The standard Gradle `test` task already selects every required JVM/debug test with the pinned
   plugins. Removing the extra `testDebugUnitTest` argument simplifies the command; Gradle already
   deduplicated those tasks, so this is **not** a claim of fewer JVM test executions.
@@ -52,6 +56,10 @@ Ten tool tests were deleted because they asserted source spelling or frozen hist
   manifest and provenance tests remain. A redundant source-text assertion in the certificate
   anchor test was also removed while retaining validation of the anchor itself.
 
+One Web test was also removed because it repeated the release-version
+constant, its constructed URL, and two button labels without rendering the button or checking the
+asset. Release verification checks the downloadable APK and the deployed participant link instead.
+
 The retained tool suite contains 193 tests. Tests that execute code with fake ADB/processes or
 temporary fixtures are retained: they verify outcomes such as rejecting a crash despite a success
 marker, preserving an unknown operation outcome, or refusing damaged APK evidence.
@@ -63,7 +71,9 @@ spent 14m09s in the host job, followed by 20m32s on API 34 and 24m36s on API 37.
 step took 10m13s; three additional Gradle invocations took another 45 seconds. API 37 failed at a
 reboot-control ADB timeout, so this is a latency baseline, not a passing release result.
 
-The new PR omits the two device jobs and release build. Actual post-change duration must be read
-from its Actions run; local cache timings do not predict hosted-runner performance. Device
-qualification is intentionally retained for the release, and no test deadlines or throughput
-thresholds were relaxed by this cleanup.
+After cleanup, [PR run 40372237192](https://github.com/JacobLinCool/particeps/actions/runs/40372237192)
+passed in 6m59s for the host job. Its main Gradle step took 3m03s, compared with 10m13s before.
+The complete PR feedback path fell from about 39 minutes to about 7 minutes because the two device
+jobs now run at release/manual dispatch. These are observations from individual runs with different
+runner/cache conditions, not a controlled performance benchmark. No device deadlines or throughput
+thresholds were relaxed.

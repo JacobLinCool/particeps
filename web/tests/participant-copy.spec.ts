@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import {
-  ANDROID_APK_URL, ANDROID_RELEASE_VERSION, GLANCE,
+  GLANCE,
   STUDY_CONFIGURATION_PATH, STUDY_GUIDE_PATH
 } from '$lib/participant/content';
 import { en, zhTW } from '$lib/participant/copy';
@@ -15,15 +15,6 @@ describe('participant page structure', () => {
     expect('controls' in en).toBe(false);
     expect('fingerprint' in zhTW).toBe(false);
     expect('controls' in zhTW).toBe(false);
-  });
-
-  it('links the selected Android release from the hero in both locales', () => {
-    expect(ANDROID_RELEASE_VERSION).toBe('v1.0.0-rc.17');
-    expect(ANDROID_APK_URL).toBe(
-      'https://github.com/JacobLinCool/particeps/releases/download/v1.0.0-rc.17/particeps-v1.0.0-rc.17.apk'
-    );
-    expect(en.hero.download).toBe('Download App');
-    expect(zhTW.hero.download).toBe('下載 App');
   });
 
   it('keeps public source tiles independent of signed collector profiles', () => {
