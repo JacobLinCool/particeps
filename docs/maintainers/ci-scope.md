@@ -88,6 +88,12 @@ reboot proof still checks safety pause, its notification, stopped data admission
 identity and current-boot crash/ANR/death events. A six-second readiness fixture fails with the
 previous client and succeeds with this change; a reply beyond the shared deadline still fails.
 
+The [corrected manual workflow](https://github.com/JacobLinCool/particeps/actions/runs/40378130745)
+passed its host, API 34 and API 37 jobs. API 37 completed all 14 host scenarios with zero failures
+or skips and no quarantine. Its reboot proof completed in 19.89 seconds within the unchanged
+105-second limit, verifying one main-process start, stable boot/process identity, the recovery
+notification and two safety-paused observations with no advancing data count.
+
 ## Timing evidence
 
 Before this change, [PR run 40359380353, attempt 1](https://github.com/JacobLinCool/particeps/actions/runs/40359380353/attempts/1)
@@ -98,7 +104,8 @@ reboot-control ADB timeout, so this is a latency baseline, not a passing release
 After cleanup, [PR run 40372237192](https://github.com/JacobLinCool/particeps/actions/runs/40372237192)
 passed in 6m59s for the host job. Its main Gradle step took 3m03s, compared with 10m13s before.
 The [follow-up PR run 40377990690](https://github.com/JacobLinCool/particeps/actions/runs/40377990690)
-took 12m09s in the host job and 8m25s in its main Gradle step. The observed PR feedback path fell
+took 12m09s in the host job and 8m25s in its main Gradle step. The [final test-cleanup PR run](https://github.com/JacobLinCool/particeps/actions/runs/40381689583)
+took 11m37s and 8m20s respectively. The observed PR feedback path fell
 from about 39 minutes to about 7–13 minutes because the two device jobs now run at release/manual
 dispatch. These are observations from individual runs with different runner/cache conditions,
 not a controlled performance benchmark or a fixed duration guarantee. Overall device qualification
