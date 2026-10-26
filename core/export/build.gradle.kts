@@ -8,6 +8,9 @@ java {
 }
 
 kotlin {
+    sourceSets.test {
+        kotlin.srcDir(rootProject.file("tools/conformance/kotlin"))
+    }
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
         allWarningsAsErrors = true
@@ -28,6 +31,10 @@ dependencies {
 
 val kotlinExportInteropDirectory = providers.environmentVariable("PARTICEPS_KOTLIN_EXPORT_INTEROP_DIR")
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    systemProperty("particeps.repository.root", rootProject.projectDir.absolutePath)
+    inputs.dir(rootProject.file("protocol/v1"))
+        .withPropertyName("protocolConformanceVectors")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     if (kotlinExportInteropDirectory.isPresent) {
         inputs.property("particepsKotlinExportInteropDirectory", kotlinExportInteropDirectory)
         outputs.dir(kotlinExportInteropDirectory)

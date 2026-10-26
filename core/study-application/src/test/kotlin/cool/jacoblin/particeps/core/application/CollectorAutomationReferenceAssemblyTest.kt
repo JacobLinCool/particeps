@@ -39,6 +39,7 @@ import cool.jacoblin.particeps.core.model.RuntimeDocument
 import cool.jacoblin.particeps.core.model.StorageUsage
 import cool.jacoblin.particeps.core.model.StudyReadSnapshot
 import cool.jacoblin.particeps.core.model.StudyStore
+import cool.jacoblin.particeps.core.model.StorageRecoveryProgress
 import cool.jacoblin.particeps.core.protocol.VerifiedConfiguration
 import cool.jacoblin.particeps.core.resource.ResourceKey
 import cool.jacoblin.particeps.core.resource.ResourceKind
@@ -267,7 +268,10 @@ class CollectorAutomationReferenceAssemblyTest {
         private var runtime: RuntimeDocument? = null
         private var pending: PendingEngineInput? = null
 
-        override suspend fun loadRuntime(observeRetained: (EngineCommit) -> Unit): RuntimeDocument? = runtime
+        override suspend fun loadRuntime(
+            observeRetained: (EngineCommit) -> Unit,
+            onProgress: (StorageRecoveryProgress) -> Unit,
+        ): RuntimeDocument? = runtime
         override suspend fun initialize(runtime: RuntimeDocument) {
             this.runtime = runtime
         }

@@ -4,6 +4,7 @@ import cool.jacoblin.particeps.core.application.ParticipantDataCategorySummary
 import cool.jacoblin.particeps.core.application.ParticipantRuntimeStatus
 import cool.jacoblin.particeps.core.application.ParticipantStudySummary
 import cool.jacoblin.particeps.core.application.StartupStage
+import cool.jacoblin.particeps.core.application.StartupProgress
 import cool.jacoblin.particeps.core.application.StudyAccessStatus
 import cool.jacoblin.particeps.core.application.StudyRecoveryStatus
 import cool.jacoblin.particeps.core.application.StudySessionSnapshot
@@ -104,9 +105,9 @@ class StudyUiStateSharingTest {
         val screen = backgroundScope.launch { pipeline.state.collect {} }
         runCurrent()
 
-        pipeline.snapshots.value = StudySessionSnapshot(startupStage = StartupStage.VERIFYING_STORAGE)
+        pipeline.snapshots.value = StudySessionSnapshot(startupProgress = StartupProgress(StartupStage.VERIFYING_STORAGE, 37))
         runCurrent()
-        assertEquals(StudyUiState.Initializing(StartupStage.VERIFYING_STORAGE), pipeline.state.value)
+        assertEquals(StudyUiState.Initializing(StartupProgress(StartupStage.VERIFYING_STORAGE, 37)), pipeline.state.value)
 
         pipeline.snapshots.value = StudySessionSnapshot(initialized = true)
         pipeline.busy.value = true

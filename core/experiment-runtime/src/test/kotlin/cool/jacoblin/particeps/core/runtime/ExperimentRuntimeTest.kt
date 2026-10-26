@@ -71,6 +71,7 @@ import cool.jacoblin.particeps.core.model.SourceClockBasis
 import cool.jacoblin.particeps.core.model.StorageUsage
 import cool.jacoblin.particeps.core.model.StudyReadSnapshot
 import cool.jacoblin.particeps.core.model.StudyStore
+import cool.jacoblin.particeps.core.model.StorageRecoveryProgress
 import cool.jacoblin.particeps.core.model.withComputedDigest
 import cool.jacoblin.particeps.core.resource.ApplyReceipt
 import cool.jacoblin.particeps.core.resource.DesiredResourceState
@@ -3625,7 +3626,10 @@ class ExperimentRuntimeTest {
         var beforeAppendCommit: suspend (EngineCommit) -> Unit = {}
         var afterAppendCommit: suspend (EngineCommit) -> Unit = {}
 
-        override suspend fun loadRuntime(observeRetained: (EngineCommit) -> Unit): RuntimeDocument? =
+        override suspend fun loadRuntime(
+            observeRetained: (EngineCommit) -> Unit,
+            onProgress: (StorageRecoveryProgress) -> Unit,
+        ): RuntimeDocument? =
             runtime?.also { current ->
                 commits.filter { it.commitSequence >= current.retainedFromCommit }.forEach(observeRetained)
             }

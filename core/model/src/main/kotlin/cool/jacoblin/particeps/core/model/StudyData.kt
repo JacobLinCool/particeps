@@ -454,6 +454,18 @@ interface StudyReadSnapshot {
     )
 }
 
+/** File bytes inspected during the one cold-recovery pass, not a count of research observations. */
+data class StorageRecoveryProgress(val processedBytes: Long, val totalBytes: Long) {
+    init {
+        require(totalBytes >= 0 && processedBytes in 0..totalBytes) { "Invalid recovery progress" }
+    }
+
+    /** Never rounds an unfinished scan to 100%, even for very large files. */
+    val percent: Int
+        get() = if (processedBytes == totalBytes) 100 else
+            (processedBytes.toDouble() / totalBytes * 100).toInt().coerceAtMost(99)
+}
+
 interface StudyStore {
     /**
      * Recovers the durable runtime. Recovery authenticates every retained commit, and
@@ -461,7 +473,10 @@ interface StudyStore {
      * what the scalar successor does not carry without reading the log a second time. A commit it
      * has seen is not yet recovered truth; only a returned runtime is.
      */
-    suspend fun loadRuntime(observeRetained: (EngineCommit) -> Unit = {}): RuntimeDocument?
+    suspend fun loadRuntime(
+        observeRetained: (EngineCommit) -> Unit = {},
+        onProgress: (StorageRecoveryProgress) -> Unit = {},
+    ): RuntimeDocument?
     /** Captures initialized durable state without recovery; pins the range while allowing appends. */
     suspend fun <T> withReadSnapshot(block: suspend (StudyReadSnapshot) -> T): T
     suspend fun initialize(runtime: RuntimeDocument)

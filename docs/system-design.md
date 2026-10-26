@@ -421,6 +421,15 @@ while a destination is slow. Reclamation waits for the snapshot to close; the ex
 still applies while files are pinned. Reads stop at the requested boundary or when the consumer
 declines the next commit. Locating a range still scans earlier frame headers in retained segments.
 
+The same cold-recovery pass reports processed segment bytes against the captured file lengths, at
+most once per integer percentage point. Completion is reported only after validating the named
+snapshot boundary; this is scan completion, not application readiness. Participant UI receives only
+the percentage and neutral startup stages, plus elapsed waiting time. Runtime restoration and
+platform scheduling still finish before the initialized application graph is published. The scan
+checks cancellation between frames and owns one reusable Cipher, reinitialized with every frame's
+key, IV and associated data before authenticating it. Storage format, retained-history validation
+and fail-closed recovery remain unchanged; cold-start work still grows with retained history.
+
 Old event-segment/metadata layouts are detected and rejected. The app uses its existing generic
 recovery/reset surface and never deletes or uploads them automatically.
 

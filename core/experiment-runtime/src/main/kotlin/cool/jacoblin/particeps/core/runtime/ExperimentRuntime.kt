@@ -217,13 +217,15 @@ class ExperimentRuntime(
         deadlineTimers,
     )
 
-    suspend fun initialize(): RuntimeInitializationResult {
+    suspend fun initialize(
+        onProgress: (RuntimeInitializationProgress) -> Unit = {},
+    ): RuntimeInitializationResult {
         if (!initialized.compareAndSet(false, true)) {
             return RuntimeInitializationResult.Ready(false, snapshot.value)
         }
         return try {
             mutex.withLock {
-                val loaded = recoveryCoordinator.loadLocked()
+                val loaded = recoveryCoordinator.loadLocked(onProgress)
                 bindTerminalListeners()
                 val recover = recoveryCoordinator.recoverOrReanchorLocked(loaded)
                 startTerminalConsumer()
@@ -232,6 +234,7 @@ class ExperimentRuntime(
             }
         } catch (failure: Throwable) {
             gate.forceClose()
+            if (failure is CancellationException) throw failure
             RuntimeInitializationResult.Failed(SafetyPauseReason.STORAGE_FAILURE, failure)
         }
     }

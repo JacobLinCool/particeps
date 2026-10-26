@@ -1,15 +1,6 @@
 name: Analysis CI
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "particeps-analysis/**"
-      - "protocol/v1/**"
-      - "tools/generate_protocol_vectors.mjs"
-      - "tools/validate_protocol_vectors.py"
-      - ".github/workflows/analysis.yml"
   pull_request:
     paths:
       - "particeps-analysis/**"

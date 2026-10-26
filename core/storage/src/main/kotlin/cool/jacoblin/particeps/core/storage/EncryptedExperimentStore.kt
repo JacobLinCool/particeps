@@ -10,6 +10,7 @@ import cool.jacoblin.particeps.core.model.EngineCommitIntegrity
 import cool.jacoblin.particeps.core.model.EngineInputKind
 import cool.jacoblin.particeps.core.model.PendingEngineInput
 import cool.jacoblin.particeps.core.model.RuntimeDocument
+import cool.jacoblin.particeps.core.model.StorageRecoveryProgress
 import cool.jacoblin.particeps.core.model.StorageUsage
 import cool.jacoblin.particeps.core.model.StudyReadSnapshot
 import cool.jacoblin.particeps.core.model.StudyStore
@@ -34,6 +35,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -112,7 +114,9 @@ class EncryptedExperimentStore internal constructor(
 
     override suspend fun loadRuntime(
         observeRetained: (EngineCommit) -> Unit,
+        onProgress: (StorageRecoveryProgress) -> Unit,
     ): RuntimeDocument? = withContext(Dispatchers.IO) {
+        val recoveryContext = currentCoroutineContext()
         mutex.withLock {
             engineKey = null
             forgetStorageLayout()
@@ -134,13 +138,14 @@ class EncryptedExperimentStore internal constructor(
             // Only containment commits consume one, so the list stays short without probing the slot.
             val pendingConsumers = mutableListOf<PendingConsumer>()
             val recovered = try {
-                replayAfter(snapshot, key, recoverTail = true) { commit ->
+                replayAfter(snapshot, key, recoveryContext::ensureActive, onProgress) { commit ->
                     commit.consumedPendingInputSha256?.let { digest ->
                         pendingConsumers += PendingConsumer(commit.commitSequence, digest)
                     }
                     observeRetained(commit)
                 }
             } catch (failure: Throwable) {
+                if (failure is CancellationException) throw failure
                 if (failure is StudyStoreRecoveryException) throw failure
                 throw StudyStoreRecoveryException(StudyStoreRecoveryFailure.COMMIT_LOG_INVALID, failure)
             }
@@ -623,17 +628,25 @@ class EncryptedExperimentStore internal constructor(
     private fun replayAfter(
         snapshot: RuntimeDocument,
         key: SecretKey,
-        recoverTail: Boolean,
+        checkCancellation: () -> Unit,
+        onProgress: (StorageRecoveryProgress) -> Unit,
         observeRetained: (EngineCommit) -> Unit,
     ): RuntimeDocument {
         var recovered = snapshot
         var expectedRetainedSequence = snapshot.retainedFromCommit
         var previousRetainedDigest: String? = null
         var snapshotBoundarySeen = snapshot.revision < snapshot.retainedFromCommit
+        var lastProgress: StorageRecoveryProgress? = null
         scanFrames(
             key = key,
-            recoverTail = recoverTail,
+            recoverTail = true,
             decryptFromSequence = snapshot.retainedFromCommit,
+            checkCancellation = checkCancellation,
+            onProgress = { progress ->
+                lastProgress = progress
+                // Completion also requires the named snapshot boundary, checked below.
+                if (progress.processedBytes < progress.totalBytes) onProgress(progress)
+            },
         ) { frame ->
             if (frame.sequence < snapshot.retainedFromCommit) return@scanFrames true
             require(frame.sequence == expectedRetainedSequence) { "Retained commit sequence gap" }
@@ -658,6 +671,8 @@ class EncryptedExperimentStore internal constructor(
             true
         }
         require(snapshotBoundarySeen) { "Retained log does not reach the snapshot boundary" }
+        checkCancellation()
+        lastProgress?.let(onProgress)
         return recovered
     }
 
@@ -707,6 +722,7 @@ class EncryptedExperimentStore internal constructor(
         throughSequenceInclusive: Long? = null,
         capturedSegments: List<CapturedSegment>? = null,
         checkCancellation: () -> Unit = {},
+        onProgress: ((StorageRecoveryProgress) -> Unit)? = null,
         consume: (FrameResult) -> Boolean,
     ) {
         val selectedSegments = capturedSegments ?: run {
@@ -718,6 +734,12 @@ class EncryptedExperimentStore internal constructor(
         selectedSegments.zipWithNext().forEach { (left, right) ->
             require(right.segment.index == left.segment.index + 1) { "Commit segment index gap" }
         }
+        // File lengths are already captured for recovery. Progress needs no counting/decryption pass.
+        val progress = onProgress?.let { RecoveryScanProgress(selectedSegments.sumOf { it.length }, it) }
+        progress?.update(0)
+        // One reader owns this cipher. Each frame still initializes its own IV/AAD and verifies GCM.
+        val decryptor = Cipher.getInstance(CIPHER_TRANSFORMATION)
+        var precedingBytes = 0L
         var previousSequence: Long? = null
         var reachedUpperBound = false
         // Every selected segment is walked from its first frame, including those wholly before
@@ -776,7 +798,7 @@ class EncryptedExperimentStore internal constructor(
                     previousSequence = sequence
                     val commit = sealed?.let { frame ->
                         val digestHex = frame.digest.toLowerHex()
-                        val plaintext = decryptCommit(frame.iv, frame.ciphertext, sequence, frame.digest, key)
+                        val plaintext = decryptCommit(decryptor, frame.iv, frame.ciphertext, sequence, frame.digest, key)
                         EngineDataJsonCodec.decodeCommit(plaintext).also { decoded ->
                             require(decoded.commitSequence == sequence && decoded.commitSha256 == digestHex) {
                                 "Encrypted commit frame identity mismatch"
@@ -784,7 +806,10 @@ class EncryptedExperimentStore internal constructor(
                             EngineCommitIntegrity.verify(decoded)
                         }
                     }
-                    if (!consume(FrameResult(sequence, commit)) ||
+                    val continueReading = consume(FrameResult(sequence, commit))
+                    checkCancellation()
+                    progress?.update(precedingBytes + offset)
+                    if (!continueReading ||
                         (throughSequenceInclusive != null && sequence >= throughSequenceInclusive)
                     ) {
                         reachedUpperBound = true
@@ -793,6 +818,9 @@ class EncryptedExperimentStore internal constructor(
                 }
             }
             truncateAt?.let { truncateSegmentTail(segment.file, it) }
+            precedingBytes += captured.length
+            // A torn final uncommitted tail has been inspected and durably removed.
+            if (!reachedUpperBound) progress?.update(precedingBytes)
         }
     }
 
@@ -928,12 +956,13 @@ class EncryptedExperimentStore internal constructor(
     }
 
     private fun decryptCommit(
+        cipher: Cipher,
         iv: ByteArray,
         ciphertext: ByteArray,
         sequence: Long,
         commitDigest: ByteArray,
         key: SecretKey,
-    ): ByteArray = Cipher.getInstance(CIPHER_TRANSFORMATION).run {
+    ): ByteArray = cipher.run {
         init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
         updateAAD(commitAad(sequence, commitDigest))
         doFinal(ciphertext)
@@ -1098,6 +1127,21 @@ class EncryptedExperimentStore internal constructor(
     private data class EncryptedCommit(val iv: ByteArray, val ciphertext: ByteArray)
     private class SealedFrame(val iv: ByteArray, val ciphertext: ByteArray, val digest: ByteArray)
     private data class FrameResult(val sequence: Long, val commit: EngineCommit?)
+
+    /** At most one notification per percentage point; never one UI update per research event. */
+    private class RecoveryScanProgress(
+        private val totalBytes: Long,
+        private val report: (StorageRecoveryProgress) -> Unit,
+    ) {
+        private var lastPercent = -1
+
+        fun update(processedBytes: Long) {
+            val progress = StorageRecoveryProgress(processedBytes, totalBytes)
+            if (progress.percent == lastPercent) return
+            lastPercent = progress.percent
+            report(progress)
+        }
+    }
 
     private companion object {
         const val ANDROID_KEYSTORE = "AndroidKeyStore"

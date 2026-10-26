@@ -2,6 +2,7 @@ package cool.jacoblin.particeps
 
 import cool.jacoblin.particeps.core.access.AccessManager
 import cool.jacoblin.particeps.core.application.StartupStage
+import cool.jacoblin.particeps.core.application.StartupProgress
 import cool.jacoblin.particeps.core.application.StudySessionManager
 import cool.jacoblin.particeps.platform.AndroidActionOutboxNotifier
 import cool.jacoblin.particeps.platform.AndroidStudyUploadPlatform
@@ -32,7 +33,7 @@ class ApplicationStartupTest {
         var invocations = 0
         startup.start { report ->
             invocations++
-            report(StartupStage.LOADING_STUDY)
+            report(StartupProgress(StartupStage.LOADING_STUDY))
             finish.await()
             UnusedGraph
         }
@@ -42,7 +43,7 @@ class ApplicationStartupTest {
         runCurrent()
 
         assertEquals(1, invocations)
-        assertEquals(ApplicationStartupState.Starting(StartupStage.LOADING_STUDY), startup.state.value)
+        assertEquals(ApplicationStartupState.Starting(StartupProgress(StartupStage.LOADING_STUDY)), startup.state.value)
         assertTrue("No consumer may observe a partially initialized graph", consumers.none { it.isCompleted })
         finish.complete(Unit)
         runCurrent()
@@ -52,6 +53,35 @@ class ApplicationStartupTest {
         assertEquals(ApplicationStartupState.Ready(UnusedGraph), startup.state.value)
         assertSame(UnusedGraph, startup.awaitReady())
         assertEquals(1, invocations)
+    }
+
+    @Test
+    fun measuredScanCompletionDoesNotPublishReadyBeforeRuntimeAndPlatformPreparation() = runTest {
+        val startup = ApplicationStartup(backgroundScope, StandardTestDispatcher(testScheduler))
+        val finish = CompletableDeferred<Unit>()
+        var reportProgress: ((StartupProgress) -> Unit)? = null
+        startup.start { report ->
+            reportProgress = report
+            finish.await()
+            UnusedGraph
+        }
+        val ready = async { startup.awaitReady() }
+        runCurrent()
+        listOf(
+            StartupProgress(StartupStage.VERIFYING_STORAGE, 25),
+            StartupProgress(StartupStage.VERIFYING_STORAGE, 100),
+            StartupProgress(StartupStage.RESTORING_RUNTIME),
+            StartupProgress(StartupStage.PREPARING_STUDY),
+        ).forEach { progress ->
+            checkNotNull(reportProgress)(progress)
+            assertEquals(ApplicationStartupState.Starting(progress), startup.state.value)
+            assertFalse(ready.isCompleted)
+        }
+        finish.complete(Unit)
+        runCurrent()
+        assertSame(UnusedGraph, ready.await())
+        checkNotNull(reportProgress)(StartupProgress(StartupStage.VERIFYING_STORAGE, 1))
+        assertEquals(ApplicationStartupState.Ready(UnusedGraph), startup.state.value)
     }
 
     @Test

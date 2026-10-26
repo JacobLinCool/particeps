@@ -23,6 +23,7 @@ import cool.jacoblin.particeps.core.model.RuntimeMutation
 import cool.jacoblin.particeps.core.model.RuntimeMutationOperation
 import cool.jacoblin.particeps.core.model.RuntimeProjection
 import cool.jacoblin.particeps.core.model.SourceObservation
+import cool.jacoblin.particeps.core.model.StorageRecoveryProgress
 import cool.jacoblin.particeps.core.model.StudyReadSnapshot
 import cool.jacoblin.particeps.core.model.StudyStoreRecoveryException
 import cool.jacoblin.particeps.core.model.StudyStoreRecoveryFailure
@@ -38,6 +39,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -84,6 +86,96 @@ class EncryptedExperimentStoreTest {
         val commits = mutableListOf<EngineCommit>()
         reopened.readCommits(1, 1, commits::add)
         assertEquals(listOf(commit), commits)
+    }
+
+    @Test
+    fun recoveryReportsOneMonotonicByteScanWithoutChangingExistingCommitFiles() = runBlocking {
+        store = EncryptedExperimentStore(
+            context, experimentId, QUOTA_BYTES, File::delete,
+            maximumSegmentBytes = SMALL_SEGMENT_BYTES,
+        )
+        var current = initialRuntime()
+        store.initialize(current)
+        val appended = mutableListOf<EngineCommit>()
+        repeat(8) {
+            val (commit, successor) = lifecycleCommit(current, ExperimentState.CONFIG_VERIFIED)
+            store.appendCommit(commit, successor)
+            appended += commit
+            current = successor
+        }
+        val files = commitSegments().associateWith(File::readBytes)
+        assertTrue(files.size > 1)
+        val totalBytes = files.keys.sumOf(File::length)
+        val observed = mutableListOf<EngineCommit>()
+        val progress = mutableListOf<StorageRecoveryProgress>()
+
+        assertEquals(current, newStore().loadRuntime(observed::add, progress::add))
+
+        assertEquals(appended, observed)
+        assertEquals(StorageRecoveryProgress(0, totalBytes), progress.first())
+        assertEquals(StorageRecoveryProgress(totalBytes, totalBytes), progress.last())
+        assertTrue(progress.any { it.percent in 1..99 })
+        assertTrue(progress.size <= 101)
+        assertTrue(progress.all { it.totalBytes == totalBytes })
+        assertTrue(progress.zipWithNext().all { (a, b) -> a.processedBytes < b.processedBytes })
+        files.forEach { (file, bytes) -> assertArrayEquals(bytes, file.readBytes()) }
+    }
+
+    @Test
+    fun recoveryDoesNotReportCompletionWhenRetainedDataIsCorrupt() = runBlocking {
+        val initial = initialRuntime()
+        store.initialize(initial)
+        val (commit, successor) = lifecycleCommit(initial, ExperimentState.CONFIG_VERIFIED)
+        store.appendCommit(commit, successor)
+        RandomAccessFile(commitSegments().single(), "rw").use { file ->
+            file.seek(FIRST_CIPHERTEXT_OFFSET)
+            val original = file.readByte().toInt()
+            file.seek(FIRST_CIPHERTEXT_OFFSET)
+            file.writeByte(original xor 0x01)
+        }
+        val progress = mutableListOf<StorageRecoveryProgress>()
+
+        val failure = assertThrows(StudyStoreRecoveryException::class.java) {
+            runBlocking { newStore().loadRuntime(onProgress = progress::add) }
+        }
+
+        assertEquals(StudyStoreRecoveryFailure.COMMIT_LOG_INVALID, failure.failure)
+        assertTrue(progress.isNotEmpty())
+        assertTrue(progress.none { it.percent == 100 })
+    }
+
+    @Test
+    fun cancellationStopsRecoveryAndLeavesTheExistingStoreRecoverable() = runBlocking {
+        var current = initialRuntime()
+        store.initialize(current)
+        repeat(8) {
+            val (commit, successor) = lifecycleCommit(current, ExperimentState.CONFIG_VERIFIED)
+            store.appendCommit(commit, successor)
+            current = successor
+        }
+        var observed = 0
+        val progress = mutableListOf<StorageRecoveryProgress>()
+        var cancellation: Throwable? = null
+        val reader = launch {
+            val owner = currentCoroutineContext()
+            try {
+                newStore().loadRuntime(
+                    observeRetained = { observed++ },
+                    onProgress = {
+                        progress += it
+                        if (it.percent in 1..99) owner.cancel()
+                    },
+                )
+            } catch (failure: Throwable) {
+                cancellation = failure
+            }
+        }
+        reader.join()
+
+        assertTrue(cancellation is CancellationException)
+        assertTrue(observed in 1..7)
+        assertTrue(progress.none { it.percent == 100 })
+        assertEquals(current, newStore().loadRuntime())
     }
 
     @Test

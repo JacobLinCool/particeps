@@ -56,8 +56,12 @@
     <string name="startup_failed_body">Collection cannot resume. Please contact the research team before continuing.</string>
     <string name="startup_stage_generic">Still starting up.</string>
     <string name="startup_stage_loading_study">Reading the saved study.</string>
-    <string name="startup_stage_validating_storage">Checking recorded study data. A study that has been collecting for a while can take longer here.</string>
+    <string name="startup_stage_verifying_study">Checking the saved study configuration.</string>
+    <string name="startup_stage_validating_storage">Checking saved data. More data takes longer to check. Please keep Particeps open.</string>
     <string name="startup_stage_restoring_runtime">Restoring the study runtime.</string>
+    <string name="startup_stage_preparing_study">Preparing the study screen.</string>
+    <string name="startup_storage_progress">Data checked: %1$d%%</string>
+    <string name="startup_elapsed">Time waiting: %1$d:%2$02d (min:sec)</string>
     <string name="header_elapsed_minutes">%1$dm</string>
     <string name="header_elapsed_hours">%1$dh %2$dm</string>
     <!-- %1$s is a locale-formatted date and time; %2$s is a duration such as "2h 15m". -->

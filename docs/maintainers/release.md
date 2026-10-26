@@ -6,16 +6,23 @@ For maintainers of this repository. Participants and researchers do not need thi
 
 All workflows live in [`.github/workflows`](../../.github/workflows). The two that decide what ships are below, and `Pages` has its own section. `Analysis CI` and `Receiver CI` verify their own directories on the pull requests that touch them.
 
-**`Android CI`** (`ci.yml`) runs on pushes to `main`, pull requests, and manual dispatch. It checks
-event-source-registry generation/digests, Kotlin/TypeScript/Python conformance, Collector capability,
-Go vet/race/source checks, unit/lint/build/release verification, and connected/host-orchestrated
-Android scenarios. API 34 x86_64 is the complete blocking functional lane, including VPN,
-TCP/UDP/DNS, shaping throughput, lifecycle, process death/reboot, package replacement, permission
-revocation, and competing-VPN scenarios. API 37 `google_apis_ps16k` x86_64 revision 6 or newer is a
-blocking compatibility lane: compilation, installation, 16 KiB runtime page size, manifest and
-permission contracts, source-built native loading, and instrumentation that does not invoke system
-task snapshots must pass. Four-ABI packaging and 16 KiB ELF alignment remain blocking in the release
-verifier. Successful runs retain the debug APK as an artifact for 14 days.
+**`Android CI`** (`ci.yml`) runs on pull requests, manual dispatch, and as a reusable
+release check. It does not repeat on the merge to `main`. A pull request runs registry/vector and
+collector checks, tool tests, Go vet/race, one JVM suite per module, debug lint, and an x86_64 debug
+APK build. `test` already includes JVM modules and Android debug-variant unit tests with the pinned
+plugins, so the redundant `testDebugUnitTest` argument is removed. Kotlin protocol conformance
+belongs to the ordinary export test suite. The protocol corpus is a declared input to that task's build cache.
+Successful runs retain the debug APK as an artifact for 14 days.
+
+Manual and release runs additionally start both device lanes **in parallel** with the host checks.
+Device coverage is intentionally deferred from ordinary PR feedback to release qualification;
+a maintainer can dispatch Android CI on a feature branch when earlier device feedback is useful.
+API 34 x86_64 is the complete blocking functional lane, including VPN, TCP/UDP/DNS, shaping
+throughput, lifecycle, process death/reboot, package replacement, permission revocation, and
+competing-VPN scenarios. API 37 `google_apis_ps16k` x86_64 revision 6 or newer requires compilation,
+installation, 16 KiB runtime page size, manifest/permission contracts, native loading, and the
+complete host harness subject only to the exact platform-defect classification described below.
+Four-ABI packaging and 16 KiB ELF alignment remain blocking in the signed release verifier.
 
 Before API 34 UI tests, the launcher verifies that its target is the isolated API 34 emulator,
 wakes it, dismisses the unsecured keyguard through Android's normal command, and checks the
@@ -110,22 +117,27 @@ operator override and is never inferred in CI.
 
 **`Android Release`** (`release.yml`) accepts only `v<SemVer>` tags that are reachable from `main` — for example `v0.1.0`. A tag with a prerelease suffix produces a GitHub prerelease.
 
-The release workflow runs the same tiered API 34/API 37 gates and, in parallel, rechecks the
-Web authoring surface, shared TypeScript conformance, ciphertext receiver, and Python replay and
-materialization pipeline from their locked environments. Only after both gates pass does the
-dependent release job reconstruct the `.signing` configuration and pinned Go/NDK native build,
-then re-run host-side tests plus debug/release lint. It writes the tag into
-`versionName` and the workflow run number into `versionCode`, then verifies the APK that Gradle signed
-with `apksigner verify`. Verification must report exactly one signer certificate and its SHA-256 must
-match the checked-in production identity anchor. The release verifier also requires four native
-ABIs, 16 KiB ELF alignment for the 64-bit libraries, exact VPN manifest/permissions, Go module/tool provenance, registry
-digest asset, complete linked-dependency SBOM/licenses, no tracked native binary, and no sensitive
-packet/destination/DNS logging. The GitHub release carries the APK and SHA-256. Any gate failure
-stops publication; signing secrets are not materialized before device gates succeed.
+The release workflow calls the same Android checks and, in parallel, verifies the Web authoring
+surface, TypeScript conformance, receiver, and full Python analysis suite. Cross-language Kotlin
+fixtures are generated once in the consumer job and replayed by Python; they are not regenerated
+and replayed on every Android PR. Analysis and receiver PR workflows check their own affected paths
+without repeating on merge.
 
-Permissions are job-scoped. The instrumented gate, including the third-party emulator action, gets
-only `contents: read`; only the dependent release job gets `contents: write` to create or update the
-GitHub Release.
+A separate read-only job builds the signed four-ABI APK with release lint while those checks run.
+It reconstructs `.signing` only in that job and removes the signing files on exit. `versionName`
+comes from the tag and `versionCode` from the release workflow run number. The verifier requires
+exactly one signer matching the production certificate anchor, four native ABIs, 16 KiB ELF
+alignment for 64-bit libraries, the VPN manifest/permissions, Go provenance, registry digest,
+SBOM/licenses, no tracked native binaries, and no sensitive network logging. The verified APK,
+checksum and release notes are retained as a short-lived artifact from the same workflow run.
+
+Only the publication job has `contents: write`. It depends on **all** Android, consumer and APK
+jobs succeeding, downloads that run's verified artifact, checks its checksum, and publishes it
+without rebuilding. A failure in any gate prevents a public release. The device actions receive
+only `contents: read` and never receive signing secrets. Signing and test execution overlap;
+publication still waits for complete qualification.
+
+See [CI scope and test cleanup](ci-scope.md) for the removed duplication and the coverage tradeoff.
 
 Particeps is distributed directly as that signed APK. A Play listing, Play release track, and AAB
 are not prerequisites for this release process; do not replace the verified APK artifact with an

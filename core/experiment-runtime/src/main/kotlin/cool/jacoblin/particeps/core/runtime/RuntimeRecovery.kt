@@ -42,9 +42,13 @@ internal class RuntimeRecovery(
      * Loads the retained runtime, or creates and stores the initial one, checks that it belongs to
      * this study, and restores [RuntimeMemory] from it.
      */
-    suspend fun loadLocked(): RuntimeDocument {
+    suspend fun loadLocked(onProgress: (RuntimeInitializationProgress) -> Unit): RuntimeDocument {
         val retainedTransition = RetainedStateTransition()
-        var loaded = ctx.store.loadRuntime(retainedTransition::observe)
+        onProgress(RuntimeInitializationProgress.CheckingStorage())
+        var loaded = ctx.store.loadRuntime(retainedTransition::observe) {
+            onProgress(RuntimeInitializationProgress.CheckingStorage(it))
+        }
+        onProgress(RuntimeInitializationProgress.RestoringRuntime)
         if (loaded == null) {
             loaded = RuntimeDocument.initial(
                 experimentId = ctx.study.experimentId,

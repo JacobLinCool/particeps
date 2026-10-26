@@ -5,7 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import cool.jacoblin.particeps.core.application.ParticipantRuntimeStatus
-import cool.jacoblin.particeps.core.application.StartupStage
+import cool.jacoblin.particeps.core.application.StartupProgress
 import cool.jacoblin.particeps.core.application.StudyAccessStatus
 import cool.jacoblin.particeps.core.application.StudyCommandResult
 import cool.jacoblin.particeps.core.application.StudyRecoveryStatus
@@ -36,7 +36,7 @@ sealed interface StudyUiState {
     val busy: Boolean
     val recoveryStatus: ParticipantRecoveryState?
 
-    data class Initializing(val stage: StartupStage?) : StudyUiState {
+    data class Initializing(val progress: StartupProgress?) : StudyUiState {
         override val message: ParticipantMessage? = null
         override val busy: Boolean = true
         override val recoveryStatus: ParticipantRecoveryState = ParticipantRecoveryState.RECOVERING
@@ -266,7 +266,7 @@ internal fun participantUiState(
     }
     val model = projected.model
     when {
-        !snapshot.initialized -> StudyUiState.Initializing(snapshot.startupStage)
+        !snapshot.initialized -> StudyUiState.Initializing(snapshot.startupProgress)
         model == null -> StudyUiState.NoStudy(visibleMessage, operating, recovery)
         else -> StudyUiState.ActiveStudy(
             model = model,
