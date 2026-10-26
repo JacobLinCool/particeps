@@ -23,8 +23,9 @@ while retaining authentication of every saved commit.
   and propagates cancellation without classifying the saved study as damaged.
 - CI gives PR feedback through one debug JVM/lint/build lane. Device qualification runs at
   release or by manual dispatch; merges do not repeat the Android/analysis/receiver pipelines.
-  Release checks and signed APK construction run in parallel, with publication gated on every
-  result. Repeated fixture/conformance runs and 10 source-text or historical-copy tests were
+  Native test builds compile only the emulator ABI and retain a Go build cache partitioned by
+  the pinned NDK. Release checks and signed APK construction run in parallel, with publication
+  gated on every result. Repeated fixture/conformance runs and 10 source-text or historical-copy tests were
   removed; behavioural, storage-corruption, recovery and final APK checks remain.
 - The participant website uses simpler study descriptions, shows the current study QR in its
   study details, and lets study-guide downloads finish on slow connections.

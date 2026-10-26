@@ -18,8 +18,14 @@ publication remains blocked by it; manual dispatch provides earlier device feedb
 
 ## Removed duplication
 
-- PRs no longer build a four-ABI release APK. They build one x86_64 debug APK. The release job
-  builds and verifies the actual signed four-ABI APK once.
+- PRs no longer build a four-ABI release APK. The existing `instrumentedTestAbi` selection now
+  also controls gomobile compilation, so PRs and both emulator jobs build only x86_64 native code.
+  The ABI is a declared Gradle input: switching back to a normal release rebuilds all four ABIs.
+  The build script checks the exact selected ABI set, provenance and 64-bit ELF alignment.
+- Native compilation retains Go's content-keyed build cache under an NDK-version-specific path,
+  instead of deleting it after every build. Dependency checksums, toolchain pins and packaged
+  evidence checks still run. The NDK partition accounts for Go's documented inability to detect
+  external C-library changes automatically; see [Go build caching](https://pkg.go.dev/cmd/go#hdr-Build_and_test_caching).
 - The ordinary Kotlin export suite now includes protocol conformance, with the protocol corpus
   declared as a Gradle input. The separate init-script invocation is deleted.
 - The two Kotlin-to-Python fixture producers and replay checks run in the release consumer job,

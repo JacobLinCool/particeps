@@ -71,7 +71,9 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: "1.26.3"
-          cache-dependency-path: native/traffic-shaping/go.sum
+          cache-dependency-path: |
+            native/traffic-shaping/go.sum
+            native/traffic-shaping/build-aar.sh
 
       - name: Validate Protocol v1 and collector contracts
         run: |
@@ -186,7 +188,9 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: "1.26.3"
-          cache-dependency-path: native/traffic-shaping/go.sum
+          cache-dependency-path: |
+            native/traffic-shaping/go.sum
+            native/traffic-shaping/build-aar.sh
 
       - name: Validate the Gradle wrapper
         uses: gradle/actions/wrapper-validation@0f4528296b4bc09e8ae0fc7be30185a4ab435545 # v6.0.0

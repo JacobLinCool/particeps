@@ -147,5 +147,10 @@ GOSUMDB=sum.golang.org
 Do not add `direct` to `GOPROXY`. `sbom-input.json`, `go.mod`, and `go.sum` are
 the release-verifier inputs; `THIRD_PARTY_NOTICES.md` carries the policy-pinned
 upstream notices, and the tun2socks MIT text is embedded in every generated
-AAR. `build-aar.sh` enforces tool versions, checksums, four ABIs, 16 KiB
-alignment for 64-bit libraries, provenance, and the embedded notice.
+AAR. `build-aar.sh` enforces tool versions, checksums, the exact requested ABI set,
+16 KiB alignment for 64-bit libraries, provenance for every library, and embedded
+notices. Gradle passes `all` for normal builds and the explicit
+`instrumentedTestAbi` for emulator builds; the ABI is a declared task input.
+Go's compiled-package cache persists in an NDK-version-specific subdirectory of
+`go env GOCACHE`. Temporary binding tools and GOPATH are still removed after the
+build. The final release APK verifier always requires all four ABIs.

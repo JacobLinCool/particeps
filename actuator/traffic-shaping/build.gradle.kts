@@ -9,6 +9,7 @@ val nativeAar = rootProject.layout.buildDirectory.file(
     "generated/traffic-shaping/particeps-traffic-shaping.aar",
 )
 val nativeSourceDirectory = rootProject.layout.projectDirectory.dir("native/traffic-shaping")
+val nativeAbi = providers.gradleProperty("instrumentedTestAbi").orElse("all")
 val androidSdk = providers.environmentVariable("ANDROID_SDK_ROOT")
     .orElse(providers.environmentVariable("ANDROID_HOME"))
     .get()
@@ -21,12 +22,14 @@ val buildNativeTrafficShapingAar = tasks.register<Exec>("buildNativeTrafficShapi
             exclude("**/.DS_Store")
         },
     )
+    inputs.property("nativeAbi", nativeAbi)
     outputs.file(nativeAar)
     environment("ANDROID_HOME", androidSdk)
     environment("ANDROID_NDK_HOME", "$androidSdk/ndk/30.0.14904198")
     commandLine(
         nativeSourceDirectory.file("build-aar.sh").asFile.absolutePath,
         nativeAar.get().asFile.absolutePath,
+        nativeAbi.get(),
     )
 }
 
