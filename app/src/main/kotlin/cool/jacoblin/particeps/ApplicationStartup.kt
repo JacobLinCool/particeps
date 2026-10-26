@@ -1,7 +1,7 @@
 package cool.jacoblin.particeps
 
 import cool.jacoblin.particeps.core.access.AccessManager
-import cool.jacoblin.particeps.core.application.StartupStage
+import cool.jacoblin.particeps.core.application.StartupProgress
 import cool.jacoblin.particeps.core.application.StudySessionManager
 import cool.jacoblin.particeps.platform.AndroidActionOutboxNotifier
 import cool.jacoblin.particeps.platform.AndroidStudyUploadPlatform
@@ -32,7 +32,7 @@ internal interface ApplicationGraph {
 }
 
 internal sealed interface ApplicationStartupState {
-    data class Starting(val stage: StartupStage? = null) : ApplicationStartupState
+    data class Starting(val progress: StartupProgress? = null) : ApplicationStartupState
     data class Ready(val graph: ApplicationGraph) : ApplicationStartupState
     data object Failed : ApplicationStartupState
 }
@@ -51,14 +51,14 @@ internal class ApplicationStartup(
     private val mutableState = MutableStateFlow<ApplicationStartupState>(ApplicationStartupState.Starting())
     val state: StateFlow<ApplicationStartupState> = mutableState.asStateFlow()
 
-    fun start(factory: suspend ((StartupStage?) -> Unit) -> ApplicationGraph) {
+    fun start(factory: suspend ((StartupProgress) -> Unit) -> ApplicationGraph) {
         check(started.compareAndSet(false, true)) { "Application initialization already started" }
         val job = scope.launch(dispatcher) {
             try {
-                val graph = factory { stage ->
+                val graph = factory { progress ->
                     mutableState.update { current ->
                         if (current is ApplicationStartupState.Starting) {
-                            ApplicationStartupState.Starting(stage)
+                            ApplicationStartupState.Starting(progress)
                         } else {
                             current
                         }

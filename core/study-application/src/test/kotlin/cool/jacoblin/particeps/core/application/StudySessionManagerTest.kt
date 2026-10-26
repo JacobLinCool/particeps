@@ -24,6 +24,7 @@ import cool.jacoblin.particeps.core.model.StudyResetMarker
 import cool.jacoblin.particeps.core.model.StudyResetStore
 import cool.jacoblin.particeps.core.model.StudyReadSnapshot
 import cool.jacoblin.particeps.core.model.StudyStore
+import cool.jacoblin.particeps.core.model.StorageRecoveryProgress
 import cool.jacoblin.particeps.core.protocol.ActiveStudyRecord
 import cool.jacoblin.particeps.core.protocol.ActiveStudyStore
 import cool.jacoblin.particeps.core.protocol.VerifiedConfiguration
@@ -42,6 +43,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.job
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
@@ -52,6 +54,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -373,6 +376,61 @@ class StudySessionManagerTest {
         assertProjectionMatchesCommit(fixture)
         assertEquals(initialRecoveryReads, fixture.store.recoveryReads)
         fixture.manager.shutdownProcess()
+    }
+
+    @Test
+    fun recoveryProjectsMeasuredProgressAndClearsItBeforePublishingTheStudy() = runTest {
+        val fixture = fixture()
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        fixture.manager.shutdownProcess()
+        val restarted = fixture.newManager()
+        fixture.store.recoveryProgress = { report ->
+            listOf(0L, 25L, 75L, 100L).forEach { processed ->
+                report(StorageRecoveryProgress(processed, 100))
+                assertEquals(
+                    StartupProgress(StartupStage.VERIFYING_STORAGE, processed.toInt()),
+                    restarted.snapshot.value.startupProgress,
+                )
+                assertFalse(restarted.snapshot.value.initialized)
+                assertNull(restarted.snapshot.value.study)
+            }
+        }
+
+        restarted.initialize()
+
+        assertTrue(restarted.snapshot.value.initialized)
+        assertNull(restarted.snapshot.value.startupProgress)
+        assertEquals(StudyRecoveryStatus.NONE, restarted.snapshot.value.recoveryStatus)
+        restarted.shutdownProcess()
+    }
+
+    @Test
+    fun cancelledRecoveryDoesNotPublishReadyOrClassifyExistingDataAsDamaged() = runTest {
+        val fixture = fixture()
+        fixture.manager.initialize()
+        fixture.manager.importSignedConfiguration(ENVELOPE)
+        fixture.manager.shutdownProcess()
+        val durable = fixture.store.runtime
+        val restarted = fixture.newManager()
+        val cancelled = CancellationException("Recovery owner stopped")
+        fixture.store.recoveryProgress = { report ->
+            report(StorageRecoveryProgress(25, 100))
+            throw cancelled
+        }
+
+        assertSame(cancelled, runCatching { restarted.initialize() }.exceptionOrNull())
+
+        assertFalse(restarted.snapshot.value.initialized)
+        assertNull(restarted.snapshot.value.study)
+        assertEquals(StudyRecoveryStatus.NONE, restarted.snapshot.value.recoveryStatus)
+        assertEquals(durable, fixture.store.runtime)
+        fixture.store.recoveryProgress = {}
+        val nextProcess = fixture.newManager()
+        nextProcess.initialize()
+        assertTrue(nextProcess.snapshot.value.initialized)
+        assertEquals(StudyRecoveryStatus.NONE, nextProcess.snapshot.value.recoveryStatus)
+        nextProcess.shutdownProcess()
     }
 
     @Test
@@ -1040,9 +1098,14 @@ class StudySessionManagerTest {
 
         var recoveryReads = 0
         var rejectRecoveryReads = false
-        override suspend fun loadRuntime(observeRetained: (EngineCommit) -> Unit): RuntimeDocument? {
+        var recoveryProgress: ((StorageRecoveryProgress) -> Unit) -> Unit = {}
+        override suspend fun loadRuntime(
+            observeRetained: (EngineCommit) -> Unit,
+            onProgress: (StorageRecoveryProgress) -> Unit,
+        ): RuntimeDocument? {
             check(!rejectRecoveryReads) { "Live projection must not invoke disk recovery" }
             recoveryReads++
+            recoveryProgress(onProgress)
             return runtime?.also { current ->
                 commits.filter { it.commitSequence >= current.retainedFromCommit }.forEach(observeRetained)
             }

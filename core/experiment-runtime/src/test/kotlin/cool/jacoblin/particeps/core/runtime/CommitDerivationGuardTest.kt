@@ -44,6 +44,7 @@ import cool.jacoblin.particeps.core.model.SourceCoverage
 import cool.jacoblin.particeps.core.model.StorageUsage
 import cool.jacoblin.particeps.core.model.StudyReadSnapshot
 import cool.jacoblin.particeps.core.model.StudyStore
+import cool.jacoblin.particeps.core.model.StorageRecoveryProgress
 import cool.jacoblin.particeps.core.resource.ApplyReceipt
 import cool.jacoblin.particeps.core.resource.DesiredResourceState
 import cool.jacoblin.particeps.core.resource.FlushReceipt
@@ -599,7 +600,10 @@ class CommitDerivationGuardTest {
         val successors = mutableListOf<RuntimeDocument>()
         val pendingInputs = mutableListOf<PendingEngineInput>()
 
-        override suspend fun loadRuntime(observeRetained: (EngineCommit) -> Unit): RuntimeDocument? = runtime
+        override suspend fun loadRuntime(
+            observeRetained: (EngineCommit) -> Unit,
+            onProgress: (StorageRecoveryProgress) -> Unit,
+        ): RuntimeDocument? = runtime
         override suspend fun initialize(runtime: RuntimeDocument) {
             check(this.runtime == null)
             initial = runtime

@@ -62,6 +62,7 @@ import cool.jacoblin.particeps.core.runtime.RuntimeCommandRejection
 import cool.jacoblin.particeps.core.runtime.RuntimeCommandResult
 import cool.jacoblin.particeps.core.runtime.RuntimeEntropySource
 import cool.jacoblin.particeps.core.runtime.RuntimeInitializationResult
+import cool.jacoblin.particeps.core.runtime.RuntimeInitializationProgress
 import cool.jacoblin.particeps.core.runtime.RuntimeResourceHost
 import cool.jacoblin.particeps.core.runtime.RuntimeSnapshot
 import cool.jacoblin.particeps.core.runtime.RuntimeStudyIdentity
@@ -311,8 +312,19 @@ object NoOpStudyUploadScheduler : StudyUploadScheduler {
 
 enum class StartupStage {
     LOADING_STUDY,
+    VERIFYING_STUDY,
     VERIFYING_STORAGE,
     RESTORING_RUNTIME,
+    PREPARING_STUDY,
+}
+
+/** Participant-safe progress: a file-scan percentage, never event counts or runtime identities. */
+data class StartupProgress(val stage: StartupStage, val percent: Int? = null) {
+    init {
+        require(percent == null || (stage == StartupStage.VERIFYING_STORAGE && percent in 0..100)) {
+            "Only the storage scan has measurable startup progress"
+        }
+    }
 }
 
 enum class StudyRecoveryStatus {
@@ -459,7 +471,7 @@ data class StudySessionSnapshot(
     val lastExport: ParticipantExportSummary? = null,
     val deletionPending: Boolean = false,
     val recoveryStatus: StudyRecoveryStatus = StudyRecoveryStatus.NONE,
-    val startupStage: StartupStage? = null,
+    val startupProgress: StartupProgress? = null,
 )
 
 /** Computes permissions over every signed named profile, including each location settings shape. */
@@ -570,10 +582,10 @@ class StudySessionManager(
     private var uploadArmingPending = false
 
     suspend fun initialize() = sessionMutex.withLock {
-        check(!mutableSnapshot.value.initialized && mutableSnapshot.value.startupStage == null) {
+        check(!mutableSnapshot.value.initialized && mutableSnapshot.value.startupProgress == null) {
             "Study session is already initialized"
         }
-        mutableSnapshot.value = StudySessionSnapshot(startupStage = StartupStage.LOADING_STUDY)
+        mutableSnapshot.value = StudySessionSnapshot(startupProgress = StartupProgress(StartupStage.LOADING_STUDY))
         try {
             resetStore.load()?.let {
                 completeResetLocked()
@@ -586,7 +598,7 @@ class StudySessionManager(
                     mutableSnapshot.value = StudySessionSnapshot(initialized = true)
                 }
                 is ActiveStudyRecord.Active -> {
-                    mutableSnapshot.update { it.copy(startupStage = StartupStage.VERIFYING_STORAGE) }
+                    mutableSnapshot.update { it.copy(startupProgress = StartupProgress(StartupStage.VERIFYING_STUDY)) }
                     activateLocked(
                         envelopeBytes = record.envelopeBytes,
                         configuration = acceptedStudyVerifier.verify(record.envelopeBytes),
@@ -643,7 +655,7 @@ class StudySessionManager(
             it.copy(
                 initialized = false,
                 recoveryStatus = StudyRecoveryStatus.NONE,
-                startupStage = StartupStage.LOADING_STUDY,
+                startupProgress = StartupProgress(StartupStage.LOADING_STUDY),
             )
         }
         try {
@@ -654,7 +666,7 @@ class StudySessionManager(
                     mutableSnapshot.value = StudySessionSnapshot(initialized = true)
                 }
                 is ActiveStudyRecord.Active -> {
-                    mutableSnapshot.update { it.copy(startupStage = StartupStage.VERIFYING_STORAGE) }
+                    mutableSnapshot.update { it.copy(startupProgress = StartupProgress(StartupStage.VERIFYING_STUDY)) }
                     activateLocked(
                         envelopeBytes = record.envelopeBytes,
                         configuration = acceptedStudyVerifier.verify(record.envelopeBytes),
@@ -1018,14 +1030,28 @@ class StudySessionManager(
         val signed = configuration.configuration
         val nextStore = storeFactory.create(signed.experimentId, signed.maximumLocalBytes)
         val nextAssembly = runtimeFactory.create(configuration, nextStore)
-        if (persistEnvelope) activeStudyStore.save(envelopeBytes.copyOf())
-        mutableSnapshot.update { it.copy(startupStage = StartupStage.RESTORING_RUNTIME) }
-        when (val result = nextAssembly.runtime.initialize()) {
+        val result = try {
+            if (persistEnvelope) activeStudyStore.save(envelopeBytes.copyOf())
+            nextAssembly.runtime.initialize { progress ->
+                val participantProgress = when (progress) {
+                    is RuntimeInitializationProgress.CheckingStorage ->
+                        StartupProgress(StartupStage.VERIFYING_STORAGE, progress.scan?.percent)
+                    RuntimeInitializationProgress.RestoringRuntime -> StartupProgress(StartupStage.RESTORING_RUNTIME)
+                }
+                mutableSnapshot.update { it.copy(startupProgress = participantProgress) }
+            }
+        } catch (failure: Throwable) {
+            // A cancelled recovery never publishes this assembly for the session to close later.
+            nextAssembly.close()
+            throw failure
+        }
+        when (result) {
             is RuntimeInitializationResult.Failed -> {
                 nextAssembly.close()
                 throw result.cause
             }
             is RuntimeInitializationResult.Ready -> {
+                mutableSnapshot.update { it.copy(startupProgress = StartupProgress(StartupStage.PREPARING_STUDY)) }
                 // Initialization already authenticated every retained commit once; its acknowledged
                 // document is the durable one, so the log is not recovered a second time.
                 val document = checkNotNull(nextAssembly.runtime.committedDocument()) {

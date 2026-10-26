@@ -27,6 +27,7 @@ import cool.jacoblin.particeps.core.application.EventDrivenRuntimeAssemblyFactor
 import cool.jacoblin.particeps.core.application.PlatformResourceActuatorFactory
 import cool.jacoblin.particeps.core.application.StudyAccessPolicy
 import cool.jacoblin.particeps.core.application.StartupStage
+import cool.jacoblin.particeps.core.application.StartupProgress
 import cool.jacoblin.particeps.core.application.StudyRuntimeAssemblyFactory
 import cool.jacoblin.particeps.core.application.StudySessionManager
 import cool.jacoblin.particeps.core.application.StudyStoreFactory
@@ -58,6 +59,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
@@ -214,28 +216,28 @@ class CollectorApplication : Application(), Configuration.Provider {
 
     private suspend fun initializeSession(
         graph: ApplicationGraph,
-        reportStage: (StartupStage?) -> Unit,
+        reportStage: (StartupProgress) -> Unit,
     ) {
         val session = graph.session
-        // Stage names and elapsed times only — never study data. Initialization runs behind a bare
-        // starting screen, and logcat is the sole way to place a reported startup stall.
+        // Only coarse progress and stage timings cross into the UI or logs, never study contents.
         val startedAtMillis = SystemClock.elapsedRealtime()
         val stageLog = applicationScope.launch {
             session.snapshot
-                .map { it.startupStage }
+                .map { it.startupProgress }
                 .distinctUntilChanged()
                 .filterNotNull()
-                .collect { stage ->
-                    reportStage(stage)
-                    Log.i(TAG, "Startup stage $stage at ${SystemClock.elapsedRealtime() - startedAtMillis}ms")
+                .collect { progress ->
+                    reportStage(progress)
+                    Log.i(TAG, "Startup $progress at ${SystemClock.elapsedRealtime() - startedAtMillis}ms")
                 }
         }
         try {
             session.initialize()
         } finally {
-            stageLog.cancel()
+            stageLog.cancelAndJoin()
             Log.i(TAG, "Session initialization finished in ${SystemClock.elapsedRealtime() - startedAtMillis}ms")
         }
+        reportStage(StartupProgress(StartupStage.PREPARING_STUDY))
         val snapshot = session.snapshot.value
         if (snapshot.recoveryStatus != cool.jacoblin.particeps.core.application.StudyRecoveryStatus.ACTION_REQUIRED) {
             graph.reconcileTimerWakeups()

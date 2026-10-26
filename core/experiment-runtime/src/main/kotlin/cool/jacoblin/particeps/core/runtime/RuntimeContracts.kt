@@ -7,6 +7,7 @@ import cool.jacoblin.particeps.core.automation.TimerProductionResult
 import cool.jacoblin.particeps.core.model.ConditionEpochId
 import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.model.SafetyPauseReason
+import cool.jacoblin.particeps.core.model.StorageRecoveryProgress
 import cool.jacoblin.particeps.core.resource.ResourceKey
 import cool.jacoblin.particeps.core.resource.ResourceGeneration
 import cool.jacoblin.particeps.core.resource.PeriodicResourceAuditSource
@@ -260,6 +261,11 @@ enum class RuntimeCommandRejection {
     UPLOAD_RECEIPT_MISMATCH,
     TIMER_NOT_FOUND,
     TIMER_NOT_DUE,
+}
+
+sealed interface RuntimeInitializationProgress {
+    data class CheckingStorage(val scan: StorageRecoveryProgress? = null) : RuntimeInitializationProgress
+    data object RestoringRuntime : RuntimeInitializationProgress
 }
 
 sealed interface RuntimeInitializationResult {

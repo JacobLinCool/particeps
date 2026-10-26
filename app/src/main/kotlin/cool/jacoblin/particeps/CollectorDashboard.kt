@@ -1,5 +1,6 @@
 package cool.jacoblin.particeps
 
+import android.os.SystemClock
 import android.text.format.DateUtils
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
@@ -37,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -66,6 +68,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import cool.jacoblin.particeps.core.application.StartupStage
+import cool.jacoblin.particeps.core.application.StartupProgress
 import cool.jacoblin.particeps.core.collector.AccessKind
 import cool.jacoblin.particeps.core.collector.SetupAction
 import cool.jacoblin.particeps.core.model.ExperimentState
@@ -100,6 +103,8 @@ object UiTags {
     const val RECOVERY_COPY = "recovery_copy"
     const val RECOVERY_RESET = "recovery_reset"
     const val STARTUP_STAGE = "startup_stage"
+    const val STARTUP_PROGRESS = "startup_progress"
+    const val STARTUP_ELAPSED = "startup_elapsed"
     const val TRAFFIC_SHAPING_DISCLOSURE = "traffic_shaping_disclosure"
     const val STUDY_AND_MY_DATA = "study_and_my_data"
     const val STUDY_AND_MY_DATA_SCREEN = "study_and_my_data_screen"
@@ -185,7 +190,7 @@ internal fun ApplicationStartupScreen(state: ApplicationStartupState) {
                         onOpenLanguage = { languageOpen = true },
                     )
                     when (state) {
-                        is ApplicationStartupState.Starting -> StartupPatience(state.stage)
+                        is ApplicationStartupState.Starting -> StartupPatience(state.progress)
                         ApplicationStartupState.Failed -> {
                             Text(stringResource(R.string.startup_failed_title), style = MaterialTheme.typography.titleMedium)
                             Text(stringResource(R.string.startup_failed_body))
@@ -312,7 +317,7 @@ private fun Dashboard(
         state.message?.let { Alert(it) }
 
         if (state is StudyUiState.Initializing) {
-            StartupPatience(state.stage)
+            StartupPatience(state.progress)
             return@Column
         }
         if (state.recoveryStatus == ParticipantRecoveryState.ACTION_REQUIRED) {
@@ -479,36 +484,55 @@ private fun Header(
     }
 }
 
-/**
- * Nothing at first, then which startup stage is running and a bar that keeps moving.
- *
- * A normal start resolves in well under a second, and drawing progress for it would make every
- * launch look slow. Only a start that has already kept the participant waiting owes them an
- * account of what it is doing and evidence that it has not hung — the report that finally
- * distinguished a long storage validation from a freeze arrived as a photo of this screen.
- */
+/** Short starts stay quiet; a long scan shows measured file progress, not an estimated completion. */
 @Composable
-private fun StartupPatience(stage: StartupStage?) {
+private fun StartupPatience(progress: StartupProgress?) {
     var waited by remember { mutableStateOf(false) }
+    var elapsedSeconds by remember { mutableLongStateOf(0L) }
     LaunchedEffect(Unit) {
+        val startedAt = SystemClock.elapsedRealtime()
         delay(STARTUP_PATIENCE_MILLIS)
         waited = true
+        while (true) {
+            elapsedSeconds = (SystemClock.elapsedRealtime() - startedAt) / 1_000
+            delay(1_000)
+        }
     }
     if (!waited) return
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        val percent = progress?.percent
+        if (percent == null) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth().testTag(UiTags.STARTUP_PROGRESS))
+        } else {
+            LinearProgressIndicator(
+                progress = { percent / 100f },
+                modifier = Modifier.fillMaxWidth().testTag(UiTags.STARTUP_PROGRESS),
+            )
+            Text(
+                stringResource(R.string.startup_storage_progress, percent),
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
         Text(
             stringResource(
-                when (stage) {
+                when (progress?.stage) {
                     StartupStage.LOADING_STUDY -> R.string.startup_stage_loading_study
+                    StartupStage.VERIFYING_STUDY -> R.string.startup_stage_verifying_study
                     StartupStage.VERIFYING_STORAGE -> R.string.startup_stage_validating_storage
                     StartupStage.RESTORING_RUNTIME -> R.string.startup_stage_restoring_runtime
+                    StartupStage.PREPARING_STUDY -> R.string.startup_stage_preparing_study
                     null -> R.string.startup_stage_generic
                 },
             ),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.testTag(UiTags.STARTUP_STAGE),
+        )
+        Text(
+            stringResource(R.string.startup_elapsed, elapsedSeconds / 60, elapsedSeconds % 60),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag(UiTags.STARTUP_ELAPSED),
         )
     }
 }

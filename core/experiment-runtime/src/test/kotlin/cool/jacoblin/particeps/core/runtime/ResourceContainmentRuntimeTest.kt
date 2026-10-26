@@ -39,6 +39,7 @@ import cool.jacoblin.particeps.core.model.RuntimeDocument
 import cool.jacoblin.particeps.core.model.StorageUsage
 import cool.jacoblin.particeps.core.model.StudyReadSnapshot
 import cool.jacoblin.particeps.core.model.StudyStore
+import cool.jacoblin.particeps.core.model.StorageRecoveryProgress
 import cool.jacoblin.particeps.core.resource.AppliedResourceState
 import cool.jacoblin.particeps.core.resource.AppliedResourceStatus
 import cool.jacoblin.particeps.core.resource.ApplyReceipt
@@ -492,7 +493,10 @@ class ResourceContainmentRuntimeTest {
         var pending: PendingEngineInput? = null
         val commits = mutableListOf<EngineCommit>()
 
-        override suspend fun loadRuntime(observeRetained: (EngineCommit) -> Unit): RuntimeDocument? =
+        override suspend fun loadRuntime(
+            observeRetained: (EngineCommit) -> Unit,
+            onProgress: (StorageRecoveryProgress) -> Unit,
+        ): RuntimeDocument? =
             runtime?.also { current ->
                 commits.filter { it.commitSequence >= current.retainedFromCommit }.forEach(observeRetained)
             }

@@ -36,6 +36,7 @@ import cool.jacoblin.particeps.core.model.StudyReadSnapshot
 import cool.jacoblin.particeps.core.model.StudyResetMarker
 import cool.jacoblin.particeps.core.model.StudyResetStore
 import cool.jacoblin.particeps.core.model.StudyStore
+import cool.jacoblin.particeps.core.model.StorageRecoveryProgress
 import cool.jacoblin.particeps.core.protocol.ActiveStudyRecord
 import cool.jacoblin.particeps.core.protocol.ActiveStudyStore
 import cool.jacoblin.particeps.core.resource.ApplyReceipt
@@ -158,7 +159,10 @@ internal class InteropStudyStore : StudyStore {
         commitsInterrupted = false
     }
 
-    override suspend fun loadRuntime(observeRetained: (EngineCommit) -> Unit): RuntimeDocument? =
+    override suspend fun loadRuntime(
+        observeRetained: (EngineCommit) -> Unit,
+        onProgress: (StorageRecoveryProgress) -> Unit,
+    ): RuntimeDocument? =
         runtime?.also { current ->
             commits.filter { it.commitSequence >= current.retainedFromCommit }.forEach(observeRetained)
         }

@@ -7,6 +7,36 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
+## v1.0.0-rc.18 — 2026-10-27
+
+This release makes long cold-start data checking visible and removes repeated Cipher construction
+while retaining authentication of every saved commit.
+
+- Long cold starts show a measured saved-data checking percentage, elapsed waiting time, and
+  separate restoration/preparation stages. Progress comes from the existing scan without another
+  decryption pass; 100% scan completion does not publish the application before it is ready.
+  Each scan reuses one Cipher while reinitializing and authenticating every frame independently.
+  Existing layout 3 files and keys remain unchanged, and no reset is required for this change.
+  Full retained-history checking still runs before readiness, so startup cost continues to grow
+  with retained data. See the [crypto and recovery review](https://github.com/JacobLinCool/particeps/blob/v1.0.0-rc.18/docs/maintainers/crypto-and-recovery-review.md).
+- Cancelling the recovery owner stops the scan between records, closes the unpublished runtime,
+  and propagates cancellation without classifying the saved study as damaged.
+- The participant website uses simpler study descriptions, shows the current study QR in its
+  study details, and lets study-guide downloads finish on slow connections.
+
+**Application installation:** the application ID remains `cool.jacoblin.particeps` and the signed
+APK retains the production certificate established in RC5. Install this newer APK over RC17;
+do not uninstall the existing app to update it.
+
+**Local study data:** RC17's accepted signed configurations, layout 3 files, and existing Keystore
+keys remain supported without conversion or reset. Interrupted active studies still recover paused
+until the participant explicitly resumes. Previously retired layouts and unavailable collectors
+remain unsupported; this release does not add a legacy reader or migrate them.
+
+Local verification passed 279 JVM tests and 45 Android API 34 emulator tests, plus debug build and
+lint. These checks do not establish the cause of the reported Samsung S24 Ultra startup stall or
+measure its startup speed; the complete retained-history scan remains a possible long wait.
+
 ## v1.0.0-rc.17 — 2026-10-05
 
 This release improves participant disclosure, collection recovery, and verification of
