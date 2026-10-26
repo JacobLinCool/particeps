@@ -7,7 +7,46 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
+## v1.0.0-rc.19 — 2026-10-27
+
+Long cold starts now show saved-data checking progress, elapsed waiting time, and separate
+restoration/preparation stages. Each scan reuses one Cipher while independently initializing and
+authenticating every saved frame. Progress comes from that same scan, without another decryption
+pass. Cancelling recovery closes the unpublished runtime and preserves saved study data.
+
+The RC18 tag did not produce a public release: its API 37 reboot qualification stopped at the
+first readiness query's five-second transport limit. RC19 includes the CI control correction and
+follows RC17 as the next public release candidate.
+
+- Cold-start readiness queries now share the existing qualification budget. The overall reboot
+  deadline, safety-pause proof, notification check, stopped data admission and crash/process checks
+  remain. Live queries and mutation admissions retain their five-second limit; a lost response
+  fails without relaunching the activity or resubmitting an operation.
+- PRs run one debug JVM/lint/build lane. Full API 34/API 37 device qualification runs at release
+  or manual dispatch, alongside the host checks and signed APK build. Publication requires every
+  result and uses that same verified APK. API 34 now stops before emulator launch if APK prebuild
+  fails. Native test builds compile only the emulator ABI and retain an NDK-specific Go cache.
+  Duplicate invocations and 11 source-text or fixed-copy tests were removed; two executable
+  cold-readiness regression tests were added. Observed PR feedback fell from about 39 minutes to
+  about 7–13 minutes across runs with different runner/cache conditions, not a fixed guarantee.
+- The participant website uses simpler study descriptions, shows the current study QR in its
+  study details, and lets study-guide downloads finish on slow connections.
+
+**Updating from RC17:** install the newer APK over the existing app; do not uninstall it. The
+application ID remains `cool.jacoblin.particeps` and the production signing certificate is unchanged.
+Accepted signed configurations, layout 3 files and existing Keystore keys remain supported without
+conversion or reset. Interrupted active studies recover paused until the participant resumes.
+Previously retired layouts and unavailable collectors remain unsupported.
+
+Full retained-history authentication still runs before readiness, so startup cost grows with
+retained data. These changes do not establish the cause of the reported Samsung S24 Ultra stall
+or measure its startup speed. See the [crypto and recovery review](https://github.com/JacobLinCool/particeps/blob/v1.0.0-rc.19/docs/maintainers/crypto-and-recovery-review.md)
+and [CI scope and timing evidence](https://github.com/JacobLinCool/particeps/blob/v1.0.0-rc.19/docs/maintainers/ci-scope.md).
+
 ## v1.0.0-rc.18 — 2026-10-27
+
+This tag did not produce a public release; RC19 includes these application changes and the CI
+cold-readiness control correction.
 
 This release makes long cold-start data checking visible and removes repeated Cipher construction
 while retaining authentication of every saved commit.
