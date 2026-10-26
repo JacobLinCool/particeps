@@ -1,5 +1,4 @@
 import org.gradle.api.tasks.Exec
-import org.gradle.api.tasks.testing.Test
 
 plugins {
     alias(libs.plugins.android.library)
@@ -55,10 +54,6 @@ kotlin {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
         allWarningsAsErrors = true
     }
-}
-
-tasks.withType<Test>().configureEach {
-    systemProperty("particeps.repositoryRoot", rootProject.projectDir.absolutePath)
 }
 
 dependencies {

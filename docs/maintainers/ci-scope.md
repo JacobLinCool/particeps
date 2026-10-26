@@ -1,6 +1,6 @@
 # CI scope and test cleanup
 
-RC18 separates quick pull-request feedback from release qualification. A change merged through a
+CI separates quick pull-request feedback from release qualification. A change merged through a
 PR does not trigger a second Android, analysis or receiver run. Pages still builds the merged
 source before deploying it.
 
@@ -59,6 +59,14 @@ Ten tool tests were deleted because they asserted source spelling or frozen hist
 One Web test was also removed because it repeated the release-version
 constant, its constructed URL, and two button labels without rendering the button or checking the
 asset. Release verification checks the downloadable APK and the deployed participant link instead.
+
+Two Kotlin tests in `AndroidVpnContractTest` were also removed. They searched the unmerged
+Manifest and VPN source for literal strings, without constructing the service or exercising its
+behaviour. The signed-APK verifier checks the actual merged service declaration, and device
+qualification still exercises selected-app routing, protocol traffic, throughput and bypass
+behaviour. The repository-root system property used only by those two source tests is deleted.
+This brings the cleanup to 13 removed tests; the two cold-readiness regression tests below add
+behavioural coverage for the CI defect found during release.
 
 The retained tool suite contains 195 tests, including two new cold-readiness deadline regression
 tests. Tests that execute code with fake ADB/processes or
