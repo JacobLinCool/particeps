@@ -60,9 +60,25 @@ One Web test was also removed because it repeated the release-version
 constant, its constructed URL, and two button labels without rendering the button or checking the
 asset. Release verification checks the downloadable APK and the deployed participant link instead.
 
-The retained tool suite contains 193 tests. Tests that execute code with fake ADB/processes or
+The retained tool suite contains 195 tests, including two new cold-readiness deadline regression
+tests. Tests that execute code with fake ADB/processes or
 temporary fixtures are retained: they verify outcomes such as rejecting a crash despite a success
 marker, preserving an unknown operation outcome, or refusing damaged APK evidence.
+
+## Cold-start control deadline
+
+RC18 release attempt 1 passed API 37 compatibility and 13 of 14 host scenarios. The reboot scenario
+failed before a readiness receipt: `am start -W` had returned after displaying MainActivity, then
+the first readiness broadcast exceeded the host's five-second command limit. Qualification stopped
+after 12.43 seconds despite its existing 105-second shared deadline. This establishes the failing
+control operation; it does not establish why Android delayed the reply or prove recovery succeeded.
+
+Cold-start readiness broadcasts now use the caller's remaining readiness budget, bounded by that
+same overall deadline. Live queries and mutation admissions retain their five-second command
+limit. A timeout still fails without relaunching the activity or resubmitting an operation. The
+reboot proof still checks safety pause, its notification, stopped data admission, stable process
+identity and current-boot crash/ANR/death events. A six-second readiness fixture fails with the
+previous client and succeeds with this change; a reply beyond the shared deadline still fails.
 
 ## Timing evidence
 
@@ -75,5 +91,6 @@ After cleanup, [PR run 40372237192](https://github.com/JacobLinCool/particeps/ac
 passed in 6m59s for the host job. Its main Gradle step took 3m03s, compared with 10m13s before.
 The complete PR feedback path fell from about 39 minutes to about 7 minutes because the two device
 jobs now run at release/manual dispatch. These are observations from individual runs with different
-runner/cache conditions, not a controlled performance benchmark. No device deadlines or throughput
-thresholds were relaxed.
+runner/cache conditions, not a controlled performance benchmark. Overall device qualification
+deadlines and throughput thresholds remain unchanged; the cold-readiness transport correction
+above removes an earlier inner cutoff.

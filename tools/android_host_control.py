@@ -57,10 +57,10 @@ class HostControl:
             raise ControlFailure("Particeps process changed; unknown operation outcome")
         self.pid = pid
 
-    def broadcast(self, action: str, extras: list[str], deadline: float) -> dict:
+    def broadcast(self, action: str, extras: list[str], deadline: float, *, maximum: float = 5.0) -> dict:
         self.check_pid(deadline)
         output = self.command(["shell", "am", "broadcast", "--include-stopped-packages", "--receiver-foreground",
-                               "-a", action, "-p", PACKAGE] + extras, deadline)
+                               "-a", action, "-p", PACKAGE] + extras, deadline, maximum)
         self.check_pid(deadline)
         value = receipt_from_broadcast(output)
         if self.process_id is not None and value["process_id"] != self.process_id:
@@ -76,7 +76,11 @@ class HostControl:
             # Explicit cold setup only. Measurement/state/profile queries never launch an activity.
             self.command(["shell", "am", "start", "-W", "-n", f"{PACKAGE}/.MainActivity"], deadline, 30.0)
         while True:
-            value = self.broadcast(QUERY, ["--ez", "readiness", "true"], deadline)
+            # Cold readiness includes Android's post-boot broadcast scheduling. Keep that wait
+            # inside the existing startup budget rather than imposing the live-query limit.
+            # A lost response still fails; no activity launch or operation is retried.
+            value = self.broadcast(QUERY, ["--ez", "readiness", "true"], deadline,
+                                   maximum=timeout if start else 5.0)
             if value["status"] == "READY":
                 return
             if value["status"] != "INITIALIZING" or not start:
