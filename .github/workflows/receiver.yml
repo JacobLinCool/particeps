@@ -1,13 +1,6 @@
 name: Receiver CI
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "receiver/**"
-      - "protocol/v1/**"
-      - ".github/workflows/receiver.yml"
   pull_request:
     paths:
       - "receiver/**"

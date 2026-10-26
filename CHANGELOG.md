@@ -21,6 +21,11 @@ while retaining authentication of every saved commit.
   with retained data. See the [crypto and recovery review](https://github.com/JacobLinCool/particeps/blob/v1.0.0-rc.18/docs/maintainers/crypto-and-recovery-review.md).
 - Cancelling the recovery owner stops the scan between records, closes the unpublished runtime,
   and propagates cancellation without classifying the saved study as damaged.
+- CI gives PR feedback through one debug JVM/lint/build lane. Device qualification runs at
+  release or by manual dispatch; merges do not repeat the Android/analysis/receiver pipelines.
+  Release checks and signed APK construction run in parallel, with publication gated on every
+  result. Repeated fixture/conformance runs and 10 source-text or historical-copy tests were
+  removed; behavioural, storage-corruption, recovery and final APK checks remain.
 - The participant website uses simpler study descriptions, shows the current study QR in its
   study details, and lets study-guide downloads finish on slow connections.
 

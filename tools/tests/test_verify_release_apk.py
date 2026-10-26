@@ -13,14 +13,9 @@ from tools import verify_release_apk
 
 
 class VerifyReleaseApkTest(unittest.TestCase):
-    def test_repository_anchor_is_strict_and_workflow_does_not_duplicate_it(self) -> None:
+    def test_repository_anchor_is_strict(self) -> None:
         expected = verify_release_apk.read_expected_certificate_sha256()
-        workflow = (verify_release_apk.ROOT / ".github/workflows/release.yml").read_text(
-            encoding="utf-8",
-        )
-
         self.assertRegex(expected, r"\A[0-9a-f]{64}\Z")
-        self.assertNotIn(expected, workflow)
 
     def test_anchor_rejects_noncanonical_content(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -103,21 +98,6 @@ class VerifyReleaseApkTest(unittest.TestCase):
                 Path("/sdk/apksigner"),
                 Path("/tmp/final.apk"),
             )
-
-    def test_release_jobs_have_minimum_permissions_and_call_verifier_before_publish(self) -> None:
-        workflow = (verify_release_apk.ROOT / ".github/workflows/release.yml").read_text(
-            encoding="utf-8",
-        )
-        header, jobs = workflow.split("\njobs:\n", maxsplit=1)
-        instrumented, release = jobs.split("\n  release:\n", maxsplit=1)
-
-        self.assertNotIn("contents: write", header)
-        self.assertIn("    permissions:\n      contents: read\n", instrumented)
-        self.assertIn("    permissions:\n      contents: write\n", release)
-        verifier = 'python3 tools/verify_release_apk.py "$build_tools/apksigner" "$release_apk"'
-        self.assertIn(verifier, release)
-        self.assertLess(release.index(verifier), release.index("sha256sum"))
-        self.assertLess(release.index(verifier), release.index("gh release"))
 
     def test_apk_contents_require_four_architecture_aligned_abis_and_exact_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

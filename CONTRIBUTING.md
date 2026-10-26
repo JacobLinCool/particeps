@@ -58,7 +58,9 @@ Requirements: JDK 17, Android SDK platform/build tools for API 37, Go 1.26.3, an
 AAR.
 
 ```bash
-./gradlew test testDebugUnitTest lintDebug lintRelease assembleDebug assembleRelease
+./gradlew test lintDebug :app:assembleDebug
+# Before release, also build and lint the release variant.
+./gradlew lintRelease :app:assembleRelease
 go -C native/traffic-shaping vet ./...
 go -C native/traffic-shaping test -race ./...
 cd web && pnpm check && pnpm test && pnpm build

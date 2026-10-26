@@ -1,34 +1,24 @@
 name: Android CI
 
-# The excluded paths below cannot change what Gradle builds, so a commit touching only those skips
-# a seven-minute Android build. The list starts from every path and removes only those, rather
-# than naming what to build: a path nobody anticipated still runs this workflow, which is the safe
-# direction to be wrong in. Later patterns override earlier ones. The published study
-# configurations are included again because RealRuntimeBundleInteropTest reads the pilot's.
+# PRs run one debug JVM/lint/build lane. Device suites run only for a release
+# caller or explicit manual dispatch, and run concurrently with the JVM lane.
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "**"
-      - "!web/**"
-      - "web/static/studies/**"
-      - "!docs/**"
-      - "!**.md"
-      - "!.github/workflows/pages.yml"
-      - "!CITATION.cff"
-      - "!LICENSE"
   pull_request:
     paths:
       - "**"
+      - "!receiver/**"
+      - "!particeps-analysis/**"
       - "!web/**"
       - "web/static/studies/**"
       - "!docs/**"
       - "!**.md"
       - "!.github/workflows/pages.yml"
+      - "!.github/workflows/analysis.yml"
+      - "!.github/workflows/receiver.yml"
       - "!CITATION.cff"
       - "!LICENSE"
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -46,8 +36,6 @@ jobs:
       ANDROID_PLATFORM_PACKAGE: platforms;android-37.0
       ANDROID_BUILD_TOOLS_PACKAGE: build-tools;37.0.0
       ANDROID_NDK_PACKAGE: ndk;30.0.14904198
-      PARTICEPS_KOTLIN_EXPORT_INTEROP_DIR: ${{ github.workspace }}/build/protocol-interop/kotlin-export
-      PARTICEPS_REAL_RUNTIME_INTEROP_DIR: ${{ github.workspace }}/build/protocol-interop/real-runtime
       PARTICEPS_REGISTRY_MERGE_BASE: ${{ github.event.pull_request.base.sha || '' }}
       GOTOOLCHAIN: local
       GOPROXY: https://proxy.golang.org
@@ -88,7 +76,6 @@ jobs:
       - name: Validate Protocol v1 and collector contracts
         run: |
           python3 tools/event_source_registry.py check
-          python3 -m unittest tools.tests.test_event_source_registry
           python3 tools/validate_protocol_vectors.py
           python3 tools/retired_identity_audit.py
           python3 -m unittest discover -s tools/tests -v
@@ -100,6 +87,8 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@0f4528296b4bc09e8ae0fc7be30185a4ab435545 # v6.0.0
+        with:
+          cache-read-only: false
 
       - name: Install Android SDK packages
         shell: bash
@@ -137,51 +126,8 @@ jobs:
       - name: Test, lint, and build
         run: >-
           ./gradlew --no-daemon
-          test testDebugUnitTest lintDebug assembleDebug assembleRelease
-
-      - name: Produce a Kotlin encrypted bundle for cross-language replay
-        run: >-
-          ./gradlew --no-daemon
-          :core:export:test
-          --tests cool.jacoblin.particeps.core.export.ResearchExportTest.kotlinExporterWritesEncryptedPythonInteropFixtureWhenExplicitlyRequested
-
-      # The hand-built chain above cannot show what the runtime actually writes. This test runs the
-      # production session manager and runtime through a pilot-shaped week, verifies its exports
-      # with the Kotlin bundle verifier, and writes them for the Python analyzer. The test step above
-      # already ran it with the same directory; like the Kotlin export step, this names the producer
-      # of the files the Python step reads, for about ten seconds.
-      - name: Produce real-runtime bundles for cross-language replay
-        run: >-
-          ./gradlew --no-daemon
-          :core:study-application:test
-          --tests cool.jacoblin.particeps.core.application.RealRuntimeBundleInteropTest
-
-      - name: Set up locked Python analysis environment
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
-        with:
-          version: "0.11.26"
-          python-version: "3.13"
-          working-directory: particeps-analysis
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-
-      - name: Replay the Kotlin ciphertext through Python
-        working-directory: particeps-analysis
-        run: |
-          uv sync --locked
-          uv run --frozen python -m unittest discover -s tests -p test_bundle_contract.py -v
-
-      - name: Materialize the real-runtime bundles through Python
-        working-directory: particeps-analysis
-        run: uv run --frozen python -m unittest discover -s tests -p test_real_runtime_interop.py -v
-
-      - name: Consume shared Protocol v1 vectors in Kotlin
-        run: >-
-          ./gradlew --no-daemon
-          -I tools/protocol-conformance.init.gradle
-          :core:export:test
-          --tests particeps.conformance.ProtocolConformanceTest
-          --tests particeps.conformance.AutomationReducerConformanceTest
+          -PinstrumentedTestAbi=x86_64
+          test lintDebug :app:assembleDebug
 
       - name: Enforce collector capability boundary
         run: python3 tools/collector_assurance.py
@@ -196,7 +142,7 @@ jobs:
 
   instrumented:
     name: Instrumented tests (${{ matrix.name }})
-    needs: verify
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -247,6 +193,8 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@0f4528296b4bc09e8ae0fc7be30185a4ab435545 # v6.0.0
+        with:
+          cache-read-only: false
 
       - name: Install pinned Android NDK
         shell: bash
