@@ -230,6 +230,8 @@ class AcknowledgedAtomicFileTest {
             if (failurePoint == FailurePoint.FILE_SYNC) throw IOException("injected sync failure")
         }
 
+        override fun syncFile(file: File) = AndroidAcknowledgedFileSystem.syncFile(file)
+
         override fun closeFile(output: FileOutputStream) {
             calls += "close-file"
             output.close()

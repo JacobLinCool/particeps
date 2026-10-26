@@ -75,6 +75,10 @@ jobs:
             native/traffic-shaping/go.sum
             native/traffic-shaping/build-aar.sh
 
+      - name: Check storage commit and recovery model
+        timeout-minutes: 1
+        run: python3 tools/check_storage_model.py
+
       - name: Validate Protocol v1 and collector contracts
         run: |
           python3 tools/event_source_registry.py check
@@ -133,6 +137,43 @@ jobs:
 
       - name: Enforce collector capability boundary
         run: python3 tools/collector_assurance.py
+
+      - name: Report storage verification cost
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          model = Path('build/reports/storage-model/timing.json')
+          rows = []
+          for path in sorted(Path('core/storage/build/test-results').glob('*/TEST-*CommitRecoveryPropertyTest.xml')):
+              suite = ET.parse(path).getroot()
+              rows.append({'task': path.parent.name, **suite.attrib})
+          report = {'model': json.loads(model.read_text()) if model.exists() else None, 'property_suites': rows}
+          output = Path('build/reports/storage-verification.json')
+          output.parent.mkdir(parents=True, exist_ok=True)
+          output.write_text(json.dumps(report, indent=2) + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('### Storage verification cost\n\n')
+              summary.write(f"Model download/checksum and all TLC runs: {report['model']['total_seconds']} s\n\n" if report['model'] else 'Model verification incomplete.\n\n')
+              for row in rows:
+                  summary.write(f"- {row['task']}: {row['tests']} tests, {row['time']} s, {row['failures']} failures\n")
+              summary.write('\nJUnit durations exclude compilation and test-worker startup; cached XML retains the original execution duration.\n')
+          PY
+
+      - name: Upload storage verification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: storage-verification-${{ github.sha }}
+          path: |
+            build/reports/storage-model/
+            build/reports/storage-verification.json
+            core/storage/build/test-results/*/TEST-*CommitRecoveryPropertyTest.xml
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload debug APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
