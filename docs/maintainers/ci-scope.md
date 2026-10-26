@@ -89,8 +89,10 @@ reboot-control ADB timeout, so this is a latency baseline, not a passing release
 
 After cleanup, [PR run 40372237192](https://github.com/JacobLinCool/particeps/actions/runs/40372237192)
 passed in 6m59s for the host job. Its main Gradle step took 3m03s, compared with 10m13s before.
-The complete PR feedback path fell from about 39 minutes to about 7 minutes because the two device
-jobs now run at release/manual dispatch. These are observations from individual runs with different
-runner/cache conditions, not a controlled performance benchmark. Overall device qualification
+The [follow-up PR run 40377990690](https://github.com/JacobLinCool/particeps/actions/runs/40377990690)
+took 12m09s in the host job and 8m25s in its main Gradle step. The observed PR feedback path fell
+from about 39 minutes to about 7–13 minutes because the two device jobs now run at release/manual
+dispatch. These are observations from individual runs with different runner/cache conditions,
+not a controlled performance benchmark or a fixed duration guarantee. Overall device qualification
 deadlines and throughput thresholds remain unchanged; the cold-readiness transport correction
 above removes an earlier inner cutoff.
