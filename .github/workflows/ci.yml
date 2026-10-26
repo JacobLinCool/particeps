@@ -163,6 +163,8 @@ jobs:
             # Keep the stock image unmodified. Product compatibility is blocking; the full host
             # harness has an exact-signature quarantine for the revision 5 renderer defect.
     env:
+      ANDROID_PLATFORM_PACKAGE: platforms;android-37.0
+      ANDROID_BUILD_TOOLS_PACKAGE: build-tools;37.0.0
       ANDROID_NDK_PACKAGE: ndk;30.0.14904198
       GOTOOLCHAIN: local
       GOPROXY: https://proxy.golang.org
@@ -200,7 +202,7 @@ jobs:
         with:
           cache-read-only: false
 
-      - name: Install pinned Android NDK
+      - name: Install pinned Android build packages
         shell: bash
         run: |
           set -euo pipefail
@@ -214,7 +216,13 @@ jobs:
             fi
           done
           test -n "$sdkmanager"
-          printf 'y\n' | "$sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" "$ANDROID_NDK_PACKAGE"
+          printf 'y\n' | "$sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" "$ANDROID_PLATFORM_PACKAGE" "$ANDROID_BUILD_TOOLS_PACKAGE" "$ANDROID_NDK_PACKAGE"
+
+      # The emulator action continues launching after its pre-launch hook fails.
+      # A separate step makes a failed build stop before booting an unused device.
+      - name: Build API 34 test APKs
+        if: matrix.require_16k == false
+        run: tools/android-emulator-prebuild.sh --require-16k=false
 
       - name: Enable KVM
         run: |
@@ -236,7 +244,6 @@ jobs:
           disk-size: 12G
           emulator-options: ${{ matrix.emulator_options }}
           disable-animations: true
-          pre-emulator-launch-script: tools/android-emulator-prebuild.sh --require-16k=${{ matrix.require_16k }}
           script: tools/android-emulator-ci.sh --require-16k=${{ matrix.require_16k }}
 
       - name: Run blocking API 37 compatibility gate and quarantined full harness

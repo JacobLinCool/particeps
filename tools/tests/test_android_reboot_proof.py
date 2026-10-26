@@ -80,6 +80,9 @@ class FakeAdb:
         if callable(response):
             response = response(self)
         if response["status"] == "READY":
+            if self.ready_delay > kwargs["timeout"]:
+                self.now += kwargs["timeout"]
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
             self.now += self.ready_delay
         if response["status"] == "SUCCEEDED":
             response = {**response, "result": json.dumps(self.proof)}
@@ -178,7 +181,31 @@ class RebootQualificationTest(unittest.TestCase):
         self.assertEqual(1, sum("include_safety_pause_proof" in c for c in calls))
         self.assertEqual(1, sum("operation_status" in c for c in calls))
         self.assertFalse(any(token in c for c in calls for token in ("instrument", "force-stop", "reset", "reboot")))
-        self.assertTrue(all(0 < timeout <= 30 for _, timeout in adb.calls))
+        self.assertTrue(all(0 < timeout <= 105 for _, timeout in adb.calls))
+
+    def test_delayed_cold_readiness_uses_existing_qualification_budget(self):
+        adb = FakeAdb()
+        adb.ready_delay = 6.0
+        with tempfile.TemporaryDirectory() as temporary:
+            result = self.invoke(adb, Path(temporary) / "proof")
+        self.assertEqual("VERIFIED_SAFETY_PAUSED", result["status"])
+        self.assertEqual(1, sum("start" in command for command, _ in adb.calls))
+        self.assertEqual(1, sum("readiness" in command for command, _ in adb.calls))
+        self.assertEqual(1, sum("include_safety_pause_proof" in command for command, _ in adb.calls))
+
+    def test_cold_readiness_timeout_never_relaunches_or_admits_proof(self):
+        adb = FakeAdb()
+        adb.ready_delay = 6.0
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "proof"
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.invoke(adb, output, timeout=3.0)
+            result = json.loads((output / "result.json").read_text())
+        self.assertEqual("FAILED", result["status"])
+        self.assertEqual([], result["receipts"])
+        self.assertEqual(1, sum("start" in command for command, _ in adb.calls))
+        self.assertEqual(1, sum("readiness" in command for command, _ in adb.calls))
+        self.assertFalse(any("include_safety_pause_proof" in command for command, _ in adb.calls))
 
     def test_crash_before_first_receipt_then_restart_cannot_become_pass(self):
         adb = FakeAdb()
