@@ -377,6 +377,10 @@ commit, pending input, checkpoint, and successor against a plain re-derivation o
 
 A commit never crosses a segment. A torn uncommitted final tail is truncated; corruption anywhere
 else makes open/read/export fail closed. Export, upload, and eviction boundaries align to complete commits.
+Exception reconciliation and cold recovery sync each authenticated segment before accepting its
+frames or publishing a newer snapshot: complete readable bytes may still be only kernel-visible
+after a failed append or process death. Ordinary live read snapshots do not sync. The bounded model
+and generated implementation checks are described in [storage verification](maintainers/storage-verification.md).
 Reclamation is bounded by `min(uploaded_through_commit, evaluated_through_commit)` so neither
 delivery nor reducer recovery can lose required input.
 

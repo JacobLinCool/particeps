@@ -5,9 +5,11 @@ import android.system.OsConstants
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.nio.channels.FileChannel
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.LinkOption
+import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.BasicFileAttributes
 
 /**
@@ -185,6 +187,9 @@ internal interface AcknowledgedFileSystem {
 
     fun syncFile(output: FileOutputStream)
 
+    /** Persist an existing log without truncating it or creating a missing file. */
+    fun syncFile(file: File)
+
     fun closeFile(output: FileOutputStream)
 
     fun atomicReplace(source: File, target: File)
@@ -225,6 +230,10 @@ internal object AndroidAcknowledgedFileSystem : AcknowledgedFileSystem {
 
     override fun syncFile(output: FileOutputStream) {
         output.fd.sync()
+    }
+
+    override fun syncFile(file: File) {
+        FileChannel.open(file.toPath(), StandardOpenOption.WRITE).use { it.force(true) }
     }
 
     override fun closeFile(output: FileOutputStream) {

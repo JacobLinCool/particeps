@@ -16,6 +16,11 @@ throughput, permission revocation, 16 KiB native loading and signed APK identity
 device tests out of the PR gate means a device-only regression can be found after merge. Release
 publication remains blocked by it; manual dispatch provides earlier device feedback when needed.
 
+The host lane also runs the bounded [storage commit/recovery model](storage-verification.md),
+including two expected counterexamples. Generated actual-store histories run inside the existing
+Gradle tests. CI publishes model/setup and property-test timings as separate evidence; no additional
+emulator lane or Gradle invocation is introduced.
+
 ## Removed duplication
 
 - PRs no longer build a four-ABI release APK. The existing `instrumentedTestAbi` selection now

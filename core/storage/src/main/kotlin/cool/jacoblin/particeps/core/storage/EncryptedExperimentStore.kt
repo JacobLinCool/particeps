@@ -1,10 +1,6 @@
 package cool.jacoblin.particeps.core.storage
 
 import android.content.Context
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
-import android.system.Os
-import android.system.OsConstants
 import cool.jacoblin.particeps.core.model.EngineCommit
 import cool.jacoblin.particeps.core.model.EngineCommitIntegrity
 import cool.jacoblin.particeps.core.model.EngineInputKind
@@ -22,16 +18,12 @@ import java.io.DataInputStream
 import java.io.EOFException
 import java.io.File
 import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
-import java.nio.file.Files
 import java.security.GeneralSecurityException
-import java.security.KeyStore
 import java.security.MessageDigest
 import java.util.Collections
 import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.Dispatchers
@@ -54,15 +46,37 @@ internal const val ENGINE_KEY_ALIAS_PREFIX = "particeps-engine-"
  * snapshots are bounded recovery caches and can only advance by replaying authenticated frames.
  */
 class EncryptedExperimentStore internal constructor(
-    context: Context,
+    private val rootDirectory: File,
     private val experimentId: String,
     private val maximumLocalBytes: Long,
-    private val deleteSegment: (File) -> Boolean,
+    private val keyAccess: ExperimentKeyAccess,
+    private val deleteSegment: (File) -> Boolean = File::delete,
     private val fileSystem: AcknowledgedFileSystem = AndroidAcknowledgedFileSystem,
     private val appendFrame: (File, ByteArray) -> Unit = ::appendFrameDurably,
     private val snapshotPolicy: SnapshotCheckpointPolicy = SnapshotCheckpointPolicy(),
     private val maximumSegmentBytes: Long = MAXIMUM_SEGMENT_BYTES,
 ) : StudyStore {
+    internal constructor(
+        context: Context,
+        experimentId: String,
+        maximumLocalBytes: Long,
+        deleteSegment: (File) -> Boolean,
+        fileSystem: AcknowledgedFileSystem = AndroidAcknowledgedFileSystem,
+        appendFrame: (File, ByteArray) -> Unit = ::appendFrameDurably,
+        snapshotPolicy: SnapshotCheckpointPolicy = SnapshotCheckpointPolicy(),
+        maximumSegmentBytes: Long = MAXIMUM_SEGMENT_BYTES,
+    ) : this(
+        context.noBackupFilesDir.resolve(STORAGE_DIRECTORY),
+        experimentId,
+        maximumLocalBytes,
+        AndroidExperimentKeyAccess("$ENGINE_KEY_ALIAS_PREFIX${sha256(experimentId.toByteArray()).toLowerHex()}"),
+        deleteSegment,
+        fileSystem,
+        appendFrame,
+        snapshotPolicy,
+        maximumSegmentBytes,
+    )
+
     constructor(
         context: Context,
         experimentId: String,
@@ -75,11 +89,8 @@ class EncryptedExperimentStore internal constructor(
     )
 
     private val mutex = Mutex()
-    private val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
     private val opaqueId = sha256(experimentId.toByteArray()).toLowerHex()
     private val opaqueIdBytes = opaqueId.toByteArray(Charsets.US_ASCII)
-    private val keyAlias = "$ENGINE_KEY_ALIAS_PREFIX$opaqueId"
-    private val rootDirectory = context.noBackupFilesDir.resolve(STORAGE_DIRECTORY)
     private val snapshotFile = AcknowledgedAtomicFile(
         rootDirectory.resolve("$opaqueId.runtime3.ptc"),
         fileSystem,
@@ -387,7 +398,7 @@ class EncryptedExperimentStore internal constructor(
                 check(!fileSystem.exists(commitDirectory)) { "Cannot delete commit directory" }
                 fileSystem.syncDirectory(rootDirectory)
             }
-            if (keyStore.containsAlias(keyAlias)) keyStore.deleteEntry(keyAlias)
+            keyAccess.deleteKey()
             runtime = null
             pending = null
             snapshotPolicy.checkpointAcknowledged()
@@ -426,7 +437,8 @@ class EncryptedExperimentStore internal constructor(
         try {
             appendFrame(segment.segment.file, frame)
         } catch (failure: Throwable) {
-            // A failed append can leave a torn tail, and the readback below can truncate it.
+            // A failed append can leave a torn tail or complete but unsynced bytes. Recovery
+            // authenticates the frame AND syncs its segment before it can acknowledge readback.
             appendedExactly = false
             forgetCommitLogLayout()
             var acknowledged = false
@@ -817,7 +829,16 @@ class EncryptedExperimentStore internal constructor(
                     }
                 }
             }
-            truncateAt?.let { truncateSegmentTail(segment.file, it) }
+            truncateAt?.let { length ->
+                RandomAccessFile(segment.file, "rw").use { it.setLength(length) }
+            }
+            if (recoverTail) {
+                // Authentication establishes identity, not durability. After process death or a
+                // failed append, even a complete frame may exist only in the kernel page cache.
+                // Sync once per recovered segment before accepting readback/publishing a snapshot.
+                // This also persists a repaired tail; ordinary live reads never perform this sync.
+                fileSystem.syncFile(segment.file)
+            }
             precedingBytes += captured.length
             // A torn final uncommitted tail has been inspected and durably removed.
             if (!reachedUpperBound) progress?.update(precedingBytes)
@@ -1052,25 +1073,10 @@ class EncryptedExperimentStore internal constructor(
             rootDirectory.resolve("$opaqueId.events").exists()
 
     private fun existingKey(): SecretKey? =
-        engineKey ?: (keyStore.getKey(keyAlias, null) as? SecretKey)?.also { engineKey = it }
+        engineKey ?: keyAccess.existingKey()?.also { engineKey = it }
     private fun existingKeyOrThrow(): SecretKey = existingKey() ?: error("Encrypted experiment key is unavailable")
 
-    private fun getOrCreateKey(): SecretKey = existingKey() ?: KeyGenerator
-        .getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-        .apply {
-            init(
-                KeyGenParameterSpec.Builder(
-                    keyAlias,
-                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-                )
-                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                    .setKeySize(KEY_SIZE_BITS)
-                    .build(),
-            )
-        }
-        .generateKey()
-        .also { engineKey = it }
+    private fun getOrCreateKey(): SecretKey = existingKey() ?: keyAccess.createKey().also { engineKey = it }
 
     private fun validateSegmentHeader(input: DataInputStream, expectedIndex: Int) {
         val header = ByteArray(SEGMENT_HEADER.size).also(input::readFully)
@@ -1084,13 +1090,6 @@ class EncryptedExperimentStore internal constructor(
         val header = ByteArray(SEGMENT_HEADER.size).also(buffer::get)
         require(header.contentEquals(SEGMENT_HEADER)) { "Unsupported commit segment format" }
         require(buffer.int == expectedIndex) { "Commit segment index mismatch" }
-    }
-
-    private fun truncateSegmentTail(file: File, length: Long) {
-        RandomAccessFile(file, "rw").use { output ->
-            output.setLength(length)
-            output.fd.sync()
-        }
     }
 
     private fun DataInputStream.skipFully(bytes: Int) {
@@ -1144,13 +1143,11 @@ class EncryptedExperimentStore internal constructor(
     }
 
     private companion object {
-        const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val CIPHER_TRANSFORMATION = "AES/GCM/NoPadding"
         const val STORAGE_DIRECTORY = "experiments"
         const val IV_BYTES = 12
         const val GCM_TAG_BITS = 128
         const val GCM_TAG_BYTES = GCM_TAG_BITS / 8
-        const val KEY_SIZE_BITS = 256
         const val COMMIT_DIGEST_BYTES = 32
         const val MAXIMUM_SNAPSHOT_BYTES = 4 * 1024 * 1024
         const val MAXIMUM_PENDING_BYTES = 8 * 1024 * 1024
