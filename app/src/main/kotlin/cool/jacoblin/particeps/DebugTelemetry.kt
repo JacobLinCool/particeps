@@ -149,6 +149,13 @@ object DebugTelemetry {
         }
     }
 
+    /** Forgets the choice so the first-launch question appears again; instrumented tests only. */
+    @androidx.annotation.VisibleForTesting
+    internal fun forgetChoiceForTesting(context: Context) {
+        context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().clear().commit()
+        mutableSharing.value = DebugSharing.UNDECIDED
+    }
+
     private fun readSharing(context: Context): DebugSharing =
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
             .getString(SHARING_KEY, null)
