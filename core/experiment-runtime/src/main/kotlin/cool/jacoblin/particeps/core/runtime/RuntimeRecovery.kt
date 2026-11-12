@@ -14,6 +14,8 @@ import cool.jacoblin.particeps.core.model.RuntimeComponentKey
 import cool.jacoblin.particeps.core.model.RuntimeComponentKind
 import cool.jacoblin.particeps.core.model.RuntimeDocument
 import cool.jacoblin.particeps.core.resource.AppliedResourceState
+import cool.jacoblin.particeps.core.resource.ResourceKey
+import cool.jacoblin.particeps.core.resource.ResourceKind
 
 /**
  * Cold start and fail-closed recovery: it loads and authenticates the retained runtime, restores
@@ -45,8 +47,14 @@ internal class RuntimeRecovery(
      */
     suspend fun loadLocked(onProgress: (RuntimeInitializationProgress) -> Unit): RuntimeDocument {
         val retainedTransition = RetainedStateTransition()
+        val timeline = CollectionTimelineBuilder { sourceId ->
+            ResourceKey(ResourceKind.COLLECTOR, sourceId) in ctx.hosts
+        }
         onProgress(RuntimeInitializationProgress.CheckingStorage())
-        var loaded = ctx.store.loadRuntime(retainedTransition::observe) {
+        var loaded = ctx.store.loadRuntime({ commit ->
+            retainedTransition.observe(commit)
+            timeline.observe(commit)
+        }) {
             onProgress(RuntimeInitializationProgress.CheckingStorage(it))
         }
         onProgress(RuntimeInitializationProgress.RestoringRuntime)
@@ -64,6 +72,7 @@ internal class RuntimeRecovery(
         validateIdentity(loaded)
         memory.document = loaded
         memory.stateEntry = retainedTransition.entry(loaded)
+        memory.collectionTimeline = timeline
         restoreComponents(loaded)
         return loaded
     }

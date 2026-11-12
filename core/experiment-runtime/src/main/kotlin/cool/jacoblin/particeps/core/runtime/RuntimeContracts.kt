@@ -244,6 +244,8 @@ data class RuntimeSnapshot(
     val participantDisabledCollectors: Set<String> = emptySet(),
     /** The participant stopped automatic upload when ending the study; durable and one-way. */
     val automaticUploadStopped: Boolean = false,
+    /** When each collector recorded data and when the study was paused; process memory only. */
+    val collectionTimeline: CollectionTimeline = CollectionTimeline(),
 )
 
 sealed interface RuntimeCommandResult {

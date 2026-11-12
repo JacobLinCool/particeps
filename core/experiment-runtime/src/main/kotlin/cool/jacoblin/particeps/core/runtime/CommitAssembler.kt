@@ -178,6 +178,7 @@ internal class CommitAssembler(
             if (successor.state != current.state) memory.stateEntry = StateEntry.of(commit)
             memory.automationCheckpoint = checkpoint
             applyComponentMutations(mutations)
+            memory.collectionTimeline.observe(commit)
             require(
                 memory.resourceCleanupAttempts.isEmpty() ||
                     (successor.state == ExperimentState.PAUSED && successor.activeConditionEpoch == null),
@@ -215,6 +216,7 @@ internal class CommitAssembler(
             stateEnteredCalendarElapsedNanos = memory.stateEntry?.calendarElapsedNanos,
             participantDisabledCollectors = memory.participantDisabledCollectors.mapTo(sortedSetOf()) { it.id },
             automaticUploadStopped = memory.automaticUploadStopped,
+            collectionTimeline = memory.collectionTimeline.timeline(),
         )
     }
 

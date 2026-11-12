@@ -204,6 +204,37 @@ class ExperimentRuntimeTest {
     }
 
     @Test
+    fun collectionTimelineCountsCollectorEventsByStudyHourAndRebuildsOnRecovery() = runTest {
+        val store = InMemoryStudyStore()
+        val fixture = fixture(backgroundScope, store = store, durationSeconds = 4 * 3_600)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val token = requireNotNull(fixture.runtime.captureToken())
+        assertTrue(fixture.runtime.emitBatch(token, batteryBatch(fixture.clock.now(), percentage = 10)) is EmitBatchResult.Accepted)
+        runCurrent()
+        assertEquals(mapOf(0 to 1L), fixture.runtime.snapshot.value.collectionTimeline.hourlyCounts[BATTERY_SOURCE.value])
+
+        fixture.clock.advanceMillis(60_000)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.pause())
+        fixture.clock.advanceMillis(3_600_000)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.resume())
+        val spans = fixture.runtime.snapshot.value.collectionTimeline.pausedSpans
+        assertEquals(1, spans.size)
+        assertTrue(requireNotNull(spans.single().endMillis) - spans.single().startMillis >= 3_600_000)
+        val before = fixture.runtime.snapshot.value.collectionTimeline
+
+        val recovered = fixture(backgroundScope, store = store, durationSeconds = 4 * 3_600)
+        recovered.runtime.initialize()
+        val after = recovered.runtime.snapshot.value.collectionTimeline
+        assertEquals(before.hourlyCounts, after.hourlyCounts)
+        assertEquals(before.pausedSpans, after.pausedSpans.take(before.pausedSpans.size))
+        // Recovery from an active state ends paused, which opens a new span.
+        assertEquals(ExperimentState.PAUSED, recovered.runtime.snapshot.value.state)
+        assertNull(after.pausedSpans.last().endMillis)
+    }
+
+    @Test
     fun participantTurnsOptionalCollectorOffAndOnAcrossPauseAndRecovery() = runTest {
         val store = InMemoryStudyStore()
         val fixture = fixture(backgroundScope, store = store, withGyroscope = true, gyroscopeRequired = false)
