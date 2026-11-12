@@ -15,6 +15,7 @@ import cool.jacoblin.particeps.core.model.ObservationAdmissionKind
 import cool.jacoblin.particeps.core.model.PendingEngineInput
 import cool.jacoblin.particeps.core.model.ResearchTime
 import cool.jacoblin.particeps.core.model.RuntimeDocument
+import cool.jacoblin.particeps.core.model.RuntimeMutation
 import cool.jacoblin.particeps.core.model.SafetyPauseReason
 import cool.jacoblin.particeps.core.model.SourceCheckpoint
 import cool.jacoblin.particeps.core.model.StudyClockCheckpoint
@@ -127,6 +128,38 @@ internal class ResourceBarrierCoordinator(
         )
     }
 
+    /**
+     * Rotates the condition epoch for a participant choice. The choice component commits with the
+     * closing epoch, so the next vector already reflects it: a collector turned off is released and
+     * recorded as [PARTICIPANT_DISABLED_REASON]; one turned back on is applied again.
+     */
+    suspend fun participantChoiceBarrierLocked(choice: RuntimeMutation, clock: StudyClockCheckpoint): Boolean {
+        val current = memory.requireDocument()
+        val epoch = requireNotNull(current.activeConditionEpoch) { "A participant choice barrier requires an active epoch" }
+        val boundary = ctx.clocks.now()
+        val drain = openDrainLocked(
+            current.nextObservationSequence,
+            current.nextEventSequence,
+            epoch.id,
+            current.sourceCheckpoints,
+            boundary,
+            null,
+        )
+        return finishResourceBarrierLocked(
+            current = current,
+            epoch = epoch,
+            boundary = boundary,
+            buffer = drain.buffer,
+            drainToken = drain.token,
+            causalSubmissions = emptyList(),
+            inputKind = EngineInputKind.PARTICIPANT_CHOICE,
+            causalReducerInput = null,
+            causalEvents = emptyList(),
+            clock = clock,
+            causalMutations = listOf(choice),
+        )
+    }
+
     suspend fun completeCoordinatedBarrierLocked(request: CoordinatedBarrier): Boolean {
         if (request is FailClosedBarrier) {
             val durablePending = ctx.store.loadPendingInput()
@@ -184,6 +217,7 @@ internal class ResourceBarrierCoordinator(
         causalReducerInput: ((Long) -> ReducerInput)?,
         causalEvents: List<EventDraft>,
         clock: StudyClockCheckpoint,
+        causalMutations: List<RuntimeMutation> = emptyList(),
     ): Boolean = try {
             val flushCursors = resourcePlane.suspendAndFlushLocked(boundary)
             val barrier = buffer.snapshot()
@@ -240,7 +274,7 @@ internal class ResourceBarrierCoordinator(
                 clock = clock,
                 consumedPendingSha256 = durablePending?.encodedSha256,
                 consumePending = durablePending != null,
-                extraMutations = deactivationAudit.mutations,
+                extraMutations = causalMutations + deactivationAudit.mutations,
             )
             closeDrainLocked(drainToken)
             val vector = resourcePlane.applyDesiredVectorLocked(finalReduction.checkpoint.desiredResources, "barrier-${current.nextCommitSequence}")

@@ -463,7 +463,7 @@ class EncryptedExperimentStore internal constructor(
         val forceCheckpoint = consumePending || current.state != successor.state ||
             current.activeConditionEpoch != successor.activeConditionEpoch ||
             when (commit.inputKind) {
-                EngineInputKind.LIFECYCLE_COMMAND, EngineInputKind.SAFETY_FAILURE,
+                EngineInputKind.LIFECYCLE_COMMAND, EngineInputKind.SAFETY_FAILURE, EngineInputKind.PARTICIPANT_CHOICE,
                 EngineInputKind.RECOVERY -> true
                 else -> false
             }

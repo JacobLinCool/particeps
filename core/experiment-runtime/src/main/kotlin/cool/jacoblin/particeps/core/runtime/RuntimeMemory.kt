@@ -34,6 +34,9 @@ internal class RuntimeMemory {
     var studyDeadlineTimer: DurableTimer? = null
     var actionInvocations = sortedMapOf<String, DurableActionInvocation>()
     var latestUploadAcknowledgement: DurableUploadAcknowledgement? = null
+    /** Non-core collectors the participant turned off; durable as PARTICIPANT_CHOICE components. */
+    var participantDisabledCollectors = sortedSetOf<ResourceKey>()
+    var automaticUploadStopped = false
     var stateEntry: StateEntry? = null
     @Volatile var barrierBuffer: BarrierInputBuffer? = null
 
