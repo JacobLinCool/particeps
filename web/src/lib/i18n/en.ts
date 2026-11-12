@@ -206,6 +206,26 @@ export const en: Messages = {
     priority: { balanced: 'Balanced', highAccuracy: 'High accuracy' }
   },
 
+  tier: {
+    label: 'Participant choice',
+    core: {
+      label: 'Core',
+      hint: 'The participant cannot skip or turn this off. Missing access blocks the study.'
+    },
+    requested: {
+      label: 'Requested',
+      hint: 'The participant may skip or turn this off, and is warned it may affect their compensation.'
+    },
+    optional: {
+      label: 'Optional',
+      hint: 'The participant may skip or turn this off freely.'
+    },
+    rationale: {
+      label: 'Why the study asks for this (optional)',
+      hint: 'Shown to participants word for word. Do not reveal study arms, conditions, or schedules.'
+    }
+  },
+
   collector: {
     'app_lifecycle.v1': {
       name: 'App activity',
@@ -303,11 +323,13 @@ export const en: Messages = {
     unsupported_operator: 'The registry does not allow this operator for the field',
     canonical_value: 'Use the field’s canonical wire spelling',
     resource_owner: 'Every stateful resource needs exactly one binding automation',
-    trigger_source_liveness: 'A collector used by automation must be required and continuously active',
+    trigger_source_liveness: 'A collector used by automation must be Core and continuously active',
     dependency_cycle: 'Resource conditions form a cycle that cannot be evaluated safely',
     unbounded_state: 'This window or sequence could retain more than 4,096 entries',
     private_key_missing: 'Import the matching signing private key before signing',
-    review_required: 'Review and confirm the participant preview before signing'
+    review_required: 'Review and confirm the participant preview before signing',
+    schema_dialect: 'Does not match this configuration’s schema version',
+    blank_text: 'Write some text, or leave it empty'
   },
 
   status: {
@@ -425,9 +447,22 @@ export const en: Messages = {
       note: {
         irrevocable: 'A file you have handed out cannot be called back.',
         /** Above the twelve cards once, because the consequence is identical on every card. */
-        required: 'Mark a source Required and a participant who declines it cannot start the study.',
+        required: 'Core sources cannot be skipped or turned off: a participant who declines one cannot start. Requested and optional sources can be turned off at any time.',
         disclosure: 'The app lists the data in its own words. Agree with it.',
-        delivery: 'They cannot take part and decline this. Say so in consent.'
+        delivery: 'They cannot take part and decline this. Say so in consent.',
+        converted: 'This file used the older schema 1 and is now edited as schema 2: Required became Core, the rest Optional, and nothing extra is disclosed. That is a new configuration with a new ID. Sign it again and distribute the new file.'
+      },
+      participantDisclosure: {
+        title: 'Participant disclosure',
+        lead: 'What the app may show participants about their own data, beyond the fixed list.',
+        frequency: {
+          label: 'Show approximate collection frequency',
+          hint: 'Knowing how often data is collected can change how participants behave.'
+        },
+        timeline: {
+          label: 'Show a timeline of when each category collected data',
+          hint: 'Can change behaviour, and collection-time patterns can reveal scheduled or conditional windows.'
+        }
       }
     },
     sign: {
@@ -505,7 +540,7 @@ export const en: Messages = {
       },
       control: {
         title: 'You can stop at any time',
-        body: 'Pause or withdraw. No reason is required and the app does not ask for one. Afterwards you can still export what was collected, and delete all of it from the phone. What has already left the phone can only be dealt with by asking the research team.'
+        body: 'Pause or withdraw, or turn off any data category not marked Core while the study runs. No reason is required and the app does not ask for one. If the study sends data automatically, withdrawing asks whether to send what has not been sent yet or to stop sending. Afterwards you can still export what was collected, and delete all of it from the phone. What has already left the phone can only be dealt with by asking the research team.'
       }
     },
     flow: {
@@ -523,7 +558,7 @@ export const en: Messages = {
       },
       access: {
         title: 'Access',
-        body: 'The Android permissions those sources need. Anything marked optional can stay off.'
+        body: 'The Android permissions those sources need. Anything not marked Core can stay off; skipping something marked Requested may affect your compensation.'
       },
       start: {
         title: 'Start',

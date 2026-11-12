@@ -1,0 +1,3 @@
+# A Kotlin-runtime export encrypted to a test-only key (researcher-private-key.base64url) with no
+# participant data. *.partexp is ignored everywhere; only this named fixture is re-included.
+!/participant-choices.partexp

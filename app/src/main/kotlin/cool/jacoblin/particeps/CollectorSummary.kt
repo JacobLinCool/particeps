@@ -1,6 +1,7 @@
 package cool.jacoblin.particeps
 
 import androidx.compose.runtime.Composable
+import cool.jacoblin.particeps.core.application.ParticipantCadence
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 
@@ -9,7 +10,8 @@ import androidx.compose.ui.res.stringResource
  *
  * Sampling rates, polling cadence, automation state, and active resource profiles are deliberately
  * absent. Those values can reveal treatment assignment and are not needed to explain the category
- * of data that a signed study may collect. [records] and [notRecorded] name the fields the event
+ * of data that a signed study may collect. An approximate cadence appears beside it, through
+ * [cadenceLabel], only when the signed participant disclosure policy allows it. [records] and [notRecorded] name the fields the event
  * source registry defines for the category; a field that a profile can switch off is described as
  * one the category may include, so the copy stays the same for every profile.
  */
@@ -186,3 +188,53 @@ fun uploadCadenceLabel(upload: ParticipantUploadDisclosure): String {
     }
     return stringResource(R.string.consent_upload_cadence, every, network)
 }
+
+@Composable
+fun tierLabel(tier: ParticipantDataTier): String = stringResource(
+    when (tier) {
+        ParticipantDataTier.CORE -> R.string.data_required
+        ParticipantDataTier.REQUESTED -> R.string.data_requested
+        ParticipantDataTier.OPTIONAL -> R.string.data_optional
+    },
+)
+
+/** An approximate frequency phrase, such as "Recorded about every 5 minutes". */
+@Composable
+fun cadenceLabel(cadence: ParticipantCadence): String = when (cadence) {
+    ParticipantCadence.WhenChanged -> stringResource(R.string.cadence_when_changed)
+    is ParticipantCadence.Every -> when {
+        cadence.longestMillis < MILLIS_PER_SECOND -> {
+            val perSecond = (MILLIS_PER_SECOND / cadence.longestMillis).toInt().coerceAtLeast(1)
+            pluralStringResource(R.plurals.cadence_times_per_second, perSecond, perSecond)
+        }
+        cadence.shortestMillis == cadence.longestMillis ||
+            roundedPeriod(cadence.shortestMillis) == roundedPeriod(cadence.longestMillis) ->
+            stringResource(R.string.cadence_every, periodLabel(cadence.longestMillis))
+        else -> stringResource(
+            R.string.cadence_range,
+            periodLabel(cadence.shortestMillis.coerceAtLeast(MILLIS_PER_SECOND)),
+            periodLabel(cadence.longestMillis),
+        )
+    }
+}
+
+private fun roundedPeriod(millis: Long): Pair<Int, Long> = when {
+    millis < MILLIS_PER_MINUTE -> 0 to (millis / MILLIS_PER_SECOND).coerceAtLeast(1)
+    millis < MILLIS_PER_HOUR -> 1 to millis / MILLIS_PER_MINUTE
+    else -> 2 to millis / MILLIS_PER_HOUR
+}
+
+@Composable
+private fun periodLabel(millis: Long): String {
+    val (unit, value) = roundedPeriod(millis)
+    val count = value.toInt()
+    return when (unit) {
+        0 -> pluralStringResource(R.plurals.cadence_seconds, count, count)
+        1 -> pluralStringResource(R.plurals.cadence_minutes, count, count)
+        else -> pluralStringResource(R.plurals.cadence_hours, count, count)
+    }
+}
+
+private const val MILLIS_PER_SECOND = 1_000L
+private const val MILLIS_PER_MINUTE = 60_000L
+private const val MILLIS_PER_HOUR = 3_600_000L

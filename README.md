@@ -97,6 +97,11 @@ Studies collect from people's personal phones, so the platform is built to suppo
   bundle containing complete commits. Retries send exact bytes. Only a canonical receipt matching
   UUID, digest, size, configuration, commit range/count, and event count advances the contiguous
   watermark; undelivered input is never reclaimed.
+- **Participant choices within a study.** Each data category is core, requested, or optional.
+  Requested and optional categories can be skipped at setup or turned off and back on during the
+  study; a requested one first notes that this may affect compensation. Withdraw in a study with
+  automatic upload asks whether to keep sending data not yet sent. Every choice is durable in the
+  commit log, and automation cannot reverse it.
 - **Participant control over lifecycle.** Start/Resume applies and verifies every required resource
   before opening one condition-epoch admission token. Pause/Complete/Withdraw closes admission first,
   flushes retrospective sources at one boundary, records final resource evidence, closes the epoch,
@@ -112,10 +117,11 @@ Studies collect from people's personal phones, so the platform is built to suppo
   compact running controls remain the primary surface. One labeled *Study and my data* entry,
   identical in every study arm, lets a participant reread what they agreed to (purpose, researcher
   contact, consent text, what each data category records, upload terms, their rights) and see
-  coarse participation facts such as study day, deadline, and active collection time. Everything
-  beyond that platform floor (intervention targets, timing, or strength, assignment, charts of the
-  participant's own data, a debrief) is reserved for an explicit signed disclosure policy. Protocol
-  v1 does not carry that policy yet, so every study currently runs with the default. A
+  coarse participation facts such as study day, deadline, active collection time and a progress
+  bar over the signed duration. A schema 2 configuration signs a participant disclosure policy
+  that may add an approximate collection frequency per category and a timeline of when each
+  category collected data; both are off unless the researcher turns them on. Intervention targets,
+  timing or strength, assignment and any debrief stay outside the App. A
   traffic-shaping study still adds only one fixed high-level disclosure plus Android's mandatory
   permission/VPN consent, and no second ongoing notification.
 

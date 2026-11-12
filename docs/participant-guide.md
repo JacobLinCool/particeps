@@ -39,8 +39,12 @@ Setup keeps the existing five-step flow. The row of five indicators shows your p
 a set of buttons.
 
 1. **Study** — title, researcher, contact, purpose, and duration.
-2. **Data** — high-level data categories the study may collect. A category marked
-   **Optional** does not by itself block setup if its Android access is unavailable.
+2. **Data** — high-level data categories the study may collect. Each is marked **Core**,
+   **Requested**, or **Optional**. Core categories are a condition of taking part. Requested and
+   optional categories do not block setup if you skip their Android access; for a requested one
+   the app notes that skipping it may affect your compensation, and the research team can tell you
+   how. A category may also show the researcher's reason for asking and, if the study allows it,
+   roughly how often it records.
 3. **Consent** — the researcher-authored consent summary, document version, and signing-key
    fingerprint. Accepting is required to continue.
 4. **Access** — the Android permissions, special access, device settings, and hardware required by
@@ -157,6 +161,11 @@ by current Particeps studies. The participant-facing states are:
 - **Completed** — the configured study duration has ended;
 - **Withdrawn** — the study has ended permanently at your request.
 
+Each Requested or Optional category has a switch on this screen while the study is collecting or
+paused. Turning one off stops that category until you turn it back on; data already collected is
+kept, and a Requested category first notes that this may affect your compensation. Core categories
+have no switch. While the study is paused, the change takes effect when you resume.
+
 The screen continues to provide **Pause**, **Resume**, **Complete**, **Withdraw**, and **Export** only
 where those actions are valid: **Withdraw** while the study is collecting or paused, and **Delete
 local data** once it has completed or been withdrawn. It lists the approved data categories and
@@ -178,7 +187,7 @@ screen. It has four parts:
 - **What is collected** — each data category, whether it is required or optional, what it records
   and does not record, and the Android access it uses; the upload terms; and, for a study that may
   adjust app transfer speed, the fixed VPN explanation above.
-- **Your participation** — the current state; the study day, where day 1 is the first 24 hours
+- **Your participation** — a progress bar over the planned study time; the current state; the study day, where day 1 is the first 24 hours
   after **Start study** and the last day ends at the planned end; the planned end time, once
   Particeps can verify the phone’s clock; time spent collecting and time paused; the size of your
   last export, if you exported since Particeps last started (Particeps does not keep it after
@@ -189,10 +198,10 @@ screen. It has four parts:
   including what happens to data that has not been sent yet.
 
 The page restates what you were shown before consent and adds facts about your own participation.
-It does not show when study activities happen or how a study might change its behaviour. Showing
-more, or explaining hidden design details at a debrief, is the researcher’s decision and would come
-through a signed disclosure policy; current studies use the default and show only what is listed
-here.
+If the researcher allows it in the signed study, it also shows roughly how often each category
+records and a timeline of when each category collected data, with the paused times marked. It does
+not show when study activities happen or how a study might change its behaviour; explaining hidden
+design details is up to the research team.
 
 The configured duration ends collection automatically. New data is not accepted after that
 boundary even if Android runs the background completion work later, and completion does not wait
@@ -234,8 +243,9 @@ paused.
 **Complete** ends collection and keeps already collected encrypted data available for export.
 **Withdraw** permanently ends the study but likewise preserves already collected encrypted data
 until you delete it. Neither action sends an explanation to the researcher. In a study with
-automatic upload, neither action cancels sending: data collected but not yet sent may still be sent.
-Export if the research team should receive everything collected.
+automatic upload, Complete keeps sending data collected but not yet sent, and Withdraw asks you
+whether to keep sending it or to stop. Stopping cannot be undone; data the research team already
+received stays with them, and you can still export what was collected.
 
 If Android access, storage, a required collector, or a continuous study function becomes unsafe,
 Particeps closes admission and moves to the same generic paused experience. The participant UI

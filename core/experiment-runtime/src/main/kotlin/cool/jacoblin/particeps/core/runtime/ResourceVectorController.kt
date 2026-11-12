@@ -121,6 +121,17 @@ internal class ResourceVectorController(
                     )
                     return@forEach
                 }
+                if (host.key in memory.participantDisabledCollectors) {
+                    check(!host.required) { "A core collector cannot be turned off" }
+                    val prior = memory.appliedResources[host.key]
+                    if (actuator != null && prior?.status == AppliedResourceStatus.APPLIED) {
+                        val priorDesired = desiredState(prior)
+                        actuator.release(priorDesired).requireReleased(priorDesired, actuator.health())
+                        verifiedInactive[host.key] = desired.generation
+                    }
+                    applied += optionalFailure(host.key, desired, PARTICIPANT_DISABLED_REASON)
+                    return@forEach
+                }
                 if (actuator == null) {
                     if (host.required) throw RequiredResourceFailure()
                     applied += optionalFailure(host.key, desired, "RESOURCE_NOT_COMPILED")
@@ -391,3 +402,6 @@ internal class ResourceVectorController(
             upsertResource(inactiveResource(key, generation))
         }
 }
+
+/** Applied-vector failure reason for a collector the participant turned off. */
+internal const val PARTICIPANT_DISABLED_REASON = "PARTICIPANT_DISABLED"

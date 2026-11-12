@@ -1,13 +1,15 @@
 import {
   createCipheriv,
+  createDecipheriv,
   createHash,
   createHmac,
+  createPrivateKey,
   createPublicKey,
   diffieHellman,
   generateKeyPairSync,
   randomBytes
 } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   bundleContext,
@@ -18,7 +20,7 @@ import {
   type EngineCommit,
   type ResearchExperiment
 } from '../../../web/src/lib/particeps/bundle';
-import { canonicalize } from '../../../web/src/lib/particeps/canonical';
+import { canonicalBytes, canonicalize } from '../../../web/src/lib/particeps/canonical';
 import type { StudyConfiguration } from '../../../web/src/lib/particeps/types';
 import { parseConfiguration } from '../../../web/src/routes/researcher/parse';
 
@@ -375,6 +377,334 @@ describe('real runtime bundle shapes stay strict', () => {
     )).resolves.toEqual(unreadable);
   });
 });
+
+/**
+ * A schema 2 study exported by the real runtime after participant choices: a collector turned off
+ * while running and back on while paused, a requested collector turned off, and automatic upload
+ * stopped after withdrawal. The checked-in snapshot is `RealRuntimeBundleInteropTest` output; when
+ * PARTICEPS_REAL_RUNTIME_INTEROP_DIR names a written run, every bundle there opens too. Each bundle
+ * carries its signed configuration, which is read through the configuration parser first.
+ */
+type InteropManifest = {
+  format: string;
+  researcher_key_id: string;
+  bundles: Array<{
+    file: string; sha256: string; byte_count: number; commit_count: number; event_count: number;
+    participant_instance_id: string; state: string;
+  }>;
+};
+const choiceFixtures = new URL('fixtures/real-runtime/', import.meta.url);
+const interopDirectory = process.env.PARTICEPS_REAL_RUNTIME_INTEROP_DIR;
+
+function interopSources(): Array<{ label: string; root: URL }> {
+  const sources = [{ label: 'checked-in snapshot', root: choiceFixtures }];
+  if (interopDirectory) {
+    const root = new URL(`file://${interopDirectory.replace(/\/?$/, '/')}`);
+    // Release CI sets the variable for the whole job and runs this suite before the Kotlin test
+    // writes the directory, so a directory without its manifest is not yet a run to check.
+    if (existsSync(new URL('expected.json', root))) {
+      sources.push({ label: 'PARTICEPS_REAL_RUNTIME_INTEROP_DIR', root });
+    }
+  }
+  return sources;
+}
+
+async function openInterop(root: URL, file: string) {
+  const key = readFileSync(new URL('researcher-private-key.base64url', root), 'utf8').trim();
+  const container = new Uint8Array(readFileSync(new URL(file, root)));
+  const plaintext = decryptContainer(container, key);
+  const embedded = (JSON.parse(new TextDecoder().decode(plaintext)) as { configuration: unknown })
+    .configuration;
+  const configuration = parseConfiguration(canonicalBytes(embedded));
+  return { container, configuration, key, opened: await openBundle(container, configuration, key) };
+}
+
+for (const { label, root } of interopSources()) {
+  describe(`real runtime interop bundles (${label})`, () => {
+    const expected = JSON.parse(readFileSync(new URL('expected.json', root), 'utf8')) as InteropManifest;
+
+    it('includes the participant-choices scenario', () => {
+      expect(expected.format).toBe('particeps-real-runtime-interop-v1');
+      expect(expected.bundles.map((bundle) => bundle.file)).toContain('participant-choices.partexp');
+    });
+
+    for (const bundle of expected.bundles) {
+      it(`opens ${bundle.file} and each retained range`, async () => {
+        const { container, configuration, key, opened } = await openInterop(root, bundle.file);
+        expect(sha256Hex(container)).toBe(bundle.sha256);
+        expect(opened).toMatchObject({ ok: true });
+        if (!opened.ok) return;
+        const experiment = opened.bundle.document.experiment;
+        expect(experiment).toMatchObject({
+          participant_instance_id: bundle.participant_instance_id,
+          commit_count: String(bundle.commit_count),
+          event_count: String(bundle.event_count),
+          state: bundle.state
+        });
+        const document = JSON.parse(opened.bundle.text) as { experiment: ResearchExperiment };
+        for (const start of retainedRangeStarts(experiment)) {
+          const reopened = await openBundle(
+            reseal(container, retainedRange(document, start), configuration), configuration, key
+          );
+          expect(reopened, `retained range from commit ${start + 1}`).toMatchObject({ ok: true });
+        }
+      }, 120_000);
+    }
+  });
+}
+
+describe('real runtime participant choices stay strict', () => {
+  type Document = { experiment: ResearchExperiment };
+  const file = 'participant-choices.partexp';
+  const unreadable = { ok: false, failure: 'unreadable' };
+  const isChoice = (commit: EngineCommit) => commit.input_kind === 'PARTICIPANT_CHOICE';
+  const choiceOf = (commit: EngineCommit) =>
+    commit.mutations.find((mutation) => mutation.component_kind === 'PARTICIPANT_CHOICE')!;
+  const encodeChoice = (version: number, name: string, trailing: number[] = []) => {
+    const text = new TextEncoder().encode(name);
+    const payload = Buffer.alloc(8 + text.length + trailing.length);
+    payload.writeInt32BE(version, 0);
+    payload.writeInt32BE(text.length, 4);
+    payload.set(text, 8);
+    payload.set(trailing, 8 + text.length);
+    return `participant-choice-v1:${payload.toString('base64url')}`;
+  };
+
+  // Opens commits 1..end+1 after changing commit [end] and resealing; the unchanged prefix must
+  // open, so a rejection belongs to the change.
+  const openPrefix = async (
+    select: (commits: EngineCommit[]) => number,
+    change: (commit: EngineCommit) => void
+  ) => {
+    const { container, configuration, key, opened } = await openInterop(choiceFixtures, file);
+    if (!opened.ok) throw new Error(`${file} did not open`);
+    const document = JSON.parse(opened.bundle.text) as Document;
+    const end = select(document.experiment.commits);
+    expect(end, 'selected commit').toBeGreaterThan(0);
+    const open = async (mutate: boolean) => {
+      const commits = structuredClone(document.experiment.commits.slice(0, end + 1));
+      if (mutate) {
+        change(commits[end]);
+        commits[end].commit_sha256 = calculateCommitDigest(commits[end]);
+      }
+      const plaintext = new TextEncoder().encode(canonicalize({
+        ...document,
+        experiment: {
+          ...document.experiment,
+          commit_count: String(commits.length),
+          commits,
+          event_count: String(commits.reduce((sum, commit) => sum + commit.events.length, 0)),
+          last_commit_sequence: String(end + 1)
+        }
+      }));
+      return openBundle(reseal(container, plaintext, configuration), configuration, key);
+    };
+    expect(await open(false), 'unchanged prefix').toMatchObject({ ok: true });
+    return open(true);
+  };
+
+  it('records every participant-choice shape it is meant to exercise', async () => {
+    const { configuration, opened } = await openInterop(choiceFixtures, file);
+    expect(configuration.schema_version).toBe(2);
+    expect(configuration.participant_disclosure).toEqual({
+      approximate_frequency: true, collection_timeline: true
+    });
+    expect(configuration.collectors.map((collector) => collector.tier)).toContain('requested');
+    if (!opened.ok) throw new Error(`${file} did not open`);
+    const choices = opened.bundle.document.experiment.commits.filter(isChoice);
+    const states = choices.map((commit) => [
+      commit.successor_projection.state, choiceOf(commit).component_id, choiceOf(commit).operation
+    ]);
+    expect(states).toContainEqual(['RUNNING', 'collector:gyroscope.v1', 'UPSERT']);
+    expect(states).toContainEqual(['PAUSED', 'collector:gyroscope.v1', 'REMOVE']);
+    expect(states).toContainEqual(['PAUSED', 'collector:network_throughput.v1', 'UPSERT']);
+    expect(states).toContainEqual(['WITHDRAWN', 'upload:automatic', 'UPSERT']);
+    expect(opened.bundle.document.experiment.commits.some((commit) => commit.events.some((event) =>
+      event.fields.resource_vector_json?.includes('"failure_reason":"PARTICIPANT_DISABLED"')
+    ))).toBe(true);
+  });
+
+  it('rejects a participant choice that turns off a core collector', async () => {
+    await expect(openPrefix(
+      (commits) => commits.findIndex((commit) =>
+        isChoice(commit) && commit.successor_projection.state === 'RUNNING'),
+      (commit) => { choiceOf(commit).component_id = 'collector:network_state.v1'; }
+    )).resolves.toEqual(unreadable);
+  });
+
+  it('rejects a participant choice for a collector the study does not sign', async () => {
+    await expect(openPrefix(
+      (commits) => commits.findIndex((commit) =>
+        isChoice(commit) && commit.successor_projection.state === 'RUNNING'),
+      (commit) => { choiceOf(commit).component_id = 'collector:location.v1'; }
+    )).resolves.toEqual(unreadable);
+  });
+
+  it('rejects a participant-choice component outside a participant-choice commit', async () => {
+    await expect(openPrefix(
+      (commits) => commits.findIndex((commit) =>
+        isChoice(commit) && commit.successor_projection.state === 'PAUSED' &&
+        choiceOf(commit).operation === 'UPSERT'),
+      (commit) => { commit.input_kind = 'RESOURCE_RESULT'; }
+    )).resolves.toEqual(unreadable);
+  });
+
+  it('rejects a choice value with a wrong name, version, or trailing bytes', async () => {
+    for (const value of [
+      encodeChoice(1, 'AUTOMATIC_UPLOAD_STOPPED'),
+      encodeChoice(2, 'COLLECTOR_DISABLED'),
+      encodeChoice(1, 'COLLECTOR_DISABLED', [0]),
+      `${encodeChoice(1, 'COLLECTOR_DISABLED')}=`
+    ]) {
+      await expect(openPrefix(
+        (commits) => commits.findIndex((commit) =>
+          isChoice(commit) && commit.successor_projection.state === 'PAUSED' &&
+          choiceOf(commit).operation === 'UPSERT'),
+        (commit) => { choiceOf(commit).canonical_value = value; }
+      ), value).resolves.toEqual(unreadable);
+    }
+  });
+
+  it('accepts the canonical encoding of the recorded choice', async () => {
+    await expect(openPrefix(
+      (commits) => commits.findIndex((commit) =>
+        isChoice(commit) && commit.successor_projection.state === 'PAUSED' &&
+        choiceOf(commit).operation === 'UPSERT'),
+      (commit) => {
+        expect(choiceOf(commit).canonical_value).toBe(encodeChoice(1, 'COLLECTOR_DISABLED'));
+      }
+    )).resolves.toMatchObject({ ok: true });
+  });
+
+  it('rejects re-enabling a collector that was never turned off', async () => {
+    await expect(openPrefix(
+      (commits) => commits.findIndex((commit) =>
+        isChoice(commit) && choiceOf(commit).operation === 'REMOVE'),
+      (commit) => { choiceOf(commit).component_id = 'collector:usage_events.v1'; }
+    )).resolves.toEqual(unreadable);
+  });
+
+  it('rejects stopping automatic upload as a removal or before the study ended', async () => {
+    await expect(openPrefix(
+      (commits) => commits.findIndex((commit) =>
+        isChoice(commit) && choiceOf(commit).component_id === 'upload:automatic'),
+      (commit) => Object.assign(choiceOf(commit), { operation: 'REMOVE', canonical_value: null })
+    )).resolves.toEqual(unreadable);
+    await expect(openPrefix(
+      (commits) => commits.findIndex((commit) =>
+        isChoice(commit) && commit.successor_projection.state === 'PAUSED' &&
+        choiceOf(commit).operation === 'UPSERT'),
+      (commit) => Object.assign(choiceOf(commit), {
+        component_id: 'upload:automatic', canonical_value: encodeChoice(1, 'AUTOMATIC_UPLOAD_STOPPED')
+      })
+    )).resolves.toEqual(unreadable);
+  });
+
+  it('rejects a running choice that leaves the condition epoch open', async () => {
+    await expect(openPrefix(
+      (commits) => commits.findIndex((commit) =>
+        isChoice(commit) && commit.successor_projection.state === 'RUNNING'),
+      (commit) => { commit.successor_projection.state = 'PAUSED'; }
+    )).resolves.toEqual(unreadable);
+  });
+
+  // The activation after a choice must show the collector off, and only as the participant's.
+  const rewriteActivationVector = (
+    commit: EngineCommit,
+    rewrite: (resources: Array<Record<string, string | null>>) => void
+  ) => {
+    const event = commit.events.find((item) => item.event_type === 'CONDITION_EPOCH_ACTIVATED')!;
+    const vector = JSON.parse(event.fields.resource_vector_json) as {
+      resources: Array<Record<string, string | null>>;
+    };
+    rewrite(vector.resources);
+    const text = canonicalize(vector);
+    const digest = createHash('sha256').update(text).digest('hex');
+    event.fields.resource_vector_json = text;
+    event.fields.applied_resource_vector_sha256 = digest;
+    commit.successor_projection.active_condition_epoch!.applied_resource_vector_sha256 = digest;
+  };
+  const firstActivationAfterChoice = (commits: EngineCommit[]) => {
+    const choice = commits.findIndex((commit) =>
+      isChoice(commit) && commit.successor_projection.state === 'RUNNING');
+    return commits.findIndex((commit, index) => index > choice &&
+      commit.events.some((event) => event.event_type === 'CONDITION_EPOCH_ACTIVATED'));
+  };
+
+  it('rejects an epoch that applies a collector the participant turned off', async () => {
+    await expect(openPrefix(firstActivationAfterChoice, (commit) => {
+      rewriteActivationVector(commit, (resources) => {
+        const item = resources.find((resource) => resource.failure_reason === 'PARTICIPANT_DISABLED')!;
+        Object.assign(item, { status: 'APPLIED', failure_reason: null, applied_profile_sha256: 'a'.repeat(64) });
+      });
+    })).resolves.toEqual(unreadable);
+  });
+
+  it('rejects a collector marked turned off without a participant choice', async () => {
+    await expect(openPrefix(firstActivationAfterChoice, (commit) => {
+      rewriteActivationVector(commit, (resources) => {
+        const item = resources.find((resource) => resource.id === 'usage_events.v1')!;
+        Object.assign(item, {
+          status: 'OPTIONAL_FAILED', failure_reason: 'PARTICIPANT_DISABLED', applied_profile_sha256: null
+        });
+      });
+    })).resolves.toEqual(unreadable);
+  });
+});
+
+/**
+ * RFC 9180 base-mode open of a PTCEXP01 container, without a configuration: the header names the
+ * configuration digest the context binds, so the embedded configuration can be read first.
+ */
+function decryptContainer(container: Uint8Array, privateKey: string): Uint8Array {
+  const keyIdLength = new DataView(container.buffer, container.byteOffset).getUint16(56);
+  const keyIdEnd = 70 + keyIdLength;
+  const keyId = new TextDecoder().decode(container.subarray(70, keyIdEnd));
+  const context = Buffer.from(bundleContext(
+    formatUuid(container.subarray(8, 24)), hex(container.subarray(24, 56)), keyId
+  ));
+  // PKCS#8 wrapping of a raw X25519 private key (RFC 8410).
+  const secretKey = createPrivateKey({
+    format: 'der', type: 'pkcs8',
+    key: Buffer.concat([
+      Buffer.from('302e020100300506032b656e04220420', 'hex'), Buffer.from(privateKey, 'base64url')
+    ])
+  });
+  const recipient = Buffer.from(createPublicKey(secretKey).export({ format: 'jwk' }).x!, 'base64url');
+  const wrapped = Buffer.from(container.subarray(keyIdEnd, keyIdEnd + 80));
+  const enc = wrapped.subarray(0, 32);
+  const dh = diffieHellman({
+    privateKey: secretKey,
+    publicKey: createPublicKey({ format: 'jwk', key: { crv: 'X25519', kty: 'OKP', x: enc.toString('base64url') } })
+  });
+  const kem = Buffer.concat([Buffer.from('KEM'), i2osp2(0x0020)]);
+  const suite = Buffer.concat([Buffer.from('HPKE'), i2osp2(0x0020), i2osp2(0x0001), i2osp2(0x0002)]);
+  const eaePrk = labeledExtract(kem, Buffer.alloc(0), 'eae_prk', dh);
+  const shared = labeledExpand(kem, eaePrk, 'shared_secret', Buffer.concat([enc, recipient]), 32);
+  const schedule = Buffer.concat([
+    Buffer.of(0),
+    labeledExtract(suite, Buffer.alloc(0), 'psk_id_hash', Buffer.alloc(0)),
+    labeledExtract(suite, Buffer.alloc(0), 'info_hash', context)
+  ]);
+  const secret = labeledExtract(suite, shared, 'secret', Buffer.alloc(0));
+  const contentKey = aesGcmOpen(
+    labeledExpand(suite, secret, 'key', schedule, 32),
+    labeledExpand(suite, secret, 'base_nonce', schedule, 12),
+    Buffer.alloc(0),
+    wrapped.subarray(32)
+  );
+  return aesGcmOpen(
+    contentKey, Buffer.from(container.subarray(58, 70)), context,
+    Buffer.from(container.subarray(keyIdEnd + 80))
+  );
+}
+
+function aesGcmOpen(key: Buffer, nonce: Buffer, aad: Buffer, sealed: Buffer): Buffer {
+  const decipher = createDecipheriv('aes-256-gcm', key, nonce);
+  decipher.setAAD(aad);
+  decipher.setAuthTag(sealed.subarray(sealed.length - 16));
+  return Buffer.concat([decipher.update(sealed.subarray(0, sealed.length - 16)), decipher.final()]);
+}
 
 function retainedRangeStarts(experiment: ResearchExperiment): number[] {
   const commits = experiment.commits;

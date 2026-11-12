@@ -4,7 +4,7 @@ import { compileAutomationProgram } from './automation/compiler';
 import { COLLECTOR_SOURCES, RESEARCHER_EVENTS } from './registry';
 import { validate, type Issue } from './schema';
 import { summarizeStudyTimeline } from './study-timeline';
-import type { StudyConfiguration, CollectorConfig, SurveyDefinition, InterventionConfig, AutomationDefinition } from './types';
+import type { StudyConfiguration, CollectorConfig, SurveyDefinition, InterventionConfig, AutomationDefinition, ParticipantDisclosure } from './types';
 import {
   AUTHORING_DEFINITIONS, CATALOG_INPUT_SCHEMA, CHANGE_SCHEMA, EMPTY_INPUT_SCHEMA,
   TIMELINE_INPUT_SCHEMA, validateToolInput, type ToolSchema
@@ -40,7 +40,8 @@ export interface WebMcpRegistration {
 }
 
 const editableKeys = ['title', 'purpose', 'researcher', 'consent', 'duration_hours', 'issued_at', 'expires_at',
-  'minimum_client_version', 'collectors', 'surveys', 'interventions', 'automations', 'traffic_shaping', 'storage', 'upload'] as const;
+  'minimum_client_version', 'collectors', 'surveys', 'interventions', 'automations', 'traffic_shaping', 'storage', 'upload',
+  'participant_disclosure'] as const;
 const incompletePaths = new Set(['title', 'purpose', 'researcher.name', 'researcher.contact',
   'consent.document_version', 'consent.summary', 'experiment_id', 'configuration_id',
   'signer.key_id', 'signer.public_key', 'export.researcher_key_id', 'export.hpke_public_key']);
@@ -59,7 +60,8 @@ type Change =
   | { type: 'remove_automation'; id: string }
   | { type: 'set_traffic_shaping'; traffic_shaping: StudyConfiguration['traffic_shaping'] }
   | { type: 'set_storage'; storage: StudyConfiguration['storage'] }
-  | { type: 'set_upload'; upload: StudyConfiguration['upload'] };
+  | { type: 'set_upload'; upload: StudyConfiguration['upload'] }
+  | { type: 'set_participant_disclosure'; participant_disclosure: ParticipantDisclosure };
 
 export function createResearcherTools(port: ResearcherDraftPort): ResearcherTool[] {
   const define = (
@@ -212,6 +214,7 @@ function applyChange(configuration: StudyConfiguration, change: Change): void {
     case 'set_traffic_shaping': configuration.traffic_shaping = change.traffic_shaping; return;
     case 'set_storage': configuration.storage = change.storage; return;
     case 'set_upload': configuration.upload = change.upload; return;
+    case 'set_participant_disclosure': configuration.participant_disclosure = change.participant_disclosure; return;
   }
 }
 
@@ -234,7 +237,7 @@ function authoringCatalog(section = 'all') {
       incomplete_fields: 'Empty basic metadata and unprepared key fields may remain in a draft; every nonempty field and all resource references must be valid.',
       atomicity: 'Changes commit together after structural and production semantic validation. Removal does not delete dependents automatically.',
       ordering: 'Collector, intervention and automation upserts sort IDs. Profile IDs, traffic packages, predicate sets and random windows must already use protocol order; survey/question order is preserved.',
-      liveness: 'Event-trigger source collectors must be required and always active. usage_events.v1 event triggers require a 15-second poll interval.',
+      liveness: 'Event-trigger source collectors must be tier core and always active. usage_events.v1 event triggers require a 15-second poll interval.',
       finalization: 'Signing, key management, participant assignment and distribution stay in the researcher interface.',
       clocks: 'Study-local windows use participant study days and time zone. CALENDAR_TIME continues through pauses; ACTIVE_RUNNING_TIME pauses.',
       limits: { input_bytes: 1_048_576, changes: 64, condition_depth: 8, condition_nodes: 64, lifetime_occurrences: 512 }

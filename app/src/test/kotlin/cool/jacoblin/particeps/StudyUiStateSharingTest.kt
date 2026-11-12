@@ -1,5 +1,6 @@
 package cool.jacoblin.particeps
 
+import cool.jacoblin.particeps.core.definition.CollectorTier
 import cool.jacoblin.particeps.core.application.ParticipantDataCategorySummary
 import cool.jacoblin.particeps.core.application.ParticipantRuntimeStatus
 import cool.jacoblin.particeps.core.application.ParticipantStudySummary
@@ -177,8 +178,8 @@ class StudyUiStateSharingTest {
                 signerFingerprint = "ab".repeat(32),
                 signerAnchored = false,
                 dataCategories = listOf(
-                    ParticipantDataCategorySummary("screen_state.v1", required = true),
-                    ParticipantDataCategorySummary("usage_events.v1", required = false),
+                    ParticipantDataCategorySummary("screen_state.v1", tier = CollectorTier.CORE),
+                    ParticipantDataCategorySummary("usage_events.v1", tier = CollectorTier.OPTIONAL),
                 ),
                 mayAdjustAppTransferSpeed = false,
                 upload = null,

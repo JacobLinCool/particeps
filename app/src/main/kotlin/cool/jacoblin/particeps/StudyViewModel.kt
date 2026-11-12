@@ -1,5 +1,6 @@
 package cool.jacoblin.particeps
 
+import cool.jacoblin.particeps.core.definition.CollectorTier
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -105,7 +106,10 @@ class StudyViewModel(
     fun pause() = command(session::pause)
     fun resume() = command(session::resume)
     fun complete() = command(session::complete)
-    fun withdraw() = command(session::withdraw)
+    fun withdraw(stopAutomaticUpload: Boolean = false) = command { session.withdraw(stopAutomaticUpload) }
+    fun setCategoryTurnedOff(kind: ParticipantDataKind, turnedOff: Boolean) = command {
+        session.setCollectorEnabled(kind.sourceId, enabled = !turnedOff)
+    }
     fun safetyPauseForPlatformAccessLoss() = command(session::safetyPauseForPlatformAccessLoss)
 
     fun retryRecovery() = operation(ParticipantMessage.OPERATION_FAILED) {
@@ -298,7 +302,14 @@ internal fun StudySessionSnapshot.toParticipantUiModel(): ParticipantStudyUiMode
     val categories = summary.dataCategories.map { category ->
         ParticipantDataCategory(
             kind = category.sourceId.toParticipantDataKind(),
-            optional = !category.required,
+            tier = when (category.tier) {
+                CollectorTier.CORE -> ParticipantDataTier.CORE
+                CollectorTier.REQUESTED -> ParticipantDataTier.REQUESTED
+                CollectorTier.OPTIONAL -> ParticipantDataTier.OPTIONAL
+            },
+            rationale = category.rationale,
+            cadence = category.cadence,
+            turnedOff = category.sourceId in runtime.disabledCollectors,
         )
     }
     return ParticipantStudyUiModel(
@@ -332,6 +343,14 @@ internal fun StudySessionSnapshot.toParticipantUiModel(): ParticipantStudyUiMode
             ParticipantExportSummary(it.commitCount, it.eventCount, ParticipantSizeBucket.of(it.byteCount))
         },
         trafficShapingDisclosureRequired = summary.mayAdjustAppTransferSpeed,
+        collectionTimeline = runtime.collectionTimeline.takeIf { summary.collectionTimelineDisclosed }?.let { timeline ->
+            ParticipantCollectionTimeline(
+                hourlyCounts = timeline.hourlyCounts
+                    .filterKeys { sourceId -> summary.dataCategories.any { it.sourceId == sourceId } }
+                    .mapKeys { (sourceId, _) -> sourceId.toParticipantDataKind() },
+                pausedSpans = timeline.pausedSpans.map { ParticipantPausedSpan(it.startMillis, it.endMillis) },
+            )
+        },
     )
 }
 
@@ -426,7 +445,7 @@ private fun String.toParticipantDataKind(): ParticipantDataKind = when (this) {
     else -> error("Unknown participant data source")
 }
 
-private val ParticipantDataKind.sourceId: String
+internal val ParticipantDataKind.sourceId: String
     get() = when (this) {
         ParticipantDataKind.ACCELEROMETER -> "accelerometer.v1"
         ParticipantDataKind.AMBIENT_LIGHT -> "ambient_light.v1"

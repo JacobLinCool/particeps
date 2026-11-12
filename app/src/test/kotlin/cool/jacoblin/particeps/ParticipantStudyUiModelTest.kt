@@ -1,5 +1,6 @@
 package cool.jacoblin.particeps
 
+import cool.jacoblin.particeps.core.application.ParticipantCadence
 import cool.jacoblin.particeps.core.collector.SetupAction
 import java.lang.reflect.Modifier
 import java.lang.reflect.ParameterizedType
@@ -97,6 +98,10 @@ class ParticipantStudyUiModelTest {
             ParticipantExportState.Running::class.java,
             ParticipantExportState.Failed::class.java,
             ParticipantExportState.Cancelled::class.java,
+            ParticipantCollectionTimeline::class.java,
+            ParticipantPausedSpan::class.java,
+            ParticipantCadence.WhenChanged::class.java,
+            ParticipantCadence.Every::class.java,
         )
         val PINNED_FIELD_NAMES: Map<String, Set<String>> = mapOf(
             "ParticipantStudyUiModel" to sortedSetOf(
@@ -105,9 +110,13 @@ class ParticipantStudyUiModelTest {
                 "signerAnchored", "assignedParticipantId", "participantInstanceId", "dataCategories",
                 "access", "upload", "state", "lifetimeDataEventCount", "durableThroughCommit",
                 "uploadedThroughCommit", "retainedFromCommit", "pausedAtUtcMillis", "participation",
-                "lastExport", "trafficShapingDisclosureRequired",
+                "lastExport", "trafficShapingDisclosureRequired", "collectionTimeline",
             ),
-            "ParticipantDataCategory" to sortedSetOf("kind", "optional"),
+            "ParticipantDataCategory" to sortedSetOf("kind", "tier", "rationale", "cadence", "turnedOff"),
+            "ParticipantCollectionTimeline" to sortedSetOf("hourlyCounts", "pausedSpans"),
+            "ParticipantPausedSpan" to sortedSetOf("startMillis", "endMillis"),
+            "ParticipantCadence\$WhenChanged" to sortedSetOf<String>(),
+            "ParticipantCadence\$Every" to sortedSetOf("shortestMillis", "longestMillis"),
             "ParticipantAccessItem" to sortedSetOf("kind", "required", "owners", "resolution", "guidance"),
             "ParticipantUploadDisclosure" to sortedSetOf("destinationHost", "intervalMinutes", "allowMetered"),
             "ParticipantExportSummary" to sortedSetOf("commitCount", "eventCount", "size"),

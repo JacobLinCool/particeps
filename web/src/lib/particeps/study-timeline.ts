@@ -1,7 +1,7 @@
 import { firstInstant, localDate, nextDate, produceStandardScheduleTimer, studyLocalWindow } from './automation/timers';
 import type { MaterializedTimerSummary, TimerProductionRequest } from './automation/types';
-import { trafficShapingEnabled } from './types';
-import type { AutomationDefinition, CollectorId, OccurrenceAutomation, ResourceBindingAutomation, StateCondition, StudyConfiguration } from './types';
+import { collectorTier, trafficShapingEnabled } from './types';
+import type { AutomationDefinition, CollectorConfig, CollectorId, OccurrenceAutomation, ResourceBindingAutomation, StateCondition, StudyConfiguration } from './types';
 import { describeRule, profileDescription, resourceName } from './study-timeline-labels';
 
 export type TimelineLocale = 'en' | 'zh-TW';
@@ -95,6 +95,14 @@ interface ProjectionContext {
 const MINUTE = 60_000;
 const DAY = 86_400_000;
 const text = (locale: TimelineLocale, en: string, zh: string): string => locale === 'zh-TW' ? zh : en;
+
+function tierDetail(collector: CollectorConfig | undefined, locale: TimelineLocale): string {
+  switch (collector ? collectorTier(collector) : 'optional') {
+    case 'core': return text(locale, 'Core data source', '核心資料來源');
+    case 'requested': return text(locale, 'Requested data source', '研究需要的資料來源');
+    case 'optional': return text(locale, 'Optional data source', '選用資料來源');
+  }
+}
 
 /**
  * Bounded static projection of a reference participant with uninterrupted running time.
@@ -245,7 +253,7 @@ function resourceLane(configuration: StudyConfiguration, bindings: ResourceBindi
   }
   const collector = configuration.collectors.find((item) => item.id === id);
   const detail = kind === 'collector'
-    ? text(locale, collector?.required ? 'Required data source' : 'Optional data source', collector?.required ? '必要資料來源' : '選用資料來源')
+    ? tierDetail(collector, locale)
     : trafficShapingEnabled(configuration.traffic_shaping)
       ? configuration.traffic_shaping.target_packages === 'all' ? text(locale, 'All apps', '所有 App') : configuration.traffic_shaping.target_packages.join(', ')
       : '';

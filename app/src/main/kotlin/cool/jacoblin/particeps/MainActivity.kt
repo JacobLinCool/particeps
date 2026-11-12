@@ -115,7 +115,9 @@ class MainActivity : ComponentActivity() {
                     pause = viewModel::pause,
                     resume = { runAfterTrafficPrerequisites(viewModel, PendingTrafficAction.RESUME) },
                     complete = viewModel::complete,
-                    withdraw = viewModel::withdraw,
+                    withdraw = { viewModel.withdraw() },
+                    withdrawAndStopUpload = { viewModel.withdraw(stopAutomaticUpload = true) },
+                    setCategoryTurnedOff = viewModel::setCategoryTurnedOff,
                     decline = viewModel::declineStudy,
                     export = {
                         if (state is StudyUiState.ActiveStudy && viewModel.chooseExportDestination()) {

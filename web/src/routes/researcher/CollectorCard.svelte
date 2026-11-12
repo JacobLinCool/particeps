@@ -10,10 +10,10 @@
    * reordered: array order is participant-visible — it is what the data screen lists — so leaving
    * it free would make two otherwise-identical studies non-diffable for no benefit.
    *
-   * The header row carries two decisions: whether the collector is in the study, and whether a
-   * participant may decline it. They are siblings rather than one inside the other — the enable
-   * target is a `<button>` and interactive content inside a button is invalid HTML, which is the
-   * hard answer to "a switch inside a switch". Everything else on the card is a parameter.
+   * The header row carries one decision: whether the collector is in the study. How much the
+   * participant may decline it is a three-way tier inside the card (core, requested, optional),
+   * beside the optional rationale the App shows participants verbatim. Everything else on the card
+   * is a parameter.
    */
   import Icon from '$lib/ui/Icon.svelte';
   import Button from '$lib/ui/Button.svelte';
@@ -25,9 +25,10 @@
   import ToggleField from '$lib/ui/ToggleField.svelte';
   import ChoiceField from '$lib/ui/ChoiceField.svelte';
   import ChipSet from '$lib/ui/ChipSet.svelte';
+  import TextField from '$lib/ui/TextField.svelte';
   import RateBar from './RateBar.svelte';
   import { collectorRate, volumeOf } from './estimate';
-  import { BOUNDS, type CollectorConfig, type CollectorId, type LocationPriority, type NamedCollectorProfile, type NetworkTransport } from '$lib/particeps/types';
+  import { BOUNDS, MAXIMUM_RATIONALE_LENGTH, collectorTier, type CollectorConfig, type CollectorId, type CollectorTier, type LocationPriority, type NamedCollectorProfile, type NetworkTransport } from '$lib/particeps/types';
   import type { IconRef } from '$lib/ui/icons';
   import type { Messages } from '$lib/i18n/types';
   import type { Scale, ScaleKey } from './scales';
@@ -42,14 +43,15 @@
     scales: Record<ScaleKey, Scale>;
     onenable: (id: CollectorId) => void;
     ondisable: (id: CollectorId) => void;
-    onrequired: (id: CollectorId, required: boolean) => void;
+    ontier: (id: CollectorId, tier: CollectorTier) => void;
+    onrationale: (id: CollectorId, rationale: string) => void;
     onaddprofile: (id: CollectorId) => string | null;
     onrenameprofile: (id: CollectorId, previous: string, next: string) => void;
     onremoveprofile: (id: CollectorId, profileId: string) => void;
   }
 
   let {
-    id, config, path, m, locale, scales: S, onenable, ondisable, onrequired,
+    id, config, path, m, locale, scales: S, onenable, ondisable, ontier, onrationale,
     onaddprofile, onrenameprofile, onremoveprofile
   }: Props = $props();
 
@@ -123,6 +125,12 @@
    * claim however the word reads — the enum name itself stays, because the app's own summary shows
    * the participant the same one.
    */
+  const TIERS: readonly { value: CollectorTier; label: string; icon: IconRef }[] = $derived([
+    { value: 'core', label: m.tier.core.label, icon: 'check' },
+    { value: 'requested', label: m.tier.requested.label, icon: 'alert' },
+    { value: 'optional', label: m.tier.optional.label, icon: 'participant' }
+  ]);
+
   const PRIORITIES: readonly { value: LocationPriority; label: string; icon: IconRef }[] = $derived([
     { value: 'BALANCED', label: m.option.priority.balanced, icon: 'location' },
     { value: 'HIGH_ACCURACY', label: m.option.priority.highAccuracy, icon: 'target' }
@@ -134,9 +142,7 @@
      a screen-reader user the control they need is not usable. `aria-checked` on the switch already
      carries off and on, and the parameters simply are not rendered until it is on. -->
 <div class="collector" class:collector--on={on} data-testid={`collector-${id}`}>
-  <!-- Two controls, one row, and they cannot be nested: the enable target is a <button>, and
-       interactive content inside a button is invalid. The group is named by the collector, so both
-       controls announce under the name they are about. -->
+  <!-- The group is named by the collector, so the switch announces under the name it is about. -->
   <div class="collector__head" role="group" aria-labelledby={`${uid}-name`}>
     <button
       class="collector__enable"
@@ -150,28 +156,6 @@
       <span class="collector__name" id={`${uid}-name`}>{copy.name}</span>
       <RateBar {level} />
     </button>
-
-    {#if config}
-      {@const collector = config}
-      <!-- Not a second switch, and four things say so: `aria-pressed` rather than `aria-checked`
-           (the grammar `.chip` and `.range__preset` already use here), a tick only when it is set,
-           `--caution` where the card wears `--accent`, and its own hover surface beside the row's.
-           It only exists on a card that is already on, which is where a wrong guess costs least.
-           The sentence it used to carry is said once above the grid; `aria-describedby` and the
-           pointer title keep it one hop from the control. -->
-      <button
-        class="collector__required"
-        type="button"
-        aria-pressed={collector.required}
-        aria-describedby="collectors-required"
-        title={m.field.hint.required}
-        onclick={() => onrequired(id, !collector.required)}
-        data-testid={`required-${path}.required`}
-      >
-        <Icon name={collector.required ? 'check' : 'participant'} size={14} />
-        <span>{m.field.label.required}</span>
-      </button>
-    {/if}
   </div>
 
   <!-- What it records is what the choice is between, so it is readable before the choice is made.
@@ -182,6 +166,7 @@
 
   {#if config}
     {@const collector = config}
+    {@const tier = collectorTier(collector)}
     <div class="collector__body">
       <!-- Two disclosures, one block. Both sentences stay and both marks stay; what goes is the
            second paragraph's own padding and the body gap that stood between them. -->
@@ -191,6 +176,28 @@
         <Icon name="alert" size={16} tone="faint" />
         <span>{copy.limit}</span>
       </div>
+
+      <!-- The tier decides what the participant may do with this category, so it sits before the
+           parameters. The hint names the selected tier's consequence; `collectors-required` above
+           the grid states all three. -->
+      <ChoiceField
+        label={m.tier.label}
+        hint={m.tier[tier].hint}
+        path={`${path}.tier`}
+        value={tier}
+        options={TIERS}
+        onchange={(value) => ontier(id, value)}
+      />
+      <TextField
+        label={m.tier.rationale.label}
+        hint={m.tier.rationale.hint}
+        path={`${path}.rationale`}
+        value={collector.rationale ?? ''}
+        max={MAXIMUM_RATIONALE_LENGTH}
+        multiline
+        rows={2}
+        onchange={(value) => onrationale(id, value)}
+      />
 
       <div class="collector__profiles" role="group" aria-label={profileCopy.group}>
         {#each collector.profiles as profile (profile)}

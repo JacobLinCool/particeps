@@ -1,5 +1,7 @@
 package cool.jacoblin.particeps
 
+import cool.jacoblin.particeps.core.runtime.CollectionTimeline
+import cool.jacoblin.particeps.core.definition.CollectorTier
 import cool.jacoblin.particeps.core.application.ParticipantDataCategorySummary
 import cool.jacoblin.particeps.core.application.ParticipantExportSummary as CoreExportSummary
 import cool.jacoblin.particeps.core.application.ParticipantRuntimeStatus
@@ -234,7 +236,7 @@ class ParticipantParticipationTest {
                 consentSummary = "Consent",
                 signerFingerprint = "ab".repeat(32),
                 signerAnchored = false,
-                dataCategories = listOf(ParticipantDataCategorySummary("screen_state.v1", required = true)),
+                dataCategories = listOf(ParticipantDataCategorySummary("screen_state.v1", tier = CollectorTier.CORE)),
                 mayAdjustAppTransferSpeed = false,
                 upload = null,
             ),
@@ -246,6 +248,66 @@ class ParticipantParticipationTest {
             ParticipantExportSummary(commitCount = 12, eventCount = 1_200, size = ParticipantSizeBucket(2)),
             snapshot.toParticipantUiModel().lastExport,
         )
+    }
+
+    @Test
+    fun tiersChoicesAndTheTimelineReachTheProjectionOnlyAsTheSignedPolicyAllows() {
+        fun snapshot(timelineDisclosed: Boolean) = StudySessionSnapshot(
+            initialized = true,
+            study = ParticipantStudySummary(
+                experimentId = "choice-test",
+                configurationId = "choice-test-config",
+                assignedParticipantId = null,
+                title = "Study",
+                researcherName = "Researcher",
+                researcherContact = "researcher@example.invalid",
+                purpose = "Purpose",
+                durationHours = 120,
+                consentDocumentVersion = "consent-1",
+                consentSummary = "Consent",
+                signerFingerprint = "ab".repeat(32),
+                signerAnchored = false,
+                dataCategories = listOf(
+                    ParticipantDataCategorySummary("gyroscope.v1", tier = CollectorTier.OPTIONAL),
+                    ParticipantDataCategorySummary(
+                        "network_throughput.v1",
+                        tier = CollectorTier.REQUESTED,
+                        rationale = "Why",
+                    ),
+                    ParticipantDataCategorySummary("screen_state.v1", tier = CollectorTier.CORE),
+                ),
+                mayAdjustAppTransferSpeed = false,
+                upload = null,
+                collectionTimelineDisclosed = timelineDisclosed,
+            ),
+            runtime = status(ExperimentState.RUNNING).copy(
+                disabledCollectors = setOf("gyroscope.v1"),
+                collectionTimeline = CollectionTimeline(
+                    hourlyCounts = mapOf("screen_state.v1" to mapOf(0 to 3L), "unlisted.v1" to mapOf(0 to 1L)),
+                    pausedSpans = listOf(CollectionTimeline.PausedSpan(1_000, null)),
+                ),
+            ),
+        )
+
+        val hidden = snapshot(timelineDisclosed = false).toParticipantUiModel()
+        assertEquals(null, hidden.collectionTimeline)
+        val categories = hidden.dataCategories.associateBy { it.kind }
+        assertEquals(true, categories.getValue(ParticipantDataKind.GYROSCOPE).turnedOff)
+        assertEquals(ParticipantDataTier.REQUESTED, categories.getValue(ParticipantDataKind.NETWORK_THROUGHPUT).tier)
+        assertEquals("Why", categories.getValue(ParticipantDataKind.NETWORK_THROUGHPUT).rationale)
+        assertEquals(false, categories.getValue(ParticipantDataKind.SCREEN_STATE).optional)
+
+        val shown = requireNotNull(snapshot(timelineDisclosed = true).toParticipantUiModel().collectionTimeline)
+        assertEquals(mapOf(ParticipantDataKind.SCREEN_STATE to mapOf(0 to 3L)), shown.hourlyCounts)
+        assertEquals(listOf(ParticipantPausedSpan(1_000, null)), shown.pausedSpans)
+    }
+
+    @Test
+    fun timelineShadesAreLogarithmicAgainstTheBusiestCell() {
+        assertEquals(0, shadeLevel(0, 100))
+        assertEquals(1, shadeLevel(1, 10_000))
+        assertEquals(3, shadeLevel(10_000, 10_000))
+        assertEquals(2, shadeLevel(100, 10_000))
     }
 
     @Test

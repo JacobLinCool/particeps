@@ -65,6 +65,16 @@ export function fieldLabel(m: Messages, path: string, locale: 'en' | 'zh-TW' = '
       return label.durationHours;
     case 'required':
       return label.required;
+    case 'tier':
+      return m.tier.label;
+    case 'rationale':
+      return m.tier.rationale.label;
+    case 'approximate_frequency':
+      return m.researcher.study.participantDisclosure.frequency.label;
+    case 'collection_timeline':
+      return m.researcher.study.participantDisclosure.timeline.label;
+    case 'participant_disclosure':
+      return m.researcher.study.participantDisclosure.title;
     case 'sampling_period_us':
       return label.samplingPeriod;
     case 'maximum_report_latency_us':

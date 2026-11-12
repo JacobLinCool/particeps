@@ -22,6 +22,10 @@ import cool.jacoblin.particeps.core.model.RuntimeDocument
 import cool.jacoblin.particeps.core.model.SafetyPauseReason
 import cool.jacoblin.particeps.core.model.StudyStore
 import cool.jacoblin.particeps.core.model.StudyTimeline
+import cool.jacoblin.particeps.core.model.RuntimeComponentKey
+import cool.jacoblin.particeps.core.model.RuntimeComponentKind
+import cool.jacoblin.particeps.core.resource.ResourceKey
+import cool.jacoblin.particeps.core.resource.ResourceKind
 import cool.jacoblin.particeps.core.resource.ResourceTerminalFailure
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
@@ -301,6 +305,69 @@ class ExperimentRuntime(
         transitionReason = "PARTICIPANT_WITHDRAW",
         epochReason = "STUDY_WITHDRAWN",
     )
+
+    /**
+     * Turns one non-core collector off or back on at the participant's request. While running,
+     * the choice rotates the condition epoch at one drained boundary; while paused, it is recorded
+     * and takes effect at Resume. Core collectors, setup and ended studies are refused.
+     */
+    suspend fun setCollectorEnabled(sourceId: String, enabled: Boolean): RuntimeCommandResult = command {
+        val key = ResourceKey(ResourceKind.COLLECTOR, sourceId)
+        val host = hosts[key]
+        if (host == null || host.required) {
+            return@command RuntimeCommandResult.Rejected(RuntimeCommandRejection.COLLECTOR_NOT_OPTIONAL)
+        }
+        if ((key !in memory.participantDisabledCollectors) == enabled) return@command RuntimeCommandResult.Success
+        val componentKey = collectorChoiceComponentKey(key)
+        val mutation = if (enabled) {
+            removeParticipantChoice(componentKey)
+        } else {
+            upsertParticipantChoice(componentKey, ParticipantChoice.COLLECTOR_DISABLED)
+        }
+        val current = memory.requireDocument()
+        when {
+            current.state == ExperimentState.RUNNING && current.activeConditionEpoch != null -> {
+                val clock = clockPolicy.advanceClock(current, ctx.clocks.now())
+                if (barrierCoordinator.participantChoiceBarrierLocked(mutation, clock)) {
+                    RuntimeCommandResult.Success
+                } else {
+                    RuntimeCommandResult.FailedClosed(SafetyPauseReason.REQUIRED_RESOURCE_FAILURE)
+                }
+            }
+            current.state == ExperimentState.PAUSED && current.activeConditionEpoch == null -> {
+                commitLog.appendCommitLocked(
+                    inputKind = EngineInputKind.PARTICIPANT_CHOICE,
+                    checkpoint = memory.automationCheckpoint,
+                    extraMutations = listOf(mutation),
+                )
+                RuntimeCommandResult.Success
+            }
+            else -> RuntimeCommandResult.Rejected(RuntimeCommandRejection.INVALID_STATE)
+        }
+    }
+
+    /**
+     * Records that the participant stopped automatic upload when ending the study. It is durable and
+     * one-way; the application layer stops scheduling and cancels any request in flight.
+     */
+    suspend fun stopAutomaticUpload(): RuntimeCommandResult = command {
+        val current = memory.requireDocument()
+        if (current.state != ExperimentState.COMPLETED && current.state != ExperimentState.WITHDRAWN) {
+            return@command RuntimeCommandResult.Rejected(RuntimeCommandRejection.INVALID_STATE)
+        }
+        if (memory.automaticUploadStopped) return@command RuntimeCommandResult.Success
+        commitLog.appendCommitLocked(
+            inputKind = EngineInputKind.PARTICIPANT_CHOICE,
+            checkpoint = memory.automationCheckpoint,
+            extraMutations = listOf(
+                upsertParticipantChoice(
+                    RuntimeComponentKey(RuntimeComponentKind.PARTICIPANT_CHOICE, AUTOMATIC_UPLOAD_CHOICE_ID),
+                    ParticipantChoice.AUTOMATIC_UPLOAD_STOPPED,
+                ),
+            ),
+        )
+        RuntimeCommandResult.Success
+    }
 
     suspend fun safetyPause(reason: SafetyPauseReason): RuntimeCommandResult = command {
         lifecycleCoordinator.safetyPauseLocked(reason, causeSequence = null)

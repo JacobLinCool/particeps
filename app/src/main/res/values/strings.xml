@@ -126,7 +126,37 @@
       out is phrased "may include". The not-recorded phrases fill data_not_recorded.
     -->
     <string name="data_optional">Optional</string>
-    <string name="data_required">Required</string>
+    <string name="data_required">Core</string>
+    <string name="data_requested">Requested</string>
+    <string name="data_requested_warning">Skipping or turning this off may affect your compensation. Ask the research team for details.</string>
+    <string name="data_rationale_label">Why the study asks for this</string>
+    <string name="data_turned_off">Off</string>
+    <string name="data_turned_off_detail">You turned this off. Particeps is not collecting it.</string>
+    <string name="cadence_when_changed">Recorded when it changes</string>
+    <string name="cadence_every">Recorded about every %1$s</string>
+    <string name="cadence_range">Recorded about every %1$s to %2$s</string>
+    <plurals name="cadence_times_per_second">
+        <item quantity="one">Recorded about once a second</item>
+        <item quantity="other">Recorded about %1$d times a second</item>
+    </plurals>
+    <plurals name="cadence_seconds">
+        <item quantity="one">%1$d second</item>
+        <item quantity="other">%1$d seconds</item>
+    </plurals>
+    <plurals name="cadence_minutes">
+        <item quantity="one">%1$d minute</item>
+        <item quantity="other">%1$d minutes</item>
+    </plurals>
+    <plurals name="cadence_hours">
+        <item quantity="one">%1$d hour</item>
+        <item quantity="other">%1$d hours</item>
+    </plurals>
+    <string name="category_switch_description">Collect %1$s</string>
+    <string name="confirm_turn_off_title">Turn off %1$s?</string>
+    <string name="confirm_turn_off_body">Particeps stops collecting this category until you turn it back on. Data already collected is kept.</string>
+    <string name="action_turn_off">Turn off</string>
+    <string name="confirm_skip_access_title">Continue without some access?</string>
+    <string name="confirm_skip_access_body">The categories that need this access stay off. Skipping data the study requests may affect your compensation. Ask the research team for details.</string>
     <string name="data_not_recorded">Not recorded: %1$s</string>
     <!-- %1$s is one or more Android access names joined with list_separator. -->
     <string name="data_access_line">Android access: %1$s</string>
@@ -333,6 +363,14 @@
     <string name="my_data_notifications">Particeps also uses notifications for study status and ongoing collection, and for scheduled activities when a study has them.</string>
 
     <string name="my_data_participation_title">Your participation</string>
+    <string name="participation_progress">Study progress</string>
+    <string name="participation_progress_description">%1$d%% of the planned study time has passed</string>
+    <string name="timeline_title">When data was collected</string>
+    <string name="timeline_paused">Paused</string>
+    <string name="timeline_less">Less</string>
+    <string name="timeline_more">More</string>
+    <string name="timeline_day">Day %1$d</string>
+    <string name="timeline_row_description">%1$s: data in %2$d of %3$d hours so far</string>
     <string name="participation_status">Status</string>
     <string name="participation_day">Study day</string>
     <!-- %1$d is the current study day, counted in 24-hour periods since Start; %2$d is the number of study days. -->
@@ -358,7 +396,9 @@
     <string name="rights_pause_upload">Data that was already collected continues to be sent while the study is paused.</string>
     <string name="rights_withdraw_title">Withdraw</string>
     <string name="rights_withdraw_body">Withdrawing ends collection permanently. You do not need to give a reason, and you can still export what was already collected.</string>
-    <string name="rights_withdraw_upload">Data already collected but not yet sent may still be sent to the research team.</string>
+    <string name="rights_withdraw_upload">This study sends data automatically. When you withdraw, you choose whether data collected but not yet sent is still sent, or whether sending stops. Data already sent stays with the research team.</string>
+    <string name="rights_choices_title">Turn categories off</string>
+    <string name="rights_choices_body">While the study runs or is paused, you can turn off any category not marked Core and turn it back on later. Data already collected is kept. Turning off a Requested category may affect your compensation.</string>
     <string name="rights_delete_title">Delete local data</string>
     <string name="rights_delete_body">After the study is completed or withdrawn, Delete local data removes the study and everything it recorded from this phone. This cannot be undone, so export first if the research team should receive a copy.</string>
     <string name="rights_delete_upload">Deleting also cancels any sending that has not happened yet. Data already sent cannot be deleted from this phone. To ask the research team about it, you need the researcher’s contact details and your installation code shown above; deleting removes both from this phone, so note them first.</string>
@@ -367,6 +407,9 @@
     <string name="confirm_complete_title">Complete this study?</string>
     <string name="confirm_complete_body">Collection will stop permanently. You can still export what was already collected.</string>
     <string name="confirm_withdraw_title">Withdraw from this study?</string>
+    <string name="confirm_withdraw_upload_body">All collection stops permanently. Some data that was collected has not been sent yet: choose whether to send it. Data the research team already received stays with them, and you can still export what was collected until you delete it.</string>
+    <string name="action_withdraw_send">Withdraw and send what was collected</string>
+    <string name="action_withdraw_stop_upload">Withdraw and stop sending</string>
     <string name="confirm_withdraw_body">All collection stops permanently. You can still export what was already collected, until you delete it.</string>
     <string name="confirm_decline_title">Decline this study?</string>
     <string name="confirm_decline_body">Collection has not started, so none of the data this study asks for has been collected, and no study data has been sent to the research team. Declining removes the study and your setup progress from this phone. This cannot be undone. Android access you granted during setup stays on until you turn it off in Android Settings or uninstall Particeps.</string>

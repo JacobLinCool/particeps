@@ -2,7 +2,14 @@
 
 import { EVENT_SOURCE_REGISTRY } from './generated/event-source-registry.ts';
 
-export const SCHEMA_VERSION = 1;
+/**
+ * Protocol v1 configurations come in two closed-world dialects. Schema 1 marks each collector
+ * `required` true or false. Schema 2 replaces that with a three-level tier, an optional researcher
+ * rationale, and a signed participant disclosure policy. Readers accept both exactly; this page
+ * writes schema 2.
+ */
+export const SCHEMA_VERSION_1 = 1;
+export const SCHEMA_VERSION = 2;
 export const PLATFORM = 'android' as const;
 export const DEFAULT_MINIMUM_CLIENT_VERSION = '1';
 export const MAXIMUM_CONFIGURATION_BYTES = 1_048_576;
@@ -76,9 +83,41 @@ export interface NamedCollectorProfile<C extends CollectorProfileConfiguration =
   config: C;
 }
 
+/**
+ * How much a study depends on one data category (schema 2). `core` is a condition of taking part:
+ * missing access blocks Start and a failure pauses the study. `requested` and `optional` may be
+ * skipped or turned off by the participant; for `requested` the App adds a fixed warning that this
+ * may affect compensation.
+ */
+export type CollectorTier = 'core' | 'requested' | 'optional';
+export const COLLECTOR_TIERS: readonly CollectorTier[] = ['core', 'requested', 'optional'];
+export const MAXIMUM_RATIONALE_LENGTH = 600;
+
+export function isCollectorTier(value: unknown): value is CollectorTier {
+  return typeof value === 'string' && (COLLECTOR_TIERS as readonly string[]).includes(value);
+}
+
+/** Schema 1 spells requiredness as a boolean; schema 2 as a tier with an optional rationale. */
+export type CollectorRequirement =
+  | { required: boolean; tier?: never; rationale?: never }
+  | { tier: CollectorTier; rationale: string | null; required?: never };
+
 type CollectorResource<I extends CollectorId, C extends CollectorProfileConfiguration> = {
-  id: I; required: boolean; profiles: NamedCollectorProfile<C>[];
-};
+  id: I; profiles: NamedCollectorProfile<C>[];
+} & CollectorRequirement;
+
+/**
+ * Whether a failure of this collector closes the whole study: schema 1 `required: true` and schema
+ * 2 `tier: "core"` mean the same thing everywhere requiredness is used.
+ */
+export function collectorIsCore(collector: CollectorRequirement): boolean {
+  return collector.tier !== undefined ? collector.tier === 'core' : collector.required === true;
+}
+
+/** The schema 2 tier of either dialect: schema 1 `required` true is core, false is optional. */
+export function collectorTier(collector: CollectorRequirement): CollectorTier {
+  return collector.tier ?? (collector.required ? 'core' : 'optional');
+}
 export type CollectorConfig =
   | CollectorResource<'accelerometer.v1' | 'gyroscope.v1', SensorProfile>
   | CollectorResource<'ambient_light.v1', AmbientLightProfile>
@@ -236,6 +275,21 @@ export interface UploadConfig {
   allow_metered: boolean;
 }
 
+/**
+ * What the researcher lets participants see beyond the platform floor (schema 2 only). Schema 1
+ * has no policy and therefore shows neither.
+ */
+export interface ParticipantDisclosure {
+  /** Show an approximate sampling frequency for each data category. */
+  approximate_frequency: boolean;
+  /** Show when each data category collected data, and where the study was paused. */
+  collection_timeline: boolean;
+}
+
+export const NO_PARTICIPANT_DISCLOSURE: Readonly<ParticipantDisclosure> = Object.freeze({
+  approximate_frequency: false, collection_timeline: false
+});
+
 export interface StudyConfiguration {
   schema_version: number;
   platform: typeof PLATFORM;
@@ -259,6 +313,13 @@ export interface StudyConfiguration {
   signer: { key_id: string; public_key: string };
   export: { researcher_key_id: string; hpke_public_key: string };
   upload: UploadConfig | null;
+  /** Present exactly when `schema_version` is 2. */
+  participant_disclosure?: ParticipantDisclosure;
+}
+
+/** The disclosure policy a configuration signs; schema 1 discloses nothing beyond the floor. */
+export function participantDisclosure(configuration: StudyConfiguration): ParticipantDisclosure {
+  return configuration.participant_disclosure ?? NO_PARTICIPANT_DISCLOSURE;
 }
 
 export const BOUNDS = {

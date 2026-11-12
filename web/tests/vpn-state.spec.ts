@@ -5,7 +5,7 @@ import { eventContract } from '$lib/particeps/generated/event-source-registry';
 import { participantStudyUiModel } from '$lib/particeps/participant-projection';
 import { continuousBinding, defaultCollector, validate } from '$lib/particeps/schema';
 import { collectorRate } from '../src/routes/researcher/estimate';
-import { validConfiguration } from './fixture';
+import { validConfigurationV2 as validConfiguration } from './fixture';
 
 describe('independent VPN state collection', () => {
   it('authors an empty profile and discloses observation without enabling VPN traffic shaping', () => {

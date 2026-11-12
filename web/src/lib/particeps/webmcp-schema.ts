@@ -1,7 +1,7 @@
 /** Closed JSON schemas shared by WebMCP discovery and runtime input validation. */
 import { COLLECTOR_SOURCES } from './registry';
 import type { ProfileFieldContract } from './generated/event-source-registry';
-import { COLLECTOR_ORDER, MAXIMUM_CONFIGURATION_BYTES } from './types';
+import { COLLECTOR_ORDER, COLLECTOR_TIERS, MAXIMUM_CONFIGURATION_BYTES, MAXIMUM_RATIONALE_LENGTH } from './types';
 
 export interface ToolSchema {
   type?: 'object' | 'array' | 'string' | 'integer' | 'boolean' | 'null';
@@ -79,7 +79,9 @@ function profileObject(fields: Readonly<Record<string, ProfileFieldContract>>): 
 
 export const AUTHORING_DEFINITIONS: Record<string, ToolSchema> = {
   collector: { oneOf: COLLECTOR_SOURCES.map((source) => object({
-    id: literal(source.source_id), required: boolean,
+    id: literal(source.source_id),
+    tier: enumeration(COLLECTOR_TIERS, 'core: the participant cannot skip or turn it off, and missing access blocks the study. requested: the participant may skip or turn it off and is warned that this may affect compensation. optional: the participant may skip or turn it off freely.'),
+    rationale: { ...nullable({ ...string(MAXIMUM_RATIONALE_LENGTH), minLength: 1 }), description: 'Why the study asks for this category, shown to participants verbatim; null for none. Not blank. Visible to every participant, so it must not reveal arms or schedules.' },
     profiles: array(object({ id, config: profileObject(source.configuration?.fields ?? {}) }), 1, 64)
   })) },
   condition: { oneOf: [
@@ -137,6 +139,7 @@ export const AUTHORING_DEFINITIONS: Record<string, ToolSchema> = {
   })] },
   upload: nullable(object({ endpoint: { ...string(2_048), minLength: 8 }, interval_minutes: integer(1, 10_080), allow_metered: boolean })),
   storage: object({ maximum_local_bytes: integer(8_388_608, 8_589_934_592) }),
+  participant_disclosure: { ...object({ approximate_frequency: boolean, collection_timeline: boolean }), description: 'Optional participant views the App may show. Both can change participant behaviour; a collection timeline can reveal scheduled collection windows.' },
   study: { ...object({
     title: string(120), purpose: string(2_000), researcher: object({ name: string(120), contact: string(240) }),
     consent: object({ document_version: string(64), summary: string(8_000) }), duration_hours: integer(1, 8_760),
@@ -162,7 +165,8 @@ export const CHANGE_SCHEMA: ToolSchema = {
       variant('remove_automation', { id }),
       variant('set_traffic_shaping', { traffic_shaping: reference('traffic_shaping') }),
       variant('set_upload', { upload: reference('upload') }),
-      variant('set_storage', { storage: reference('storage') })
+      variant('set_storage', { storage: reference('storage') }),
+      variant('set_participant_disclosure', { participant_disclosure: reference('participant_disclosure') })
     ] }, 1, 64), description: 'Ordered atomic changes. Supply dependencies together: every collector needs one resource binding, and every intervention needs an occurrence. Removals never silently cascade.' }
   }, ['expected_revision', 'changes']),
   $defs: AUTHORING_DEFINITIONS

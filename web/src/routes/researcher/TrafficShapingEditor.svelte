@@ -167,7 +167,7 @@
     {#if review}
       <div class="example-review" aria-live="polite">
         <h4>{locale === 'zh-TW' ? '套用前檢閱變更' : 'Review changes before applying'}</h4>
-        <p>{locale === 'zh-TW' ? '此範例會替換全部限速條件。它也會啟用必要的 App 使用事件來源，將所有輪詢設定改為 15 秒，並讓該來源在整個研究中保持啟用。其他資料來源與研究活動保留。' : 'This example replaces all traffic conditions. It also enables required app usage events, changes every usage polling profile to 15 seconds, and keeps that source active throughout the study. Other sources and activities are preserved.'}</p>
+        <p>{locale === 'zh-TW' ? '此範例會替換全部限速條件。它也會將 App 使用事件來源設為「核心」並啟用，將所有輪詢設定改為 15 秒，並讓該來源在整個研究中保持啟用。其他資料來源與研究活動保留。' : 'This example replaces all traffic conditions. It also enables app usage events as a Core source, changes every usage polling profile to 15 seconds, and keeps that source active throughout the study. Other sources and activities are preserved.'}</p>
         <details open>
           <summary>{locale === 'zh-TW' ? '完整變更內容' : 'Full change details'}</summary>
           <div class="example-diff">

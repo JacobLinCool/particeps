@@ -36,15 +36,18 @@ export function parseCanonicalJson(bytes: Uint8Array): unknown {
 }
 
 /** The Protocol v1 configuration value before JCS. Disabled upload is encoded as the one exact
- * empty object. No array is silently reordered here: sorted resource/profile/automation/package
+ * empty object, and `participant_disclosure` appears only in schema 2. No array is silently reordered here: sorted resource/profile/automation/package
  * arrays are a signed validation rule, not a canonicalization convenience. */
 export function configurationValue(configuration: StudyConfiguration): unknown {
   const normalizeInstant = (value: string) => {
     const parsed = parseInstant(value);
     return parsed ? formatInstant(parsed) : value;
   };
+  const { participant_disclosure: disclosure, ...rest } = configuration;
+  // Schema 1 has no disclosure member at all; an absent policy is never encoded as null or {}.
   return {
-    ...configuration,
+    ...rest,
+    ...(disclosure === undefined ? {} : { participant_disclosure: disclosure }),
     issued_at: normalizeInstant(configuration.issued_at),
     expires_at: normalizeInstant(configuration.expires_at),
     upload: configuration.upload ?? {}

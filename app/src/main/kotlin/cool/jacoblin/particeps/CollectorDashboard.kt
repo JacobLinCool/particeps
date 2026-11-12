@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
@@ -76,6 +77,14 @@ import java.text.NumberFormat
 import kotlinx.coroutines.delay
 
 object UiTags {
+    const val STUDY_PROGRESS = "study_progress"
+    const val COLLECTION_TIMELINE = "collection_timeline"
+    const val CONFIRM_TURN_OFF = "confirm_turn_off"
+    const val WITHDRAW_SEND = "withdraw_send"
+    const val WITHDRAW_STOP_UPLOAD = "withdraw_stop_upload"
+    const val CONFIRM_SKIP_ACCESS = "confirm_skip_access"
+    fun category(kind: ParticipantDataKind) = "category_${kind.name.lowercase()}"
+    fun categorySwitch(kind: ParticipantDataKind) = "category_switch_${kind.name.lowercase()}"
     const val STATE = "state"
     const val SCAN_STUDY_QR = "scan_study_qr"
     const val IMPORT_CONFIGURATION = "import_configuration"
@@ -143,6 +152,10 @@ data class StudyUiActions(
      * or null when that cannot be measured. *Study and my data* calls it once each time it opens.
      */
     val readLocalStorageSize: suspend () -> ParticipantSizeBucket?,
+    /** Turns a non-core data category off (true) or back on (false). */
+    val setCategoryTurnedOff: (ParticipantDataKind, Boolean) -> Unit = { _, _ -> },
+    /** Withdraws and stops automatic upload of data that has not been sent yet. */
+    val withdrawAndStopUpload: () -> Unit = {},
 )
 
 /**
@@ -210,6 +223,7 @@ fun CollectorApp(
     actions: StudyUiActions,
 ) {
     var confirmAction by remember { mutableStateOf<ConfirmAction?>(null) }
+    var turnOffRequest by remember { mutableStateOf<ParticipantDataKind?>(null) }
     var languageOpen by remember { mutableStateOf(false) }
     // A state switch rather than an Activity: app_lifecycle.v1 records this app's Activity classes,
     // and opening the secondary screen is not something the study should learn about.
@@ -249,6 +263,9 @@ fun CollectorApp(
                             complete = { confirmAction = ConfirmAction.COMPLETE },
                             delete = { confirmAction = ConfirmAction.DELETE },
                             resetAndRestart = { confirmAction = ConfirmAction.RESET },
+                            setCategoryTurnedOff = { kind, turnedOff ->
+                                if (turnedOff) turnOffRequest = kind else actions.setCategoryTurnedOff(kind, false)
+                            },
                         ),
                         onOpenLanguage = { languageOpen = true },
                         onOpenStudyAndMyData = { studyAndMyDataOpen = true },
@@ -260,7 +277,36 @@ fun CollectorApp(
 
         if (languageOpen) LanguageDialog(onDismiss = { languageOpen = false })
 
-        confirmAction?.let { action ->
+        val activeModel = (state as? StudyUiState.ActiveStudy)?.model
+        turnOffRequest?.let { kind ->
+            val category = activeModel?.dataCategories?.firstOrNull { it.kind == kind }
+            if (category == null) {
+                turnOffRequest = null
+            } else {
+                TurnOffDialog(
+                    category = category,
+                    onDismiss = { turnOffRequest = null },
+                    onConfirm = {
+                        turnOffRequest = null
+                        actions.setCategoryTurnedOff(kind, true)
+                    },
+                )
+            }
+        }
+
+        if (confirmAction == ConfirmAction.WITHDRAW && activeModel?.upload != null) {
+            WithdrawWithUploadDialog(
+                onDismiss = { confirmAction = null },
+                onSend = {
+                    confirmAction = null
+                    actions.withdraw()
+                },
+                onStopSending = {
+                    confirmAction = null
+                    actions.withdrawAndStopUpload()
+                },
+            )
+        } else confirmAction?.let { action ->
             ConfirmDialog(
                 action = action,
                 // Only a study imported under an earlier release, which uploaded from import, can
@@ -736,13 +782,11 @@ private fun DataPanel(
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(summary.name, fontWeight = FontWeight.Bold)
-                        if (summary.optional) {
-                            Text(
-                                stringResource(R.string.data_optional),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                        Text(
+                            tierLabel(category.tier),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     Text(summary.records)
                     Text(
@@ -750,6 +794,7 @@ private fun DataPanel(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    CategoryDetails(category)
                 }
             }
         }
@@ -758,6 +803,37 @@ private fun DataPanel(
             modifier = Modifier.fillMaxWidth().testTag(UiTags.CONTINUE),
         ) { Text(stringResource(R.string.action_continue)) }
         ExitLink(study.state, actions, busy)
+    }
+}
+
+/**
+ * What the signed study adds to a category's fixed copy: the researcher's own reason, verbatim,
+ * an approximate cadence when the disclosure policy allows it, and the compensation warning for a
+ * requested category.
+ */
+@Composable
+internal fun CategoryDetails(category: ParticipantDataCategory) {
+    category.cadence?.let {
+        Text(
+            cadenceLabel(it),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    category.rationale?.let { rationale ->
+        Text(
+            stringResource(R.string.data_rationale_label),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(rationale, style = MaterialTheme.typography.bodyMedium)
+    }
+    if (category.tier == ParticipantDataTier.REQUESTED) {
+        Text(
+            stringResource(R.string.data_requested_warning),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -923,9 +999,31 @@ private fun AccessPanel(
     onOpenStudyAndMyData: (() -> Unit)? = null,
 ) {
     val requiredReady = checks.none { it.required && !it.granted }
+    val tiers = study.dataCategories.associate { it.kind to it.tier }
+    val skipsRequested = checks.any { check -> !check.granted && check.requestedBy(tiers) }
+    var confirmSkip by remember { mutableStateOf(false) }
+    if (confirmSkip) {
+        AlertDialog(
+            onDismissRequest = { confirmSkip = false },
+            title = { Text(stringResource(R.string.confirm_skip_access_title)) },
+            text = { Text(stringResource(R.string.confirm_skip_access_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmSkip = false
+                        actions.completeAccess()
+                    },
+                    modifier = Modifier.testTag(UiTags.CONFIRM_SKIP_ACCESS),
+                ) { Text(stringResource(R.string.action_continue)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmSkip = false }) { Text(stringResource(R.string.action_cancel)) }
+            },
+        )
+    }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         checks.forEach { check ->
-            AccessCard(check, actions, busy)
+            AccessCard(check, actions, busy, tiers)
         }
         if (completesInitialSetup && study.trafficShapingDisclosureRequired) {
             Text(
@@ -938,7 +1036,7 @@ private fun AccessPanel(
         if (completesInitialSetup) {
             Spacer(Modifier.height(4.dp))
             Button(
-                onClick = actions.completeAccess,
+                onClick = { if (skipsRequested) confirmSkip = true else actions.completeAccess() },
                 enabled = requiredReady && !busy,
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.ACCESS_COMPLETE),
             ) { Text(stringResource(R.string.action_done)) }
@@ -953,6 +1051,7 @@ internal fun AccessCard(
     check: ParticipantAccessItem,
     actions: StudyUiActions,
     busy: Boolean,
+    tiers: Map<ParticipantDataKind, ParticipantDataTier> = emptyMap(),
 ) {
     val kind = check.kind
     Column(
@@ -976,15 +1075,15 @@ internal fun AccessCard(
                 modifier = Modifier.weight(1f),
                 fontWeight = FontWeight.SemiBold,
             )
-                if (!check.required) {
+            if (!check.required) {
                 Text(
-                    stringResource(R.string.data_optional),
+                    stringResource(if (check.requestedBy(tiers)) R.string.data_requested else R.string.data_optional),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
 
-        AccessOwners(kind, check.owners)
+        AccessOwners(kind, check.owners, tiers)
 
         if (!check.granted) {
             check.guidance
@@ -1047,6 +1146,7 @@ private fun guidanceStepText(stepResource: Int): String = when (stepResource) {
 private fun AccessOwners(
     kind: AccessKind,
     owners: List<ParticipantAccessOwner>,
+    tiers: Map<ParticipantDataKind, ParticipantDataTier>,
 ) {
     val orderedOwners = owners.sortedBy { owner -> owner::class.simpleName }
     Column(
@@ -1061,15 +1161,17 @@ private fun AccessOwners(
         orderedOwners.forEach { owner ->
             val label = when (owner) {
                 is ParticipantAccessOwner.DataCategory ->
-                    ParticipantDataCategory(owner.kind, optional = !owner.required).summarize().name
+                    ParticipantDataCategory(owner.kind).summarize().name
                 ParticipantAccessOwner.StudyNotifications ->
                     stringResource(R.string.access_owner_study_notifications)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.access_owner_item, label))
                 if (!owner.required) {
+                    val requested = owner is ParticipantAccessOwner.DataCategory &&
+                        tiers[owner.kind] == ParticipantDataTier.REQUESTED
                     Text(
-                        stringResource(R.string.data_optional),
+                        stringResource(if (requested) R.string.data_requested else R.string.data_optional),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -1100,7 +1202,7 @@ private fun CollectionPanel(
 ) {
     val state = study.model.state
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        CollectorGrid(study)
+        CollectorGrid(study, actions, busy)
         OptionalAccessRemediation(
             study = study.model,
             checks = study.model.access,
@@ -1277,18 +1379,20 @@ private fun ExitLink(state: ExperimentState, actions: StudyUiActions, busy: Bool
 }
 
 @Composable
-private fun CollectorGrid(study: StudyUiState.ActiveStudy) {
+private fun CollectorGrid(study: StudyUiState.ActiveStudy, actions: StudyUiActions, busy: Boolean) {
+    val state = study.model.state
+    val canChoose = state == ExperimentState.RUNNING || state == ExperimentState.PAUSED
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         study.model.dataCategories.forEach { category ->
             val summary = category.summarize()
             Row(
-                Modifier.fillMaxWidth(),
+                Modifier.fillMaxWidth().testTag(UiTags.category(category.kind)),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Box(
                     Modifier.size(10.dp).background(
-                        if (study.model.state == ExperimentState.RUNNING) {
+                        if (state == ExperimentState.RUNNING && !category.turnedOff) {
                             MaterialTheme.colorScheme.secondary
                         } else {
                             MaterialTheme.colorScheme.outline
@@ -1297,10 +1401,88 @@ private fun CollectorGrid(study: StudyUiState.ActiveStudy) {
                     ),
                 )
                 GlyphIcon(summary.glyph, MaterialTheme.colorScheme.onSurfaceVariant, 18.dp)
-                Text(summary.name, Modifier.weight(1f))
+                Column(Modifier.weight(1f)) {
+                    Text(summary.name)
+                    if (category.optional) {
+                        Text(
+                            if (category.turnedOff) {
+                                stringResource(R.string.data_turned_off)
+                            } else {
+                                tierLabel(category.tier)
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (category.optional && canChoose) {
+                    val description = stringResource(R.string.category_switch_description, summary.name)
+                    Switch(
+                        checked = !category.turnedOff,
+                        onCheckedChange = { collect -> actions.setCategoryTurnedOff(category.kind, !collect) },
+                        enabled = !busy,
+                        modifier = Modifier
+                            .testTag(UiTags.categorySwitch(category.kind))
+                            .semantics { contentDescription = description },
+                    )
+                }
             }
         }
     }
+}
+
+@Composable
+private fun TurnOffDialog(
+    category: ParticipantDataCategory,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val name = category.summarize().name
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.confirm_turn_off_title, name)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.confirm_turn_off_body))
+                if (category.tier == ParticipantDataTier.REQUESTED) {
+                    Text(stringResource(R.string.data_requested_warning), fontWeight = FontWeight.SemiBold)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, modifier = Modifier.testTag(UiTags.CONFIRM_TURN_OFF)) {
+                Text(stringResource(R.string.action_turn_off))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+        },
+    )
+}
+
+/** Withdraw in a study that sends automatically: the participant decides what happens to unsent data. */
+@Composable
+private fun WithdrawWithUploadDialog(
+    onDismiss: () -> Unit,
+    onSend: () -> Unit,
+    onStopSending: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.confirm_withdraw_title)) },
+        text = { Text(stringResource(R.string.confirm_withdraw_upload_body)) },
+        confirmButton = {
+            Column(horizontalAlignment = Alignment.End) {
+                TextButton(onClick = onSend, modifier = Modifier.testTag(UiTags.WITHDRAW_SEND)) {
+                    Text(stringResource(R.string.action_withdraw_send))
+                }
+                TextButton(onClick = onStopSending, modifier = Modifier.testTag(UiTags.WITHDRAW_STOP_UPLOAD)) {
+                    Text(stringResource(R.string.action_withdraw_stop_upload))
+                }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+            }
+        },
+    )
 }
 
 /**
@@ -1546,6 +1728,10 @@ private fun Alert(message: ParticipantMessage) {
         )
     }
 }
+
+/** A non-core access item one of whose categories the study requests rather than leaves optional. */
+private fun ParticipantAccessItem.requestedBy(tiers: Map<ParticipantDataKind, ParticipantDataTier>): Boolean =
+    !required && owners.any { it is ParticipantAccessOwner.DataCategory && tiers[it.kind] == ParticipantDataTier.REQUESTED }
 
 private enum class ConfirmAction { COMPLETE, WITHDRAW, DECLINE, DELETE, RESET }
 

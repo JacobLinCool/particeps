@@ -60,6 +60,8 @@ enum class RuntimeComponentKind {
     UPLOAD_ACKNOWLEDGEMENT,
     RESOURCE,
     RESOURCE_CLEANUP,
+    /** A durable participant choice: a non-core collector turned off, or automatic upload stopped. */
+    PARTICIPANT_CHOICE,
 }
 
 data class RuntimeComponentKey(
@@ -111,6 +113,8 @@ enum class EngineInputKind {
     RESOURCE_RESULT,
     SAFETY_FAILURE,
     RECOVERY,
+    /** The participant turned a non-core collector off or on, or stopped automatic upload. */
+    PARTICIPANT_CHOICE,
 }
 
 data class EngineCommit(

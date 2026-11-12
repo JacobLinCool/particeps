@@ -20,6 +20,9 @@ object StudyConfigurationCodec {
         "researcher", "purpose", "duration_hours", "consent", "collectors", "surveys",
         "interventions", "automations", "traffic_shaping", "storage", "signer", "export", "upload",
     )
+    private val ROOT_KEYS_V2 = ROOT_KEYS + "participant_disclosure"
+    private val COLLECTOR_KEYS_V1 = setOf("id", "required", "profiles")
+    private val COLLECTOR_KEYS_V2 = setOf("id", "tier", "rationale", "profiles")
     private val UPLOAD_KEYS = setOf("endpoint", "interval_minutes", "allow_metered")
 
     fun decode(bytes: ByteArray): StudyConfiguration {
@@ -51,7 +54,7 @@ object StudyConfigurationCodec {
                 "document_version" to JsonPrimitive(configuration.consentDocumentVersion),
                 "summary" to JsonPrimitive(configuration.consentSummary),
             ))
-            add("collectors", arrayOf(configuration.collectors.map(::encodeCollector)))
+            add("collectors", arrayOf(configuration.collectors.map { encodeCollector(it, configuration.schemaVersion) }))
             add("surveys", arrayOf(configuration.surveys.map(::encodeSurvey)))
             add("interventions", arrayOf(configuration.interventions.map(::encodeIntervention)))
             add("automations", arrayOf(configuration.automations.map(::encodeAutomation)))
@@ -66,13 +69,37 @@ object StudyConfigurationCodec {
                 "hpke_public_key" to JsonPrimitive(configuration.export.hpkePublicKey),
             ))
             add("upload", configuration.upload?.let(::encodeUpload) ?: JsonObject())
+            if (configuration.schemaVersion != StudyConfiguration.SCHEMA_VERSION_1) {
+                add("participant_disclosure", objectOf(
+                    "approximate_frequency" to JsonPrimitive(configuration.participantDisclosure.approximateFrequency),
+                    "collection_timeline" to JsonPrimitive(configuration.participantDisclosure.collectionTimeline),
+                ))
+            }
         },
     )
 
     private fun decodeStructure(bytes: ByteArray): StudyConfiguration {
         require(bytes.size in 2..MAX_CONFIGURATION_BYTES) { "Invalid configuration size" }
         val root = ProtocolCanonicalJson.parse(bytes, MAX_CONFIGURATION_BYTES).requireObject("root")
-        root.requireExactKeys(ROOT_KEYS)
+        val schemaVersion = root.requireInt("schema_version")
+        root.requireExactKeys(
+            when (schemaVersion) {
+                StudyConfiguration.SCHEMA_VERSION_1 -> ROOT_KEYS
+                StudyConfiguration.CURRENT_SCHEMA_VERSION -> ROOT_KEYS_V2
+                else -> throw IllegalArgumentException("Unsupported configuration schema")
+            },
+        )
+        val disclosure = if (schemaVersion == StudyConfiguration.SCHEMA_VERSION_1) {
+            ParticipantDisclosure.NONE
+        } else {
+            root.requireObject("participant_disclosure").let {
+                it.requireExactKeys(setOf("approximate_frequency", "collection_timeline"))
+                ParticipantDisclosure(
+                    approximateFrequency = it.requireBoolean("approximate_frequency"),
+                    collectionTimeline = it.requireBoolean("collection_timeline"),
+                )
+            }
+        }
         val researcher = root.requireObject("researcher").also {
             it.requireExactKeys(setOf("name", "contact"))
         }
@@ -86,7 +113,7 @@ object StudyConfigurationCodec {
             it.requireExactKeys(setOf("key_id", "public_key"))
         }
         return StudyConfiguration(
-            schemaVersion = root.requireInt("schema_version"),
+            schemaVersion = schemaVersion,
             experimentId = root.requireString("experiment_id"),
             configurationId = root.requireString("configuration_id"),
             assignedParticipantId = root.requireNullableString("assigned_participant_id"),
@@ -101,7 +128,7 @@ object StudyConfigurationCodec {
             durationHours = root.requireInt("duration_hours"),
             consentDocumentVersion = consent.requireString("document_version"),
             consentSummary = consent.requireString("summary"),
-            collectors = root.requireArray("collectors").mapElements(::decodeCollector),
+            collectors = root.requireArray("collectors").mapElements { decodeCollector(it, schemaVersion) },
             surveys = root.requireArray("surveys").mapElements(::decodeSurvey),
             interventions = root.requireArray("interventions").mapElements(::decodeIntervention),
             automations = root.requireArray("automations").mapElements(::decodeAutomation),
@@ -110,37 +137,57 @@ object StudyConfigurationCodec {
             signer = SignerIdentity(signer.requireString("key_id"), signer.requireString("public_key")),
             export = decodeExport(root.requireObject("export")),
             upload = decodeUpload(root.requireObject("upload")),
+            participantDisclosure = disclosure,
         )
     }
 
-    private fun decodeCollector(element: JsonElement): CollectorResourceConfiguration {
+    private fun decodeCollector(element: JsonElement, schemaVersion: Int): CollectorResourceConfiguration {
         val root = element.requireObject("collector")
-        root.requireExactKeys(setOf("id", "required", "profiles"))
+        val v1 = schemaVersion == StudyConfiguration.SCHEMA_VERSION_1
+        root.requireExactKeys(if (v1) COLLECTOR_KEYS_V1 else COLLECTOR_KEYS_V2)
         val sourceId = root.requireString("id")
-        return CollectorResourceConfiguration(
-            id = sourceId,
-            required = root.requireBoolean("required"),
-            profiles = root.requireArray("profiles").mapElements { item ->
-                val profile = item.requireObject("collector profile")
-                profile.requireExactKeys(setOf("id", "config"))
-                NamedCollectorProfile(
-                    id = profile.requireString("id"),
-                    configuration = GeneratedCollectorProfileCodec.decode(sourceId, profile.requireObject("config")),
-                )
-            },
-        )
+        val profiles = root.requireArray("profiles").mapElements { item ->
+            val profile = item.requireObject("collector profile")
+            profile.requireExactKeys(setOf("id", "config"))
+            NamedCollectorProfile(
+                id = profile.requireString("id"),
+                configuration = GeneratedCollectorProfileCodec.decode(sourceId, profile.requireObject("config")),
+            )
+        }
+        return if (v1) {
+            CollectorResourceConfiguration(id = sourceId, required = root.requireBoolean("required"), profiles = profiles)
+        } else {
+            CollectorResourceConfiguration(
+                id = sourceId,
+                tier = CollectorTier.fromWire(root.requireString("tier")),
+                profiles = profiles,
+                rationale = root.requireNullableString("rationale"),
+            )
+        }
     }
 
-    private fun encodeCollector(collector: CollectorResourceConfiguration): JsonObject = objectOf(
-        "id" to JsonPrimitive(collector.id),
-        "required" to JsonPrimitive(collector.required),
-        "profiles" to arrayOf(collector.profiles.map { profile ->
+    private fun encodeCollector(collector: CollectorResourceConfiguration, schemaVersion: Int): JsonObject {
+        val profiles = arrayOf(collector.profiles.map { profile ->
             objectOf(
                 "id" to JsonPrimitive(profile.id),
                 "config" to GeneratedCollectorProfileCodec.encode(profile.configuration),
             )
-        }),
-    )
+        })
+        return if (schemaVersion == StudyConfiguration.SCHEMA_VERSION_1) {
+            objectOf(
+                "id" to JsonPrimitive(collector.id),
+                "required" to JsonPrimitive(collector.required),
+                "profiles" to profiles,
+            )
+        } else {
+            objectOf(
+                "id" to JsonPrimitive(collector.id),
+                "tier" to JsonPrimitive(collector.tier.wire),
+                "rationale" to collector.rationale.jsonOrNull(),
+                "profiles" to profiles,
+            )
+        }
+    }
 
     private fun decodeIntervention(element: JsonElement): InterventionConfiguration {
         val root = element.requireObject("intervention")

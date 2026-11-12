@@ -21,6 +21,8 @@ ROOT_KEYS = {
     "duration_hours", "consent", "collectors", "surveys", "interventions",
     "automations", "traffic_shaping", "storage", "signer", "export", "upload",
 }
+ROOT_KEYS_V2 = ROOT_KEYS | {"participant_disclosure"}
+COLLECTOR_TIERS = ("core", "requested", "optional")
 _ID = re.compile(r"[a-z0-9][a-z0-9-]{2,63}\Z")
 _PARTICIPANT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 _BCP47 = re.compile(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*\Z")
@@ -36,9 +38,27 @@ _EVALUATION_CLOCKS = {"OBSERVED_RESEARCH_TIME", "PRIMARY_SOURCE_TIME"}
 _OPERATORS = {"eq", "ne", "lt", "lte", "gt", "gte", "in"}
 
 
+def collector_is_core(collector: Mapping[str, Any]) -> bool:
+    """Schema 1 `required: true` and schema 2 `tier: "core"` both mean a failure closes the study."""
+
+    if "tier" in collector:
+        return collector["tier"] == "core"
+    return collector["required"] is True
+
+
 def validate_configuration(value: Any, registry: EventSourceRegistry) -> dict[str, Any]:
-    root = exact_object(value, ROOT_KEYS, "configuration")
-    _integer(root["schema_version"], "schema_version", 1, 1)
+    if not isinstance(value, Mapping):
+        raise ValidationError("configuration must be an object")
+    schema_version = _integer(value.get("schema_version"), "schema_version", 1, 2)
+    root = exact_object(value, ROOT_KEYS if schema_version == 1 else ROOT_KEYS_V2, "configuration")
+    if schema_version == 2:
+        disclosure = exact_object(
+            root["participant_disclosure"],
+            {"approximate_frequency", "collection_timeline"},
+            "participant disclosure",
+        )
+        if not all(isinstance(flag, bool) for flag in disclosure.values()):
+            raise ValidationError("participant disclosure switches must be boolean")
     protocol_id(root["experiment_id"], "experiment ID")
     protocol_id(root["configuration_id"], "configuration ID")
     participant = root["assigned_participant_id"]
@@ -71,14 +91,27 @@ def validate_configuration(value: Any, registry: EventSourceRegistry) -> dict[st
     required_collectors: set[str] = set()
     configured_sources: list[str] = []
     for index, item in enumerate(collectors):
-        collector = exact_object(item, {"id", "required", "profiles"}, f"collectors[{index}]")
+        collector = exact_object(
+            item,
+            {"id", "required", "profiles"} if schema_version == 1 else {"id", "tier", "rationale", "profiles"},
+            f"collectors[{index}]",
+        )
         source_id = _string(collector["id"], "collector id")
         source = registry.source(source_id)
         if source["source_kind"] != "COLLECTOR" or not source["selectable"]:
             raise ValidationError(f"source is not selectable: {source_id}")
-        if not isinstance(collector["required"], bool):
-            raise ValidationError("collector required must be boolean")
-        if collector["required"]:
+        if schema_version == 1:
+            if not isinstance(collector["required"], bool):
+                raise ValidationError("collector required must be boolean")
+        else:
+            if collector["tier"] not in COLLECTOR_TIERS:
+                raise ValidationError("collector tier is invalid")
+            rationale = collector["rationale"]
+            if rationale is not None:
+                _bounded_text(rationale, "collector rationale", 1, 600)
+                if not rationale.strip():
+                    raise ValidationError("collector rationale is blank")
+        if collector_is_core(collector):
             required_collectors.add(source_id)
         profiles = _array(collector["profiles"], "collector profiles", minimum=1, maximum=64)
         profile_ids: list[str] = []

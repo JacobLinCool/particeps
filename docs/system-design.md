@@ -377,6 +377,10 @@ commit, pending input, checkpoint, and successor against a plain re-derivation o
 
 A commit never crosses a segment. A torn uncommitted final tail is truncated; corruption anywhere
 else makes open/read/export fail closed. Export, upload, and eviction boundaries align to complete commits.
+Exception reconciliation and cold recovery sync each authenticated segment before accepting its
+frames or publishing a newer snapshot: complete readable bytes may still be only kernel-visible
+after a failed append or process death. Ordinary live read snapshots do not sync. The bounded model
+and generated implementation checks are described in [storage verification](maintainers/storage-verification.md).
 Reclamation is bounded by `min(uploaded_through_commit, evaluated_through_commit)` so neither
 delivery nor reducer recovery can lose required input.
 
@@ -724,10 +728,12 @@ the shared foreground notification and the lock-screen public version of interve
 Participant disclosure is a researcher decision with blinding as the default. The platform floor
 (study identity, purpose, contact, consent, data categories and what each records, access, upload
 terms, the fixed intervention-existence disclosure, and participant rights) is always available.
-Intervention targets, timing, strength, assignment, self-view charts, and debrief are reserved for a
-future signed participant disclosure policy that must be explicit, cannot go below the floor, and
-pairs every hidden dimension with a debrief. Protocol v1 does not carry it yet, so the App applies
-only the default. Automation/profile identifiers, timers, epochs, digests, owner UID, and typed
+A schema 2 configuration signs `participant_disclosure` with two explicit switches: an
+approximate cadence per category and a self-view collection timeline. Schema 1 has no policy and
+shows neither. Intervention targets, timing, strength and assignment are never shown by the App,
+and any debrief happens outside it. Participants may turn requested and optional collectors off;
+the choice is a `PARTICIPANT_CHOICE` commit and runtime component, and while running it rotates the
+condition epoch with the collector recorded as `OPTIONAL_FAILED`/`PARTICIPANT_DISABLED`. Automation/profile identifiers, timers, epochs, digests, owner UID, and typed
 failure reasons are never shown under any policy.
 
 The existing five setup steps and normal running screen remain the primary surface. One labeled

@@ -22,7 +22,8 @@ describe('participant-safe study projection', () => {
 
     const model = participantStudyUiModel(configuration);
     expect(Object.keys(model)).toEqual([
-      'title', 'purpose', 'data_category_ids', 'shows_traffic_disclosure', 'upload_destination_host'
+      'title', 'purpose', 'data_category_ids', 'data_category_tiers', 'disclosure',
+      'shows_traffic_disclosure', 'upload_destination_host'
     ]);
     expect(model.shows_traffic_disclosure).toBe(true);
     expect(JSON.stringify(model)).not.toMatch(/secret|64|512|180|automation|profile|epoch|digest|owner/i);

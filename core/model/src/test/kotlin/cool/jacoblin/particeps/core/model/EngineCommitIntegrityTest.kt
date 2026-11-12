@@ -18,6 +18,7 @@ class EngineCommitIntegrityTest {
                 RuntimeComponentKind.UPLOAD_ACKNOWLEDGEMENT,
                 RuntimeComponentKind.RESOURCE,
                 RuntimeComponentKind.RESOURCE_CLEANUP,
+                RuntimeComponentKind.PARTICIPANT_CHOICE,
             ),
             RuntimeComponentKind.entries,
         )

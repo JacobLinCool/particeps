@@ -159,18 +159,18 @@ await page.waitForTimeout(300);
 // on the other, so the file below has to disagree with itself in the right place: a control wired
 // to the wrong collector, or to nothing, writes the same value into both entries.
 //
-// Taken by role and name inside the card it belongs to, not by a class or an array index. The row
-// is a group named for the collector holding a switch and this button, and that is the whole of
-// what this script is entitled to know about how the card is built.
+// Taken by role and name inside the card it belongs to, not by a class or an array index: the tier
+// is a radio group of Core, Requested and Optional, and that is the whole of what this script is
+// entitled to know about how the card is built.
 const motionCard = page.locator('[data-testid="collector-accelerometer.v1"]');
-const motionRequired = motionCard.getByRole('button', { name: 'Required' });
-if ((await motionRequired.count()) !== 1) {
-  fail('the Motion card offers no Required control while the collector is on');
+const motionCore = motionCard.getByRole('radio', { name: 'Core' });
+if ((await motionCore.count()) !== 1) {
+  fail('the Motion card offers no Core tier while the collector is on');
 }
-await motionRequired.click();
+await motionCore.click();
 await page.waitForTimeout(200);
-if ((await motionRequired.getAttribute('aria-pressed')) !== 'true') {
-  fail('pressing Required left the control unpressed');
+if ((await motionCore.getAttribute('aria-checked')) !== 'true') {
+  fail('choosing Core left the tier unselected');
 }
 
 // Cloning a reactive profile must create a usable independent profile, with no DataCloneError.
@@ -343,16 +343,17 @@ claim(
 );
 claim(document.collectors.length === 2, `${document.collectors.length} collectors, expected 2`);
 
-// The Required control, from the other end. Pressed on Motion and untouched on App activity, so a
-// control that writes nowhere and a control that writes into every collector both fail here.
-const requiredOf = Object.fromEntries(document.collectors.map((c) => [c.id, c.required]));
+// The tier control, from the other end. Core on Motion and untouched on App activity, so a control
+// that writes nowhere and a control that writes into every collector both fail here.
+claim(document.schema_version === 2, `schema_version is ${document.schema_version}, expected 2`);
+const tierOf = Object.fromEntries(document.collectors.map((c) => [c.id, c.tier]));
 claim(
-  requiredOf['accelerometer.v1'] === true,
-  `Required was pressed on Motion and the file says ${JSON.stringify(requiredOf['accelerometer.v1'])}`
+  tierOf['accelerometer.v1'] === 'core',
+  `Core was chosen on Motion and the file says ${JSON.stringify(tierOf['accelerometer.v1'])}`
 );
 claim(
-  requiredOf['app_lifecycle.v1'] === false,
-  'Required was pressed on Motion alone and App activity came out required too'
+  tierOf['app_lifecycle.v1'] === 'optional',
+  'Core was chosen on Motion alone and App activity came out core too'
 );
 
 // JCS preserves non-ASCII text and uses JSON escapes only where the string grammar requires them.

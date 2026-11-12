@@ -1,5 +1,6 @@
 package cool.jacoblin.particeps
 
+import cool.jacoblin.particeps.core.application.ParticipantCadence
 import cool.jacoblin.particeps.core.collector.AccessKind
 import cool.jacoblin.particeps.core.collector.SetupAction
 import cool.jacoblin.particeps.core.collector.SetupGuidance
@@ -38,7 +39,25 @@ data class ParticipantStudyUiModel(
     val participation: ParticipantParticipationSummary,
     val lastExport: ParticipantExportSummary?,
     val trafficShapingDisclosureRequired: Boolean,
+    /**
+     * When each category collected data, and the paused spans. Null unless the signed participant
+     * disclosure policy allows it, so a blinded study never builds it for Compose.
+     */
+    val collectionTimeline: ParticipantCollectionTimeline? = null,
 )
+
+/**
+ * The participant's own collection history at hour resolution, in study time since Start. Shown
+ * only under a signed disclosure policy: in a study whose collection runs in scheduled windows the
+ * hours with data reveal those windows.
+ */
+data class ParticipantCollectionTimeline(
+    val hourlyCounts: Map<ParticipantDataKind, Map<Int, Long>>,
+    val pausedSpans: List<ParticipantPausedSpan>,
+)
+
+/** A paused span in study milliseconds since Start; an ongoing pause has no end. */
+data class ParticipantPausedSpan(val startMillis: Long, val endMillis: Long?)
 
 /**
  * Participation facts that are the same kind of fact in every study arm: which day of the study it
@@ -106,8 +125,27 @@ sealed interface ParticipantElapsedTime {
 
 data class ParticipantDataCategory(
     val kind: ParticipantDataKind,
-    val optional: Boolean,
-)
+    val tier: ParticipantDataTier = ParticipantDataTier.CORE,
+    /** Researcher-authored reason for the category, shown verbatim; signed free text. */
+    val rationale: String? = null,
+    /** Approximate collection frequency; null unless the signed disclosure policy allows it. */
+    val cadence: ParticipantCadence? = null,
+    /** The participant turned this category off. */
+    val turnedOff: Boolean = false,
+) {
+    /** Whether the participant may skip this category's access or turn it off. */
+    val optional: Boolean get() = tier != ParticipantDataTier.CORE
+}
+
+/** How much the study depends on a category, as the participant is told. */
+enum class ParticipantDataTier {
+    /** A condition of taking part: it cannot be skipped or turned off. */
+    CORE,
+    /** Wanted by the study; skipping or turning it off may affect compensation. */
+    REQUESTED,
+    /** May be skipped or turned off freely. */
+    OPTIONAL,
+}
 
 enum class ParticipantDataKind {
     ACCELEROMETER,

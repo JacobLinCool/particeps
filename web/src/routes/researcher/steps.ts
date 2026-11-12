@@ -9,7 +9,7 @@ export const STEPS: readonly StepDefinition[] = [
   { id: 'study', icon: 'document', paths: ['schema_version', 'issued_at', 'expires_at',
     'minimum_client_version', 'title', 'researcher', 'purpose', 'duration_hours', 'consent',
     'collectors', 'assigned_participant_id', 'surveys', 'interventions', 'automations',
-    'traffic_shaping', 'storage', 'upload'] },
+    'traffic_shaping', 'storage', 'upload', 'participant_disclosure'] },
   { id: 'keys', icon: 'key', paths: ['signer', 'export', 'signing_private_key', 'export_private_key'] },
   { id: 'overview', icon: 'clock', paths: ['review.blinding'] },
   { id: 'sign', icon: 'seal', paths: [] },
@@ -25,7 +25,7 @@ export function stepForPath(path: string): StepId {
 }
 export function sectionForPath(path: string): StudySection {
   switch (path.split('.')[0]) {
-    case 'collectors': case 'storage': return 'data';
+    case 'collectors': case 'storage': case 'participant_disclosure': return 'data';
     case 'surveys': case 'interventions': return 'activities';
     case 'automations': case 'traffic_shaping': return 'rules';
     case 'upload': return 'delivery';

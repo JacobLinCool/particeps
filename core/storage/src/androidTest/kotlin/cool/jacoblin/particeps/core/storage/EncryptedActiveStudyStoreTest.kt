@@ -118,6 +118,7 @@ class EncryptedActiveStudyStoreTest {
     }
 
     private class FaultInjectingFileSystem : AcknowledgedFileSystem {
+        override fun syncFile(file: File) = AndroidAcknowledgedFileSystem.syncFile(file)
         var failure: Failure? = null
 
         override fun exists(file: File): Boolean = AndroidAcknowledgedFileSystem.exists(file)

@@ -20,14 +20,14 @@
     title: '資源規則', profile: '套用設定', default: '預設設定', add: '新增條件',
     up: '將條件往上移', down: '將條件往下移', remove: '移除條件',
     inactive: '停用',
-    collectorSchedule: '每個資料來源可設定獨立時段；預設選「停用」可在時段外停止，或選另一設定降低頻率。「必要」來源在排程開啟時仍須成功收集。背景排程可能延遲。',
+    collectorSchedule: '每個資料來源可設定獨立時段；預設選「停用」可在時段外停止，或選另一設定降低頻率。「核心」來源在排程開啟時仍須成功收集。背景排程可能延遲。',
     gyroSchedule: '陀螺儀停用後會釋放持續喚醒鎖；只降低頻率仍會保持 CPU 喚醒。'
   } : {
     note: 'Cases run in order. The first true case selects a profile; otherwise use the default.',
     title: 'Resource rule', profile: 'Selected profile', default: 'Default profile', add: 'Add condition',
     up: 'Move condition up', down: 'Move condition down', remove: 'Remove condition',
     inactive: 'Inactive',
-    collectorSchedule: 'Each source can use its own time windows. Set the default to Inactive to stop outside them, or select another profile for a lower rate. Required sources must still collect successfully when scheduled on. Background scheduling may be delayed.',
+    collectorSchedule: 'Each source can use its own time windows. Set the default to Inactive to stop outside them, or select another profile for a lower rate. Core sources must still collect successfully when scheduled on. Background scheduling may be delayed.',
     gyroSchedule: 'Deactivating the gyroscope releases its continuous wake lock. Lowering its rate alone still keeps the CPU awake.'
   });
 

@@ -24,6 +24,7 @@ internal object RuntimeComponentCodec {
     private const val RESOURCE_VERSION = 1
     private const val RESOURCE_CLEANUP_VERSION = 1
     private const val TIMER_VERSION = 1
+    private const val PARTICIPANT_CHOICE_VERSION = 1
 
     fun encodeCheckpoint(checkpoint: AutomationCheckpoint): String = AutomationCheckpointCodec.encode(checkpoint)
 
@@ -135,6 +136,16 @@ internal object RuntimeComponentCodec {
     fun decodeTimer(encoded: String): DurableTimer = decode(encoded, TIMER_PREFIX) {
         require(readInt() == TIMER_VERSION) { "Unsupported timer component" }
         readTimer()
+    }
+
+    fun encodeParticipantChoice(choice: ParticipantChoice): String = encode(PARTICIPANT_CHOICE_PREFIX) {
+        writeInt(PARTICIPANT_CHOICE_VERSION)
+        writeString(choice.name)
+    }
+
+    fun decodeParticipantChoice(encoded: String): ParticipantChoice = decode(encoded, PARTICIPANT_CHOICE_PREFIX) {
+        require(readInt() == PARTICIPANT_CHOICE_VERSION) { "Unsupported participant choice component" }
+        enumValueOf<ParticipantChoice>(readString())
     }
 
     private fun encode(prefix: String, block: DataOutputStream.() -> Unit): String {
@@ -263,6 +274,7 @@ internal object RuntimeComponentCodec {
     private const val RESOURCE_PREFIX = "applied-resource-v1:"
     private const val RESOURCE_CLEANUP_PREFIX = "resource-cleanup-v1:"
     private const val TIMER_PREFIX = "durable-timer-v1:"
+    private const val PARTICIPANT_CHOICE_PREFIX = "participant-choice-v1:"
     private const val MAX_STRING_BYTES = 512 * 1_024
     private const val MAX_COMPONENT_BYTES = 512 * 1_024
 }

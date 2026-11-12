@@ -204,6 +204,113 @@ class ExperimentRuntimeTest {
     }
 
     @Test
+    fun collectionTimelineCountsCollectorEventsByStudyHourAndRebuildsOnRecovery() = runTest {
+        val store = InMemoryStudyStore()
+        val fixture = fixture(backgroundScope, store = store, durationSeconds = 4 * 3_600)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        fixture.runtime.start()
+        val token = requireNotNull(fixture.runtime.captureToken())
+        assertTrue(fixture.runtime.emitBatch(token, batteryBatch(fixture.clock.now(), percentage = 10)) is EmitBatchResult.Accepted)
+        runCurrent()
+        assertEquals(mapOf(0 to 1L), fixture.runtime.snapshot.value.collectionTimeline.hourlyCounts[BATTERY_SOURCE.value])
+
+        fixture.clock.advanceMillis(60_000)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.pause())
+        fixture.clock.advanceMillis(3_600_000)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.resume())
+        val spans = fixture.runtime.snapshot.value.collectionTimeline.pausedSpans
+        assertEquals(1, spans.size)
+        assertTrue(requireNotNull(spans.single().endMillis) - spans.single().startMillis >= 3_600_000)
+        val before = fixture.runtime.snapshot.value.collectionTimeline
+
+        val recovered = fixture(backgroundScope, store = store, durationSeconds = 4 * 3_600)
+        recovered.runtime.initialize()
+        val after = recovered.runtime.snapshot.value.collectionTimeline
+        assertEquals(before.hourlyCounts, after.hourlyCounts)
+        assertEquals(before.pausedSpans, after.pausedSpans.take(before.pausedSpans.size))
+        // Recovery from an active state ends paused, which opens a new span.
+        assertEquals(ExperimentState.PAUSED, recovered.runtime.snapshot.value.state)
+        assertNull(after.pausedSpans.last().endMillis)
+    }
+
+    @Test
+    fun participantTurnsOptionalCollectorOffAndOnAcrossPauseAndRecovery() = runTest {
+        val store = InMemoryStudyStore()
+        val fixture = fixture(backgroundScope, store = store, withGyroscope = true, gyroscopeRequired = false)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.start())
+        val gyroscope = requireNotNull(fixture.gyroscope)
+        val firstEpoch = fixture.runtime.snapshot.value.conditionEpochId
+
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.setCollectorEnabled(GYROSCOPE_SOURCE.value, false))
+        val afterOff = fixture.runtime.snapshot.value
+        assertEquals(ExperimentState.RUNNING, afterOff.state)
+        assertTrue(afterOff.admissionOpen)
+        assertNotEquals(firstEpoch, afterOff.conditionEpochId)
+        assertEquals(setOf(GYROSCOPE_SOURCE.value), afterOff.participantDisabledCollectors)
+        assertEquals(1, gyroscope.releaseCount)
+        val choiceCommit = store.commits.single { it.inputKind == EngineInputKind.PARTICIPANT_CHOICE }
+        assertTrue(choiceCommit.events.any { it.type.eventType == "CONDITION_EPOCH_DEACTIVATED" })
+        val activation = store.commits.last().events.single { it.type.eventType == "CONDITION_EPOCH_ACTIVATED" }
+        assertTrue(activation.fields.toString().contains("PARTICIPANT_DISABLED"))
+        // Turning off twice is idempotent and writes nothing.
+        val commitCount = store.commits.size
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.setCollectorEnabled(GYROSCOPE_SOURCE.value, false))
+        assertEquals(commitCount, store.commits.size)
+
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.pause())
+        val resumesBefore = gyroscope.resumeCount
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.resume())
+        assertEquals(resumesBefore, gyroscope.resumeCount)
+        assertEquals(setOf(GYROSCOPE_SOURCE.value), fixture.runtime.snapshot.value.participantDisabledCollectors)
+
+        // While paused the choice is recorded and takes effect at Resume.
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.pause())
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.setCollectorEnabled(GYROSCOPE_SOURCE.value, true))
+        assertEquals(ExperimentState.PAUSED, fixture.runtime.snapshot.value.state)
+        assertEquals(emptySet<String>(), fixture.runtime.snapshot.value.participantDisabledCollectors)
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.setCollectorEnabled(GYROSCOPE_SOURCE.value, false))
+
+        val recovered = fixture(backgroundScope, store = store, withGyroscope = true, gyroscopeRequired = false)
+        recovered.runtime.initialize()
+        assertEquals(setOf(GYROSCOPE_SOURCE.value), recovered.runtime.snapshot.value.participantDisabledCollectors)
+        assertEquals(RuntimeCommandResult.Success, recovered.runtime.setCollectorEnabled(GYROSCOPE_SOURCE.value, true))
+        assertEquals(RuntimeCommandResult.Success, recovered.runtime.resume())
+        assertTrue(requireNotNull(recovered.gyroscope).resumeCount > 0)
+    }
+
+    @Test
+    fun coreCollectorsCannotBeTurnedOffAndUploadStopIsOneWayAfterTheStudyEnds() = runTest {
+        val store = InMemoryStudyStore()
+        val fixture = fixture(backgroundScope, store = store)
+        fixture.runtime.initialize()
+        completeSetup(fixture.runtime)
+        assertEquals(
+            RuntimeCommandResult.Rejected(RuntimeCommandRejection.COLLECTOR_NOT_OPTIONAL),
+            fixture.runtime.setCollectorEnabled(BATTERY_SOURCE.value, false),
+        )
+        fixture.runtime.start()
+        assertEquals(
+            RuntimeCommandResult.Rejected(RuntimeCommandRejection.COLLECTOR_NOT_OPTIONAL),
+            fixture.runtime.setCollectorEnabled(BATTERY_SOURCE.value, false),
+        )
+        assertEquals(
+            RuntimeCommandResult.Rejected(RuntimeCommandRejection.INVALID_STATE),
+            fixture.runtime.stopAutomaticUpload(),
+        )
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.withdraw())
+        assertEquals(RuntimeCommandResult.Success, fixture.runtime.stopAutomaticUpload())
+        assertTrue(fixture.runtime.snapshot.value.automaticUploadStopped)
+        assertEquals(EngineInputKind.PARTICIPANT_CHOICE, store.commits.last().inputKind)
+
+        val recovered = fixture(backgroundScope, store = store)
+        recovered.runtime.initialize()
+        assertTrue(recovered.runtime.snapshot.value.automaticUploadStopped)
+    }
+
+    @Test
     fun startCreatesVerifiedEpochAndOnlyThenOpensAdmission() = runTest {
         val fixture = fixture(backgroundScope)
         fixture.battery.admissionProbe = { fixture.runtime.captureToken() }
@@ -2811,6 +2918,7 @@ class ExperimentRuntimeTest {
         ),
         /** Adds a continuously collected gyroscope that no automation references. */
         withGyroscope: Boolean = false,
+        gyroscopeRequired: Boolean = true,
     ): Fixture {
         val runtimeClock = clock ?: store.runtime?.clockCheckpoint?.anchor?.let(FakeClocks::continuingAfter)
             ?: FakeClocks()
@@ -2830,7 +2938,7 @@ class ExperimentRuntimeTest {
                     mapOf("baseline" to baseline.expectedSha256.value, "slow" to slow.expectedSha256.value),
                 ),
                 DeclaredResource(batteryKey, true, mapOf("continuous" to batteryProfile.expectedSha256.value)),
-                DeclaredResource(gyroscopeKey, true, mapOf("continuous" to batteryProfile.expectedSha256.value))
+                DeclaredResource(gyroscopeKey, gyroscopeRequired, mapOf("continuous" to batteryProfile.expectedSha256.value))
                     .takeIf { withGyroscope },
             ),
             interventions = listOf(InterventionDefinition("prompt", required = interventionRequired)),
@@ -2906,7 +3014,7 @@ class ExperimentRuntimeTest {
                     traffic,
                     trafficAudit,
                 ),
-                gyroscope?.let { RuntimeResourceHost(gyroscopeKey, true, mapOf("continuous" to batteryProfile), it) },
+                gyroscope?.let { RuntimeResourceHost(gyroscopeKey, gyroscopeRequired, mapOf("continuous" to batteryProfile), it) },
             ),
             clocks = runtimeClock,
             scope = scope,

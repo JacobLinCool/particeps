@@ -25,14 +25,18 @@ import {
   continuousBinding,
   defaultCollector,
   emptyConfiguration,
+  upgradeToSchema2,
   validate,
   type Issue
 } from '$lib/particeps/schema';
 import {
   COLLECTOR_ORDER,
   ID_PATTERN,
+  SCHEMA_VERSION_1,
   type CollectorConfig,
   type CollectorId,
+  type CollectorTier,
+  type ParticipantDisclosure,
   type InterventionConfig,
   type SurveyDefinition,
   type StudyConfiguration
@@ -115,6 +119,11 @@ export function createDraft() {
   let attempted = $state(false);
   let confirmedCanonical = $state<string | null>(null);
   let imported = $state(false);
+  /**
+   * The opened file was schema 1 and is now edited as its schema 2 spelling. That is a different
+   * signed document — new bytes, a new configuration ID — so the page says it must be signed again.
+   */
+  let convertedFromSchema1 = $state(false);
   let savedRevision = $state<string | null>(null);
   /**
    * Two states, because a browser cannot tell you a file reached the disk. Clicking a download
@@ -358,7 +367,8 @@ export function createDraft() {
       hpke = { kind: 'empty' };
       sent['hpke-private'] = kept['hpke-private'] = false;
     }
-    configuration = loaded;
+    convertedFromSchema1 = loaded.schema_version === SCHEMA_VERSION_1;
+    configuration = upgradeToSchema2(loaded);
     signerKeyIdPin = identifiers?.signer ?? adoptedName(loaded.signer.key_id, deriveSignerKeyId(loaded.signer.public_key));
     exportKeyIdPin = identifiers?.export ?? adoptedName(loaded.export.researcher_key_id, deriveExportKeyId(loaded.export.hpke_public_key));
     experimentIdPin = identifiers?.experiment ?? loaded.experiment_id;
@@ -451,6 +461,7 @@ export function createDraft() {
       return requiresBlindingConfirmation;
     },
     get imported() { return imported; },
+    get convertedFromSchema1() { return convertedFromSchema1; },
     get unsavedChanges() { return unsavedChanges; },
     get canSign() { return issues.length === 0; },
     markDraftSaved() { savedRevision = authoringRevision; },
@@ -558,10 +569,26 @@ export function createDraft() {
       );
     },
 
-    setCollectorRequired(id: CollectorId, required: boolean) {
+    /** Schema 2 only: the draft is always schema 2, because opening a schema 1 file converts it. */
+    setCollectorTier(id: CollectorId, tier: CollectorTier) {
       const collector = configuration.collectors.find((candidate) => candidate.id === id);
-      if (!collector) return;
-      collector.required = required;
+      if (!collector || collector.tier === undefined) return;
+      collector.tier = tier;
+    },
+
+    /** Empty text clears the rationale; anything else is kept verbatim and `validate` judges it. */
+    setCollectorRationale(id: CollectorId, rationale: string) {
+      const collector = configuration.collectors.find((candidate) => candidate.id === id);
+      if (!collector || collector.tier === undefined) return;
+      collector.rationale = rationale === '' ? null : rationale;
+    },
+
+    setParticipantDisclosure(key: keyof ParticipantDisclosure, value: boolean) {
+      configuration.participant_disclosure = {
+        approximate_frequency: configuration.participant_disclosure?.approximate_frequency ?? false,
+        collection_timeline: configuration.participant_disclosure?.collection_timeline ?? false,
+        [key]: value
+      };
     },
 
     addCollectorProfile(id: CollectorId): string | null {
@@ -764,6 +791,7 @@ export function createDraft() {
       attempted = false;
       confirmedCanonical = null;
       imported = false;
+      convertedFromSchema1 = false;
       savedRevision = null;
       sent = { ...NO_ARTIFACTS };
       kept = { ...NO_ARTIFACTS };

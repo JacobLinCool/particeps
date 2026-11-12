@@ -178,6 +178,7 @@ internal class CommitAssembler(
             if (successor.state != current.state) memory.stateEntry = StateEntry.of(commit)
             memory.automationCheckpoint = checkpoint
             applyComponentMutations(mutations)
+            memory.collectionTimeline.observe(commit)
             require(
                 memory.resourceCleanupAttempts.isEmpty() ||
                     (successor.state == ExperimentState.PAUSED && successor.activeConditionEpoch == null),
@@ -213,6 +214,9 @@ internal class CommitAssembler(
             deadlineUtcTrusted = current.clockCheckpoint?.deadlineUtcTrusted == true,
             stateEnteredAtUtcMillis = memory.stateEntry?.wallTimeUtcMillis,
             stateEnteredCalendarElapsedNanos = memory.stateEntry?.calendarElapsedNanos,
+            participantDisabledCollectors = memory.participantDisabledCollectors.mapTo(sortedSetOf()) { it.id },
+            automaticUploadStopped = memory.automaticUploadStopped,
+            collectionTimeline = memory.collectionTimeline.timeline(),
         )
     }
 
@@ -260,6 +264,7 @@ internal class CommitAssembler(
                     }
                     RuntimeMutationOperation.REMOVE -> memory.resourceAuditTimers.remove(mutation.key.id)
                 }
+                RuntimeComponentKind.PARTICIPANT_CHOICE -> applyParticipantChoice(mutation)
                 RuntimeComponentKind.STUDY_DEADLINE_TIMER -> {
                     require(mutation.key.id == STUDY_DEADLINE_COMPONENT_ID) {
                         "Invalid study deadline mutation key"
@@ -275,6 +280,19 @@ internal class CommitAssembler(
                 }
                 else -> Unit
             }
+        }
+    }
+
+    private fun applyParticipantChoice(mutation: RuntimeMutation) {
+        val choice = mutation.canonicalValue?.let(RuntimeComponentCodec::decodeParticipantChoice)
+        val collector = participantChoiceResourceKey(mutation.key.id)
+        if (collector != null) {
+            require(choice == null || choice == ParticipantChoice.COLLECTOR_DISABLED) { "Invalid collector choice" }
+            if (choice == null) memory.participantDisabledCollectors.remove(collector) else memory.participantDisabledCollectors.add(collector)
+        } else {
+            require(mutation.key.id == AUTOMATIC_UPLOAD_CHOICE_ID) { "Unknown participant choice" }
+            require(choice == ParticipantChoice.AUTOMATIC_UPLOAD_STOPPED) { "Automatic upload choice cannot be undone" }
+            memory.automaticUploadStopped = true
         }
     }
 }

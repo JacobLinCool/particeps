@@ -139,6 +139,18 @@ def detect_shapes(commits: list[dict[str, Any]]) -> set[str]:
         )
         if successor["state"] in {"IMPORTED", "CONFIG_VERIFIED", "CONSENT_PENDING", "ACCESS_SETUP", "READY"}:
             shapes.add("setup-checkpoint")
+        if kind == "PARTICIPANT_CHOICE":
+            choice_ids = {
+                mutation["component_id"]
+                for mutation in commit["mutations"]
+                if mutation["component_kind"] == "PARTICIPANT_CHOICE"
+            }
+            if "upload:automatic" in choice_ids:
+                shapes.add("participant-stops-automatic-upload")
+            elif closes:
+                shapes.add("participant-choice-rotates-epoch")
+            elif successor["state"] == "PAUSED":
+                shapes.add("participant-choice-while-paused")
         for observation in commit["source_observations"]:
             coverage = observation["coverage"]
             if observation["admission_kind"] == "BARRIER_FLUSH":

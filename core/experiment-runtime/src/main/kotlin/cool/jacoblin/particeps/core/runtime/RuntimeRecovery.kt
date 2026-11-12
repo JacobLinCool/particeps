@@ -10,9 +10,12 @@ import cool.jacoblin.particeps.core.model.EngineInputKind
 import cool.jacoblin.particeps.core.model.EventSourceId
 import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.model.PendingEngineInput
+import cool.jacoblin.particeps.core.model.RuntimeComponentKey
 import cool.jacoblin.particeps.core.model.RuntimeComponentKind
 import cool.jacoblin.particeps.core.model.RuntimeDocument
 import cool.jacoblin.particeps.core.resource.AppliedResourceState
+import cool.jacoblin.particeps.core.resource.ResourceKey
+import cool.jacoblin.particeps.core.resource.ResourceKind
 
 /**
  * Cold start and fail-closed recovery: it loads and authenticates the retained runtime, restores
@@ -44,8 +47,14 @@ internal class RuntimeRecovery(
      */
     suspend fun loadLocked(onProgress: (RuntimeInitializationProgress) -> Unit): RuntimeDocument {
         val retainedTransition = RetainedStateTransition()
+        val timeline = CollectionTimelineBuilder { sourceId ->
+            ResourceKey(ResourceKind.COLLECTOR, sourceId) in ctx.hosts
+        }
         onProgress(RuntimeInitializationProgress.CheckingStorage())
-        var loaded = ctx.store.loadRuntime(retainedTransition::observe) {
+        var loaded = ctx.store.loadRuntime({ commit ->
+            retainedTransition.observe(commit)
+            timeline.observe(commit)
+        }) {
             onProgress(RuntimeInitializationProgress.CheckingStorage(it))
         }
         onProgress(RuntimeInitializationProgress.RestoringRuntime)
@@ -63,6 +72,7 @@ internal class RuntimeRecovery(
         validateIdentity(loaded)
         memory.document = loaded
         memory.stateEntry = retainedTransition.entry(loaded)
+        memory.collectionTimeline = timeline
         restoreComponents(loaded)
         return loaded
     }
@@ -229,6 +239,24 @@ internal class RuntimeRecovery(
             .singleOrNull { it.key.kind == RuntimeComponentKind.UPLOAD_ACKNOWLEDGEMENT }
             ?.value
             ?.let(RuntimeComponentCodec::decodeUploadAcknowledgement)
+        val choices = runtime.components.filterKeys { it.kind == RuntimeComponentKind.PARTICIPANT_CHOICE }
+        memory.participantDisabledCollectors = choices.mapNotNullTo(sortedSetOf()) { (key, encoded) ->
+            participantChoiceResourceKey(key.id)?.also {
+                require(RuntimeComponentCodec.decodeParticipantChoice(encoded) == ParticipantChoice.COLLECTOR_DISABLED) {
+                    "Invalid collector choice component"
+                }
+            }
+        }
+        memory.automaticUploadStopped = choices.keys.any { it.id == AUTOMATIC_UPLOAD_CHOICE_ID }.also { stopped ->
+            if (stopped) {
+                require(RuntimeComponentCodec.decodeParticipantChoice(
+                    choices.getValue(RuntimeComponentKey(RuntimeComponentKind.PARTICIPANT_CHOICE, AUTOMATIC_UPLOAD_CHOICE_ID)),
+                ) == ParticipantChoice.AUTOMATIC_UPLOAD_STOPPED) { "Invalid upload choice component" }
+            }
+            require(choices.keys.all { participantChoiceResourceKey(it.id) != null || it.id == AUTOMATIC_UPLOAD_CHOICE_ID }) {
+                "Unknown participant choice component"
+            }
+        }
         memory.appliedResources = runtime.components.filterKeys { it.kind == RuntimeComponentKind.RESOURCE }
             .values.map(RuntimeComponentCodec::decodeResource)
             .associateByTo(sortedMapOf(), AppliedResourceState::key)

@@ -210,6 +210,26 @@ export const zhTW: Messages = {
     priority: { balanced: '平衡', highAccuracy: '高精確度' }
   },
 
+  tier: {
+    label: '參與者選擇',
+    core: {
+      label: '核心',
+      hint: '參與者不能略過或關閉。缺少權限時研究無法開始。'
+    },
+    requested: {
+      label: '研究需要',
+      hint: '參與者可以略過或關閉，並會看到可能影響研究報酬的提醒。'
+    },
+    optional: {
+      label: '選用',
+      hint: '參與者可以自由略過或關閉。'
+    },
+    rationale: {
+      label: '為什麼需要這項資料（選填）',
+      hint: '會原文顯示給參與者。請勿透露研究分組、條件或排程。'
+    }
+  },
+
   collector: {
     'app_lifecycle.v1': {
       name: 'App 使用狀況',
@@ -306,11 +326,13 @@ export const zhTW: Messages = {
     unsupported_operator: 'registry 不允許該欄位使用這個運算子',
     canonical_value: '請使用這個欄位的標準 wire 格式',
     resource_owner: '每個持續性資源都必須恰好有一個 binding automation',
-    trigger_source_liveness: 'automation 使用的 collector 必須是必要項目並持續啟用',
+    trigger_source_liveness: 'automation 使用的 collector 必須設為「核心」並持續啟用',
     dependency_cycle: '資源條件形成無法安全評估的循環依賴',
     unbounded_state: '這個視窗或序列可能保留超過 4,096 筆項目',
     private_key_missing: '簽署前請匯入相符的簽署私鑰',
-    review_required: '簽署前請檢查並確認參與者預覽'
+    review_required: '簽署前請檢查並確認參與者預覽',
+    schema_dialect: '與此設定檔的結構版本不符',
+    blank_text: '請輸入文字，或保持空白'
   },
 
   status: {
@@ -427,9 +449,22 @@ export const zhTW: Messages = {
         irrevocable: '已交付的設定檔無法收回。',
         /** 放在七張卡片上面，只說一次。每張卡片上的那顆按鈕都是同一個決定，
          *  決定帶來的後果也一樣，不必在卡片裡重複七遍。 */
-        required: '標成「必要」的來源，參與者不同意就不能開始。',
+        required: '「核心」來源不能略過或關閉：參與者不同意就不能開始。「研究需要」與「選用」來源可隨時關閉。',
         disclosure: '同意書摘要必須與 App 顯示的資料說明一致。',
-        delivery: '參與者無法只拒絕傳送而繼續參與。請在同意書中說明清楚。'
+        delivery: '參與者無法只拒絕傳送而繼續參與。請在同意書中說明清楚。',
+        converted: '這份檔案使用較舊的結構版本 1，現在以結構版本 2 編輯：原本「必要」的來源改為「核心」，其餘改為「選用」，也不會額外揭露任何資訊。這會產生一份新的設定檔與新的 ID，請重新簽署並發送新檔案。'
+      },
+      participantDisclosure: {
+        title: '參與者可見資訊',
+        lead: '除了固定的資料清單之外，App 還可以讓參與者看到哪些關於自己資料的資訊。',
+        frequency: {
+          label: '顯示大約的收集頻率',
+          hint: '知道資料多久收集一次，可能會改變參與者的行為。'
+        },
+        timeline: {
+          label: '顯示各類資料何時收集的時間軸',
+          hint: '可能改變參與者的行為，收集時間的規律也可能透露排程或依條件啟動的時段。'
+        }
       }
     },
     sign: {
@@ -505,7 +540,7 @@ export const zhTW: Messages = {
       },
       control: {
         title: '你隨時可以停止',
-        body: '暫停或退出研究都不需要說明理由，App 也不會詢問。停止後仍可匯出已收集的資料，或刪除手機上的全部本機資料。如果資料已離開手機，則必須聯絡研究團隊處理。'
+        body: '你可以暫停或退出研究，也可以在研究進行中關閉任何沒有標示為「核心」的資料類別，都不需要說明理由，App 也不會詢問。如果研究會自動傳送資料，退出時 App 會詢問你要傳送尚未傳送的資料，還是停止傳送。停止後仍可匯出已收集的資料，或刪除手機上的全部本機資料。如果資料已離開手機，則必須聯絡研究團隊處理。'
       }
     },
     flow: {
@@ -523,7 +558,7 @@ export const zhTW: Messages = {
       },
       access: {
         title: '權限',
-        body: '這些資料來源需要 Android 權限。標示為選用的權限可以不授予。'
+        body: '這些資料來源需要 Android 權限。沒有標示為「核心」的項目可以不授予；略過標示為「研究需要」的項目可能會影響你的研究報酬。'
       },
       start: {
         title: '開始',

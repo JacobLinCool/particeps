@@ -40,6 +40,7 @@ from .automation_model import (
 )
 from .automation_reducer import reduce_automation_batch
 from .commit_store import ReplayHistory
+from .configuration import collector_is_core
 from .errors import ValidationError
 from .jcs import canonicalize, exact_object, parse_embedded_json
 from .registry import EventSourceRegistry
@@ -57,12 +58,15 @@ _LIFECYCLE_STATES = {
 _INPUT_KINDS = {
     "SOURCE_OBSERVATION", "LIFECYCLE_COMMAND", "TIMER_WAKE", "RANDOM_SELECTION",
     "ACTION_RESULT", "UPLOAD_ACKNOWLEDGEMENT", "RESOURCE_RESULT", "SAFETY_FAILURE",
-    "RECOVERY",
+    "RECOVERY", "PARTICIPANT_CHOICE",
 }
 _COMPONENT_KINDS = {
     "AUTOMATION_CHECKPOINT", "TIMER", "STUDY_DEADLINE_TIMER", "RESOURCE_AUDIT_TIMER", "ACTION_INVOCATION",
-    "UPLOAD_ACKNOWLEDGEMENT", "RESOURCE", "RESOURCE_CLEANUP",
+    "UPLOAD_ACKNOWLEDGEMENT", "RESOURCE", "RESOURCE_CLEANUP", "PARTICIPANT_CHOICE",
 }
+# Applied-vector failure reason for a collector the participant turned off.
+PARTICIPANT_DISABLED_REASON = "PARTICIPANT_DISABLED"
+_AUTOMATIC_UPLOAD_CHOICE_ID = "upload:automatic"
 _RESOURCE_STATUSES = {"APPLIED", "INACTIVE", "OPTIONAL_FAILED"}
 _ACTION_STATES = {"READY", "CLAIMED", "OPENED", "SUCCEEDED", "FAILED"}
 _SESSION_STATES = {
@@ -587,6 +591,7 @@ class EngineReplayVerifier:
                 commit, prospective
             )
             self._verify_resource_audit_commit(commit, prospective)
+            self._verify_participant_choices(commit, prospective)
             self._verify_component_state(commit, prospective, checkpoint)
         finally:
             self.pending_components = None
@@ -1005,12 +1010,73 @@ class EngineReplayVerifier:
             and retirements[0].sequence_number < deactivation.sequence_number
         )
 
+    def _verify_participant_choices(
+        self, commit: EngineCommit, prospective: Mapping[tuple[str, str], str]
+    ) -> None:
+        """A participant choice is one component change in its own PARTICIPANT_CHOICE commit."""
+
+        changes = [
+            mutation for mutation in commit.mutations if mutation.component_kind == "PARTICIPANT_CHOICE"
+        ]
+        if commit.input_kind != "PARTICIPANT_CHOICE":
+            if changes:
+                raise ValidationError("participant choice changed outside a participant choice commit")
+            return
+        if len(changes) != 1:
+            raise ValidationError("participant choice commit must change exactly one choice")
+        change = changes[0]
+        previous_state = None if self.previous_projection is None else self.previous_projection["state"]
+        state = commit.successor_projection["state"]
+        if change.component_id == _AUTOMATIC_UPLOAD_CHOICE_ID:
+            if (
+                change.operation != "UPSERT"
+                or (change.component_kind, change.component_id) in self.components
+                or previous_state not in {"COMPLETED", "WITHDRAWN"}
+                or state != previous_state
+                or commit.source_observations
+                or commit.events
+            ):
+                raise ValidationError("automatic upload stop is not a one-way choice after the study ended")
+        elif previous_state == "PAUSED":
+            if state != "PAUSED" or commit.source_observations or commit.events:
+                raise ValidationError("paused participant choice changed more than the choice")
+        elif previous_state != "RUNNING" or state != "RUNNING" or commit.successor_projection["active_condition_epoch"] is not None:
+            raise ValidationError("running participant choice must close its epoch at one barrier")
+        for (kind, component_id), encoded in prospective.items():
+            if kind != "PARTICIPANT_CHOICE":
+                continue
+            choice = _decode_participant_choice_component(encoded)
+            if component_id == _AUTOMATIC_UPLOAD_CHOICE_ID:
+                if choice != "AUTOMATIC_UPLOAD_STOPPED":
+                    raise ValidationError("invalid automatic upload choice")
+                continue
+            if not component_id.startswith("collector:") or choice != "COLLECTOR_DISABLED":
+                raise ValidationError("invalid participant collector choice")
+            key = ("collector", component_id.removeprefix("collector:"))
+            if key not in self.profile_digests or key in self.required_resources:
+                raise ValidationError("participant turned off a core or unknown collector")
+
+    def _participant_disabled(self, components: Mapping[tuple[str, str], str]) -> set[tuple[str, str]]:
+        return {
+            ("collector", component_id.removeprefix("collector:"))
+            for kind, component_id in components
+            if kind == "PARTICIPANT_CHOICE" and component_id.startswith("collector:")
+        }
+
     def _verify_applied_vector(
         self, resources: tuple[AppliedResource, ...], *, prospective: bool
     ) -> None:
         components = self.pending_components if prospective else self.components
         if components is None:
             raise ValidationError("resource vector was evaluated outside a commit")
+        disabled = self._participant_disabled(components)
+        for item in resources:
+            participant_off = item.failure_reason == PARTICIPANT_DISABLED_REASON
+            if item.key in disabled:
+                if item.status == "APPLIED" or (item.status == "OPTIONAL_FAILED" and not participant_off):
+                    raise ValidationError("collector the participant turned off was applied")
+            elif participant_off:
+                raise ValidationError("collector marked turned off without a participant choice")
         durable = {
             item.key: item
             for (kind, _), value in components.items()
@@ -2160,6 +2226,9 @@ class EngineReplayVerifier:
             valid = not kinds
         elif commit.input_kind == "RESOURCE_RESULT":
             valid = event_count == 0 and tail in ([], ["LIFECYCLE"])
+        elif commit.input_kind == "PARTICIPANT_CHOICE":
+            # Only the collector input drained by the epoch rotation the choice opens.
+            valid = not tail
         elif commit.input_kind == "SAFETY_FAILURE":
             valid = event_count == 0 and 1 <= len(tail) <= 2 and all(
                 kind == "LIFECYCLE" for kind in tail
@@ -2196,7 +2265,7 @@ class EngineReplayVerifier:
         if collector_events != observation_events:
             raise ValidationError("reducer collector inputs differ from observation provenance")
         if commit.source_observations and commit.input_kind not in {
-            "SOURCE_OBSERVATION", "LIFECYCLE_COMMAND", "TIMER_WAKE", "RECOVERY",
+            "SOURCE_OBSERVATION", "LIFECYCLE_COMMAND", "TIMER_WAKE", "RECOVERY", "PARTICIPANT_CHOICE",
         }:
             raise ValidationError("engine input kind cannot carry source observations")
 
@@ -3344,6 +3413,18 @@ def _decode_upload_acknowledgement(encoded: str) -> UploadAcknowledgement:
     return acknowledgement
 
 
+def _decode_participant_choice_component(encoded: str) -> str:
+    reader = _decode_component(encoded, "participant-choice-v1:")
+    if reader.integer() != 1:
+        raise ValidationError("unsupported participant choice component")
+    choice = _enum(
+        reader.string(), {"COLLECTOR_DISABLED", "AUTOMATIC_UPLOAD_STOPPED"}, "participant choice"
+    )
+    if reader.remaining:
+        raise ValidationError("trailing participant choice component bytes")
+    return choice
+
+
 def _decode_resource_component(encoded: str) -> AppliedResource:
     reader = _decode_component(encoded, "applied-resource-v1:")
     if reader.integer() != 1:
@@ -3513,7 +3594,7 @@ def _signed_resource_profiles(
             ).hexdigest()
             for profile in collector["profiles"]
         }
-        if collector["required"]:
+        if collector_is_core(collector):
             required.add(key)
     traffic = configuration["traffic_shaping"]
     if traffic:
@@ -3942,5 +4023,6 @@ _COMPONENT_ORDER = {
     "UPLOAD_ACKNOWLEDGEMENT": 5,
     "RESOURCE": 6,
     "RESOURCE_CLEANUP": 7,
+    "PARTICIPANT_CHOICE": 8,
 }
 _RESOURCE_ORDER={"ACTUATOR":0,"COLLECTOR":1}

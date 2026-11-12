@@ -240,6 +240,12 @@ data class RuntimeSnapshot(
      * study's length: later commits in the ended state still advance [calendarElapsedNanos].
      */
     val stateEnteredCalendarElapsedNanos: Long? = null,
+    /** Source IDs of non-core collectors the participant turned off; durable participant choices. */
+    val participantDisabledCollectors: Set<String> = emptySet(),
+    /** The participant stopped automatic upload when ending the study; durable and one-way. */
+    val automaticUploadStopped: Boolean = false,
+    /** When each collector recorded data and when the study was paused; process memory only. */
+    val collectionTimeline: CollectionTimeline = CollectionTimeline(),
 )
 
 sealed interface RuntimeCommandResult {
@@ -261,6 +267,8 @@ enum class RuntimeCommandRejection {
     UPLOAD_RECEIPT_MISMATCH,
     TIMER_NOT_FOUND,
     TIMER_NOT_DUE,
+    /** The collector is unknown or core, so the participant cannot turn it off. */
+    COLLECTOR_NOT_OPTIONAL,
 }
 
 sealed interface RuntimeInitializationProgress {

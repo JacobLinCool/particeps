@@ -196,9 +196,33 @@ over a signed file directly.
 
 ## 3. Collector resources and profiles
 
-Each `collectors[]` element has `id`, `required`, and 1–64 sorted unique named profiles. A profile
-contains the exact generated configuration for that source. The same source can therefore use
-different signed settings without becoming a different event identity.
+Configurations come in two dialects selected by `schema_version`. The researcher tool writes
+schema 2: each `collectors[]` element has `id`, `tier`, `rationale`, and 1–64 sorted unique named
+profiles, and the root carries `participant_disclosure` (see section 9). Schema 1 elements have
+`id`, `required`, and profiles instead; they stay valid and behave as `core` (`required: true`) or
+`optional` (`required: false`). A schema 2 study needs Particeps RC20 or later.
+
+`tier` is one of:
+
+- `core` — a condition of taking part. Missing access blocks Start and Resume, a failure pauses the
+  study, and participants cannot turn it off. Everything this guide says about a `required`
+  collector applies to a core one.
+- `requested` — the study wants it, but a participant may skip its access at setup or turn it off
+  during the study. The App then shows a fixed note that this may affect compensation and refers
+  the participant to you. State your actual compensation terms in the consent text or recruitment
+  material; the App does not.
+- `optional` — may be skipped or turned off with no note.
+
+Analysis sees a turned-off collector as `OPTIONAL_FAILED` with failure reason
+`PARTICIPANT_DISABLED` in each epoch's resource vector, and the commit that made the choice has
+input kind `PARTICIPANT_CHOICE`. Decide at analysis time how to treat partial participation.
+
+`rationale` is `null` or 1–600 characters you write to explain why the study asks for the
+category. It is shown to participants verbatim, so it can reveal design details; leave it `null`
+when that matters.
+
+A profile contains the exact generated configuration for that source. The same source can
+therefore use different signed settings without becoming a different event identity.
 
 Every declared resource has exactly one `resource_binding` automation. Its cases are evaluated in
 signed order; the first true condition selects its `profile_id`. `null` means inactive. If no case
@@ -510,9 +534,19 @@ diagnostics. It also does not show `configuration_id`, because that differs betw
 participant who contacts you identifies their data by the installation code, which travels inside
 every bundle as the participant instance ID.
 
-Disclosing more (intervention targets, timing, or strength, assignment, charts of the participant's
-own data, or a debrief) is planned as an explicit signed participant disclosure policy. Protocol v1
-does not carry that policy yet, so every study currently runs with the default.
+A schema 2 configuration signs `participant_disclosure` with two switches, both required:
+
+```json
+"participant_disclosure": {"approximate_frequency": false, "collection_timeline": false}
+```
+
+`approximate_frequency` shows each category's rough cadence ("about every 5 minutes"), derived from
+all of its signed profiles as a range. `collection_timeline` adds paused spans to the progress bar
+and an hour-by-hour timeline of when each category collected data. Both can reveal scheduled
+windows and may change behaviour; the Web tool asks you to confirm them when the study has
+occurrence automation or a collector that is not always active, and every arm of one experiment
+should use the same switches and tiers so the screens do not differ by arm. Intervention targets,
+timing, strength, assignment and a debrief are not shown by the App; debrief participants yourself.
 
 A shaping study adds one fixed high-level paragraph inline in the existing Access step, repeated on
 *Study and my data*. The paragraph is the same for selected-package and all-app targets and does not

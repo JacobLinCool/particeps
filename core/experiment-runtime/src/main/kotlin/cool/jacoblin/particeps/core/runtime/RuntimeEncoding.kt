@@ -238,3 +238,32 @@ internal fun emptyReduction(checkpoint: AutomationCheckpoint) = ReductionResult(
     emptyMap(),
     emptyList(),
 )
+
+/**
+ * A durable participant choice. A present `collector:<source>` component means the participant
+ * turned that non-core collector off; removing it turns the collector back on. The single
+ * `upload:automatic` component means the participant stopped automatic upload when withdrawing.
+ */
+enum class ParticipantChoice { COLLECTOR_DISABLED, AUTOMATIC_UPLOAD_STOPPED }
+
+internal const val AUTOMATIC_UPLOAD_CHOICE_ID = "upload:automatic"
+
+internal fun collectorChoiceComponentKey(key: ResourceKey): RuntimeComponentKey {
+    require(key.kind == ResourceKind.COLLECTOR) { "Only collectors can be turned off by the participant" }
+    return RuntimeComponentKey(RuntimeComponentKind.PARTICIPANT_CHOICE, "collector:${key.id}")
+}
+
+internal fun participantChoiceResourceKey(id: String): ResourceKey? =
+    if (id.startsWith("collector:")) ResourceKey(ResourceKind.COLLECTOR, id.removePrefix("collector:")) else null
+
+internal fun upsertParticipantChoice(key: RuntimeComponentKey, choice: ParticipantChoice) = RuntimeMutation(
+    key,
+    RuntimeMutationOperation.UPSERT,
+    RuntimeComponentCodec.encodeParticipantChoice(choice),
+)
+
+internal fun removeParticipantChoice(key: RuntimeComponentKey) = RuntimeMutation(
+    key,
+    RuntimeMutationOperation.REMOVE,
+    null,
+)

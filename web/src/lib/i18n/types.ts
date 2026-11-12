@@ -90,6 +90,8 @@ export interface IssueMessages {
   unbounded_state: string;
   private_key_missing: string;
   review_required: string;
+  schema_dialect: string;
+  blank_text: string;
 }
 
 export type IssueCode = keyof IssueMessages;
@@ -307,6 +309,18 @@ export interface Messages {
     priority: { balanced: string; highAccuracy: string };
   };
 
+  /**
+   * A collector's schema 2 tier and its researcher rationale, as the researcher edits them. What a
+   * participant reads for each tier is the App's fixed copy in `participant-projection.ts`.
+   */
+  tier: {
+    label: string;
+    core: { label: string; hint: string };
+    requested: { label: string; hint: string };
+    optional: { label: string; hint: string };
+    rationale: { label: string; hint: string };
+  };
+
   collector: Record<CollectorId, CollectorCopy>;
 
   issue: IssueMessages;
@@ -414,6 +428,15 @@ export interface Messages {
         required: string;
         disclosure: string;
         delivery: string;
+        /** A schema 1 file was opened and is edited as schema 2: a new file, to be signed again. */
+        converted: string;
+      };
+      /** The signed participant disclosure policy: two switches and what each can cost. */
+      participantDisclosure: {
+        title: string;
+        lead: string;
+        frequency: { label: string; hint: string };
+        timeline: { label: string; hint: string };
       };
     };
     sign: {
