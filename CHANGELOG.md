@@ -7,7 +7,11 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
-## v1.0.0-rc.20 — 2026-11-13
+## v1.0.0-rc.21 — 2026-11-13
+
+The RC20 tag did not produce a public release: its release run was cancelled after an instrumented
+test that still used the removed `optional` parameter was found. RC21 contains the RC20 changes
+below with that test corrected, and follows RC19 as the next public release candidate.
 
 Participants can now understand and shape what a study collects about them, and researchers decide
 how much of that a study discloses.
@@ -43,7 +47,11 @@ how much of that a study discloses.
 **Updating from RC19 or earlier:** install the newer APK over the existing app; do not uninstall
 it. The application ID and production signing certificate are unchanged. Accepted schema 1
 configurations and existing study data remain supported without conversion. A study signed with
-schema 2 requires RC20 or later; earlier releases refuse it at import.
+schema 2 requires RC21 or later; earlier releases refuse it at import.
+
+## v1.0.0-rc.20 — 2026-11-13
+
+This tag did not produce a public release; RC21 includes these changes.
 
 ## v1.0.0-rc.19 — 2026-10-27
 
