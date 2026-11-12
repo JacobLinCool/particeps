@@ -49,7 +49,10 @@ describe('invited participant study files', () => {
     expect(study.title).toBe(zhTW.study.title);
     expect(en.study.team).toContain(study.researcher.name);
     expect(zhTW.study.team).toContain(study.researcher.name);
-    expect(study.minimum_client_version).toBe('41');
+    expect(study.minimum_client_version).toBe('47');
+    expect(study.schema_version).toBe(2);
+    expect(study.participant_disclosure).toEqual({ approximate_frequency: false, collection_timeline: false });
+    expect(study.collectors.filter((c: { tier: string }) => c.tier !== 'core').map((c: { id: string }) => c.id)).toEqual(['gyroscope.v1']);
     expect(study.upload).toEqual({});
     expect(readdirSync(new URL(`../static${STUDY_CONFIGURATION_PATH}/..`, import.meta.url)).sort()).toEqual([
       STUDY_CONFIGURATION_PATH.split('/').at(-1),

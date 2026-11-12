@@ -215,7 +215,8 @@
           "id": "continuous"
         }
       ],
-      "required": true
+      "tier": "requested",
+      "rationale": null
     },
     {
       "id": "network_state.v1",
@@ -227,7 +228,8 @@
           "id": "continuous"
         }
       ],
-      "required": true
+      "tier": "core",
+      "rationale": null
     },
     {
       "id": "network_throughput.v1",
@@ -239,7 +241,8 @@
           "id": "continuous"
         }
       ],
-      "required": true
+      "tier": "core",
+      "rationale": null
     },
     {
       "id": "screen_state.v1",
@@ -249,7 +252,8 @@
           "id": "continuous"
         }
       ],
-      "required": true
+      "tier": "core",
+      "rationale": null
     },
     {
       "id": "temporal_context.v1",
@@ -259,7 +263,8 @@
           "id": "continuous"
         }
       ],
-      "required": true
+      "tier": "core",
+      "rationale": null
     },
     {
       "id": "usage_events.v1",
@@ -271,7 +276,8 @@
           "id": "continuous"
         }
       ],
-      "required": true
+      "tier": "core",
+      "rationale": null
     },
     {
       "id": "vpn_state.v1",
@@ -281,17 +287,18 @@
           "id": "continuous"
         }
       ],
-      "required": true
+      "tier": "core",
+      "rationale": null
     }
   ],
-  "configuration_id": "phone-usage-five-day-20261011-r2",
+  "configuration_id": "phone-usage-five-day-20261113-r3",
   "consent": {
     "document_version": "phone-usage-five-day-consent-2",
     "summary": "本研究為期120小時，記錄這支手機的App活動、螢幕電源與鎖定狀態、陀螺儀、網路連線與VPN狀態、傳輸量及時區。研究可能調整App的傳輸速度，並邀請您填寫問卷，回顧手機以外的活動、其他裝置使用、活動安排變化及手機網路速度對日常活動的主觀影響。App使用紀錄為本研究必要資料，須授予使用情況存取權。您可暫停或退出研究；資料加密儲存於裝置，經您匯出後交予研究團隊。"
   },
   "duration_hours": 120,
   "experiment_id": "phone-usage-five-day-20261005",
-  "expires_at": "2027-10-11T00:00:00Z",
+  "expires_at": "2026-12-31T16:00:00Z",
   "export": {
     "hpke_public_key": "L8w4mMhGxWMbdPczG4OF_8H4-9IXW66cx6vWy4jIqE0",
     "researcher_key_id": "internal-five-day-export-20260909"
@@ -308,15 +315,15 @@
       "required": true
     }
   ],
-  "issued_at": "2026-10-11T00:00:00Z",
-  "minimum_client_version": "41",
+  "issued_at": "2026-10-31T16:00:00Z",
+  "minimum_client_version": "47",
   "platform": "android",
   "purpose": "了解日常手機使用、其他裝置使用與活動安排之間的關係。",
   "researcher": {
     "name": "黃貞穎老師團隊",
     "contact": "請透過邀請您參與研究的管道聯絡研究團隊。"
   },
-  "schema_version": 1,
+  "schema_version": 2,
   "signer": {
     "key_id": "internal-five-day-signer-20260909",
     "public_key": "BkYy50nuq36nLAuMZMOXjR2KP0RRJxqPkvHKlHyg79s"
@@ -687,5 +694,9 @@
     ],
     "target_packages": "all"
   },
-  "upload": {}
+  "upload": {},
+  "participant_disclosure": {
+    "approximate_frequency": false,
+    "collection_timeline": false
+  }
 }
