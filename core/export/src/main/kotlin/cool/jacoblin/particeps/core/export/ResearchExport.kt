@@ -29,7 +29,6 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.UUID
 import javax.crypto.Cipher
-import javax.crypto.CipherOutputStream
 import javax.crypto.KeyGenerator
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -185,10 +184,6 @@ object ResearchExport {
         val wrappedKey = HpkeCrypto.encrypt(configuration.export.hpkePublicKeyBytes(), contentKey.encoded, context)
         require(wrappedKey.size == WRAPPED_KEY_BYTES) { "Unexpected wrapped-key size" }
         val nonce = ByteArray(NONCE_BYTES).also(SecureRandom()::nextBytes)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
-            init(Cipher.ENCRYPT_MODE, contentKey, GCMParameterSpec(TAG_BITS, nonce))
-            updateAAD(context)
-        }
         val keyId = configuration.export.researcherKeyId.toByteArray(Charsets.UTF_8)
         val digesting = DigestingOutputStream(destination)
         digesting.write(
@@ -202,7 +197,7 @@ object ResearchExport {
                 .put(wrappedKey)
                 .array(),
         )
-        val eventCount = CanonicalJsonWriter(CipherOutputStream(digesting, cipher)).use { writer ->
+        val eventCount = CanonicalJsonWriter(StreamingAesGcmOutputStream(digesting, contentKey, nonce, context)).use { writer ->
             val count = writeSnapshot(writer, snapshot, store, selection, progress)
             coroutineContext.ensureActive()
             progress.report(ExportStage.FINALIZING, selection.commitCount, selection.commitCount, force = true)

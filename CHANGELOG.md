@@ -31,6 +31,11 @@ how much of that a study discloses.
 - **Progress and timeline in Study and my data.** Every study shows a progress bar over its signed
   duration. When the signed policy allows it, the page also shows paused spans and an hour-by-hour
   timeline of when each category collected data, and each category's approximate frequency.
+- **Exports no longer run out of memory.** Android's AES-GCM cipher buffered the whole export
+  before encrypting it, so exporting a full five-day study could exceed the app's memory and
+  crash (seen on a Pixel 10a with about 89,000 events). Export now encrypts as it writes, with
+  constant memory, and produces byte-for-byte the same AES-256-GCM output, so the bundle format
+  and every reader are unchanged.
 - Kotlin, Python and TypeScript verifiers accept the new commit and component kinds and reject a
   participant choice on a core collector or an applied collector the participant turned off. The
   event-source registry is unchanged, so earlier exports, including RC13 pilot bundles, still verify.
