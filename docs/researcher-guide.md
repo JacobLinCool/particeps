@@ -200,7 +200,7 @@ Configurations come in two dialects selected by `schema_version`. The researcher
 schema 2: each `collectors[]` element has `id`, `tier`, `rationale`, and 1–64 sorted unique named
 profiles, and the root carries `participant_disclosure` (see section 9). Schema 1 elements have
 `id`, `required`, and profiles instead; they stay valid and behave as `core` (`required: true`) or
-`optional` (`required: false`). A schema 2 study needs Particeps RC20 or later.
+`optional` (`required: false`). A schema 2 study needs Particeps RC21 or later (RC20 was never published).
 
 `tier` is one of:
 
