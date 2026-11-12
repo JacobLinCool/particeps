@@ -341,18 +341,20 @@ three layers:
   version, the enabled data categories and what each records, Android access, upload terms, the
   fixed intervention-existence disclosure, and participant rights. These can be restated on any
   participant screen.
-- **Policy-gated.** Intervention targets, timing, and strength, assignment, charts of the
-  participant's own data, and a debrief. A signed participant disclosure policy may relax the
-  default one dimension at a time. It must be explicit in the signed bytes, can never go below the
-  floor, and must pair any dimension hidden at enrollment with a debrief. Protocol v1 does not yet
-  carry this policy, so every current study runs with the default and none of these dimensions is
-  shown.
+- **Policy-gated.** A schema 2 configuration signs `participant_disclosure` with two explicit
+  switches and no default: `approximate_frequency` (a cadence phrase per category, derived from all
+  of its signed profiles, so it shows a range rather than the profile in force) and
+  `collection_timeline` (an hour-resolution timeline of when each category collected data, and the
+  paused spans). Both reveal schedule-dependent patterns, so the Web tool asks the researcher to
+  confirm them when the configuration has occurrence automation or a collector that is not always
+  active. Schema 1 configurations carry no policy and show neither. Intervention targets, timing,
+  strength, assignment and any debrief are not shown by the App; a debrief happens outside it.
 - **Never shown.** Automation and profile identifiers, timer state, condition epochs, vector
   digests, owner UID, typed internal failure reasons, and participant-specific random instants.
 
 Compose receives a whitelist participant projection rather than the full signed/runtime model.
 The *Study and my data* screen restates only floor information and participation facts (study
-day, deadline, active and paused time, the size and event count of an export made since Particeps
+day, deadline, a progress bar over the signed duration, active and paused time, the size and event count of an export made since Particeps
 last started, and local storage measured when the screen opens, both sizes in 50 MB steps); its
 entry is identical in every study arm so its presence cannot reveal assignment. Its two sizes are
 not arm-independent; see the residual side channels below.
@@ -380,8 +382,11 @@ window's study days, the activation cap, issue and expiry times, the minimum cli
 boolean profile settings, are not checked by it. Notification sentinel tests assert that sensitive fixture
 values never reach the shared foreground notification and that an intervention notification's
 lock-screen version carries none of its researcher text.
+A second sentinel test signs a frequency-only policy and asserts that the cadence phrase and a
+researcher rationale appear while the timeline does not.
 These protect against accidental derived UI leakage, not malicious researcher-authored text: study
-title, purpose, researcher name/contact, consent, notifications, and surveys are rendered verbatim.
+title, purpose, researcher name/contact, consent, collector rationales, notifications, and surveys
+are rendered verbatim.
 Those signed free-text fields are the explicit blinding exception, and they can disclose a
 schedule or condition the policy keeps hidden. Neither the runtime nor Web checks that text. For a
 configuration with an occurrence automation or a treatment-changing resource binding, Web blocks

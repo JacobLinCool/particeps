@@ -7,6 +7,39 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
+## v1.0.0-rc.20 — 2026-11-13
+
+Participants can now understand and shape what a study collects about them, and researchers decide
+how much of that a study discloses.
+
+- **Three tiers for data categories (configuration schema 2).** A signed configuration may now mark
+  each collector `core`, `requested` or `optional`, with an optional researcher-written rationale,
+  and sign a participant disclosure policy with two switches: approximate collection frequency and
+  a collection timeline. Core behaves like the former `required: true`. Requested and optional
+  categories can be skipped at the Access step or turned off during the study; a requested one
+  first shows a fixed note that this may affect compensation. Schema 1 configurations remain valid
+  and behave exactly as before (required → core, not required → optional, nothing disclosed).
+  The researcher tool writes schema 2 and converts an opened schema 1 draft, which must be re-signed.
+- **Turning categories off and back on.** While running, a participant choice closes the condition
+  epoch at one drained boundary and records the collector as `OPTIONAL_FAILED` with reason
+  `PARTICIPANT_DISABLED`; while paused, it takes effect at Resume. The choice is durable as a new
+  `PARTICIPANT_CHOICE` runtime component and commit kind, so automation cannot turn the collector
+  back on. Core categories cannot be turned off.
+- **Withdraw asks about unsent data.** In a study with automatic upload, Withdraw offers to keep
+  sending data that has not been sent yet or to stop sending. Stopping is durable and one-way; data
+  the research team already received stays with them, and manual export still works.
+- **Progress and timeline in Study and my data.** Every study shows a progress bar over its signed
+  duration. When the signed policy allows it, the page also shows paused spans and an hour-by-hour
+  timeline of when each category collected data, and each category's approximate frequency.
+- Kotlin, Python and TypeScript verifiers accept the new commit and component kinds and reject a
+  participant choice on a core collector or an applied collector the participant turned off. The
+  event-source registry is unchanged, so earlier exports, including RC13 pilot bundles, still verify.
+
+**Updating from RC19 or earlier:** install the newer APK over the existing app; do not uninstall
+it. The application ID and production signing certificate are unchanged. Accepted schema 1
+configurations and existing study data remain supported without conversion. A study signed with
+schema 2 requires RC20 or later; earlier releases refuse it at import.
+
 ## v1.0.0-rc.19 — 2026-10-27
 
 Long cold starts now show saved-data checking progress, elapsed waiting time, and separate
