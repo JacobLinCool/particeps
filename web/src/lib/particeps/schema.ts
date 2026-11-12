@@ -16,7 +16,12 @@ import {
   MINIMUM_LOCAL_BYTES,
   PARTICEPS_APPLICATION_ID,
   PLATFORM,
+  MAXIMUM_RATIONALE_LENGTH,
   SCHEMA_VERSION,
+  SCHEMA_VERSION_1,
+  collectorIsCore,
+  collectorTier,
+  isCollectorTier,
   UPLOAD_MAXIMUM_INTERVAL_MINUTES,
   UPLOAD_MINIMUM_INTERVAL_MINUTES,
   trafficShapingEnabled,
@@ -41,7 +46,7 @@ export type IssueCode =
   | 'key_invalid' | 'language_tag' | 'unknown_reference' | 'selection_bounds'
   | 'automation_invalid' | 'unknown_event' | 'unknown_field' | 'unsupported_operator'
   | 'canonical_value' | 'resource_owner' | 'trigger_source_liveness' | 'dependency_cycle'
-  | 'unbounded_state' | 'private_key_missing' | 'review_required';
+  | 'unbounded_state' | 'private_key_missing' | 'review_required' | 'schema_dialect' | 'blank_text';
 
 export interface Issue {
   path: string;
@@ -55,7 +60,11 @@ export const DEFAULT_LOCAL_BYTES = 1_024 * 1_024 * 1_024;
 
 export function validate(configuration: StudyConfiguration): Issue[] {
   const issues: Issue[] = [];
-  if (configuration.schema_version !== SCHEMA_VERSION) issues.push(range('schema_version', [1, 1]));
+  const schemaVersion = configuration.schema_version;
+  if (schemaVersion !== SCHEMA_VERSION_1 && schemaVersion !== SCHEMA_VERSION) {
+    issues.push(range('schema_version', [SCHEMA_VERSION_1, SCHEMA_VERSION]));
+  }
+  validateDisclosure(issues, configuration);
   if (configuration.platform !== PLATFORM) issues.push({ path: 'platform', code: 'required' });
   identifier(issues, 'experiment_id', configuration.experiment_id);
   identifier(issues, 'configuration_id', configuration.configuration_id);
@@ -99,6 +108,7 @@ export function emptyConfiguration(): StudyConfiguration {
   return {
     schema_version: SCHEMA_VERSION,
     platform: PLATFORM,
+    participant_disclosure: { approximate_frequency: false, collection_timeline: false },
     experiment_id: '', configuration_id: '', assigned_participant_id: null,
     issued_at: formatInstant({ second: now, nano: 0 }),
     expires_at: formatInstant({ second: now + DEFAULT_VALIDITY_DAYS * 86_400, nano: 0 }),
@@ -113,9 +123,81 @@ export function emptyConfiguration(): StudyConfiguration {
   };
 }
 
-/** Registry-backed continuous collector macro used by the authoring UI. */
+/**
+ * Registry-backed continuous collector macro used by the authoring UI. A new collector is optional,
+ * as schema 1's `required: false` default was: the researcher raises it deliberately.
+ */
 export function defaultCollector(id: CollectorId): CollectorConfig {
-  return { id, required: false, profiles: [{ id: 'continuous', config: defaultProfileConfiguration(id) }] } as CollectorConfig;
+  return {
+    id, tier: 'optional', rationale: null,
+    profiles: [{ id: 'continuous', config: defaultProfileConfiguration(id) }]
+  } as CollectorConfig;
+}
+
+/**
+ * The schema 2 spelling of a configuration. A schema 1 document maps `required: true` to core and
+ * `false` to optional, with no rationale and nothing disclosed beyond the floor. The result is a
+ * different signed document — new bytes, a new configuration ID — and must be signed again; a
+ * schema 2 document is returned unchanged.
+ */
+export function upgradeToSchema2(configuration: StudyConfiguration): StudyConfiguration {
+  if (configuration.schema_version !== SCHEMA_VERSION_1) return configuration;
+  return {
+    ...configuration,
+    schema_version: SCHEMA_VERSION,
+    participant_disclosure: { approximate_frequency: false, collection_timeline: false },
+    collectors: configuration.collectors.map((collector) => ({
+      id: collector.id, tier: collectorTier(collector), rationale: null, profiles: collector.profiles
+    }) as CollectorConfig)
+  };
+}
+
+/** Kotlin's `isBlank`: every UTF-16 unit is Java whitespace or a Unicode space separator. */
+const BLANK = /^[\t\n\u000B\f\r\u001C-\u001F\p{Zs}\u2028\u2029]*$/u;
+
+function validateDisclosure(issues: Issue[], configuration: StudyConfiguration): void {
+  const disclosure: unknown = configuration.participant_disclosure;
+  if (configuration.schema_version === SCHEMA_VERSION_1) {
+    if (disclosure !== undefined) issues.push({ path: 'participant_disclosure', code: 'schema_dialect' });
+    return;
+  }
+  if (configuration.schema_version !== SCHEMA_VERSION) return;
+  if (disclosure === null || typeof disclosure !== 'object' || Array.isArray(disclosure)) {
+    issues.push({ path: 'participant_disclosure', code: 'required' });
+    return;
+  }
+  const value = disclosure as Record<string, unknown>;
+  const keys = Object.keys(value).sort().join(',');
+  if (keys !== 'approximate_frequency,collection_timeline') {
+    issues.push({ path: 'participant_disclosure', code: 'schema_dialect' });
+  }
+  for (const key of ['approximate_frequency', 'collection_timeline']) {
+    if (typeof value[key] !== 'boolean') issues.push({ path: `participant_disclosure.${key}`, code: 'required' });
+  }
+}
+
+function validateCollectorRequirement(
+  issues: Issue[], path: string, collector: CollectorConfig, schemaVersion: number
+): void {
+  const value = collector as unknown as Record<string, unknown>;
+  if (schemaVersion === SCHEMA_VERSION_1) {
+    if (Object.hasOwn(value, 'tier') || Object.hasOwn(value, 'rationale')) {
+      issues.push({ path, code: 'schema_dialect' });
+    }
+    if (typeof value.required !== 'boolean') issues.push({ path: `${path}.required`, code: 'required' });
+    return;
+  }
+  if (schemaVersion !== SCHEMA_VERSION) return;
+  if (Object.hasOwn(value, 'required')) issues.push({ path, code: 'schema_dialect' });
+  if (!isCollectorTier(value.tier)) issues.push({ path: `${path}.tier`, code: 'required' });
+  const rationale = value.rationale;
+  if (rationale === undefined) issues.push({ path: `${path}.rationale`, code: 'schema_dialect' });
+  else if (rationale !== null) {
+    text(issues, `${path}.rationale`, rationale, [1, MAXIMUM_RATIONALE_LENGTH]);
+    if (typeof rationale === 'string' && rationale.length > 0 && BLANK.test(rationale)) {
+      issues.push({ path: `${path}.rationale`, code: 'blank_text' });
+    }
+  }
 }
 
 export function continuousBinding(collector: CollectorConfig): ResourceBindingAutomation {
@@ -148,6 +230,7 @@ function validateCollectors(issues: Issue[], configuration: StudyConfiguration):
   if (!sortedUnique(configuration.collectors.map((collector) => collector.id))) issues.push({ path: 'collectors', code: 'sorted_unique' });
   configuration.collectors.forEach((collector, index) => {
     const path = `collectors.${index}`;
+    validateCollectorRequirement(issues, path, collector, configuration.schema_version);
     if (!(COLLECTOR_ORDER as readonly string[]).includes(collector.id)) {
       issues.push({ path: `${path}.id`, code: 'unknown_reference' });
       return;
@@ -227,7 +310,7 @@ function validateTrafficShaping(issues: Issue[], configuration: StudyConfigurati
 function validateAutomations(issues: Issue[], configuration: StudyConfiguration, interventionIds: Set<string>): void {
   const resources = new Map<string, { required: boolean; profiles: Set<string> }>();
   for (const collector of configuration.collectors) resources.set(`collector:${collector.id}`, {
-    required: collector.required, profiles: new Set(collector.profiles.map((profile) => profile.id))
+    required: collectorIsCore(collector), profiles: new Set(collector.profiles.map((profile) => profile.id))
   });
   if (trafficShapingEnabled(configuration.traffic_shaping)) resources.set('actuator:traffic-shaping.v1', {
     required: true, profiles: new Set(configuration.traffic_shaping.profiles.map((profile) => profile.id))
@@ -295,7 +378,7 @@ function validateAutomations(issues: Issue[], configuration: StudyConfiguration,
   for (const sourceId of referencedCollectorIds) {
     const collector = configuration.collectors.find((item) => item.id === sourceId);
     const owner = owners.get(`collector:${sourceId}`)?.[0];
-    if (!collector?.required || !owner || !bindingAlwaysActive(owner)) {
+    if (!collector || !collectorIsCore(collector) || !owner || !bindingAlwaysActive(owner)) {
       issues.push({ path: 'automations', code: 'trigger_source_liveness' });
     }
     if (sourceId === 'usage_events.v1' && collector?.profiles.some((profile) =>
@@ -306,7 +389,8 @@ function validateAutomations(issues: Issue[], configuration: StudyConfiguration,
   if (hasCycle(dependencies)) issues.push({ path: 'automations', code: 'dependency_cycle' });
 }
 
-function bindingAlwaysActive(binding: ResourceBindingAutomation): boolean {
+/** The binding selects a profile for the whole time the study session is active. */
+export function bindingAlwaysActive(binding: ResourceBindingAutomation): boolean {
   for (const entry of binding.cases) {
     if (entry.profile_id === null) return false;
     if (entry.condition.type === 'study_session_active') return true;

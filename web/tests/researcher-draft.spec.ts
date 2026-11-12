@@ -104,7 +104,7 @@ describe('draft', () => {
     expect(draft.sign()).toBe('signed');
   });
 
-  it('preserves the continuous schedule when requiredness changes', () => {
+  it('preserves the continuous schedule when the tier changes', () => {
     const draft = ready();
     const binding = draft.configuration.automations.find((automation) =>
       automation.type === 'resource_binding' && automation.resource.id === 'location.v1'
@@ -112,20 +112,26 @@ describe('draft', () => {
     if (!binding || binding.type !== 'resource_binding') throw new Error('missing location binding');
 
     expect(binding.default_profile_id).toBeNull();
-    draft.setCollectorRequired('location.v1', true);
+    draft.setCollectorTier('location.v1', 'core');
     flushSync();
-    expect(draft.collector('location.v1')?.required).toBe(true);
+    expect(draft.collector('location.v1')?.tier).toBe('core');
     expect(binding.default_profile_id).toBeNull();
     expect(draft.issues).toEqual([]);
     expect(draft.requiresBlindingConfirmation).toBe(false);
 
-    draft.setCollectorRequired('location.v1', false);
+    draft.setCollectorTier('location.v1', 'requested');
+    flushSync();
+    expect(draft.collector('location.v1')?.tier).toBe('requested');
+    expect(binding.default_profile_id).toBeNull();
+    expect(draft.issues).toEqual([]);
+
+    draft.setCollectorTier('location.v1', 'optional');
     flushSync();
     expect(binding.default_profile_id).toBeNull();
     expect(draft.issues).toEqual([]);
   });
 
-  it('does not rewrite a researcher-authored binding when its collector becomes required', () => {
+  it('does not rewrite a researcher-authored binding when its collector becomes core', () => {
     const draft = ready();
     const binding = draft.configuration.automations.find((automation) =>
       automation.type === 'resource_binding' && automation.resource.id === 'location.v1'
@@ -136,7 +142,7 @@ describe('draft', () => {
       profile_id: 'continuous'
     }];
 
-    draft.setCollectorRequired('location.v1', true);
+    draft.setCollectorTier('location.v1', 'core');
     flushSync();
     expect(binding.default_profile_id).toBeNull();
     expect(draft.issues).toEqual([{ path: 'review.blinding', code: 'review_required' }]);

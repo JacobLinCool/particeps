@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { render } from 'svelte/server';
-import type { StudyConfiguration, SurveyQuestion } from '$lib/particeps/types';
+import { collectorIsCore, type StudyConfiguration, type SurveyQuestion } from '$lib/particeps/types';
 import { canonicalize } from '$lib/particeps/canonical';
 import { continuousBinding, defaultCollector, validate } from '$lib/particeps/schema';
 import { zhTW } from '$lib/i18n/zh-TW';
@@ -12,16 +12,16 @@ import SurveyPreview from '../src/routes/researcher/SurveyPreview.svelte';
 import type { Draft } from '../src/routes/researcher/draft.svelte';
 import { createAutomationSchedule, createAutomationTrigger, createStateCondition, createSurveyQuestion, moveEditorItem, removeInterventionReferences } from '../src/routes/researcher/editor-model';
 import { applyTrafficExample, reviewTrafficExample, undoTrafficExample } from '../src/routes/researcher/traffic-example';
-import { validConfiguration } from './fixture';
+import { validConfiguration, validConfigurationV2 } from './fixture';
 
 const fiveDay = (): StudyConfiguration => JSON.parse(readFileSync(new URL('../../researcher-tools/examples/five-day-speed-study.json', import.meta.url), 'utf8'));
 const localized = (value: string) => ({ default: value, translations: {} });
 
 function trafficStudy(): StudyConfiguration {
-  return validConfiguration({ traffic_shaping: {
+  return validConfigurationV2({ traffic_shaping: {
     target_packages: ['com.android.chrome'],
     profiles: [{ id: 'baseline', uplink_kbps: null, downlink_kbps: null }, { id: 'slow-network', uplink_kbps: 256, downlink_kbps: 512 }]
-  }, automations: [...validConfiguration().automations, {
+  }, automations: [...validConfigurationV2().automations, {
     type: 'resource_binding' as const, id: 'traffic-rule', resource: { kind: 'actuator' as const, id: 'traffic-shaping.v1' },
     cases: [{ condition: { type: 'study_local_window' as const, first_day: 1, last_day: 1, start_local_time: '12:00', end_local_time: '17:00' }, profile_id: 'slow-network' }],
     default_profile_id: 'baseline'
@@ -120,7 +120,7 @@ describe('reviewed traffic example transaction', () => {
     expect(JSON.stringify(review.changedAfter)).toContain('held_for');
     const applied = applyTrafficExample(c, review);
     expect(validate(c)).toEqual([]);
-    expect(c.collectors.find((item) => item.id === 'usage_events.v1')?.required).toBe(true);
+    expect(collectorIsCore(c.collectors.find((item) => item.id === 'usage_events.v1')!)).toBe(true);
     undoTrafficExample(c, review, applied);
     expect(canonicalize(c)).toBe(before);
   });

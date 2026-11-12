@@ -3,7 +3,7 @@ import { createResearcherTools, configurationRevision, registerResearcherWebMcp,
 import { AUTHORING_DEFINITIONS, CHANGE_SCHEMA, validateToolInput } from '../src/lib/particeps/webmcp-schema';
 import { continuousBinding, defaultCollector, emptyConfiguration } from '../src/lib/particeps/schema';
 import { COLLECTOR_ORDER, type StudyConfiguration, type SurveyDefinition } from '../src/lib/particeps/types';
-import { validConfiguration, SIGNING, HPKE } from './fixture';
+import { validConfigurationV2 as validConfiguration, SIGNING, HPKE } from './fixture';
 
 function setup(initial = validConfiguration()) {
   let configuration = structuredClone(initial);

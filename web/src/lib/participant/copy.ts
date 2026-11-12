@@ -165,7 +165,7 @@ export const en: ParticipantCopy = {
     naming: {
       name: 'Particeps is Latin for one who takes part in something. What the app records is written to your phone and encrypted there, you see every source your study switched on before you agree, and nothing is collected until you press Start.',
       limits:
-        'The name is not a promise that the study is yours to set. What a study may collect, and how long it runs, are fixed in the signed study file your research team gives you: you can decline the study, or leave it, but you cannot rewrite it. Inside a study you can hold back the sources it marks optional, by not granting the access they ask for; a source it marks required stops the study instead. Nothing that has already left your phone can be taken back.'
+        'The name is not a promise that the study is yours to set. What a study may collect, and how long it runs, are fixed in the signed study file your research team gives you: you can decline the study, or leave it, but you cannot rewrite it. Inside a study, any source not marked Core can be skipped at setup or turned off later while the study runs or is paused, and turned back on; turning off one marked Requested may affect your compensation. A source marked Core cannot be turned off: declining it stops the study instead. Nothing that has already left your phone can be taken back.'
     }
   },
 
@@ -264,7 +264,7 @@ export const en: ParticipantCopy = {
       sampleCadence: 'About every 6 hours',
       sampleNetwork: 'Wi-Fi only',
       code: 'The encrypted content includes a randomly generated installation code so the research team can tell participants apart after decrypting it. It contains no name and no account.',
-      mandatory: 'Automatic sending is part of the study and cannot be switched off on its own. Pausing or withdrawing stops new collection, but data already collected and not yet sent can still be sent to the research team.',
+      mandatory: 'Automatic sending is part of the study and cannot be switched off on its own while you take part. Pausing stops new collection, but data already collected can still be sent. When you withdraw, the app asks whether to send the data not yet sent or to stop automatic sending for good.',
       caption: 'The same phone. Your export, and a second arrow that repeats on a schedule.',
       metadata:
         'The receiving server sees when a delivery arrived and how large it was, plus bundle, configuration, digest, and claimed range metadata. It cannot see your installation code or collected content.'
@@ -310,7 +310,7 @@ export const zhTW: ParticipantCopy = {
     naming: {
       name: 'Particeps 是拉丁文，意思是「參與其中的人」。App 記錄的資料會寫入你的手機並在當下加密；在你同意之前，App 會先列出這項研究啟用的每一項資料來源；按下「開始研究」之前不會收集任何資料。',
       limits:
-        '這個名稱不代表研究內容由你決定。研究可以收集哪些資料、進行多久，都寫定在研究團隊交給你的那份已簽署設定檔裡：你可以拒絕參與，也可以中途離開，但無法改寫它。在一項研究裡，你能保留不給的只有標示為選用的資料來源——不授予它要求的權限，它就不會啟用；標示為必要的來源則會直接讓研究無法進行。已經離開手機的資料也無法收回。'
+        '這個名稱不代表研究內容由你決定。研究可以收集哪些資料、進行多久，都寫定在研究團隊交給你的那份已簽署設定檔裡：你可以拒絕參與，也可以中途離開，但無法改寫它。在一項研究裡，沒有標示為「核心」的資料來源，都可以在設定時略過，或在研究進行中或暫停時關閉、之後再重新開啟；關閉標示為「研究需要」的來源可能會影響你的研究報酬。標示為「核心」的來源無法關閉，拒絕它就會讓研究無法進行。已經離開手機的資料也無法收回。'
     }
   },
 
@@ -408,7 +408,7 @@ export const zhTW: ParticipantCopy = {
       sampleCadence: '約每 6 小時',
       sampleNetwork: '只用 Wi-Fi',
       code: '加密內容包含一組隨機產生的安裝代碼，研究團隊解密後可用它區分不同的 App 安裝。代碼不含你的姓名或帳號。',
-      mandatory: '自動傳送是這個研究的一部分，無法單獨關閉。暫停或退出研究會停止收集新資料，但已收集且尚未傳送的資料仍可能傳送給研究團隊。',
+      mandatory: '參與期間，自動傳送是這個研究的一部分，無法單獨關閉。暫停會停止收集新資料，但已收集的資料仍可能傳送。退出研究時，App 會詢問你要傳送尚未傳送的資料，還是永久停止自動傳送。',
       caption: '一個箭頭代表你自行匯出，另一個代表 App 依排程自動傳送。',
       metadata:
         '接收伺服器會看到傳送抵達的時間與大小，以及 bundle、設定摘要、內容摘要和宣告的資料範圍；它看不到安裝代碼或收集內容。'

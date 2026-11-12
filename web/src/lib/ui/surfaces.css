@@ -961,43 +961,6 @@ button.fingerprint--plaque:hover {
   background: var(--accent-wash);
 }
 
-/* The chip vocabulary the page already has for a pressed choice. `--caution`, never `--accent`:
-   `--accent` is what the card wears for "in the study", and a source a participant cannot decline
-   is a different thing entirely. The two must never share a colour. */
-.collector__required {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-3);
-  flex: none;
-  margin-inline-start: auto;
-  min-block-size: var(--tap-min);
-  padding-inline: var(--sp-4);
-  border: var(--line-hair) solid var(--rule);
-  border-radius: var(--r-pill);
-  background: var(--surface);
-  font-size: var(--type-micro);
-  color: var(--ink-soft);
-  white-space: nowrap;
-  transition:
-    background-color var(--motion-state),
-    border-color var(--motion-state),
-    color var(--motion-state);
-}
-
-.collector__required:hover {
-  border-color: var(--caution-ink);
-  color: var(--ink);
-}
-
-/* Same reason as the chip and the preset: a 1.1:1 wash cannot be the only mark of state, so the set
-   one is also the only one carrying a tick and the page's own ink weight. */
-.collector__required[aria-pressed='true'] {
-  background: var(--caution-wash);
-  border-color: var(--caution-ink);
-  color: var(--ink);
-  font-weight: var(--w-medium);
-}
-
 .collector__name {
   font-size: var(--type-body);
   font-weight: var(--w-medium);

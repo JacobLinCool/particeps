@@ -10,6 +10,7 @@ import {
   hpkeKeyPairFromPrivate,
   signingKeyPairFromPrivate
 } from '../src/lib/particeps/crypto';
+import { upgradeToSchema2 } from '../src/lib/particeps/schema';
 import type { StudyConfiguration } from '../src/lib/particeps/types';
 
 const raw = (byte: number) => encodeBase64Url(new Uint8Array(32).fill(byte));
@@ -17,6 +18,7 @@ const raw = (byte: number) => encodeBase64Url(new Uint8Array(32).fill(byte));
 export const SIGNING = signingKeyPairFromPrivate(raw(0x11));
 export const HPKE = hpkeKeyPairFromPrivate(raw(0x22));
 
+/** A schema 1 study: collectors carry `required`, and there is no disclosure policy. */
 export function validConfiguration(
   overrides: Partial<StudyConfiguration> = {}
 ): StudyConfiguration {
@@ -74,4 +76,14 @@ export function validConfiguration(
     upload: null,
     ...overrides
   };
+}
+
+/**
+ * The same study in the schema 2 dialect the authoring page writes: `required: true` becomes core,
+ * `false` optional, no rationale, and nothing disclosed.
+ */
+export function validConfigurationV2(
+  overrides: Partial<StudyConfiguration> = {}
+): StudyConfiguration {
+  return { ...upgradeToSchema2(validConfiguration()), ...overrides };
 }

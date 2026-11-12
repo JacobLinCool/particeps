@@ -1,0 +1,17 @@
+{
+  "bundles": [
+    {
+      "byte_count": 178087,
+      "commit_count": 23,
+      "event_count": 67,
+      "file": "participant-choices.partexp",
+      "participant_instance_id": "5c0e0300-0000-4000-8000-000000000001",
+      "scenario": "A schema 2 pilot with an optional gyroscope and a requested throughput collector: the participant turns the gyroscope off while running, back on while paused, turns throughput off, resumes, then withdraws and stops automatic upload",
+      "sha256": "a3da60e386dd35fedb545ea6b22f88c37dcd34505226047be2df15aecd8cc06f",
+      "state": "WITHDRAWN"
+    }
+  ],
+  "format": "particeps-real-runtime-interop-v1",
+  "note": "Snapshot of core/study-application RealRuntimeBundleInteropTest output (PARTICEPS_REAL_RUNTIME_INTEROP_DIR). The researcher key is a test-only key.",
+  "researcher_key_id": "real-runtime-interop-export"
+}

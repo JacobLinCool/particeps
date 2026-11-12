@@ -8,7 +8,7 @@ import {
 import { simulate } from '$lib/particeps/simulator';
 import { javaDoubleString } from '$lib/particeps/wire-float';
 import { nextRandomWindow } from '../src/routes/researcher/random-window';
-import { validConfiguration } from './fixture';
+import { validConfiguration, validConfigurationV2 } from './fixture';
 import type { CollectorConfig, StateCondition } from '$lib/particeps/types';
 
 describe('event-driven authoring contract', () => {
@@ -120,7 +120,7 @@ describe('event-driven authoring contract', () => {
 
   it('derives profile defaults from the generated registry', () => {
     expect(defaultCollector('usage_events.v1')).toEqual({
-      id: 'usage_events.v1', required: false,
+      id: 'usage_events.v1', tier: 'optional', rationale: null,
       profiles: [{ id: 'continuous', config: { poll_interval_seconds: 900 } }]
     });
     expect(defaultCollector('network_usage.v1').profiles[0].config).toEqual({
@@ -151,9 +151,9 @@ describe('event-driven authoring contract', () => {
   });
 
   it('requires a 15-second usage profile when it drives a condition', () => {
-    const configuration = validConfiguration();
+    const configuration = validConfigurationV2();
     const usage = defaultCollector('usage_events.v1') as Extract<CollectorConfig, { id: 'usage_events.v1' }>;
-    usage.required = true;
+    usage.tier = 'core';
     configuration.collectors.push(usage);
     configuration.collectors.sort((left, right) => left.id.localeCompare(right.id));
     configuration.interventions = [{
@@ -245,9 +245,9 @@ describe('event-driven authoring contract', () => {
   });
 
   it('simulates held keyed presence without retroactively applying an ended interval', () => {
-    const configuration = validConfiguration();
+    const configuration = validConfigurationV2();
     const usage = defaultCollector('usage_events.v1') as Extract<CollectorConfig, { id: 'usage_events.v1' }>;
-    usage.required = true;
+    usage.tier = 'core';
     usage.profiles[0].config.poll_interval_seconds = 15;
     configuration.collectors.push(usage);
     configuration.collectors.sort((left, right) => left.id.localeCompare(right.id));

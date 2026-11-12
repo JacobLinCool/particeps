@@ -15,7 +15,7 @@ import {
   parseCanonicalJson
 } from './canonical';
 import { decodeBase64Url, encodeBase64Url, verify } from './crypto';
-import { ID_PATTERN, trafficShapingEnabled, type StudyConfiguration } from './types';
+import { ID_PATTERN, collectorIsCore, trafficShapingEnabled, type StudyConfiguration } from './types';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { expand, extract } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -85,12 +85,22 @@ const UNSIGNED_DECIMAL = /^(?:0|[1-9][0-9]*)$/;
 const EMBEDDED_TIME_MEMBERS = 'boot_session_id,monotonic_time_nanos,wall_time_utc_millis';
 const INPUT_KINDS = new Set([
   'SOURCE_OBSERVATION', 'LIFECYCLE_COMMAND', 'TIMER_WAKE', 'RANDOM_SELECTION', 'ACTION_RESULT',
-  'UPLOAD_ACKNOWLEDGEMENT', 'RESOURCE_RESULT', 'SAFETY_FAILURE', 'RECOVERY'
+  'UPLOAD_ACKNOWLEDGEMENT', 'RESOURCE_RESULT', 'SAFETY_FAILURE', 'RECOVERY', 'PARTICIPANT_CHOICE'
 ]);
+/** Engine inputs that may carry source observations: the collector input an epoch close drains. */
+const OBSERVATION_INPUT_KINDS = new Set([
+  'SOURCE_OBSERVATION', 'LIFECYCLE_COMMAND', 'TIMER_WAKE', 'RECOVERY', 'PARTICIPANT_CHOICE'
+]);
+/** Component sort order is this array's order; PARTICIPANT_CHOICE is ordinal 8. */
 const COMPONENT_KINDS = [
   'AUTOMATION_CHECKPOINT', 'TIMER', 'STUDY_DEADLINE_TIMER', 'RESOURCE_AUDIT_TIMER', 'ACTION_INVOCATION',
-  'UPLOAD_ACKNOWLEDGEMENT', 'RESOURCE', 'RESOURCE_CLEANUP'
+  'UPLOAD_ACKNOWLEDGEMENT', 'RESOURCE', 'RESOURCE_CLEANUP', 'PARTICIPANT_CHOICE'
 ] as const;
+const PARTICIPANT_CHOICE_PREFIX = 'participant-choice-v1:';
+const AUTOMATIC_UPLOAD_CHOICE_ID = 'upload:automatic';
+const COLLECTOR_CHOICE_PREFIX = 'collector:';
+/** Applied-vector failure reason for a collector the participant turned off. */
+const PARTICIPANT_DISABLED_REASON = 'PARTICIPANT_DISABLED';
 const COMPONENT_KIND_ORDER = new Map(COMPONENT_KINDS.map((kind, index) => [kind, index]));
 
 export function isRuntimeComponentKind(value: string): value is typeof COMPONENT_KINDS[number] {
@@ -587,6 +597,8 @@ function readExperiment(
     seen: new Set()
   };
   const resources = signedResourceKeys(configuration);
+  // Participant choices in force. Known from genesis; a retained partial range starts without them.
+  const choices: ParticipantChoiceState = { known: first === 1n, components: new Set() };
   let priorReducerCursor: bigint | null = null;
   let priorCheckpointParts: Set<string> | null = null;
   for (let index = 0; index < source.commits.length; index += 1) {
@@ -622,6 +634,9 @@ function readExperiment(
     if (collectorEvents === null) {
       return null;
     }
+    if (!verifyParticipantChoices(
+      commit, index > 0 || first === 1n, previous?.successor_projection ?? null, choices, configuration
+    )) return null;
     eventCount += BigInt(commit.events.length);
     collectorEventCount += BigInt(collectorEvents);
     commits.push(commit);
@@ -1187,6 +1202,7 @@ function verifyCommitSemantics(
 ): number | null {
   const events = commit.events;
   const observations = commit.source_observations;
+  if (observations.length > 0 && !OBSERVATION_INPUT_KINDS.has(commit.input_kind)) return null;
   if (events.length > 0) {
     if (
       BigInt(commit.successor_projection.next_event_sequence) !==
@@ -1319,6 +1335,140 @@ function verifyCommitSemantics(
       BigInt(previous.lifetime_data_event_count) + BigInt(collectorEvents.length)
   ) return null;
   return verifySourceCheckpoints(commit, previous) ? collectorEvents.length : null;
+}
+
+interface ParticipantChoiceState {
+  /** False until the range is known to start at genesis; a partial range cannot know its map. */
+  known: boolean;
+  /** PARTICIPANT_CHOICE component IDs present after the last verified commit. */
+  components: Set<string>;
+}
+
+/**
+ * A participant choice is one component change in its own PARTICIPANT_CHOICE commit, mirroring
+ * `particeps_analysis.engine._verify_participant_choices`:
+ *
+ * - `collector:<id>` (COLLECTOR_DISABLED) turns a signed, non-core collector off; REMOVE turns it
+ *   back on. While RUNNING the choice closes the epoch at one barrier (RUNNING, no active epoch
+ *   after); while PAUSED it changes nothing else.
+ * - `upload:automatic` (AUTOMATIC_UPLOAD_STOPPED) is a one-way UPSERT after COMPLETED or WITHDRAWN
+ *   that changes nothing else.
+ *
+ * Every condition-epoch resource vector must then agree with the choices: a turned-off collector is
+ * never APPLIED and fails only as PARTICIPANT_DISABLED, and nothing else carries that reason. A
+ * deactivation reads the choices before the commit, an activation those after it.
+ *
+ * A retained partial range does not know the choices in force before it, nor the state before its
+ * first commit; those checks start once they are known.
+ */
+function verifyParticipantChoices(
+  commit: EngineCommit,
+  previousKnown: boolean,
+  previous: RuntimeProjection | null,
+  choices: ParticipantChoiceState,
+  configuration: StudyConfiguration
+): boolean {
+  const changes = commit.mutations.filter((mutation) => mutation.component_kind === 'PARTICIPANT_CHOICE');
+  const before = new Set(choices.components);
+  if (commit.input_kind !== 'PARTICIPANT_CHOICE') {
+    if (changes.length > 0) return false;
+  } else {
+    if (changes.length !== 1) return false;
+    const change = changes[0];
+    const previousState = previous?.state ?? null;
+    const projection = commit.successor_projection;
+    const state = projection.state;
+    const quiet = commit.source_observations.length === 0 && commit.events.length === 0;
+    if (change.component_id === AUTOMATIC_UPLOAD_CHOICE_ID) {
+      if (
+        change.operation !== 'UPSERT' || !quiet ||
+        (choices.known && choices.components.has(change.component_id)) ||
+        (state !== 'COMPLETED' && state !== 'WITHDRAWN') ||
+        (previousKnown && state !== previousState)
+      ) return false;
+    } else if (previousKnown ? previousState === 'PAUSED' : state === 'PAUSED') {
+      if (state !== 'PAUSED' || !quiet) return false;
+    } else if (
+      (previousKnown && previousState !== 'RUNNING') || state !== 'RUNNING' ||
+      projection.active_condition_epoch !== null
+    ) return false;
+    if (change.operation === 'REMOVE' && choices.known && !choices.components.has(change.component_id)) {
+      return false;
+    }
+  }
+  for (const change of changes) {
+    if (change.operation === 'REMOVE') {
+      choices.components.delete(change.component_id);
+      continue;
+    }
+    let choice: string;
+    try {
+      choice = decodeParticipantChoice(change.canonical_value!);
+    } catch {
+      return false;
+    }
+    if (change.component_id === AUTOMATIC_UPLOAD_CHOICE_ID) {
+      if (choice !== 'AUTOMATIC_UPLOAD_STOPPED') return false;
+    } else {
+      if (!change.component_id.startsWith(COLLECTOR_CHOICE_PREFIX) || choice !== 'COLLECTOR_DISABLED') {
+        return false;
+      }
+      const sourceId = change.component_id.slice(COLLECTOR_CHOICE_PREFIX.length);
+      const collector = configuration.collectors.find((item) => item.id === sourceId);
+      if (!collector || collectorIsCore(collector)) return false;
+    }
+    choices.components.add(change.component_id);
+  }
+  if (!choices.known) return true;
+  for (const event of commit.events) {
+    if (event.source_id !== CONDITION_SOURCE_ID) continue;
+    const prospective = event.event_type === CONDITION_ACTIVATED;
+    if (!prospective && event.event_type !== CONDITION_DEACTIVATED) continue;
+    if (!verifyParticipantDisabledVector(
+      event.fields.resource_vector_json, prospective ? choices.components : before
+    )) return false;
+  }
+  return true;
+}
+
+function verifyParticipantDisabledVector(vectorJson: string | undefined, components: ReadonlySet<string>): boolean {
+  const disabled = new Set(
+    [...components]
+      .filter((id) => id.startsWith(COLLECTOR_CHOICE_PREFIX))
+      .map((id) => `collector\u0000${id.slice(COLLECTOR_CHOICE_PREFIX.length)}`)
+  );
+  let resources: unknown;
+  try {
+    resources = (JSON.parse(vectorJson ?? '') as { resources?: unknown }).resources;
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(resources)) return false;
+  for (const raw of resources) {
+    const item = record(raw);
+    if (!item || typeof item.kind !== 'string' || typeof item.id !== 'string') return false;
+    const participantOff = item.failure_reason === PARTICIPANT_DISABLED_REASON;
+    if (disabled.has(`${item.kind}\u0000${item.id}`)) {
+      if (item.status === 'APPLIED' || (item.status === 'OPTIONAL_FAILED' && !participantOff)) return false;
+    } else if (participantOff) return false;
+  }
+  return true;
+}
+
+/** `participant-choice-v1:` + unpadded base64url of int32 version 1 and one length-prefixed name. */
+function decodeParticipantChoice(encoded: string): string {
+  if (!encoded.startsWith(PARTICIPANT_CHOICE_PREFIX)) throw new Error('choice_prefix');
+  const text = encoded.slice(PARTICIPANT_CHOICE_PREFIX.length);
+  const payload = decodeBase64Url(text);
+  if (payload.length > MAXIMUM_COMPONENT_BYTES || encodeBase64Url(payload) !== text) {
+    throw new Error('choice_encoding');
+  }
+  const reader = new CheckpointBinaryReader(payload);
+  if (reader.int() !== 1) throw new Error('choice_version');
+  const choice = reader.string();
+  if (choice !== 'COLLECTOR_DISABLED' && choice !== 'AUTOMATIC_UPLOAD_STOPPED') throw new Error('choice_name');
+  if (!reader.done()) throw new Error('choice_trailing');
+  return choice;
 }
 
 /**

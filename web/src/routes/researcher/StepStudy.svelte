@@ -18,7 +18,7 @@
   import WindowStrip from './WindowStrip.svelte';
   import { COLLECTOR_ORDER, type Draft } from './draft.svelte';
   import { scales } from './scales';
-  import { BOUNDS } from '$lib/particeps/types';
+  import { BOUNDS, participantDisclosure } from '$lib/particeps/types';
   import type { Messages } from '$lib/i18n/types';
   import type { Units } from './units';
   import { i18n } from '$lib/ui/i18n.svelte';
@@ -34,6 +34,7 @@
   let { draft, m, units, activeSection, onnavigate }: Props = $props();
 
   const configuration = $derived(draft.configuration);
+  const disclosure = $derived(participantDisclosure(configuration));
   const section = $derived(m.researcher.study.section);
 
   /**
@@ -77,6 +78,11 @@
   {/each}
 </nav>
 <div class="stack">
+  {#if draft.convertedFromSchema1}
+    <!-- Above every section, because it is a fact about the whole file: what was opened is not
+         what will be signed, and the old file stays valid on its own. -->
+    <Note icon="alert" tone="caution" text={m.researcher.study.note.converted} />
+  {/if}
   {#if activeSection === 'details'}
   <Section id="about" title={section.about.title} icon="person">
     <TextField
@@ -208,9 +214,9 @@
   {/if}
   {#if activeSection === 'data'}
   <Section id="collectors" path="collectors" title={section.collectors.title} icon="sources">
-    <!-- Said once for the section, because it is the same sentence on all twelve cards. Every
-         必要 control points at this `id`, so the consequence is still one hop from the decision,
-         and it carries the mark an unpressed control carries. -->
+    <!-- Said once for the section, because it is the same three consequences on every card: what
+         Core, Requested and Optional let a participant do. Each card's tier control names the
+         selected one in its own hint. -->
     <Note
       id="collectors-required"
       icon="participant"
@@ -229,7 +235,8 @@
           scales={S}
           onenable={(which) => draft.enableCollector(which)}
           ondisable={(which) => draft.disableCollector(which)}
-          onrequired={(which, required) => draft.setCollectorRequired(which, required)}
+          ontier={(which, tier) => draft.setCollectorTier(which, tier)}
+          onrationale={(which, rationale) => draft.setCollectorRationale(which, rationale)}
           onaddprofile={(which) => draft.addCollectorProfile(which)}
           onrenameprofile={(which, previous, next) => draft.renameCollectorProfile(which, previous, next)}
           onremoveprofile={(which, profileId) => draft.removeCollectorProfile(which, profileId)}
@@ -246,6 +253,34 @@
       {units}
       unit={S.maximum_local_bytes}
       onquota={(value) => (configuration.storage.maximum_local_bytes = value)}
+    />
+  </Section>
+
+  <!-- Signed with the study, so a participant can check it was promised. Each switch carries its own
+       cost: what participants learn can change what they do, and a collection timeline draws the
+       shape of any scheduled or conditional window. -->
+  <Section
+    id="participant-disclosure"
+    path="participant_disclosure"
+    title={m.researcher.study.participantDisclosure.title}
+    lead={m.researcher.study.participantDisclosure.lead}
+    icon="eye"
+  >
+    <ToggleField
+      label={m.researcher.study.participantDisclosure.frequency.label}
+      hint={m.researcher.study.participantDisclosure.frequency.hint}
+      path="participant_disclosure.approximate_frequency"
+      value={disclosure.approximate_frequency}
+      caution={disclosure.approximate_frequency}
+      onchange={(value) => draft.setParticipantDisclosure('approximate_frequency', value)}
+    />
+    <ToggleField
+      label={m.researcher.study.participantDisclosure.timeline.label}
+      hint={m.researcher.study.participantDisclosure.timeline.hint}
+      path="participant_disclosure.collection_timeline"
+      value={disclosure.collection_timeline}
+      caution={disclosure.collection_timeline}
+      onchange={(value) => draft.setParticipantDisclosure('collection_timeline', value)}
     />
   </Section>
 

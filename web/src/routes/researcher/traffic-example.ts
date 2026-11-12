@@ -1,6 +1,6 @@
 import { canonicalize } from '$lib/particeps/canonical';
 import { continuousBinding, defaultCollector, validate } from '$lib/particeps/schema';
-import { trafficShapingEnabled, type EventMatcher, type ResourceBindingAutomation, type StudyConfiguration } from '$lib/particeps/types';
+import { SCHEMA_VERSION_1, trafficShapingEnabled, type CollectorConfig, type EventMatcher, type ResourceBindingAutomation, type StudyConfiguration } from '$lib/particeps/types';
 
 export interface TrafficExampleSnapshot {
   collectors: StudyConfiguration['collectors'];
@@ -45,7 +45,10 @@ export function reviewTrafficExample(configuration: StudyConfiguration): Traffic
   if (!slow) throw new Error('example_requires_slower_profile');
   let usage = candidate.collectors.find((collector) => collector.id === 'usage_events.v1');
   if (!usage) {
-    candidate.collectors.push(defaultCollector('usage_events.v1'));
+    const added = defaultCollector('usage_events.v1');
+    // A schema 1 study keeps its own dialect; the authoring draft itself is always schema 2.
+    candidate.collectors.push(candidate.schema_version === SCHEMA_VERSION_1
+      ? { id: added.id, required: true, profiles: added.profiles } as CollectorConfig : added);
     usage = candidate.collectors.find((collector) => collector.id === 'usage_events.v1');
     if (!usage) throw new Error('example_requires_usage_rule');
     candidate.collectors.sort((left, right) => left.id.localeCompare(right.id));
@@ -55,7 +58,8 @@ export function reviewTrafficExample(configuration: StudyConfiguration): Traffic
     while (used.has(binding.id)) binding.id = `bind-usage-example-${ordinal++}`;
     candidate.automations.push(binding);
   }
-  usage.required = true;
+  // An event-trigger source must be core in either dialect.
+  if (usage.tier !== undefined) usage.tier = 'core'; else usage.required = true;
   for (const profile of usage.profiles) profile.config.poll_interval_seconds = 15;
   const usageBinding = usageOwner(candidate);
   if (!usageBinding || !usage.profiles[0]) throw new Error('example_requires_usage_rule');

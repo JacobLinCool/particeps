@@ -1,7 +1,7 @@
 /** Researcher-facing guard for configurations whose automation can change participant treatment. */
 
-import type { ResourceBindingAutomation, StudyConfiguration } from './types';
-import { continuousBindingProfile } from './schema';
+import { participantDisclosure, type ResourceBindingAutomation, type StudyConfiguration } from './types';
+import { bindingAlwaysActive, continuousBindingProfile } from './schema';
 
 /**
  * The authoring UI requires an explicit blinding acknowledgement whenever an automation can
@@ -13,7 +13,25 @@ import { continuousBindingProfile } from './schema';
 export function requiresBlindingConfirmation(configuration: StudyConfiguration): boolean {
   return configuration.automations.some((automation) =>
     automation.type === 'occurrence' || bindingChangesTreatment(automation)
-  );
+  ) || disclosureMayRevealSchedule(configuration);
+}
+
+/**
+ * A participant disclosure view (approximate frequency or a collection timeline) shows when and how
+ * much each category collected. That can reveal a scheduled or conditional window whenever the
+ * study has an occurrence automation, or a collector that is not active for the whole session —
+ * so either switch on such a study needs the same researcher confirmation as a treatment.
+ */
+export function disclosureMayRevealSchedule(configuration: StudyConfiguration): boolean {
+  const disclosure = participantDisclosure(configuration);
+  if (!disclosure.approximate_frequency && !disclosure.collection_timeline) return false;
+  if (configuration.automations.some((automation) => automation.type === 'occurrence')) return true;
+  return configuration.collectors.some((collector) => {
+    const owner = configuration.automations.find((automation): automation is ResourceBindingAutomation =>
+      automation.type === 'resource_binding' && automation.resource.kind === 'collector' &&
+      automation.resource.id === collector.id);
+    return !owner || !bindingAlwaysActive(owner);
+  });
 }
 
 function bindingChangesTreatment(binding: ResourceBindingAutomation): boolean {

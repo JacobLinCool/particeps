@@ -1,4 +1,4 @@
-/** Closed-world reader for the current Protocol v1 configuration only. */
+/** Closed-world reader for both Protocol v1 configuration dialects (schema 1 and schema 2). */
 
 import { canonicalConfigurationBytes, parseCanonicalJson } from '$lib/particeps/canonical';
 import { verify } from '$lib/particeps/crypto';
@@ -9,6 +9,9 @@ import { validate } from '$lib/particeps/schema';
 import {
   PLATFORM,
   MAXIMUM_CONFIGURATION_BYTES,
+  SCHEMA_VERSION,
+  SCHEMA_VERSION_1,
+  isCollectorTier,
   isCollectorId,
   trafficShapingEnabled,
   type Aggregate,
@@ -36,6 +39,9 @@ const ROOT_KEYS = [
   'duration_hours', 'consent', 'collectors', 'surveys', 'interventions', 'automations',
   'traffic_shaping', 'storage', 'signer', 'export', 'upload'
 ] as const;
+const ROOT_KEYS_V2 = [...ROOT_KEYS, 'participant_disclosure'] as const;
+const COLLECTOR_KEYS_V1 = ['id', 'required', 'profiles'] as const;
+const COLLECTOR_KEYS_V2 = ['id', 'tier', 'rationale', 'profiles'] as const;
 
 export class UnavailableCollectorError extends Error {
   constructor(readonly sourceId: string) {
@@ -62,7 +68,14 @@ export function parseConfiguration(bytes: Uint8Array): StudyConfiguration {
  * integer bounds before any protocol file is accepted or signed. */
 export function decodeConfigurationValue(value: unknown): StudyConfiguration {
   const raw = object(value);
-  requireExactKeys(raw, ROOT_KEYS);
+  // The schema version selects the dialect before any other member is read. Anything else is not
+  // a Protocol v1 configuration, and neither dialect accepts the other's members.
+  const schemaVersion = raw.schema_version;
+  if (schemaVersion !== SCHEMA_VERSION_1 && schemaVersion !== SCHEMA_VERSION) fail('parse_schema_version');
+  requireExactKeys(raw, schemaVersion === SCHEMA_VERSION_1 ? ROOT_KEYS : ROOT_KEYS_V2);
+  const disclosure = schemaVersion === SCHEMA_VERSION_1
+    ? null
+    : exactObject(raw.participant_disclosure, ['approximate_frequency', 'collection_timeline']);
   const researcher = exactObject(raw.researcher, ['name', 'contact']);
   const consent = exactObject(raw.consent, ['document_version', 'summary']);
   const storage = exactObject(raw.storage, ['maximum_local_bytes']);
@@ -73,7 +86,7 @@ export function decodeConfigurationValue(value: unknown): StudyConfiguration {
   if (raw.platform !== PLATFORM) fail('parse_platform');
 
   const configuration: StudyConfiguration = {
-    schema_version: numberValue(raw.schema_version), platform: PLATFORM,
+    schema_version: schemaVersion, platform: PLATFORM,
     experiment_id: string(raw.experiment_id), configuration_id: string(raw.configuration_id),
     assigned_participant_id: nullableString(raw.assigned_participant_id),
     issued_at: string(raw.issued_at), expires_at: string(raw.expires_at),
@@ -81,7 +94,7 @@ export function decodeConfigurationValue(value: unknown): StudyConfiguration {
     researcher: { name: string(researcher.name), contact: string(researcher.contact) },
     purpose: string(raw.purpose), duration_hours: numberValue(raw.duration_hours),
     consent: { document_version: string(consent.document_version), summary: string(consent.summary) },
-    collectors: array(raw.collectors).map(parseCollector),
+    collectors: array(raw.collectors).map((item) => parseCollector(item, schemaVersion)),
     surveys: array(raw.surveys).map(parseSurvey),
     interventions: array(raw.interventions).map(parseIntervention),
     automations: array(raw.automations).map(parseAutomation),
@@ -94,11 +107,18 @@ export function decodeConfigurationValue(value: unknown): StudyConfiguration {
       allow_metered: boolean(upload.allow_metered)
     }
   };
+  if (disclosure) {
+    configuration.participant_disclosure = {
+      approximate_frequency: boolean(disclosure.approximate_frequency),
+      collection_timeline: boolean(disclosure.collection_timeline)
+    };
+  }
   return configuration;
 }
 
-function parseCollector(raw: unknown): CollectorConfig {
-  const source = exactObject(raw, ['id', 'required', 'profiles']);
+function parseCollector(raw: unknown, schemaVersion: number): CollectorConfig {
+  const v1 = schemaVersion === SCHEMA_VERSION_1;
+  const source = exactObject(raw, v1 ? COLLECTOR_KEYS_V1 : COLLECTOR_KEYS_V2);
   if (!isCollectorId(source.id)) {
     const contract = EVENT_SOURCE_REGISTRY.sources.find((candidate) =>
       candidate.source_id === source.id && candidate.source_kind === 'COLLECTOR');
@@ -106,13 +126,14 @@ function parseCollector(raw: unknown): CollectorConfig {
     fail('parse_collector');
   }
   const id = source.id;
-  return {
-    id, required: boolean(source.required),
-    profiles: array(source.profiles).map((rawProfile) => {
-      const profile = exactObject(rawProfile, ['id', 'config']);
-      return { id: string(profile.id), config: parseProfile(id, profile.config) };
-    })
-  } as CollectorConfig;
+  const profiles = array(source.profiles).map((rawProfile) => {
+    const profile = exactObject(rawProfile, ['id', 'config']);
+    return { id: string(profile.id), config: parseProfile(id, profile.config) };
+  });
+  if (v1) return { id, required: boolean(source.required), profiles } as CollectorConfig;
+  if (!isCollectorTier(source.tier)) fail('parse_collector_tier');
+  // Rationale bounds and blankness are validate()'s, so an unfinished draft still opens.
+  return { id, tier: source.tier, rationale: nullableString(source.rationale), profiles } as CollectorConfig;
 }
 
 function parseProfile(id: CollectorConfig['id'], raw: unknown): CollectorProfileConfiguration {

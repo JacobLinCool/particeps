@@ -27,7 +27,7 @@
 <div class="matcher stack" data-issue-host={path}>
   <Select label={zh ? '事件' : 'Event'} path={`${path}.event`} value={eventIdentityKey(value)} options={events.map(({ source, event }) => ({ value: `${source.source_id}:${source.schema_version}:${event.event_type}`, label: `${source.source_id} · ${event.event_type}` }))} hint={zh ? '更換事件會清除這個事件的欄位篩選。' : 'Changing the event clears its field predicates.'} onchange={selectEvent} />
   {#if contract?.source.source_kind === 'COLLECTOR'}
-    <p class="fine faint">{zh ? `事件來源 ${contract.source.source_id} 必須設為必要，並在整個研究進行期間啟用。` : `Event source ${contract.source.source_id} must be required and remain active throughout the study.`}{contract.source.source_id === 'usage_events.v1' ? (zh ? ' 每個設定檔的輪詢間隔必須為 15 秒。' : ' Every profile must poll every 15 seconds.') : ''}</p>
+    <p class="fine faint">{zh ? `事件來源 ${contract.source.source_id} 必須設為「核心」，並在整個研究進行期間啟用。` : `Event source ${contract.source.source_id} must be Core and remain active throughout the study.`}{contract.source.source_id === 'usage_events.v1' ? (zh ? ' 每個設定檔的輪詢間隔必須為 15 秒。' : ' Every profile must poll every 15 seconds.') : ''}</p>
   {/if}
   <div class="stack" data-issue-host={`${path}.predicates`}>
     {#each value.predicates as predicate, index (predicate)}
