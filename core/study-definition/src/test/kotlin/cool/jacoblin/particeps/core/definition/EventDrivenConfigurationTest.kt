@@ -90,6 +90,67 @@ class EventDrivenConfigurationTest {
     }
 
     @Test
+    fun schemaTwoCarriesTierRationaleAndDisclosureExactly() {
+        val v2 = configuration().copy(
+            schemaVersion = 2,
+            participantDisclosure = ParticipantDisclosure(approximateFrequency = true, collectionTimeline = false),
+        )
+        val encoded = StudyConfigurationCodec.encode(v2).toString(Charsets.UTF_8)
+        assertTrue(encoded.contains("\"tier\":\"core\""))
+        assertTrue(encoded.contains("\"rationale\":null"))
+        assertTrue(encoded.contains("\"participant_disclosure\":{\"approximate_frequency\":true,\"collection_timeline\":false}"))
+        assertEquals(setOf("id", "profiles", "rationale", "tier"), collectorKeys(encoded))
+        assertEquals(v2, StudyConfigurationCodec.decode(encoded.toByteArray()))
+
+        val requested = v2.copy(collectors = listOf(v2.collectors.single().copy(
+            tier = CollectorTier.REQUESTED,
+            rationale = "Shows how long each app stays open.",
+        )))
+        // A requested collector cannot be a trigger source; only the codec shape is checked here.
+        val requestedJson = StudyConfigurationCodec.encode(requested.copy(automations = requested.automations.filterNot { it is OccurrenceAutomation }, interventions = emptyList()))
+        val decoded = StudyConfigurationCodec.decode(requestedJson)
+        assertEquals(CollectorTier.REQUESTED, decoded.collectors.single().tier)
+        assertEquals(false, decoded.collectors.single().required)
+
+        val hostile = listOf(
+            encoded.replace("\"tier\":\"core\"", "\"tier\":\"CORE\""),
+            encoded.replace("\"tier\":\"core\"", "\"required\":true"),
+            encoded.replace(",\"collection_timeline\":false", ""),
+            encoded.replace("\"participant_disclosure\":{\"approximate_frequency\":true,\"collection_timeline\":false},", ""),
+            encoded.replace("\"rationale\":null", "\"rationale\":\"   \""),
+            encoded.replace("\"rationale\":null", "\"rationale\":\"${"x".repeat(601)}\""),
+            encoded.replace("\"schema_version\":2", "\"schema_version\":3"),
+        )
+        hostile.forEach { bytes ->
+            assertThrows(IllegalArgumentException::class.java) { StudyConfigurationCodec.decode(bytes.toByteArray()) }
+        }
+    }
+
+    @Test
+    fun schemaOneKeepsBooleanCollectorsAndRejectsSchemaTwoMembers() {
+        val v1 = configuration()
+        val encoded = StudyConfigurationCodec.encode(v1).toString(Charsets.UTF_8)
+        assertEquals(setOf("id", "profiles", "required"), collectorKeys(encoded))
+        assertTrue(!encoded.contains("participant_disclosure"))
+        assertEquals(CollectorTier.CORE, StudyConfigurationCodec.decode(encoded.toByteArray()).collectors.single().tier)
+        assertThrows(IllegalArgumentException::class.java) {
+            v1.copy(participantDisclosure = ParticipantDisclosure(true, true))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            v1.copy(collectors = listOf(v1.collectors.single().copy(rationale = "Why")))
+        }
+        val withDisclosure = JsonParser.parseString(encoded).asJsonObject.apply {
+            add("participant_disclosure", JsonObject().apply {
+                addProperty("approximate_frequency", false)
+                addProperty("collection_timeline", false)
+            })
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            StudyConfigurationCodec.decode(ProtocolCanonicalJson.encode(withDisclosure))
+        }
+    }
+
+    @Test
     fun shapingDisabledIsExactlyAnEmptyObject() {
         val noResources = configuration(
             collectors = emptyList(),
@@ -124,6 +185,9 @@ class EventDrivenConfigurationTest {
             TrafficShapingProfile("too-fast", 1_000_001, null)
         }
     }
+
+    private fun collectorKeys(json: String): Set<String> =
+        JsonParser.parseString(json).asJsonObject.getAsJsonArray("collectors").single().asJsonObject.keySet()
 
     private fun configuration(
         title: String = "Runtime test",

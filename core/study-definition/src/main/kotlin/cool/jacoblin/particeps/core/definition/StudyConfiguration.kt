@@ -30,9 +30,20 @@ data class StudyConfiguration(
     val signer: SignerIdentity,
     val export: ExportConfiguration,
     val upload: UploadConfiguration?,
+    val participantDisclosure: ParticipantDisclosure = ParticipantDisclosure.NONE,
 ) {
     init {
-        require(schemaVersion == CURRENT_SCHEMA_VERSION) { "Unsupported configuration schema" }
+        require(schemaVersion == SCHEMA_VERSION_1 || schemaVersion == CURRENT_SCHEMA_VERSION) {
+            "Unsupported configuration schema"
+        }
+        if (schemaVersion == SCHEMA_VERSION_1) {
+            require(participantDisclosure == ParticipantDisclosure.NONE) {
+                "Schema 1 configurations carry no participant disclosure policy"
+            }
+            require(collectors.all { it.tier != CollectorTier.REQUESTED && it.rationale == null }) {
+                "Schema 1 collectors are only required or optional"
+            }
+        }
         require(ID.matches(experimentId)) { "Invalid experiment ID" }
         require(ID.matches(configurationId)) { "Invalid configuration ID" }
         require(issuedAt < expiresAt) { "Configuration expiry must follow issue time" }
@@ -121,11 +132,13 @@ data class StudyConfiguration(
 
     companion object {
         /**
-         * The only accepted pre-1.0 Protocol v1 schema. Protocol v1 is replaced in place while it
-         * is pre-release: there is no legacy reader, fallback, or migration. An artifact either
-         * matches the current closed-world contract exactly or is refused.
+         * Protocol v1 configurations come in two closed-world dialects. Schema 1 marks each
+         * collector `required` true or false. Schema 2 replaces that with a three-level tier,
+         * an optional researcher rationale, and a signed participant disclosure policy. Every
+         * reader accepts both exactly; producers write schema 2.
          */
-        const val CURRENT_SCHEMA_VERSION = 1
+        const val SCHEMA_VERSION_1 = 1
+        const val CURRENT_SCHEMA_VERSION = 2
         const val ANDROID_PLATFORM = "android"
         /**
          * Local budget a study may claim, 8 MiB to 8 GiB. The floor leaves room for the metadata
