@@ -110,7 +110,9 @@ internal fun StudyAndMyDataScreen(
         Section(R.string.my_data_about_title) { AboutThisStudy(study) }
         Section(R.string.my_data_collected_title) { WhatIsCollected(study) }
         Section(R.string.my_data_participation_title) { YourParticipation(study, readLocalStorageSize) }
-        Section(R.string.my_data_rights_title) { YourRights(uploads = study.upload != null) }
+        Section(R.string.my_data_rights_title) {
+            YourRights(uploads = study.upload != null, canTurnOff = study.dataCategories.any { it.optional })
+        }
     }
 }
 
@@ -200,10 +202,13 @@ private fun WhatIsCollected(study: ParticipantStudyUiModel) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(summary.name, fontWeight = FontWeight.Bold)
                         Text(
-                            stringResource(if (summary.optional) R.string.data_optional else R.string.data_required),
+                            tierLabel(category.tier),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                    if (category.turnedOff) {
+                        Text(stringResource(R.string.data_turned_off_detail), fontWeight = FontWeight.SemiBold)
                     }
                     Text(summary.records)
                     Text(
@@ -211,6 +216,7 @@ private fun WhatIsCollected(study: ParticipantStudyUiModel) {
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    CategoryDetails(category)
                     Text(
                         if (access.isEmpty()) {
                             stringResource(R.string.data_access_none)
@@ -261,6 +267,8 @@ private fun YourParticipation(
     val participation = study.participation
     val numbers = NumberFormat.getIntegerInstance()
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        StudyProgressBar(participation, study.durationHours, study.collectionTimeline, now)
+        study.collectionTimeline?.let { CollectionTimelineChart(study, it, now) }
         FactLine(stringResource(R.string.participation_status), stringResource(study.state.labelRes()))
         participation.studyDayAt(now)?.let { day ->
             FactLine(
@@ -323,12 +331,13 @@ private fun sizeLabel(size: ParticipantSizeBucket): String {
 
 /**
  * What each participant control does, stated as the code does it. Upload sentences appear only for
- * a study that sends data automatically: Pause and Withdraw leave sending in place, and only Delete
- * local data cancels it.
+ * a study that sends data automatically: Pause leaves sending in place, Withdraw asks whether to
+ * keep sending, and Delete local data cancels it.
  */
 @Composable
-private fun YourRights(uploads: Boolean) {
+private fun YourRights(uploads: Boolean, canTurnOff: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        if (canTurnOff) Right(R.string.rights_choices_title, R.string.rights_choices_body, null)
         Right(
             R.string.rights_pause_title,
             R.string.rights_pause_body,

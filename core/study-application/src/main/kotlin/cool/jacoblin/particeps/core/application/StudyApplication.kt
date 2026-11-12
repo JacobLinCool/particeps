@@ -55,6 +55,7 @@ import cool.jacoblin.particeps.core.resource.StatefulResourceActuator
 import cool.jacoblin.particeps.core.runtime.ActionExecutionFailure
 import cool.jacoblin.particeps.core.runtime.ActionOutboxNotifier
 import cool.jacoblin.particeps.core.runtime.DurableActionInvocation
+import cool.jacoblin.particeps.core.runtime.CollectionTimeline
 import cool.jacoblin.particeps.core.runtime.ExperimentRuntime
 import cool.jacoblin.particeps.core.runtime.GeneratedEventContractRegistry
 import cool.jacoblin.particeps.core.runtime.NoOpActionOutboxNotifier
@@ -467,6 +468,11 @@ data class ParticipantRuntimeStatus(
     val disabledCollectors: Set<String> = emptySet(),
     /** The participant stopped automatic upload when ending the study. */
     val automaticUploadStopped: Boolean = false,
+    /**
+     * When each category collected data and when the study was paused. It is the participant's own
+     * data, so participant surfaces show it only when the signed disclosure policy allows it.
+     */
+    val collectionTimeline: CollectionTimeline = CollectionTimeline(),
 )
 
 data class ParticipantExportSummary(
@@ -1295,6 +1301,7 @@ class StudySessionManager(
         stateEnteredCalendarElapsedMillis = runtime.stateEnteredCalendarElapsedNanos?.div(NANOS_PER_MILLISECOND),
         disabledCollectors = runtime.participantDisabledCollectors,
         automaticUploadStopped = runtime.automaticUploadStopped,
+        collectionTimeline = runtime.collectionTimeline,
     )
 
     private fun mapCommand(result: RuntimeCommandResult): StudyCommandResult {
