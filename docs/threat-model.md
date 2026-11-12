@@ -332,6 +332,19 @@ This proves internal Particeps assignment/admission consistency under the truste
 does not prove an external app consumed the network exactly as expected, a server response time was
 caused only by the cap, or the participant was attending to the app.
 
+## Debug information (PostHog)
+
+Separate from research data, the App can send debug events to PostHog (`us.i.posthog.com`) after
+the participant opts in on first launch; `DebugTelemetry` drops every event while the choice is
+undecided or declined. Events carry fixed step names, outcome categories, durations, export phase
+durations, 50 MB size buckets, order-of-magnitude event counts, and for errors the exception class
+names and stack frames, plus PostHog's own device and app-version properties and a random distinct
+ID. They carry no study data, survey answers, configuration content, experiment or configuration
+ID, installation code, or exception messages, so debug events cannot be joined to a research bundle
+by any field Particeps controls. PostHog still receives the phone's IP address with each request
+and can see timing; a study whose participants must not contact third-party services should tell
+them to decline. Session replay, screen views and deep links are not captured.
+
 ## Participant UI and blinding
 
 What a participant is told is a researcher decision, and the default is blinding. The model has

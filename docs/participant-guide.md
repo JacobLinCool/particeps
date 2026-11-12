@@ -8,6 +8,15 @@ You can decline, pause, resume, withdraw, and export your encrypted data. Declin
 start removes the study from the phone; completing or withdrawing also lets you permanently delete
 it. Particeps never asks why you made one of these choices.
 
+## Debug information
+
+The first time you open Particeps, it asks whether to share debug information with its developers.
+This is about the app, not about you, and it is not part of any study: which app step ran, whether
+it worked, how long it took, the type of any error, rough sizes, the app version and phone model,
+and a random debug code. It never includes study data, survey answers, which study you joined, your
+installation code, or the content of error messages. Nothing is sent unless you agree, and you can
+change the choice at the bottom of the main screen.
+
 ## Before you start
 
 A Particeps study can arrive as a QR code, a join link, or a signed configuration file. To use a

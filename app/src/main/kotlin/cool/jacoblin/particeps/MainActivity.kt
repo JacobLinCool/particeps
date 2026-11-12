@@ -97,6 +97,7 @@ class MainActivity : ComponentActivity() {
             val graph = startup.graph
             val viewModel = studyViewModel(graph)
             val state = viewModel.state.collectAsStateWithLifecycle().value
+            val debugSharing = DebugTelemetry.sharing.collectAsStateWithLifecycle().value
             CollectorApp(
                 state = state,
                 actions = StudyUiActions(
@@ -134,6 +135,8 @@ class MainActivity : ComponentActivity() {
                     retryRecovery = viewModel::retryRecovery,
                     resetAndRestart = viewModel::resetAndRestart,
                     readLocalStorageSize = viewModel::localStorageSize,
+                    debugSharing = debugSharing,
+                    setDebugSharing = { shared -> DebugTelemetry.setSharing(this, shared) },
                 ),
             )
         }

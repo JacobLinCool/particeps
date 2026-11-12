@@ -1,5 +1,6 @@
 package cool.jacoblin.particeps
 
+import android.os.SystemClock
 import cool.jacoblin.particeps.core.definition.CollectorTier
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -84,6 +85,7 @@ class StudyViewModel(
     )
 
     fun importSignedConfiguration(load: () -> ByteArray) = operation(
+        "import_file",
         ParticipantMessage.CONFIGURATION_IMPORT_FAILED,
     ) {
         val bytes = withContext(Dispatchers.IO) { load() }
@@ -94,29 +96,30 @@ class StudyViewModel(
     }
 
     fun importJoin(link: JoinLink, load: suspend () -> ByteArray) = operation(
+        "import_join",
         ParticipantMessage.JOIN_IMPORT_FAILED,
     ) {
         session.importSignedConfiguration(load(), link)
     }
 
-    fun reviewStudy() = command(session::reviewStudy)
-    fun acceptConsent() = command(session::acceptConsent)
-    fun completeAccessSetup() = command(session::completeAccessSetup)
-    fun start() = command(session::start)
-    fun pause() = command(session::pause)
-    fun resume() = command(session::resume)
-    fun complete() = command(session::complete)
-    fun withdraw(stopAutomaticUpload: Boolean = false) = command { session.withdraw(stopAutomaticUpload) }
-    fun setCategoryTurnedOff(kind: ParticipantDataKind, turnedOff: Boolean) = command {
+    fun reviewStudy() = command("review_study", session::reviewStudy)
+    fun acceptConsent() = command("accept_consent", session::acceptConsent)
+    fun completeAccessSetup() = command("complete_access", session::completeAccessSetup)
+    fun start() = command("start", session::start)
+    fun pause() = command("pause", session::pause)
+    fun resume() = command("resume", session::resume)
+    fun complete() = command("complete", session::complete)
+    fun withdraw(stopAutomaticUpload: Boolean = false) = command(if (stopAutomaticUpload) "withdraw_stop_upload" else "withdraw") { session.withdraw(stopAutomaticUpload) }
+    fun setCategoryTurnedOff(kind: ParticipantDataKind, turnedOff: Boolean) = command(if (turnedOff) "category_off" else "category_on") {
         session.setCollectorEnabled(kind.sourceId, enabled = !turnedOff)
     }
-    fun safetyPauseForPlatformAccessLoss() = command(session::safetyPauseForPlatformAccessLoss)
+    fun safetyPauseForPlatformAccessLoss() = command("platform_access_lost", session::safetyPauseForPlatformAccessLoss)
 
-    fun retryRecovery() = operation(ParticipantMessage.OPERATION_FAILED) {
+    fun retryRecovery() = operation("retry_recovery", ParticipantMessage.OPERATION_FAILED) {
         session.retryRecovery()
     }
 
-    fun resetAndRestart() = operation(ParticipantMessage.RESET_FAILED) {
+    fun resetAndRestart() = operation("reset_study", ParticipantMessage.RESET_FAILED) {
         session.resetAfterRecoveryFailure()
         exportController.clearResult()
     }
@@ -161,7 +164,7 @@ class StudyViewModel(
         // Returning from the camera or document picker must not occupy the import operation slot.
         // Before a study is loaded there are no study permissions to reconcile.
         if (session.snapshot.value.study == null) return
-        operation(ParticipantMessage.ACCESS_INSPECTION_FAILED) {
+        operation("access_check", ParticipantMessage.ACCESS_INSPECTION_FAILED) {
             session.reconcileAccess()
         }
     }
@@ -184,17 +187,26 @@ class StudyViewModel(
 
     private fun removeLocalStudy(removedMessage: ParticipantMessage) {
         if (exportController.state.value.isActive) return
-        operation(ParticipantMessage.DELETE_FAILED) {
+        operation("delete_local_data", ParticipantMessage.DELETE_FAILED) {
             session.deleteLocalData()
             exportController.clearResult()
             localMessage.value = removedMessage
         }
     }
 
-    private fun command(execute: suspend () -> StudyCommandResult) = operation(
+    private fun command(step: String, execute: suspend () -> StudyCommandResult) = operation(
+        step,
         ParticipantMessage.OPERATION_FAILED,
     ) {
-        localMessage.value = when (execute()) {
+        val result = execute()
+        lastOutcome = when (result) {
+            StudyCommandResult.Success -> "success"
+            StudyCommandResult.InvalidState -> "invalid_state"
+            StudyCommandResult.InvalidInput -> "invalid_input"
+            StudyCommandResult.AccessRequired -> "access_required"
+            StudyCommandResult.FailedClosed -> "failed_closed"
+        }
+        localMessage.value = when (result) {
             StudyCommandResult.Success -> null
             StudyCommandResult.InvalidState -> ParticipantMessage.OPERATION_FAILED
             StudyCommandResult.InvalidInput -> ParticipantMessage.OPERATION_FAILED
@@ -203,17 +215,30 @@ class StudyViewModel(
         }
     }
 
+    /** The outcome category a [command] reports for debug information; reset per operation. */
+    private var lastOutcome: String? = null
+
     private fun operation(
+        step: String,
         failureMessage: ParticipantMessage,
         execute: suspend () -> Unit,
     ) {
         if (!operationBusy.compareAndSet(expect = false, update = true)) return
         viewModelScope.launch {
             localMessage.value = null
+            lastOutcome = null
+            val startedAt = SystemClock.elapsedRealtime()
             try {
                 execute()
+                DebugTelemetry.step(step, lastOutcome ?: "success", SystemClock.elapsedRealtime() - startedAt)
             } catch (failure: Throwable) {
                 if (failure is CancellationException) throw failure
+                DebugTelemetry.step(
+                    step,
+                    "error",
+                    SystemClock.elapsedRealtime() - startedAt,
+                    DebugTelemetry.errorProperties(failure),
+                )
                 localMessage.value = failureMessage
             } finally {
                 operationBusy.value = false

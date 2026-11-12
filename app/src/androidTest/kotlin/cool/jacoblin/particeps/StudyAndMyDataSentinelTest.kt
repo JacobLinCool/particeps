@@ -188,8 +188,13 @@ class StudyAndMyDataSentinelTest {
         composeRule.onNodeWithTag(UiTags.COLLECTION_TIMELINE).assertDoesNotExist()
     }
 
+    /**
+     * The semantics tree with node numbers and pixel bounds removed: those are layout artifacts, and a
+     * node number such as `#4219` would otherwise match a hidden configuration value by accident.
+     */
     private fun semanticsDump(): String =
         composeRule.onRoot(useUnmergedTree = true).printToString(maxDepth = Int.MAX_VALUE)
+            .replace(Regex("""Node #\d+ at \([^)]*\)px"""), "Node")
 
     private fun assertNoSentinel(dump: String, surface: String) {
         val lowercase = dump.lowercase()

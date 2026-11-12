@@ -83,16 +83,25 @@ class CollectorApplication : Application(), Configuration.Provider {
         val startedAt = SystemClock.elapsedRealtime()
         val startedCpu = SystemClock.currentThreadTimeMillis()
         super.onCreate()
+        DebugTelemetry.initialize(this)
         // A redelivered foreground service must be able to post its neutral notification before
         // waiting for the graph. All other dependency construction stays outside process binding.
         ParticepsNotificationChannels.ensureCreated(this)
         startup.start { reportStage ->
+            val initializationStartedAt = SystemClock.elapsedRealtime()
             try {
                 val graph = buildGraph()
                 initializeSession(graph, reportStage)
+                DebugTelemetry.step("app_startup", "success", SystemClock.elapsedRealtime() - initializationStartedAt)
                 graph
             } catch (failure: Throwable) {
                 Log.e(TAG, "Application initialization did not complete")
+                DebugTelemetry.step(
+                    "app_startup",
+                    "error",
+                    SystemClock.elapsedRealtime() - initializationStartedAt,
+                    DebugTelemetry.errorProperties(failure),
+                )
                 throw failure
             }
         }
