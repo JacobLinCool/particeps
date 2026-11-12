@@ -6,7 +6,9 @@ import cool.jacoblin.particeps.core.collector.AccessKind
 import cool.jacoblin.particeps.core.collector.CollectorRegistry
 import cool.jacoblin.particeps.core.crypto.HpkeCrypto
 import cool.jacoblin.particeps.core.crypto.HpkeKeyPair
+import cool.jacoblin.particeps.core.definition.CollectorTier
 import cool.jacoblin.particeps.core.definition.ExportConfiguration
+import cool.jacoblin.particeps.core.definition.ParticipantDisclosure
 import cool.jacoblin.particeps.core.definition.ProtocolBase64Url
 import cool.jacoblin.particeps.core.definition.SignerIdentity
 import cool.jacoblin.particeps.core.definition.StudyConfiguration
@@ -95,6 +97,20 @@ class RealRuntimeBundleInteropTest {
         assertBundleMatchesStore(completerBundle, completer, ExperimentState.COMPLETED)
         completer.verifyRetainedRangesFromEveryBoundary(keys.hpke.privateKey)
 
+        val chooser = InteropPhone(
+            this,
+            keys.signedPilotEnvelope(::withParticipantTiers),
+            ordinal = 3,
+            local("2026-09-14", "16:50:00"),
+            BOOT_FOUR,
+        )
+        chooser.runParticipantChoices()
+        val chooserExport = chooser.manualExport()
+        val chooserBundle = verify(chooserExport, chooser.configuration, keys.hpke.privateKey)
+        chooser.assertParticipantChoiceShapes()
+        assertBundleMatchesStore(chooserBundle, chooser, ExperimentState.WITHDRAWN)
+        chooser.verifyRetainedRangesFromEveryBoundary(keys.hpke.privateKey)
+
         System.getenv(INTEROP_DIRECTORY_ENV)?.takeIf(String::isNotBlank)?.let { directory ->
             writeInterop(
                 Path.of(directory),
@@ -102,6 +118,7 @@ class RealRuntimeBundleInteropTest {
                 listOf(
                     InteropBundle("pilot-deadline.partexp", PILOT_SCENARIO, pilotExport, pilotBundle),
                     InteropBundle("complete-from-running.partexp", COMPLETE_SCENARIO, completerExport, completerBundle),
+                    InteropBundle("participant-choices.partexp", CHOICE_SCENARIO, chooserExport, chooserBundle),
                 ),
             )
         }
@@ -164,6 +181,27 @@ class RealRuntimeBundleInteropTest {
         const val BOOT_ONE = "46fbdc844f961c90556fa310a23853f5"
         const val BOOT_TWO = "ae341a42ab1a8775c4c19b2a338f3a01"
         const val BOOT_THREE = "0c7d3f9e21b84a55a6e0f1d2c3b4a596"
+        const val BOOT_FOUR = "5b2e9c1d7a3f4e8b9c0d1e2f3a4b5c6d"
+        const val CHOICE_SCENARIO =
+            "A schema 2 pilot with an optional gyroscope and a requested throughput collector: the participant turns " +
+                "the gyroscope off while running, back on while paused, turns throughput off, resumes, then withdraws " +
+                "and stops automatic upload"
+
+        /** The pilot as schema 2: gyroscope optional, throughput requested with a rationale, both disclosures on. */
+        fun withParticipantTiers(configuration: StudyConfiguration): StudyConfiguration = configuration.copy(
+            schemaVersion = StudyConfiguration.CURRENT_SCHEMA_VERSION,
+            participantDisclosure = ParticipantDisclosure(approximateFrequency = true, collectionTimeline = true),
+            collectors = configuration.collectors.map { collector ->
+                when (collector.id) {
+                    "gyroscope.v1" -> collector.copy(tier = CollectorTier.OPTIONAL)
+                    "network_throughput.v1" -> collector.copy(
+                        tier = CollectorTier.REQUESTED,
+                        rationale = "Measures how much data the phone moves each minute.",
+                    )
+                    else -> collector
+                }
+            },
+        )
         const val PILOT_SCENARIO =
             "Setup, Start, window barriers, pauses, a survey at the 17:00 barrier, same-boot process recovery, " +
                 "clock changes while running and while paused, a reboot with a durable pending usage batch while traffic shaping is applied, " +
@@ -193,7 +231,9 @@ private class InteropKeys(
     private val signing: java.security.KeyPair,
     val hpke: HpkeKeyPair,
 ) {
-    fun signedPilotEnvelope(): ByteArray {
+    fun signedPilotEnvelope(
+        transform: (StudyConfiguration) -> StudyConfiguration = { it },
+    ): ByteArray {
         val path = Path.of(
             requireNotNull(System.getProperty(RealRuntimeBundleInteropTest.PILOT_CONFIGURATION_PROPERTY)) {
                 "The Gradle test task names the published pilot configuration"
@@ -201,7 +241,7 @@ private class InteropKeys(
         )
         val published = StudyConfigurationCodec.decode(StudyConfigurationCodec.canonicalize(Files.readAllBytes(path)))
         val rawSigningKey = signing.public.encoded.copyOfRange(ED25519_X509_PREFIX_BYTES, ED25519_X509_BYTES)
-        val configuration = published.copy(
+        val configuration = transform(published).copy(
             signer = SignerIdentity(
                 RealRuntimeBundleInteropTest.SIGNER_KEY_ID,
                 ProtocolBase64Url.encode(rawSigningKey),
@@ -491,6 +531,48 @@ private class InteropPhone(
         }
         assertEquals(EngineInputKind.TIMER_WAKE, deadline.inputKind)
         assertEquals(ExperimentState.PAUSING, deadline.successorProjection.state)
+    }
+
+    suspend fun runParticipantChoices() {
+        enrolAndStart()
+        clocks.advanceMillis(2_000)
+        screen(on = true)
+        clocks.advanceMillis(1_000)
+        gyroscope(3)
+        command("turn gyroscope off") { manager.setCollectorEnabled("gyroscope.v1", false) }
+        check(manager.snapshot.value.runtime.disabledCollectors == setOf("gyroscope.v1")) { "Gyroscope did not turn off" }
+        usageActivity(local("2026-09-14", "16:50:10"), "ACTIVITY_RESUMED", READER)
+        advanceTo(local("2026-09-14", "16:51:00"))
+        poll()
+        advanceTo(local("2026-09-14", "16:52:00"))
+        command("pause") { manager.pause() }
+        command("turn gyroscope on while paused") { manager.setCollectorEnabled("gyroscope.v1", true) }
+        command("turn throughput off while paused") { manager.setCollectorEnabled("network_throughput.v1", false) }
+        manager.setCollectorEnabled("screen_state.v1", false).let { refused ->
+            check(refused == StudyCommandResult.InvalidState) { "A core collector was turned off: $refused" }
+        }
+        advanceTo(local("2026-09-14", "16:53:00"))
+        command("resume") { manager.resume() }
+        clocks.advanceMillis(1_000)
+        gyroscope(2)
+        usageActivity(local("2026-09-14", "16:53:30"), "ACTIVITY_PAUSED", READER)
+        advanceTo(local("2026-09-14", "16:55:00"))
+        command("withdraw and stop upload") { manager.withdraw(stopAutomaticUpload = true) }
+        check(manager.snapshot.value.runtime.automaticUploadStopped) { "Upload stop was not recorded" }
+        clocks.advanceMillis(30_000)
+    }
+
+    fun assertParticipantChoiceShapes() {
+        val commits = store.commits
+        assertSetupAndCursorShapes(commits)
+        val choices = commits.filter { it.inputKind == EngineInputKind.PARTICIPANT_CHOICE }
+        assertEquals(4, choices.size)
+        assertEquals(ExperimentState.RUNNING, choices[0].successorProjection.state)
+        assertTrue("A running choice closes its epoch", choices[0].events.any { it.named("CONDITION_EPOCH_DEACTIVATED") })
+        assertEquals(ExperimentState.PAUSED, choices[1].successorProjection.state)
+        assertEquals(ExperimentState.PAUSED, choices[2].successorProjection.state)
+        assertEquals(ExperimentState.WITHDRAWN, choices[3].successorProjection.state)
+        assertEquals(ExperimentState.WITHDRAWN, commits.last().successorProjection.state)
     }
 
     fun assertCompleteFromRunningShapes() {

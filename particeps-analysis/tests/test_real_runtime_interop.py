@@ -59,6 +59,13 @@ EXPECTED_SHAPES = {
         "terminal-request-retires-deadline",
         "deadline-events-in-closing-epoch",
     },
+    "participant-choices.partexp": {
+        "setup-checkpoint",
+        "participant-choice-rotates-epoch",
+        "participant-choice-while-paused",
+        "participant-stops-automatic-upload",
+        "lifecycle-command-retirements",
+    },
 }
 
 

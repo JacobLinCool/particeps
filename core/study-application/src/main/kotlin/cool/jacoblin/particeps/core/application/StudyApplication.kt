@@ -19,6 +19,7 @@ import cool.jacoblin.particeps.core.collector.SetupGuidance
 import cool.jacoblin.particeps.core.collector.StudyAccessGateway
 import cool.jacoblin.particeps.core.definition.InterventionConfiguration
 import cool.jacoblin.particeps.core.definition.CollectorResourceConfiguration
+import cool.jacoblin.particeps.core.definition.CollectorTier
 import cool.jacoblin.particeps.core.definition.LocationV1ProfileConfiguration
 import cool.jacoblin.particeps.core.definition.MultipleChoiceQuestion
 import cool.jacoblin.particeps.core.definition.ScaleQuestion
@@ -365,12 +366,20 @@ data class ParticipantStudySummary(
     val dataCategories: List<ParticipantDataCategorySummary>,
     val mayAdjustAppTransferSpeed: Boolean,
     val upload: ParticipantUploadSummary?,
+    /** The signed disclosure policy allows a timeline of when each category collected data. */
+    val collectionTimelineDisclosed: Boolean = false,
 )
 
 data class ParticipantDataCategorySummary(
     val sourceId: String,
-    val required: Boolean,
-)
+    val tier: CollectorTier,
+    /** Researcher-authored reason, shown verbatim; null when the researcher wrote none. */
+    val rationale: String? = null,
+    /** Approximate collection cadence; null unless the signed disclosure policy allows it. */
+    val cadence: ParticipantCadence? = null,
+) {
+    val required: Boolean get() = tier == CollectorTier.CORE
+}
 
 data class ParticipantUploadSummary(
     val destinationHost: String,
@@ -380,13 +389,20 @@ data class ParticipantUploadSummary(
 
 /**
  * The only path from a verified signed configuration to [ParticipantStudySummary]. Every field it
- * copies is platform-floor information; automation, resources, profiles, targets, caps, and export
- * keys are never read here.
+ * copies is platform-floor information, or information the signed participant disclosure policy
+ * explicitly allows: a collector's profiles are read only to derive [ParticipantCadence] when that
+ * policy enables approximate frequency. Automation, targets, caps, and export keys are never read.
  */
 fun participantStudySummary(configuration: VerifiedConfiguration): ParticipantStudySummary {
     val signed = configuration.configuration
+    val disclosure = signed.participantDisclosure
     val categories = signed.collectors.map {
-        ParticipantDataCategorySummary(sourceId = it.id, required = it.required)
+        ParticipantDataCategorySummary(
+            sourceId = it.id,
+            tier = it.tier,
+            rationale = it.rationale,
+            cadence = if (disclosure.approximateFrequency) participantCadence(it) else null,
+        )
     }.sortedBy(ParticipantDataCategorySummary::sourceId)
     return ParticipantStudySummary(
         experimentId = signed.experimentId,
@@ -403,6 +419,7 @@ fun participantStudySummary(configuration: VerifiedConfiguration): ParticipantSt
         signerAnchored = configuration.signerAnchored,
         dataCategories = categories,
         mayAdjustAppTransferSpeed = signed.trafficShaping is TrafficShapingConfiguration.Enabled,
+        collectionTimelineDisclosed = disclosure.collectionTimeline,
         upload = signed.upload?.let { upload ->
             ParticipantUploadSummary(
                 destinationHost = checkNotNull(java.net.URI(upload.endpoint).host),
@@ -446,6 +463,10 @@ data class ParticipantRuntimeStatus(
      * state do not change even though they still advance [calendarElapsedMillis].
      */
     val stateEnteredCalendarElapsedMillis: Long? = null,
+    /** Source IDs of non-core collectors the participant turned off. */
+    val disabledCollectors: Set<String> = emptySet(),
+    /** The participant stopped automatic upload when ending the study. */
+    val automaticUploadStopped: Boolean = false,
 )
 
 data class ParticipantExportSummary(
@@ -716,7 +737,41 @@ class StudySessionManager(
 
     suspend fun complete(): StudyCommandResult = runtimeCommand { it.complete() }
 
-    suspend fun withdraw(): StudyCommandResult = runtimeCommand { it.withdraw() }
+    /**
+     * Withdraws. With [stopAutomaticUpload], the participant also chose not to send data that has
+     * not been sent yet: the choice is committed first, then the upload chain is cancelled and its
+     * staged ciphertext discarded. Data already delivered stays delivered; manual export still works.
+     */
+    suspend fun withdraw(stopAutomaticUpload: Boolean = false): StudyCommandResult {
+        val result = runtimeCommand { it.withdraw() }
+        if (result != StudyCommandResult.Success || !stopAutomaticUpload) return result
+        return stopAutomaticUpload()
+    }
+
+    /** Records the participant's choice to stop automatic upload after the study ended, then stops it. */
+    suspend fun stopAutomaticUpload(): StudyCommandResult {
+        val (result, experimentId) = sessionMutex.withLock {
+            val current = runtimeOrInvalid() ?: return StudyCommandResult.InvalidState
+            mapCommand(current.stopAutomaticUpload()) to verified?.configuration?.experimentId
+        }
+        if (result == StudyCommandResult.Success && experimentId != null) {
+            exportMutex.withLock {
+                val failures = mutableListOf<Throwable>()
+                runCleanup(failures) { uploadCoordinator.prepareDeletion(experimentId) }
+                runCleanup(failures) { uploadScheduler.cancel(experimentId) }
+                runCleanup(failures) { uploadCoordinator.clear(experimentId) }
+                if (failures.isNotEmpty()) throw combineFailures(failures)
+            }
+        }
+        return result
+    }
+
+    /**
+     * Turns one non-core data category off or back on. A core category is refused. While the study
+     * runs the change takes effect at once; while it is paused, at Resume.
+     */
+    suspend fun setCollectorEnabled(sourceId: String, enabled: Boolean): StudyCommandResult =
+        runtimeCommand { it.setCollectorEnabled(sourceId, enabled) }
 
     /** Platform-only consent/access revocation bridge; no platform reason is exposed to UI. */
     suspend fun safetyPauseForPlatformAccessLoss(): StudyCommandResult = sessionMutex.withLock {
@@ -902,7 +957,9 @@ class StudySessionManager(
      * it before sending anything, including a bundle an earlier release staged before Start, so a
      * study still in setup sends nothing; its upload chain is armed at Start.
      */
-    fun automaticUploadStarted(): Boolean = mutableSnapshot.value.runtime.state in STARTED_STATES
+    fun automaticUploadStarted(): Boolean = mutableSnapshot.value.runtime.let {
+        it.state in STARTED_STATES && !it.automaticUploadStopped
+    }
 
     /**
      * Encrypts one durable automatic-upload stage. The caller owns atomic staging and retries.
@@ -920,6 +977,7 @@ class StudySessionManager(
                 check(!mutableSnapshot.value.deletionPending) { "Study deletion is pending" }
                 val configuration = verified ?: return@withLock null
                 if (configuration.configuration.upload == null) return@withLock null
+                if (mutableSnapshot.value.runtime.automaticUploadStopped) return@withLock null
                 val currentStore = store ?: return@withLock null
                 ExportRequest(configuration, currentStore)
             } ?: return@withLock null
@@ -963,7 +1021,7 @@ class StudySessionManager(
         )
         if (result == StudyCommandResult.Success) {
             uploadCoordinator.acknowledge(receipt.bundleId)
-            uploadScheduler.ensureScheduled(plan)
+            if (!current.snapshot.value.automaticUploadStopped) uploadScheduler.ensureScheduled(plan)
         }
         result
     }
@@ -1088,8 +1146,12 @@ class StudySessionManager(
                     uploadCoordinator.reconcile(
                         UploadReconciliation(plan, document.uploadedThroughCommit),
                     )
-                    // A study still in setup arms its upload chain at Start instead.
-                    if (nextAssembly.runtime.snapshot.value.state in STARTED_STATES) {
+                    // A study still in setup arms its upload chain at Start instead, and one whose
+                    // participant stopped automatic upload never re-arms it.
+                    if (
+                        nextAssembly.runtime.snapshot.value.state in STARTED_STATES &&
+                        !nextAssembly.runtime.snapshot.value.automaticUploadStopped
+                    ) {
                         uploadScheduler.ensureScheduled(plan)
                     }
                 }
@@ -1231,6 +1293,8 @@ class StudySessionManager(
         elapsedMeasuredAtUtcMillis = runtime.clockAnchorWallTimeUtcMillis,
         stateEnteredAtUtcMillis = runtime.stateEnteredAtUtcMillis,
         stateEnteredCalendarElapsedMillis = runtime.stateEnteredCalendarElapsedNanos?.div(NANOS_PER_MILLISECOND),
+        disabledCollectors = runtime.participantDisabledCollectors,
+        automaticUploadStopped = runtime.automaticUploadStopped,
     )
 
     private fun mapCommand(result: RuntimeCommandResult): StudyCommandResult {
