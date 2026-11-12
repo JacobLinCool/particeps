@@ -77,6 +77,10 @@ import java.text.NumberFormat
 import kotlinx.coroutines.delay
 
 object UiTags {
+    const val DEBUG_SHARING_CHOICE = "debug_sharing_choice"
+    const val DEBUG_SHARING_ALLOW = "debug_sharing_allow"
+    const val DEBUG_SHARING_DECLINE = "debug_sharing_decline"
+    const val DEBUG_SHARING_ROW = "debug_sharing_row"
     const val STUDY_PROGRESS = "study_progress"
     const val COLLECTION_TIMELINE = "collection_timeline"
     const val CONFIRM_TURN_OFF = "confirm_turn_off"
@@ -152,6 +156,9 @@ data class StudyUiActions(
      * or null when that cannot be measured. *Study and my data* calls it once each time it opens.
      */
     val readLocalStorageSize: suspend () -> ParticipantSizeBucket?,
+    /** The participant's debug-information choice; null hides the choice (tests and previews). */
+    val debugSharing: DebugSharing? = null,
+    val setDebugSharing: (Boolean) -> Unit = {},
     /** Turns a non-core data category off (true) or back on (false). */
     val setCategoryTurnedOff: (ParticipantDataKind, Boolean) -> Unit = { _, _ -> },
     /** Withdraws and stops automatic upload of data that has not been sent yet. */
@@ -246,7 +253,12 @@ fun CollectorApp(
     ) {
         Surface(Modifier.fillMaxSize()) {
             Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
-                if (studyAndMyDataOpen && startedStudy != null) {
+                if (actions.debugSharing == DebugSharing.UNDECIDED) {
+                    DebugSharingChoiceScreen(
+                        onChoose = actions.setDebugSharing,
+                        modifier = Modifier.padding(padding),
+                    )
+                } else if (studyAndMyDataOpen && startedStudy != null) {
                     BackHandler { studyAndMyDataOpen = false }
                     StudyAndMyDataScreen(
                         study = startedStudy,
@@ -735,6 +747,7 @@ private fun NoStudyPanel(actions: StudyUiActions, busy: Boolean) {
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.IMPORT_DEMO),
             ) { Text(stringResource(R.string.action_load_demo)) }
         }
+        actions.debugSharing?.let { DebugSharingRow(it == DebugSharing.SHARED, actions.setDebugSharing) }
     }
 }
 
@@ -1250,6 +1263,7 @@ private fun CollectionPanel(
         }
         ExitLink(state, actions, busy)
         StudyAndMyDataEntry(onOpenStudyAndMyData)
+        actions.debugSharing?.let { DebugSharingRow(it == DebugSharing.SHARED, actions.setDebugSharing) }
     }
 }
 

@@ -127,12 +127,12 @@ internal class ParticipantExportController(
                     timings.finish("cancelled", incompleteFileRemains = !removed)
                 }
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (failure: Exception) {
                 withContext(NonCancellable) {
                     timings.begin(ExportTimingStage.CLEANUP)
                     val removed = removeIncompleteSafely(removeIncomplete)
                     mutableState.value = ParticipantExportState.Failed(incompleteFileRemains = !removed)
-                    timings.finish("failed", incompleteFileRemains = !removed)
+                    timings.finish("failed", incompleteFileRemains = !removed, failure = failure)
                 }
             }
         }
@@ -190,6 +190,7 @@ private class ExportTimings(private val log: (String) -> Unit) {
     private val started = System.nanoTime()
     private var stage: ExportTimingStage? = null
     private var stageStarted = started
+    private val phaseMillis = linkedMapOf<String, Long>()
 
     fun begin(next: ExportTimingStage) {
         if (stage == next) return
@@ -200,9 +201,28 @@ private class ExportTimings(private val log: (String) -> Unit) {
         log("Export phase=$next started elapsed_ms=${millis(now - started)}")
     }
 
-    fun finish(outcome: String, receipt: ExportReceipt? = null, incompleteFileRemains: Boolean = false) {
+    fun finish(
+        outcome: String,
+        receipt: ExportReceipt? = null,
+        incompleteFileRemains: Boolean = false,
+        failure: Throwable? = null,
+    ) {
         val now = System.nanoTime()
         endStage(now)
+        DebugTelemetry.step(
+            step = "export",
+            outcome = outcome,
+            durationMillis = millis(now - started),
+            properties = buildMap {
+                phaseMillis.forEach { (phase, duration) -> put("phase_${phase.lowercase()}_ms", duration) }
+                receipt?.let {
+                    put("event_count_bucket", DebugTelemetry.countBucket(it.eventCount))
+                    put("size_bucket", DebugTelemetry.sizeBucket(it.byteCount))
+                }
+                put("incomplete_file_remains", incompleteFileRemains)
+                failure?.let { putAll(DebugTelemetry.errorProperties(it)) }
+            },
+        )
         log(
             "Export outcome=$outcome elapsed_ms=${millis(now - started)} " +
                 "incomplete_file_remains=$incompleteFileRemains" +
@@ -214,6 +234,7 @@ private class ExportTimings(private val log: (String) -> Unit) {
 
     private fun endStage(now: Long) {
         stage?.let {
+            phaseMillis[it.name] = (phaseMillis[it.name] ?: 0L) + millis(now - stageStarted)
             log("Export phase=$it finished duration_ms=${millis(now - stageStarted)} elapsed_ms=${millis(now - started)}")
         }
     }

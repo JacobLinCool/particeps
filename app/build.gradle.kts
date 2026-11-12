@@ -119,6 +119,7 @@ dependencies {
 
     implementation(platform(libs.compose.bom))
     implementation(libs.activity.compose)
+    implementation(libs.posthog.android)
     implementation(libs.camera.camera2)
     implementation(libs.camera.core)
     implementation(libs.camera.lifecycle)

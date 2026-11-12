@@ -7,6 +7,23 @@ identity — the application ID, the file formats, or the signing certificate. D
 compatibility from the version number; each release below states what an existing installation
 must do.
 
+## v1.0.0-rc.21 — 2026-11-13
+
+The App can now report its own errors and step timings, separately from any study, when the
+participant agrees.
+
+- **Opt-in debug information.** On first launch the App asks whether to share debug information
+  with its developers through PostHog; nothing is sent before the participant agrees, and the choice
+  can be changed at the bottom of the main screen. Events name fixed App steps (import, setup
+  steps, start, pause, resume, complete, withdraw, category switches, export, startup), their
+  outcome category and duration, export phase durations with coarse event-count and 50 MB size
+  buckets, and uncaught errors by exception type and stack frames. They never carry study data,
+  survey answers, configuration content, study or experiment IDs, the installation code, or error
+  messages. Session replay, screen-view and deep-link capture are off.
+
+**Updating from RC20:** install the newer APK over the existing app. Study data, configurations
+and choices are unchanged; the debug-information question appears once after the update.
+
 ## v1.0.0-rc.20 — 2026-11-13
 
 Participants can now understand and shape what a study collects about them, and researchers decide

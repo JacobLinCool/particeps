@@ -459,4 +459,15 @@
     <string name="message_local_data_deleted">The local study data was deleted.</string>
     <string name="message_study_removed">The study was removed from this phone.</string>
     <string name="message_study_paused_for_safety">The study paused because Particeps could not verify safe collection. Review any Android access shown below, then resume.</string>
+    <string name="debug_sharing_title">Help keep Particeps working</string>
+    <string name="debug_sharing_body">Particeps can send debug information to its developers so they can find errors and slow steps, such as an export that takes too long. Debug information is about the app, not about you, and it is not part of any study.</string>
+    <string name="debug_sharing_includes_title">What it includes</string>
+    <string name="debug_sharing_includes">Which app step ran (for example start, pause, or export), whether it succeeded, how long it took, the type of any error and where in the app it happened, rough sizes such as “0–50 MB”, the app version, your phone model and Android version, and a random debug ID that is not linked to any study.</string>
+    <string name="debug_sharing_excludes_title">What it never includes</string>
+    <string name="debug_sharing_excludes">Data a study collects, survey answers, which study you joined, your installation code, the apps you use, your location, or the content of error messages.</string>
+    <string name="debug_sharing_change_later">It is sent to PostHog, a product-analytics service. You can change this choice at any time at the bottom of the main screen. Choosing not to share does not affect any study.</string>
+    <string name="debug_sharing_allow">Share debug information</string>
+    <string name="debug_sharing_decline">Don’t share</string>
+    <string name="debug_sharing_row">Share debug information</string>
+    <string name="debug_sharing_row_detail">Errors and step timings about the app, never study data</string>
 </resources>

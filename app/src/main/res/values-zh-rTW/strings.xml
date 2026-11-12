@@ -391,4 +391,15 @@
     <string name="message_local_data_deleted">本機研究資料已刪除。</string>
     <string name="message_study_removed">這項研究已從這支手機移除。</string>
     <string name="message_study_paused_for_safety">Particeps 無法驗證安全收集，因此研究已暫停。請先處理下方顯示的 Android 存取權，再恢復研究。</string>
+    <string name="debug_sharing_title">協助維持 Particeps 穩定運作</string>
+    <string name="debug_sharing_body">Particeps 可以把除錯資訊傳給開發者，讓他們找出錯誤和太慢的步驟，例如匯出花太久。除錯資訊是關於 App 本身，不是關於你，也不屬於任何研究。</string>
+    <string name="debug_sharing_includes_title">包含哪些內容</string>
+    <string name="debug_sharing_includes">執行了哪個 App 步驟（例如開始、暫停或匯出）、是否成功、花了多久、錯誤的類型與發生在 App 的哪個位置、粗略的大小（例如「0–50 MB」）、App 版本、手機型號與 Android 版本，以及一個與任何研究都無關的隨機除錯代碼。</string>
+    <string name="debug_sharing_excludes_title">絕不包含</string>
+    <string name="debug_sharing_excludes">研究收集的資料、問卷答案、你參加的是哪個研究、你的安裝代碼、你使用的 App、你的位置，或錯誤訊息的內容。</string>
+    <string name="debug_sharing_change_later">除錯資訊會傳送到產品分析服務 PostHog。你隨時可以在主畫面最下方更改這個選擇。選擇不分享不會影響任何研究。</string>
+    <string name="debug_sharing_allow">分享除錯資訊</string>
+    <string name="debug_sharing_decline">不分享</string>
+    <string name="debug_sharing_row">分享除錯資訊</string>
+    <string name="debug_sharing_row_detail">App 的錯誤與步驟耗時，絕不包含研究資料</string>
 </resources>
