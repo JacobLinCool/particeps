@@ -1,5 +1,7 @@
 package cool.jacoblin.particeps
 
+import cool.jacoblin.particeps.core.definition.ParticipantDisclosure
+import cool.jacoblin.particeps.core.definition.CollectorTier
 import android.text.format.Formatter
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -16,6 +18,7 @@ import cool.jacoblin.particeps.core.application.StudySessionSnapshot
 import cool.jacoblin.particeps.core.application.participantStudySummary
 import cool.jacoblin.particeps.core.collector.AccessKind
 import cool.jacoblin.particeps.core.collector.AccessResolution
+import cool.jacoblin.particeps.core.definition.StudyConfiguration
 import cool.jacoblin.particeps.core.definition.StudyConfigurationCodec
 import cool.jacoblin.particeps.core.model.ExperimentState
 import cool.jacoblin.particeps.core.protocol.VerifiedConfiguration
@@ -100,6 +103,13 @@ class StudyAndMyDataSentinelTest {
         composeRule.waitUntil { semanticsDump().contains(storedStep) }
         val screen = semanticsDump()
         assertNoSentinel(screen, "Study and my data")
+        // No signed disclosure policy: no cadence, no researcher rationale, no collection timeline.
+        composeRule.onNodeWithTag(UiTags.COLLECTION_TIMELINE).assertDoesNotExist()
+        listOf(
+            context.getString(R.string.cadence_when_changed),
+            context.getString(R.string.data_rationale_label),
+            context.getString(R.string.timeline_title),
+        ).forEach { policyText -> assertFalse("Shows $policyText without a policy:\n$screen", policyText in screen) }
         listOf(STORED_BYTES, EXPORTED_BYTES).forEach { bytes ->
             listOf(Formatter.formatShortFileSize(context, bytes), Formatter.formatFileSize(context, bytes))
                 .forEach { exact -> assertFalse("Shows the exact size $exact:\n$screen", exact in screen) }
@@ -127,6 +137,55 @@ class StudyAndMyDataSentinelTest {
                 context.getString(R.string.details_last_export_value, exportedStep, numbers.format(1_200)),
             ) + categoryNames,
         )
+    }
+
+    @Test
+    fun aSignedPolicyShowsOnlyTheDimensionItAllows() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val floor = verifiedFixture()
+        val configuration = floor.configuration.copy(
+            schemaVersion = StudyConfiguration.CURRENT_SCHEMA_VERSION,
+            participantDisclosure = ParticipantDisclosure(approximateFrequency = true, collectionTimeline = false),
+            collectors = floor.configuration.collectors.map { collector ->
+                if (collector.id == "screen_state.v1") {
+                    collector.copy(tier = CollectorTier.REQUESTED, rationale = POLICY_RATIONALE)
+                } else {
+                    collector
+                }
+            },
+        )
+        val model = StudySessionSnapshot(
+            initialized = true,
+            study = participantStudySummary(floor.copy(configuration = configuration)),
+            runtime = runningStatus(),
+            access = listOf(StudyAccessStatus(AccessKind.NOTIFICATIONS, true, AccessResolution.Satisfied, null)),
+        ).toParticipantUiModel()
+        composeRule.setFixtureContent {
+            CollectorApp(
+                state = StudyUiState.ActiveStudy(
+                    model = model,
+                    export = ParticipantExportState.Idle,
+                    message = null,
+                    busy = false,
+                    recoveryStatus = null,
+                ),
+                actions = actions(),
+            )
+        }
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA).performScrollTo().performClick()
+        composeRule.onNodeWithTag(UiTags.STUDY_AND_MY_DATA_SCREEN).assertExists()
+        val screen = semanticsDump()
+        assertNoSentinel(screen, "Study and my data under a frequency-only policy")
+        assertShows(
+            screen,
+            listOf(
+                context.getString(R.string.cadence_when_changed),
+                POLICY_RATIONALE,
+                context.getString(R.string.data_requested),
+                context.getString(R.string.data_requested_warning),
+            ),
+        )
+        composeRule.onNodeWithTag(UiTags.COLLECTION_TIMELINE).assertDoesNotExist()
     }
 
     private fun semanticsDump(): String =
@@ -214,6 +273,7 @@ class StudyAndMyDataSentinelTest {
         const val FLOOR_UPLOAD_HOST = "upload.example.invalid"
         const val INSTANCE_ID = "5f0c3a1e-9d2b-4c7a-8e61-2b4d6f8a0c13"
         const val STORED_BYTES = 123_456_789L
+        const val POLICY_RATIONALE = "Shows whether the screen is on while you use the phone."
         const val EXPORTED_BYTES = 2_500_000L
         const val HPKE_PUBLIC_KEY = "ZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5_gIGCg4Q"
         const val SIGNER_PUBLIC_KEY = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"

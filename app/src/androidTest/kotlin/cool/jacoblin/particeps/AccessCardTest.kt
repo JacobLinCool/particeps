@@ -670,7 +670,7 @@ class AccessCardTest {
             signerAnchored = false,
             assignedParticipantId = null,
             participantInstanceId = "00000000-0000-4000-8000-000000000000",
-            dataCategories = listOf(ParticipantDataCategory(ParticipantDataKind.USAGE_EVENTS, optional = true)),
+            dataCategories = listOf(ParticipantDataCategory(ParticipantDataKind.USAGE_EVENTS, tier = ParticipantDataTier.OPTIONAL)),
             access = access,
             upload = upload,
             state = state,
