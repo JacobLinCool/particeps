@@ -26,7 +26,10 @@ import org.junit.runner.RunWith
 /** QR transport must preserve the same five deliberate setup steps as file import. */
 @RunWith(AndroidJUnit4::class)
 class QrStudyConsentFlowTest {
-    @get:Rule
+    @get:Rule(order = 0)
+    val debugSharing = DebugSharingDecidedRule()
+
+    @get:Rule(order = 1)
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     private val application: CollectorApplication
